@@ -141,9 +141,13 @@ function selectProbe(name: keyof DiagnosticReport['probes'], value: unknown, spe
     }
     const input = requireObject(value);
     if (name === 'status') {
+        if(input.index_state==='unavailable'){
+            if(input.collection!==spec.collection&&(!spec.service||input.project!==spec.service.project))throw new InvalidResponse('Unavailable status did not match the selected project.');
+            return {...fields(input,['collection','project','index_state']),publication:null,files:null,chunks:null,index_error:fields(input.index_error,['code'])};
+        }
         if (input.collection !== spec.collection || typeof input.files !== 'number' || typeof input.generation !== 'number') { throw new InvalidResponse('Native status did not match the selected collection.'); }
         const result = withReadiness(input, fields(input, ['collection', 'generation', 'files', 'chunks', 'source_bytes', 'indexed_vectors',
-            'local_model_ready', 'vectors_enabled', 'vector_eligible_artifacts', 'vector_excluded_artifacts', 'extractor_version']));
+            'local_model_ready', 'vectors_enabled', 'vector_eligible_artifacts', 'vector_excluded_artifacts', 'extractor_version','index_state']));
         if (input.publication === null) { result.publication = null; }
         else { result.publication = fields(input.publication, ['collection', 'generation', 'incarnation', 'revision', 'token']); }
         result.execution = fields(input.execution, ['mode', 'logical_cpus', 'requested_inference_workers', 'inference_workers', 'working_memory_bytes', 'resource_slots']);
@@ -211,6 +215,7 @@ function assess(probes: DiagnosticReport['probes'], editor?: DiagnosticEditorSta
     if (Object.values(probes).some(probe => probe.state === 'busy')) { return set('busy', 'wait', 'Another native reader or publication is holding the index gate. Refresh after the current operation finishes.'); }
     if (probes.status.reason === 'not_indexed') { return set('not_indexed', 'retry', 'This collection has no published index yet. Index now starts it.'); }
     if (probes.status.state !== 'ok') { return set('unknown', 'review', 'Current index state could not be established. Historical errors do not establish a current failure.'); }
+    if(status?.index_state==='unavailable'){return set('unknown','review','The index snapshot is unavailable. Service and job diagnostics remain separate; refresh before inferring publication or source coverage.');}
     if (['pending', 'partial'].includes(String(semantic?.state)) && probes.schedule.state === 'ok' && schedule === null) {
         return set('blocked', 'retry', 'Semantic work is pending without a scheduler registration. Index now registers the collection and continues requested work.');
     }

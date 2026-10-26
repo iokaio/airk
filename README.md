@@ -1,218 +1,90 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.3.1.** See the [1.3.1 release notes](docs/release-1.3.1.md), [1.3.0 format changes](docs/release-1.3.0.md), and [1.2.4 diagnosis and recovery notes](docs/release-1.2.4.md). Download available [native ZIPs and platform VSIX packages](https://github.com/iokaio/airk/releases); publication is verified separately by the release workflows.
+1.4.4 corrects Unix cleanup after a child exits naturally. Cleanup confirms that the owned child has exited and its process group has drained before releasing it; transient native errors remain bounded by the existing deadline.
 
-**Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace.** AIRK indexes files and returns bounded facts and passages with source paths, hashes and original locations. The agent supplies the reasoning. Runtime storage uses memory and local disk.
+1.4.4 also creates staged Windows runtime directories with explicit current-user ownership and owner-only access, including nested payload directories, so elevated installations satisfy the same strict ownership checks. Installed macOS runtime validation, self-test and retirement read the complete app payload from its outer root. Cold service starts coordinate registration-metadata setup before source watching.
 
-[Document indexing](docs/document-indexing.md) specializes headings, dates, requirements, numeric bounds/units, qualitative cues and design/architecture/feature/decision language for Markdown, text and extracted documents. DOCX tables and XLSX worksheets retain row/cell evidence and original locations. These are cited evidence candidates, with category-filtered retrieval through MCP and the CLI.
+1.4.4 corrects a fixed WAL limit that could block indexing and repeatedly fail recovery despite free disk space. WAL and shared-memory allowances now scale with admitted database capacity; retained reads and pending replay inputs are preserved. SQLite growth admission includes uncheckpointed pages. See the [storage-recovery release record](docs/release-1.4.4.md). This source fix still requires installation and recovery verification in affected workspaces.
 
-This is an independent, runnable open-source project. Munarium, VCP and local reference files inform the design; their implementations are not dependencies. SQLite FTS5 lexical retrieval, authenticated SQLite records and mutable Microsoft DiskANN publish one coherent current revision. Vector indexing and hybrid retrieval are enabled by default. The native helper embeds the pinned [local CPU embedding model](docs/onnx-models.md) (about 91 MB of assets), which the trusted panel installs locally on first use without downloading; turn **Vector search** off per collection to opt out. Inference and source data stay local. Model quality must be evaluated for the intended corpus.
+1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits.
 
-[Code facts and relationships](docs/code-facts-and-relationships.md) add scopes, signatures, written types, call/framework candidates and optional source/build-bound SCIP imports. The 1.3.1 source has fifteen read-only MCP tools; the published 1.2.4 helper has sixteen. Both expose bounded evidence with explicit syntax versus producer provenance. Native indexing needs no external compiler/indexer installation.
+Installation and upgrades now display a VS Code progress notification with the current stage: version and payload checks, staging, native activation, agent connection updates, workspace setup and cleanup. Progress uses actual stages without an invented percentage. A connected-client preflight pauses the upgrade with a visible Retry Update action; success and failure remain explicit. VS Code owns the earlier VSIX installation UI, before AIRK can activate.
 
-## What's new in 1.3.1
+Installation now shows a completion notification with MCP Servers, Reload Window and Show Details actions. Copilot users can restart AIRK from MCP Servers; external coding-agent sessions and existing terminals need their own restart. Routine activation does not repeat the notice for the same runtime, while explicit Install or Repair CLI shows it again. Connection or cleanup issues produce a warning instead of a clean success message. The dashboard retains restart guidance, including the distinction between an editor reload and a full restart required before a rejected VSIX reinstall.
 
-The helper includes the FP32 all-MiniLM-L6-v2 weights, tokenizer, manifest and Apache license. First-use model setup works offline, including on networks that block Hugging Face. Native-only setup uses `airk collections vectors install-bundled`; existing custom models are preserved.
+Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
 
-Different projects sharing one storage root can index concurrently. Each collection has its own native worker lock; two windows on the same project still share one worker. Editor indexing requests advance only their selected collection, and foreign source requests no longer interrupt semantic batches. The existing four execution slots retain CPU/memory budgets, admit model loading before it starts, and report capacity waits separately from a busy project. An active older global worker requires restarting older AIRK workers before retrying. See [scheduling and upgrade details](docs/native-scheduler.md).
+The current package version is **1.4.4**, superseding the 1.4.2 resource-policy candidate. Validation and remaining qualification limits are recorded in its release notes.
 
-## What's new in 1.3.0
+CLI installation removes previous extension-managed terminal executable copies regardless of version. It also retires the previous native rollback payload after successful activation, preserving the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to retry. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
 
-Committed lexical passages and facts can be searched while a source scan continues. Known saved-path changes can update only those paths, while periodic full inventories reconcile coverage. An older 1.2 lexical index needs a rebuild because this candidate moves to SQLite FTS5; the extension starts that rebuild on indexing, and native CLI users run `airk index --full`. See the [release summary and qualification limits](docs/release-1.3.0.md#release-summary).
+Trusted VSIX activation now installs the native runtime and the `airk` terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. No setup links are required. Open a new VS Code terminal after installation; restart external terminal applications to refresh PATH. User `airk.cli.autoInstall: false` disables automatic installation and registration. Existing 1.4 registrations, selected index-data locations and watching preferences are preserved, including after a storage change. Compatible 1.4 runtime updates use the native fenced activation and schema-migration path; no fresh registration or reindex is requested for saved projects. Managed runtime ownership and explicit Stop remain authoritative. Use **Choose Index Storage Folder** or **Choose Native Automatic Watching** to change defaults later. Storage selection creates a reviewed binding and retains old index files for separate cleanup. Agent connection remains a separate explicit action.
 
-The [indexing follow-up](docs/indexing-follow-up-2026-10-21.md) queues rebuilds during active scans, retains revision-specific completion reports, clears stale editor waits and labels coverage pending its five-minute rescan. Warm reads and publications can reuse guarded, bounded lexical snapshots; Linux notification guards reject raw writes even when timestamps coincide; explicit integrity diagnostics still hash the complete lexical state. The follow-up documents the cache's changed verification contract and limits.
+**1.4.4 native service and storage recovery.** See the [release record](docs/release-1.4.4.md). Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical; this candidate requires its own validation. Publication is controlled by protected-main CI and the release workflows. [Routine CI](docs/ci-and-builds.md) runs the full workspace on Linux, focused Windows/macOS regressions and all native/VSIX build and smoke gates; full platform and multi-project lifecycle qualification is opt-in.
 
-Saved-path updates are available through `airk index --paths src/retry.rs tests/retry.rs`; the editor and native watcher submit known changed paths too. They preserve unrelated indexed bindings and leave semantic work queued after lexical/fact publication. Complete reconciliation remains the backstop. Scheduled semantic calls reuse a model across bounded batches, and status exposes scheduled source-pass timings and inventory age. See the [indexing feedback review](docs/indexing-speed-review-2026-10-21.md) for implementation decisions, integrity limits and measurements.
+The [Windows build and editor harness](docs/windows-local-build.md) now uses the verified runtime pair and reviewed native registrations. An allowlisted development stage can be exercised before creating a VSIX; final artifact acceptance remains separate.
 
-`airk model-catalog` reports native CPU instruction capabilities and the pinned default for new model setup without opening a workspace, index or model. New extension model setup and the offline provisioning script share one catalog. Automatic selection retains the current FP32 MiniLM model; CPU-specific INT8 selection is a [documented future option](docs/onnx-models.md#capabilities-and-qualified-model-catalog), not enabled behavior. Existing/custom models are preserved.
+AIRK indexes local code and documents and serves bounded, cited evidence to coding agents through read-only MCP tools. It preserves original document locations and exact indexed revision identities. It provides native syntax facts and candidate relationships without claiming complete language understanding or resolved references. Original files remain outside derived storage.
 
-The former `airk_history` MCP tool is retired because AIRK 1.2 retains one current index and could only return an unsupported error. Search returns focused snippets by default, with `full_chunks: true` for complete indexed chunks. `AIRK_MCP_RESPONSE_MODE=terse` shortens repeated response metadata while retaining the exact token, citations, hashes and coverage state. MCP requests can wait briefly in a bounded queue; `known_hash` mismatches fail explicitly; textual references select indexed candidates before exact source verification. The editor can verify and start MCP while initial indexing continues, shows committed file progress, and stops a scan that makes no progress for ten minutes. Progressive scans now defer semantic inference until source discovery completes and adapt batch cadence to publication cost, keeping the first batch small and later work bounded. A bounded scheduler wait now resumes the same queued request; diagnostics distinguish a completed native request from an earlier editor wait failure. [Release notes](docs/release-1.3.0.md) describe qualification limits; release workflow records establish publication status.
+## Native service ownership
 
-## What's new in 1.2.4
+A per-user service brokers authenticated connections and owns registration, durable work and resource policy. Retrieval flows directly between clients and project workers. Project workers also talk directly to the shared inference helper; the broker does not forward evidence, source text, model weights or embeddings.
 
-**Diagnose & Repair** collects the selected collection's helper identity, current indexing/semantic progress, queue state and recent failures inside the extension. Copy a bounded report, retry indexing, resume window indexing or rebuild derived evidence from the same view. Recent failures survive reloads and are kept separate from current observations.
+The approved runtime pair contains two executables: a lightweight `airk` for native service/client/worker roles, and `airk-embed` for inference and embedded offline MiniLM assets. Compatible projects share verified model files and loaded sessions. Inference starts when needed; connecting a read-only client does not load a model. Native operation targets Windows, Linux and both Mac architectures. Windows/Linux x64 and private Windows editor evidence is recorded separately; native Mac and the complete installed-platform matrix remain unqualified.
 
-**Verify retained data** checks source and extraction inputs in bounded pages at one indexed revision. It reports incomplete checks and failures explicitly; saved readiness alone is not proof of intact retained data. Verification yields to active indexing and enrichment. Diagnostics also flag older helper paths in known agent configurations after an update; settings are preserved for manual review.
+The Mac layout uses a [GUI-less signed app bundle](docs/service-macos-login.md) containing those same two executables, with a macOS 13.0 deployment baseline and optional bundle-scoped login registration. Portable ownership/package checks pass; native SDK, signing, lifecycle and installed-platform qualification remain pending.
 
-Diagnostics recognize the managed CLI copy when its bytes match the verified extension helper. Native failures display readable messages while preserving bounded stderr details. Missing extractions across a batch share one authenticated posting-map traversal; automatic recapture waits for readers within a bounded, pause-aware admission window.
+Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. Native workers own indexing and source watching. Automatic watching explicitly continues after editor windows close; login startup is a separate opt-in choice.
 
-Native writer admission also detects SQLite's silent read-only fallback. On Windows, verified temporary sharing denial permits a bounded reopen; genuine permission failures remain explicit.
+## Start with a fresh 1.4 namespace
 
-Retry safely releases abandoned publication quota reservations after proving the index is Ready with no pending journal. Committed evidence and reservations needed for recovery remain protected.
+The [native management clients](docs/service-native-management.md) provide direct usage/settings reads, bounded exports and guarded project changes. Usage & Savings waits for native completion; imports bind the reviewed input bytes, and shared quota updates reject stale policies.
 
-Temporary publication contention retries with a capped delay using structured native outcomes that are independent of Rust backtraces. Indexing can recreate missing retained objects from validated source files and retire old postings for changed or deleted files when the prior extraction is missing. Repair remains bounded; corruption, permissions and unavailable journals remain visible failures. Slow semantic work no longer forces the next source batch to publish prematurely. Agent Lean remains the default.
+1.4 is a clean break. It does not read, convert or share live 1.3 indexes, journals, jobs or revision tokens. Old state and agent configurations remain for explicit review. Fresh indexing requires additional disk space. Known older workers can still compete for resources; review and stop their owned registrations separately.
 
-Automatic scheduling rechecks what is due when a timer fires. An early timer callback cannot start unrequested semantic work and block a pending source scan.
+In the extension, trusted activation sets up new workspace roots automatically. Use **AIRK: Index Now** for later explicit indexing and **AIRK: Choose Native Automatic Watching** to switch between manual and automatic watching. **AIRK Service Console** shows cached observations, readiness, jobs, sampled native wait reasons, independent source/helper state, project settings, guarded repairs and lifecycle controls. Queued jobs remain visible while paused and can be canceled explicitly. Start is explicit after a deliberate Stop; reconnect cannot clear that preference. The console also offers Terse/Full response mode, reviewed runtime upgrades/rollback and saved-request recovery.
 
-## What's new in 1.2.3
+Project settings offer [guarded unregister](docs/service-project-retirement.md), including paused projects. It stops new admission and drains the selected owner while preserving source files, settings and index data. The console's **Unregistered projects / cleanup** view separately previews and deletes selected owned index state, preserves saved settings and sources, and resumes interrupted cleanup before re-registration.
 
-New collections start with **Agent Lean**: selected declarations, imports and document facts with compact MCP replies. Start lean and fast, then choose Rich Structure for broader structural facts and declaration tracking, Detailed for document-unit tracking, or Search Only for text and citations. From 1.3.0, Agent Lean and Rich Structure both retain supported call occurrences as unresolved syntax candidates. Existing collections retain their saved or published detail level. Rich Structure, Search Only and Detailed remain selectable. Semantic search stays enabled; the default Agent Lean vector policy excludes reviewed lockfiles and minified JS/CSS while retaining their lexical evidence.
+Native project settings can reset scan-limit overrides to automatic limits. Native quotas apply to manual and automatic work; retired editor timer/soft-budget settings no longer appear. Workspace tree actions use the clicked project, and native usage counts performed source, semantic and replacement work independently of job acceptance.
 
-Progressive indexing also keeps newly captured and reusable objects alive across intermediate batches. This fixes the `retained object missing` failure that could stop a fresh scan; update and retry **Index now** without wiping the collection.
+The MCP provider advertises only reviewed bindings. **Connect Coding Agent** creates a stable-launcher configuration on request and preserves unrelated client settings. Recognized legacy JSON entries have an [explicit diff and guarded replacement](docs/service-legacy-transition.md); Custom TOML and other agent formats use manual review; recognized existing local Codex, Claude Code and Copilot connections are refreshed during installation. Agent connection is separate from the extension's bounded read-only MCP verification.
 
-## What's new in 1.2.2
+The console separately reviews old login startup and offers ownership-verified removal with its own approval and resumable receipts. Review never executes the old command. Startup removal preserves sources, settings and indexes; candidate process matches do not authorize stopping unrelated workers. A separate [offline CLI preview and deletion](docs/service-legacy-transition.md) retires owner-verified 1.3 derived files while preserving sources, settings and usage history. Mac loaded-registration proof is implemented; actual native removal qualification remains pending.
 
-The VS Code extension continues unfinished semantic batches after **Index now** and when reopening a trusted workspace, without a separately installed service. The dashboard shows semantic indexing independently of saved-file coverage, even at 100%. Pause, failure blocking and collection/storage changes apply between batches. Manual mode still completes already requested semantic work, and previously committed evidence remains available.
+Approved managed payloads can remain read-only. Their client launcher copies only the lightweight main into user metadata; the provider retains control of its payload and external service lifecycle. Development test evidence and remaining gates are recorded in [cutover qualification](docs/service-cutover-qualification.md).
 
-## What's new in 1.2.1
+## Native CLI
 
-The extension's Details/Marketplace description and repository documentation now explain the 1.2 behavior and current controls. One storage-budget message was corrected; indexing and retrieval behavior remain as in 1.2.0. See the [release notes](docs/release-1.2.1.md).
+Install/select an independently approved offline runtime pair using the [installation contract](docs/service-installation.md). A manifest's own checksum is not executable approval. The stable launcher remains outside the versioned extension directory and follows the approved selection.
 
-## What's new in 1.2.0
+```console
+airk --service-install-dir <installation> --root <source> --data-dir <data> --collection project-a init
+airk --service-install-dir <installation> --root <source> --data-dir <data> --collection project-a index
+airk --service-install-dir <installation> --root <source> --data-dir <data> --collection project-a tools call airk_status
+airk --service-install-dir <installation> --root <source> --data-dir <data> --collection project-a setup --client codex
+```
 
-**Agent Lean** keeps useful code declarations, signatures, imports and document facts with compact MCP replies. **Rich Structure** and **Search Only** name the existing Balanced and Essential policies; in 1.2.0–1.2.2 new collections used Rich Structure; 1.2.3 defaults to Agent Lean. Progressive indexing publishes bounded exact-evidence and semantic batches, preserves committed work when paused, and reports discovery and semantic readiness separately. Optional lossless retained-object compression starts off.
+`init` registers roots and prepares reserved storage. `index` reports durable job acceptance; completion and semantic readiness are separate. CLI requests save their exact key before submission and support explicit recovery after a lost acknowledgment. Read aliases and `tools shell` use the direct project transport. A saved opaque binding supports retained reads when sources are unavailable. Missing or incompatible service state fails explicitly; there is no local-store fallback.
 
-Version 1.3.1 uses one authenticated current SQLite FTS5/DiskANN index. When the extension indexes a recognized older 1.2 collection, it replaces the obsolete derived index and starts a full rebuild using the existing ID. Source files and saved settings remain untouched. CLI users can run `airk index --full` for the same upgrade. The earlier 1.1 layout still requires fresh 1.2 state. See [current-index operation and recovery](docs/current-index-runtime.md) and the [current qualification notes](docs/release-1.3.1.md#validation).
+The old window scheduler and public direct-store maintenance commands are retired. Full rebuilds require a guarded native preview and separate approval. Advanced native management is available through bounded typed metadata RPC and the service console. See [client adapters and request recovery](docs/service-client-adapters.md) and [project setup](docs/service-project-setup.md).
 
-## What's new in 1.1.4
+## Indexed evidence and response size
 
-Warm retrieval validates publication integrity, hybrid search ranks distinct chunks before applying text budgets, and scoped vector searches use bounded matching candidates. Discovery tools support revision-bound continuation cursors and compact outlines. PDF parsing runs in a local resource-limited worker, source traversal uses protected handles, and CLI shell setup rejects redirected or hard-linked profiles. [Request execution](docs/request-execution.md) keeps optional accounting off the MCP protocol thread.
+`airk_help` adds a 35-topic usage catalog, generated public CLI command help and current MCP tool schemas. `airk_status.work` independently reports project jobs, bounded queued work, cached phase/counters, source-watcher status and matched sampled waits. Help explains management options; these MCP tools do not change job state. All 16 tools remain read-only.
 
-Usage comparisons use compact full-source byte measurements from the response's exact indexed revision. Current source-size measurements can compare small excerpts from large repositories without the former 8 MiB inventory/retained-payload and 1 MiB text comparison limits. The report distinguishes evidence requests from background activity and explains unavailable comparisons. Index once with the new helper and restart agent MCP sessions; older missing comparisons remain unmeasured. See [the 1.2 runtime and rebuild boundary](docs/current-index-runtime.md).
+`airk_status` includes a runtime JSON bundle for the MCP frontend, index worker and native service: compiled versions, process identities, executable/payload hashes and available build receipt metadata. Missing observations remain explicit; see the [MCP contract](docs/mcp.md).
 
-## What's new in 1.1.3
+MCP provides bounded file discovery, outlines, symbols, code/document facts, imports, references, relationships, search, reads, context, capabilities and changes. **Terse is the default.** It sends the exact token once, uses shared source bindings and `items`, and avoids repeated static diagnostics. Full mode supplies detailed provenance, coverage and readiness for audits or surprising results; agents can request it per call. Compact navigation uses names, kinds, lines and signatures. Syntax call targets remain labeled candidates.
 
-Open **Usage & Savings** on any collection to see how much smaller AIRK results were than complete cited files, daily activity, optional session/task measurements and explicit cost assumptions. The report explains estimates in plain language and keeps technical counters expandable. [Measurement and evaluation](docs/usage-evaluation.md) covers content-free client adapters, matched-task comparisons and cumulative native totals. These features do not establish provider billing savings.
+Results describe indexed evidence. `airk_changes` calls its validation `index-current`; this is not a live-file verification. Change baselines retain bounded metadata across up to 64 publications/24 hours, with explicit coverage floors under pressure. Reads retain usable prior generations during publication or disclose a finite retry hint. See [response modes](docs/mcp-response-modes.md) and the [MCP contract](docs/mcp.md).
 
-## What's new in 1.1.0–1.1.2
+Storage uses independent collection ownership, admitted publication/replacement space, bounded readers and conservative recovery. DiskANN is the selected disk-backed vector engine; bootstrap lexical/retained-snapshot adapters are not a substitute for that engine. Scoped repair preserves original sources and reports partial failures. See [publication](docs/service-publication.md), [storage ownership](docs/service-storage-ownership.md) and [maintenance plans](docs/service-maintenance.md).
 
-- **Workstation indexing:** automatic source allowances scale with machine memory, up to 4 GiB per collection. Coverage reports measured bytes and large files; reviewed limit increases preserve existing policies and retry once. [Ingestion limits](docs/ingestion-limits.md) distinguish raw-file admission from extracted-text and parser limits.
-- **Collection dashboard:** inspect coverage and MCP helper health, index or reindex a collection, pause automatic work, choose storage and select evidence detail. The current controls are described below; the 1.1 labels were Essential, Balanced and Detailed.
-- **Storage and recovery:** the 1.1 line introduced storage and recovery controls. Version 1.2 replaced historical generations with one authenticated current index. Defaults are 256 GiB per collection and 500 GiB per storage root.
-- **Coding-agent connections:** a persistent setup guide creates missing Codex project configuration, installs Claude Code/Gemini CLI/Antigravity project entries while preserving other settings, or opens Copilot's explicit registration controls. Helper health and actual agent discovery are checked separately.
+## Development and records
 
-See the [combined release notes](docs/releases-2026-10-17.md) for release provenance, measured Windows results and changes that require an explicit upgrade action.
+Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). The runtime builder stages a host-native executable pair without creating a VSIX. Formatting, Clippy, workspace tests, repository checks and exact artifact verification remain release gates. Installed-platform evidence is recorded separately from development fixtures.
 
-## Try the native binary
+The [1.3.2](docs/release-1.3.2.md), [1.3.1](docs/release-1.3.1.md), [1.3.0](docs/release-1.3.0.md) and earlier release notes are historical records. Their direct-helper/window-scheduler instructions do not describe 1.4 defaults. Existing public releases are separate from this unpushed development branch.
 
-The native product targets **Windows, macOS and Linux**. Developer builds require Git, the pinned Rust toolchain and native C/C++ build tools. Runtime requires only the built binary.
-
-[GitHub CI](docs/ci-and-builds.md) is configured to test and package Windows x64, Linux x64 and both Mac architectures using standard hosted runners. Successful runs retain matching unsigned candidate ZIPs/VSIX packages, notices and checksums for seven days.
-
-The manual [GitHub release workflow](docs/release-workflow.md#versioned-github-releases) adds versioned releases, Azure-signed Windows helpers, signed/notarized Mac helpers, and native ZIP/VSIX downloads hosted on [GitHub Releases](https://github.com/iokaio/airk/releases). Linux downloads are unsigned. Publication is selected explicitly when dispatching the workflow.
-
-The [downloads website workflow](docs/release-workflow.md#downloads-website) publishes an AIRK overview, installation steps and direct platform downloads to **airk.ioka.io** using GitHub Pages. It refreshes after release publication and can also be run manually. GitHub releases provide native ZIPs and matching VSIX files; Marketplace publication is a separate workflow.
-
-For the extension, install the matching VSIX, open and trust a workspace, then use **AIRK: Index Now** and **AIRK: Connect Coding Agent…**. Keep the generated helper path, root, data directory and collection together. Reload the selected agent and ask it to run `airk_status`, `airk_capabilities` and a known-phrase search. **Check AIRK MCP Helper** verifies the native server; the agent must confirm its own tool discovery. See [agent setup](docs/agent-integration.md) for client-specific routes.
-
-For a local Windows app and extension build:
-
-~~~powershell
-pwsh -NoProfile -File scripts/build-windows.ps1
-~~~
-
-Add `-OpenReview` to install the generated VSIX in an isolated editor profile. The extension provides measured workspace coverage, grouped controls, indexing presets, persistent pause/resume, storage selection, generation trimming, local usage reports, scoped VS Code MCP registration and guided agent setup. See [Windows build/review instructions](docs/windows-local-build.md) and [extension behavior and limits](docs/vscode-extension.md).
-
-~~~console
-cargo install --path crates/airk-cli --locked
-~~~
-
-For native-only use, [provision the local model](docs/onnx-models.md#default-setup-and-native-provisioning) before indexing to enable the default hybrid search. The extension handles this setup automatically. Explicit `--mode lexical` remains available for a model-free query.
-
-From your own workspace:
-
-~~~console
-airk setup --collection project-a --client claude
-airk search "authenticate" --collection project-a
-airk symbol authenticate --collection project-a
-airk outline src/auth.py --collection project-a
-airk refs authenticate --collection project-a
-airk index . --collection project-a
-airk coverage --refresh --collection project-a
-airk usage report --collection project-a
-airk tools list
-airk tools help airk_search
-airk tools shell --collection project-a
-~~~
-
-Setup indexes the workspace and prints client-specific configuration using actual absolute paths. It never overwrites client settings. Use --client codex for TOML, --client vscode or cursor for editor configurations, and other supported formats listed in [agent integration](docs/agent-integration.md). Commands return JSON; MCP uses stdio and needs no Python bridge, port, service account or API key.
-
-Select **Open AIRK Tools** on a dashboard collection to open an interactive tools console in VS Code's Terminal panel. It includes help and examples and calls the same MCP handlers without a coding agent. The standalone CLI also supports `tools call <tool> --args-file query.json`; see [direct MCP tool access](docs/mcp.md#call-tools-without-a-coding-agent).
-
-The extension installs its bundled CLI during the first trusted startup and updates it with the extension. Open a new terminal and run `airk --help`; restart external terminal applications to pick up PATH changes. No Cargo installation is needed. The dashboard includes a CLI getting-started note and **Install or repair CLI** button. See [CLI installation and PATH](docs/vscode-extension.md#cli-installation-and-path) for platform behavior and troubleshooting.
-
-State defaults to .airk/collections-1.2/<id> under the workspace. Choose a shared user-controlled disk with --data-dir. Each MCP launch fixes its root and collection; retrieval tools cannot switch collections.
-
-## One container per user and machine
-
-Build and start one persistent container from this checkout:
-
-~~~console
-docker compose up -d --build
-docker exec airk airk --root /workspaces/project-a --data-dir /data --collection project-a index
-docker exec airk airk --root /workspaces/project-b --data-dir /data --collection project-b index
-~~~
-
-The default mounts the tiny public [example workspaces](examples/workspaces). Set AIRK_WORKSPACES to the absolute parent directory of your intended workspaces before startup. Source mounts are read-only. A named volume retains all collection indexes, runtime networking is disabled and no ports are exposed.
-
-Configure each workspace's agent with its own root and collection, using [the Docker MCP example](examples/mcp/docker.json). The client launches a stdio worker using docker exec inside the existing container. Workers share immutable disk generations and retain separate caches. The [native scheduler](docs/native-scheduler.md) coordinates submitted indexing jobs across workers sharing a data root; no system service is automatically installed. No public container image is published; native and extension downloads are distributed separately.
-
-## Implemented retrieval
-
-The 1.3.1 source provides fifteen read-only MCP tools for search, file listing, bounded reads, file metadata, context, outlines, native syntax definitions/imports, structured document facts, code facts/relationships, textual identifier occurrences, indexed changes, status and capability inspection. The retired `airk_history` endpoint belonged to an earlier history design; the published 1.2.4 helper still lists it but returns only an unsupported error. Results describe published evidence; freshness requires indexing, and counts alone do not prove live workspace coverage.
-
-Native grammar profiles cover Rust, Python, JavaScript/JSX, TypeScript/TSX, Go, Java, C/C++, C#, Ruby, PHP, Bash, PowerShell, Lua, Swift, Kotlin and SQL. Structured adapters cover Markdown, JSON/YAML/TOML, HTML/CSS, XML/SVG, CSV/TSV, INI-style configuration and Dockerfiles. Native extraction supports text-layer PDF, DOCX paragraphs and structured tables, XLSX stored worksheet rows/cells, and PPTX slide text in presentation order. Spreadsheet formulas are retained with any stored result; AIRK does not calculate formulas. Other UTF-8 files retain lexical retrieval without an extension allowlist.
-
-See the [format matrix](docs/formats.md) for the broader language, build-file and composite-format profiles and their exact limits. Optional local LSP/Ctags execution and manifest-bound SCIP imports provide separately labeled producer evidence; explicit local OCR retains recognition and provenance limits. Supported composite formats map bounded child syntax to original host locations. These features do not establish universal compiler resolution, complete caller graphs or full framework understanding. The extension coalesces filesystem edits and submits durable native indexing requests. [Scale qualification](docs/scale-qualification.md) records measured workloads; larger-than-memory performance, production semantic quality and practical token savings remain unqualified.
-
-### Choose indexing detail
-
-The AIRK sidebar offers **Search Only**, **Agent Lean** (the default for new collections), **Rich Structure**, and **Detailed**. Search Only keeps searchable text and exact citations. Agent Lean keeps selected declarations, imports, call occurrences and useful document facts with compact MCP replies. Rich Structure adds broader structural facts and declaration tracking while also retaining call occurrences. Detailed adds document-unit tracking. Existing saved choices keep their meanings.
-
-The panel shows configured and published levels separately. Changing a level rebuilds evidence; preparation keeps the current head readable, and Applying requires completion or recovery before reads resume. Native fact and relationship responses explicitly report omitted detail. Storage quotas, current-object cleanup and vector search are separate controls. See [index detail](docs/ingestion-limits.md#index-detail) for CLI equivalents and costs.
-
-## Storage and maintenance
-
-[Local usage and estimated savings](docs/usage-reporting.md) records bounded daily aggregates without query/source text, including response bytes, latency, indexing reuse, index stages, logical disk growth and supported OS CPU/I/O/RSS counters. JSON, CSV and Markdown reports preserve missing and overlapping measurements. Optional commands import content-free client/session and paired-task measurements, calibrate digest-bound BPE/WordPiece/Unigram/WordLevel pipelines with explicit framing, and apply supplied input-price scenarios. Imported counters remain self-reported and hypothetical price equivalents are not verified bills. Reports remain partial because historical recording loss cannot be certified; Windows transfer bytes are distinct from OS storage I/O and hardware physical I/O.
-
-~~~console
-airk --data-dir /path/to/airk-state collections list
-airk --data-dir /path/to/airk-state --collection project-a collections prune
-airk --data-dir /path/to/airk-state --collection project-a collections prune --apply
-airk --data-dir /path/to/airk-state collections remove obsolete-project
-~~~
-
-On Windows use a path such as D:/indexes/airk. Pruning previews obsolete immutable generations and protects active or leased evidence. Removal deletes only a named, validated managed collection, preserving its source workspace; active native readers prevent removal. Disconnect workers for that collection first. See [collections](docs/collections.md) and [operations](docs/operations.md).
-
-Default [storage quotas](docs/storage-quotas.md) are **256 GiB per collection** within **500 GiB per data root**. These are ceilings, not preallocated space. AIRK 1.2 starts fresh collection/settings ownership and leaves 1.1 state untouched. Current cleanup proves ownership before removing unreferenced objects. See the [current-index contract](docs/current-index-runtime.md) for token expiry, busy states and recovery.
-
-Indexing streams one artifact at a time into content-addressed source/extraction storage. Authenticated current catalog/postings, head-bound FTS5 content and posting digests and mutable DiskANN records preserve exact revision identity without loading all source text for each request. [Source aliases](docs/source-roots.md) add independent folders to one collection; their original locations are pinned with each revision. Shared logical-byte quotas cover participating writers, including temporary builds and durable recovery allowances. Explicit relocation copies and verifies a data root before activating it, retaining the old managed state.
-
-Automatic [ingestion limits](docs/ingestion-limits.md) allow up to 256 MiB per source file, 32 MiB extracted text per file and 100,000 files. Eligible source is sized to one eighth of detected machine memory, capped at 4 GiB, with twice that allowance for extracted text. Unknown memory uses a 512 MiB source allowance; saved policies remain unchanged. Collection policies explicitly permit larger workloads within validated ceilings and storage quotas; [scale qualification](docs/scale-qualification.md) records measured profiles. Ignore rules and common secret/build exclusions apply; indexes themselves contain source text. Read [SECURITY.md](SECURITY.md).
-
-## Code organization
-
-~~~text
-crates/
-  airk-core/       Artifact, fact, query, citation and provider contracts
-  airk-ingest/     Discovery, hashing, native grammars and document adapters
-  airk-store/      SQLite state, durable queues/usage, locks and current-object cleanup
-  airk-retrieval/  Disk-backed DiskANN, local vectors and retrieval primitives
-  airk-kernel/     Collection-scoped services, rank fusion and response budgets
-  airk-mcp/        Read-only schemas and official SDK stdio transport
-  airk-cli/        Binary, client setup and collection operations
-docs/             Architecture, decisions, roadmap and extension research
-packages/vscode/  Native-helper extension, controls and platform VSIX packaging
-examples/         Public MCP configurations and original tiny workspaces
-scripts/          Local app/extension builds, packaging and contributor checks
-third_party/      Pinned dependency license records; no imported project source
-.github/          Cross-platform CI and contribution templates
-~~~
-
-Start with the [documentation index](docs/README.md), [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md). The optional [VS Code extension](docs/vscode-extension.md) implements native installation, client setup, configurable storage, indexing schedules and collection maintenance. The stable release uses the existing `iokaio.airk` Marketplace identity; see the release checklist for publication and installed-editor verification.
-
-Review the [illustrated extension content guide](docs/extension-content.md), [manual build/publishing workflow and PR rules](docs/release-workflow.md), and [release summary and qualification links](docs/releases-2026-10-17.md) before preparing a public candidate.
-
-## Contributing and license
-
-Read [CONTRIBUTING.md](CONTRIBUTING.md), [SUPPORT.md](SUPPORT.md), [SECURITY.md](SECURITY.md) and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
-
-~~~console
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo test --workspace --locked
-pwsh -NoProfile -File scripts/check-repo.ps1
-git diff --check
-~~~
-
-Original code/documentation use the existing [Apache-2.0 license](LICENSE). Dependency notices and release-review gaps are recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Local temp/ reference files are excluded from Git, indexing and Docker builds.
+AIRK is [Apache-2.0 licensed](LICENSE). Preserve [NOTICE](NOTICE), [third-party notices](THIRD_PARTY_NOTICES.md), original SPDX headers and dependency license bundles. Commits use the authorized human contributor's DCO sign-off.

@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 impl Kernel {
     pub fn changes_freshness(&self) -> FreshnessObservation {
         let mut observation = FreshnessObservation {
+            source_job: None,
             observed_unix_ms: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |value| {
@@ -21,6 +22,19 @@ impl Kernel {
             last_inventory_unix_ms: None,
             last_index: None,
         };
+        if self.service_collection.is_some() {
+            // Service source intents live in the user's service registry, not
+            // the legacy per-root scheduler namespace. Never substitute that
+            // unrelated queue for an unavailable service observation.
+            return self.service_freshness.as_ref().map_or_else(
+                || {
+                    crate::service_freshness::unavailable(
+                        "service_freshness_observation_unavailable",
+                    )
+                },
+                |cache| cache.read(std::time::Instant::now()),
+            );
+        }
         match airk_store::scheduler::Queue::new(&self.data_root)
             .status(&self.collection, &self.root_id())
         {
@@ -81,5 +95,24 @@ impl Kernel {
             &read,
             &self.store,
         )?))
+    }
+
+    pub fn readiness_observation(
+        &self,
+        expected: airk_core::identity::RevisionToken,
+    ) -> anyhow::Result<
+        Option<(
+            airk_core::readiness::DiscoveryReadiness,
+            airk_core::readiness::SemanticReadiness,
+        )>,
+    > {
+        let read = self.current_reader()?;
+        if crate::current::runtime::revision(read.token()?) != expected {
+            return Ok(None);
+        }
+        Ok(Some((
+            crate::current::progress::readiness(&read, &self.store)?,
+            crate::current::enrichment::readiness(&read, &self.store)?,
+        )))
     }
 }

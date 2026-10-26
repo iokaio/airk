@@ -82,7 +82,7 @@ airk --root /projects/a --data-dir /indexes/airk --collection project-a facts do
 airk --root /projects/a --data-dir /indexes/airk --collection project-a facts docs/ --kind architecture
 ~~~
 
-For MCP, use the existing read-only document tool within the unreleased fifteen-tool inventory:
+For MCP, use the existing read-only document tool within the unreleased sixteen-tool inventory:
 
 ~~~json
 {"name":"airk_document_facts","arguments":{"kind":"requirement","path_prefix":"docs/","name":"latency","limit":10,"max_bytes":8192}}

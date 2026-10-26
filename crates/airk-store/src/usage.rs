@@ -30,6 +30,18 @@ pub fn unix_ms() -> u64 {
 /// Validate ownership using indexed metadata, without loading source payloads.
 pub fn validate_binding(directory: &Path, root: &str, collection: &str) -> Result<()> {
     let store = crate::FileStore::new(directory);
+    if directory.join("service-owner.json").try_exists()? {
+        ensure!(
+            store.collection_id()? == collection,
+            "service usage collection mismatch"
+        );
+        crate::service::collection::Collection::existing(
+            store.managed_path()?.root,
+            root,
+            collection,
+        )?;
+        return crate::service::collection::validate_usage_directory(directory);
+    }
     if let Some(scope) = store.current_owned_scope()? {
         ensure!(
             scope.root == root && scope.collection == collection,
@@ -125,15 +137,9 @@ fn lock_with_budget(path: PathBuf, budget: Duration) -> Result<UsageLock> {
 }
 
 fn reserve_write(directory: &Path, bytes: u64) -> Result<crate::quota::Reservation> {
-    let root = directory
-        .parent()
-        .and_then(Path::parent)
-        .context("invalid usage data root")?;
-    let collection = directory
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("invalid usage collection")?;
-    let reservation = crate::quota::Quota::open(root)?.reserve(collection, bytes)?;
+    let store = crate::FileStore::new(directory);
+    let reservation =
+        crate::quota::Quota::for_store(&store)?.reserve(store.collection_id()?, bytes)?;
     reservation.charge(bytes)?;
     Ok(reservation)
 }
@@ -152,15 +158,9 @@ fn reserve_ledger(
         .saturating_sub(current)
         .max(16_384);
     if best_effort {
-        let root = directory
-            .parent()
-            .and_then(Path::parent)
-            .context("invalid usage data root")?;
-        let collection = directory
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("invalid usage collection")?;
-        let quota = crate::quota::Quota::open(root)?;
+        let store = crate::FileStore::new(directory);
+        let collection = store.collection_id()?;
+        let quota = crate::quota::Quota::for_store(&store)?;
         let started = Instant::now();
         let reservation = loop {
             match quota.try_reserve(
@@ -196,12 +196,17 @@ fn operation_guard(collection: &Path) -> Result<UsageLock> {
 }
 
 fn managed(directory: &Path) -> Result<()> {
+    let service = directory.join("service-owner.json").try_exists()?;
+    if service {
+        crate::service::collection::validate_usage_directory(directory)?;
+    }
     ensure!(
         !fs::symlink_metadata(directory)?.file_type().is_symlink(),
         "linked collection usage state"
     );
     ensure!(
-        directory.join("current.sqlite3").is_file()
+        service
+            || directory.join("current.sqlite3").is_file()
             || directory.join("index.sqlite3").is_file()
             || directory.join("snapshot.json").is_file(),
         "collection no longer exists"
@@ -420,9 +425,22 @@ impl UsageStore {
         // New collections cannot race each other to overcommit the data-root cap.
         if !directory.join("usage.sqlite3").exists() {
             let mut reservations = 1u64;
-            for (count, entry) in fs::read_dir(root.join("collections-1.2"))?.enumerate() {
+            let mut entries = Vec::new();
+            for namespace in ["collections-1.2", "collections-1.4"] {
+                let path = root.join(namespace);
+                if !path.try_exists()? {
+                    continue;
+                }
+                for entry in fs::read_dir(path)? {
+                    entries.push(entry?);
+                    ensure!(
+                        entries.len() <= 4096,
+                        "usage collection inventory exceeds bound"
+                    );
+                }
+            }
+            for (count, entry) in entries.into_iter().enumerate() {
                 ensure!(count < 4096, "usage collection inventory exceeds bound");
-                let entry = entry?;
                 if entry.file_type()?.is_dir() && entry.path().join("usage.sqlite3").exists() {
                     reservations += 1;
                 }

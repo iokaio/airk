@@ -23,12 +23,16 @@ impl ModelAssetSource for DirectoryAssets<'_> {
     }
 }
 
-struct ObjectAssets<'a> {
-    collection: &'a Path,
-    set: &'a ModelObjectSet,
+pub(crate) struct ObjectAssets<'a> {
+    pub(crate) collection: &'a Path,
+    pub(crate) set: &'a ModelObjectSet,
 }
 impl ModelAssetSource for ObjectAssets<'_> {
     fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
+        ensure!(
+            self.set.shared.is_none(),
+            "shared model requires its scoped installed source"
+        );
         let reference = self
             .set
             .assets
@@ -112,24 +116,29 @@ pub struct ModelInfo {
 }
 
 pub enum EmbeddingModel {
+    Remote(Box<crate::remote_model::RemoteModel>),
     WordVectors(LocalModel),
     Onnx(Box<OnnxModel>),
 }
 
 /// Untruncated token offsets for one bounded planning slice. Special tokens have
 /// no source span and are accounted for separately by the model adapter.
-pub(crate) struct PlanningTokens {
+#[derive(Serialize, Deserialize)]
+pub struct PlanningTokens {
     pub offsets: Vec<(usize, usize)>,
     pub special_tokens: usize,
 }
 
 impl PlanningTokens {
+    pub fn is_empty(&self) -> bool {
+        self.offsets.is_empty() && self.special_tokens == 0
+    }
     pub fn len(&self) -> usize {
         self.offsets.len() + self.special_tokens
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct EmbeddingCacheStats {
     /// Artifacts admitted by the applied vector policy, independent of model enablement.
     pub vector_eligible_artifacts: u64,
@@ -347,6 +356,15 @@ pub(crate) fn onnx_manifest(bytes: &[u8]) -> Result<(OnnxManifest, String)> {
     Ok((manifest, format!("{:x}", digest.finalize())))
 }
 
+pub(crate) fn qualified_batch_four(manifest: &OnnxManifest) -> bool {
+    cfg!(all(target_os = "windows", target_arch = "x86_64"))
+        && manifest.model_sha256
+            == "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
+        && manifest.tokenizer_sha256
+            == "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
+        && manifest.dimensions == 384
+}
+
 enum VerifiedManifest {
     Word(crate::vector::ModelManifest),
     Onnx(Box<OnnxManifest>, String),
@@ -422,6 +440,106 @@ pub fn inspect_cache_descriptor(directory: &Path) -> Result<EmbeddingDescriptor>
     }
 }
 
+/// Build metadata from fixed, trusted asset references. Actual provisioning and
+/// inference must still verify asset bytes against these references.
+pub fn plan_from_asset_references(
+    bytes: &[u8],
+    assets: BTreeMap<ModelAssetName, ModelObjectRef>,
+) -> Result<ModelObjectSet> {
+    ensure!(
+        !bytes.is_empty() && bytes.len() <= 16384,
+        "model metadata exceeds bound"
+    );
+    let schema = serde_json::from_slice::<serde_json::Value>(bytes)?["schema"].as_u64();
+    let (descriptor, legacy_identity) = match schema {
+        Some(1) => {
+            let manifest: crate::vector::ModelManifest = serde_json::from_slice(bytes)?;
+            (
+                descriptor_from_manifest(DescriptorManifest::Word(&manifest))?,
+                manifest.sha256,
+            )
+        }
+        Some(2) => {
+            let (manifest, identity) = onnx_manifest(bytes)?;
+            (
+                descriptor_from_manifest(DescriptorManifest::Onnx(&manifest))?,
+                identity,
+            )
+        }
+        _ => anyhow::bail!("unsupported model metadata schema"),
+    };
+    let set = ModelObjectSet {
+        version: 1,
+        shared: None,
+        pipeline_digest: descriptor.identity()?,
+        legacy_identity,
+        assets,
+    };
+    struct Metadata<'a>(&'a [u8]);
+    impl ModelAssetSource for Metadata<'_> {
+        fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
+            ensure!(
+                name == ModelAssetName::ModelJson && self.0.len() as u64 <= maximum,
+                "metadata planner requested model payload"
+            );
+            Ok(self.0.to_vec())
+        }
+    }
+    ensure!(
+        descriptor_from_asset_metadata(&Metadata(bytes), &set)? == descriptor,
+        "model metadata/reference mismatch"
+    );
+    Ok(set)
+}
+
+/// Plan a complete, verified asset set without filesystem staging or inference.
+pub fn inspect_asset_plan(source: &dyn ModelAssetSource) -> Result<ModelObjectSet> {
+    let (descriptor, legacy_identity, names) = match inspect_source_assets(source)? {
+        VerifiedManifest::Word(manifest) => (
+            descriptor_from_manifest(DescriptorManifest::Word(&manifest))?,
+            manifest.sha256,
+            vec![ModelAssetName::ModelJson, ModelAssetName::VocabularyJson],
+        ),
+        VerifiedManifest::Onnx(manifest, identity) => (
+            descriptor_from_manifest(DescriptorManifest::Onnx(&manifest))?,
+            identity,
+            vec![
+                ModelAssetName::ModelJson,
+                ModelAssetName::ModelOnnx,
+                ModelAssetName::TokenizerJson,
+                ModelAssetName::License,
+            ],
+        ),
+    };
+    let mut assets = BTreeMap::new();
+    for name in names {
+        let bytes = source.read_asset(name, name.maximum_bytes())?;
+        ensure!(
+            bytes.len() as u64 <= name.maximum_bytes(),
+            "model asset exceeds planning bound"
+        );
+        assets.insert(
+            name,
+            ModelObjectRef {
+                sha256: Sha256Digest::from_bytes(Sha256::digest(&bytes).into()),
+                bytes: bytes.len() as u64,
+            },
+        );
+    }
+    let set = ModelObjectSet {
+        version: 1,
+        shared: None,
+        pipeline_digest: descriptor.identity()?,
+        legacy_identity,
+        assets,
+    };
+    ensure!(
+        descriptor_from_asset_metadata(source, &set)? == descriptor,
+        "model asset source changed during planning"
+    );
+    Ok(set)
+}
+
 pub fn inspect_object_plan(directory: &Path) -> Result<ModelObjectSet> {
     for ancestor in directory
         .ancestors()
@@ -465,6 +583,7 @@ pub fn inspect_object_plan(directory: &Path) -> Result<ModelObjectSet> {
     );
     let set = ModelObjectSet {
         version: 1,
+        shared: None,
         pipeline_digest: descriptor.identity()?,
         legacy_identity: info.identity,
         assets,
@@ -507,8 +626,21 @@ pub fn descriptor_from_objects_metadata(
     set: &ModelObjectSet,
 ) -> Result<EmbeddingDescriptor> {
     set.validate()?;
-    let source = ObjectAssets { collection, set };
+    descriptor_from_asset_metadata(&ObjectAssets { collection, set }, set)
+}
+
+pub fn descriptor_from_asset_metadata(
+    source: &dyn ModelAssetSource,
+    set: &ModelObjectSet,
+) -> Result<EmbeddingDescriptor> {
+    set.validate()?;
     let bytes = source.read_asset(ModelAssetName::ModelJson, 16_384)?;
+    let reference = &set.assets[&ModelAssetName::ModelJson];
+    ensure!(
+        bytes.len() as u64 == reference.bytes
+            && Sha256Digest::from_bytes(Sha256::digest(&bytes).into()) == reference.sha256,
+        "model metadata asset differs from captured reference"
+    );
     let schema = serde_json::from_slice::<serde_json::Value>(&bytes)?["schema"].as_u64();
     let check_asset = |name: ModelAssetName, declared: &str| -> Result<()> {
         let reference = set
@@ -562,19 +694,26 @@ pub fn descriptor_from_objects_metadata(
 mod object_metadata_tests;
 
 impl EmbeddingModel {
+    pub fn open_shared(source: &dyn ModelAssetSource, set: &ModelObjectSet) -> Result<Self> {
+        Ok(Self::Remote(Box::new(
+            crate::remote_model::RemoteModel::open(source, set)?,
+        )))
+    }
     pub(crate) fn planning_context_tokens(&self) -> Option<usize> {
         match self {
+            Self::Remote(model) => model.info.max_tokens,
             Self::WordVectors(_) => None,
             Self::Onnx(model) => Some(model.manifest.max_tokens),
         }
     }
 
-    pub(crate) fn planning_tokens(&self, text: &str) -> Result<PlanningTokens> {
+    pub fn planning_tokens(&self, text: &str) -> Result<PlanningTokens> {
         ensure!(
             text.len() <= MAX_INPUT_BYTES,
             "vector planning input exceeds byte bound"
         );
         match self {
+            Self::Remote(model) => model.planning_tokens(text),
             Self::Onnx(model) => model.planning_tokens(text),
             Self::WordVectors(_) => {
                 let mut offsets = Vec::new();
@@ -604,7 +743,7 @@ impl EmbeddingModel {
         let value: serde_json::Value = serde_json::from_slice(&bytes)?;
         let model = match value["schema"].as_u64() {
             Some(1) => Self::WordVectors(LocalModel::open_assets(&source)?),
-            Some(2) => Self::Onnx(Box::new(OnnxModel::open_assets(&source, &bytes)?)),
+            Some(2) => Self::Onnx(Box::new(OnnxModel::open_retained(collection, set, &bytes)?)),
             _ => anyhow::bail!("unsupported local embedding model schema"),
         };
         ensure!(
@@ -625,30 +764,38 @@ impl EmbeddingModel {
     }
     pub fn identity(&self) -> &str {
         match self {
+            Self::Remote(model) => &model.info.identity,
             Self::WordVectors(model) => &model.manifest.sha256,
             Self::Onnx(model) => &model.identity,
         }
     }
     pub fn dimensions(&self) -> usize {
         match self {
+            Self::Remote(model) => model.info.dimensions,
             Self::WordVectors(model) => model.manifest.dimensions,
             Self::Onnx(model) => model.manifest.dimensions,
         }
     }
     pub fn specification(&self) -> &'static str {
         match self {
+            Self::Remote(model) => model.info.backend,
             Self::WordVectors(_) => "local-word-vectors/mean/l2-normalized",
             Self::Onnx(_) => ONNX_RUNTIME,
         }
     }
     pub fn asset_names(&self) -> &'static [&'static str] {
         match self {
+            Self::Remote(model) if model.is_onnx() => {
+                &["model.json", "model.onnx", "tokenizer.json", "LICENSE"]
+            }
+            Self::Remote(_) => &["model.json", "vocabulary.json"],
             Self::WordVectors(_) => &["model.json", "vocabulary.json"],
             Self::Onnx(_) => &["model.json", "model.onnx", "tokenizer.json", "LICENSE"],
         }
     }
     pub fn embed_text(&self, text: &str) -> Result<Option<Vec<f32>>> {
         match self {
+            Self::Remote(model) => model.embed_text(text),
             Self::WordVectors(model) => model.embed_text(text),
             Self::Onnx(model) => model.embed_text(text),
         }
@@ -675,14 +822,19 @@ impl EmbeddingModel {
 
     /// Complete pipeline identity, separate from the legacy model display identity.
     pub fn cache_descriptor(&self) -> Result<EmbeddingDescriptor> {
+        if let Self::Remote(model) = self {
+            return Ok(model.descriptor.clone());
+        }
         descriptor_from_manifest(match self {
+            Self::Remote(_) => unreachable!("shared descriptor handled above"),
             Self::WordVectors(model) => DescriptorManifest::Word(&model.manifest),
             Self::Onnx(model) => DescriptorManifest::Onnx(&model.manifest),
         })
     }
 
-    pub(crate) fn plan_cache_peak_bytes(&self) -> Result<u64> {
+    pub fn plan_cache_peak_bytes(&self) -> Result<u64> {
         match self {
+            Self::Remote(model) => model.plan_cache_peak_bytes(),
             Self::WordVectors(_) => Ok(0),
             Self::Onnx(model) => model.plan_cache_peak_bytes(),
         }
@@ -702,7 +854,8 @@ impl EmbeddingModel {
             .plan_cache_peak_bytes
             .max(self.plan_cache_peak_bytes()?);
         stats.inputs += 1;
-        let is_onnx = matches!(self, Self::Onnx(_));
+        let is_onnx =
+            matches!(self, Self::Onnx(_)) || matches!(self, Self::Remote(model) if model.is_onnx());
         let blank = if is_onnx {
             onnx_input_is_blank(text)
         } else {
@@ -726,6 +879,11 @@ impl EmbeddingModel {
         stats.inferences += 1;
         let started = std::time::Instant::now();
         let vector = match self {
+            Self::Remote(model) => {
+                let (vector, execution) = model.embed_text_measured(text, 1 << 30)?;
+                stats.add_execution(&execution);
+                vector
+            }
             Self::WordVectors(model) => model.embed_text(text)?,
             Self::Onnx(model) => {
                 let (vector, execution) = model.embed_text_measured(text, 1 << 30)?;

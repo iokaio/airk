@@ -21,10 +21,13 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Result<Self> {
+        Self::namespace("collections-1.2")
+    }
+    fn namespace(namespace: &str) -> Result<Self> {
         let root = tempfile::tempdir()?;
-        let collection = root.path().join("collections-1.2/fixture");
+        let collection = root.path().join(namespace).join("fixture");
         fs::create_dir_all(&collection)?;
-        let quota = Quota::open(root.path())?;
+        let quota = Quota::for_store(&crate::FileStore::new(&collection))?;
         let digest = Sha256Digest::from_bytes([1; 32]);
         let descriptor = EmbeddingDescriptor {
             version: 1,
@@ -61,6 +64,27 @@ impl Fixture {
         }
         cache.finalize()
     }
+}
+
+#[test]
+fn service_namespace_cache_is_quota_bound_and_preserves_packed_vectors() -> Result<()> {
+    let fixture = Fixture::namespace("collections-1.4")?;
+    let manifest = fixture.build(3)?;
+    let reservation = fixture.reserve()?;
+    let cache = VectorCache::new(
+        &fixture.collection,
+        &reservation,
+        &fixture.descriptor,
+        Some(&manifest),
+    )?;
+    assert_eq!(
+        cache.lookup(&fixture.entry(2)?.key)?.unwrap().vector[0].to_bits(),
+        fixture.entry(2)?.vector[0].to_bits()
+    );
+    let other = fixture._root.path().join("collections-1.4/other");
+    fs::create_dir_all(&other)?;
+    assert!(VectorCache::new(&other, &reservation, &fixture.descriptor, None).is_err());
+    Ok(())
 }
 
 fn flip(path: &std::path::Path, offset: u64) -> Result<()> {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Real CLI gate contention is structured independently of Rust backtrace settings.
+//! Native clients refuse unavailable services without opening legacy storage.
 use airk_kernel::Kernel;
 use airk_store::{FileStore, current::CurrentScope, quota::Quota};
 use anyhow::Result;
@@ -7,7 +7,8 @@ use serde_json::Value;
 use std::{fs, process::Command};
 
 #[test]
-fn cli_gate_contention_is_typed_with_backtraces_and_other_errors_are_not_retryable() -> Result<()> {
+fn cli_service_refusal_preserves_locked_legacy_storage_and_backtrace_independent_errors()
+-> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     fs::write(root.path().join("fixture.txt"), "gate contention fixture\n")?;
@@ -22,15 +23,17 @@ fn cli_gate_contention_is_typed_with_backtraces_and_other_errors_are_not_retryab
     let writer = store.lock()?;
     let capacity = store.current_database_capacity(&scope)?;
     let current = store.current_write(&writer, &quota, &scope, capacity)?;
+    let before = fs::read(store.directory().join("current-owner.json"))?;
     for (arguments, backtrace) in [
-        (vec!["collections", "diagnose"], "0"),
-        (vec!["collections", "diagnose"], "1"),
-        (vec!["collections", "diagnose"], "full"),
+        (vec!["status"], "0"),
         (vec!["status"], "1"),
-        (vec!["semantic", "status"], "full"),
-        (vec!["semantic", "run", "--scheduled"], "1"),
+        (vec!["status"], "full"),
+        (vec!["index"], "full"),
+        (vec!["outline", "fixture.txt"], "1"),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_airk"))
+            .arg("--service-install-dir")
+            .arg(data.path().join("missing-runtime"))
             .arg("--root")
             .arg(root.path())
             .arg("--data-dir")
@@ -45,16 +48,11 @@ fn cli_gate_contention_is_typed_with_backtraces_and_other_errors_are_not_retryab
         let outcome: Value = serde_json::from_slice(&output.stderr)?;
         assert_eq!(outcome["airk_error"], 1);
         assert_eq!(
-            outcome["code"], "current_gate_busy",
+            outcome["code"], "operation_failed",
             "{arguments:?}: {outcome}"
         );
-        assert_eq!(outcome["retryable"], true);
-        assert!(
-            outcome["message"]
-                .as_str()
-                .unwrap()
-                .contains("current index is busy applying an update")
-        );
+        assert_eq!(outcome["retryable"], false);
+        assert!(outcome["message"].as_str().unwrap().contains("runtime"));
         assert!(
             !outcome["message"]
                 .as_str()
@@ -62,6 +60,11 @@ fn cli_gate_contention_is_typed_with_backtraces_and_other_errors_are_not_retryab
                 .contains("stack backtrace")
         );
     }
+    assert_eq!(
+        fs::read(store.directory().join("current-owner.json"))?,
+        before
+    );
+    assert!(!data.path().join("missing-runtime").exists());
     drop(current);
     drop(writer);
     // Invalid durable ownership is an operational error, never a busy result.
@@ -70,11 +73,13 @@ fn cli_gate_contention_is_typed_with_backtraces_and_other_errors_are_not_retryab
         "invalid owner",
     )?;
     let output = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .arg("--service-install-dir")
+        .arg(data.path().join("missing-runtime"))
         .arg("--root")
         .arg(root.path())
         .arg("--data-dir")
         .arg(data.path())
-        .args(["collections", "diagnose"])
+        .args(["status"])
         .env("AIRK_ERROR_FORMAT", "json")
         .env("RUST_LIB_BACKTRACE", "1")
         .output()?;
@@ -83,11 +88,13 @@ fn cli_gate_contention_is_typed_with_backtraces_and_other_errors_are_not_retryab
     assert_eq!(outcome["code"], "operation_failed");
     assert_eq!(outcome["retryable"], false);
     let output = Command::new(env!("CARGO_BIN_EXE_airk"))
+        .arg("--service-install-dir")
+        .arg(data.path().join("missing-runtime"))
         .arg("--root")
         .arg(root.path())
         .arg("--data-dir")
         .arg(data.path())
-        .args(["collections", "diagnose"])
+        .args(["status"])
         .env_remove("AIRK_ERROR_FORMAT")
         .env("RUST_BACKTRACE", "0")
         .env("RUST_LIB_BACKTRACE", "0")

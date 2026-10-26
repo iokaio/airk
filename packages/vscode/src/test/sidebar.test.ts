@@ -12,6 +12,15 @@ const state: SidebarState = { trusted: true, paused: false, changingStorage: fal
     collections: [{ collection: 'a', name: 'Project A', root: '/project/a', dataDir: '/data', state: 'indexing',
         coverage: { report, scanning: false, pending: false }, diskBytes: 1048576 }] };
 
+test('MCP response mode defaults terse, offers Full and validates trusted panel actions', () => {
+    assert.match(sidebarContent(state), /value="terse" selected>Terse response mode \(default\)/);
+    assert.match(sidebarContent({ ...state, responseMode: 'full' }), /value="full" selected>Full response mode/);
+    assert.match(sidebarContent({ ...state, trusted: false }), /id="response-mode" disabled/);
+    assert.match(sidebarContent(state), /Full to investigate provenance, coverage or unexpected results/);
+    assert.deepEqual(sidebarAction({ type: 'responseMode', value: 'full' }, new Set()), { type: 'responseMode', value: 'full' });
+    assert.equal(sidebarAction({ type: 'responseMode', value: 'verbose' }, new Set()), undefined);
+});
+
 test('semantic progress uses committed batches and never reports 100% before readiness', () => {
     const vectors = { enabled: true, published: true, indexed_vectors: 0, pending_reindex: false,
         default_search_mode: 'hybrid' as const, semantic_readiness: {
@@ -99,6 +108,8 @@ test('initial indexing shows committed MCP evidence and a quiet scan warning', (
     sample.collections[0].mcp.indexState = 'not_indexed';
     assert.match(sidebarContent(sample), /MCP can start; search awaits the first publication/);
     assert.match(sidebarContent(sample), /indexing pending/);
+    sample.collections[0].mcp.indexState='unavailable';
+    assert.match(sidebarContent(sample), /index status unavailable/);
     sample.collections[0].indexActivity.phase = 'waiting';
     assert.match(sidebarContent(sample), /Waiting for this project’s indexing request/);
     assert.doesNotMatch(sidebarContent(sample), /No new progress|Published evidence remains available/);
@@ -106,6 +117,29 @@ test('initial indexing shows committed MCP evidence and a quiet scan warning', (
     assert.match(sidebarContent(sample), /Waiting for indexing capacity/);
     sample.collections[0].indexActivity.phase = 'waiting_collection';
     assert.match(sidebarContent(sample), /This project is already indexing in another window or process/);
+});
+
+test('source scan labels cached semantic readiness and keeps progress beside index controls', () => {
+    const sample = structuredClone(state);
+    const item = sample.collections[0];
+    item.vectors = { enabled: true, published: true, indexed_vectors: 100,
+        pending_reindex: false, default_search_mode: 'hybrid', semantic_readiness: {
+            state: 'ready', selected_artifacts: 32, completed_artifacts: 32,
+            selected_units: null, completed_units: 100, failure: null } };
+    item.indexActivity = { phase: 'scan_started', revision: null, processed_artifacts: 0,
+        committed_artifacts: 0, selected_artifacts: null, completed_artifacts: null,
+        elapsedSeconds: 65, quietSeconds: 65 };
+    let html = sidebarContent(sample);
+    assert.match(html, /Last observed publication: semantic evidence ready; source indexing is in progress/);
+    assert.match(html, /class="semantic-running" role="status">Indexing for 1m 5s: 0 files committed, 0 processed/);
+    assert.ok(html.indexOf('data-action="index"') < html.indexOf('Indexing for 1m 5s'));
+    assert.ok(html.indexOf('Indexing for 1m 5s') < html.indexOf('Diagnose &amp; Repair<\/button>'));
+    assert.doesNotMatch(html, /role="status">Semantic evidence ready<\/p>/);
+    item.state = 'current';
+    item.indexActivity = undefined;
+    html = sidebarContent(sample);
+    assert.match(html, /role="status">Semantic evidence ready<\/p>/);
+    assert.doesNotMatch(html, /Last observed publication|Indexing for 1m/);
 });
 
 test('CLI getting-started note reports setup failures and keeps repair behind workspace trust', () => {

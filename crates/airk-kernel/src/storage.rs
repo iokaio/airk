@@ -12,7 +12,7 @@ impl Kernel {
     fn storage_quota(&self) -> Result<Quota> {
         // Validate the selected collection before using its shared data root.
         self.load_optional()?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         ensure!(
             !self.root.starts_with(quota.root()),
             "index storage must not contain its source root"

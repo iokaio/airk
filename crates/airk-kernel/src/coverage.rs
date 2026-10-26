@@ -269,7 +269,8 @@ impl Kernel {
             bytes.len() as u64 <= CACHE_LIMIT,
             "coverage cache exceeds bounded size"
         );
-        let reservation = airk_store::quota::Quota::open(&self.data_root)?
+        let reservation = self
+            .collection_quota()?
             .reserve(&self.collection, bytes.len() as u64)?;
         reservation.charge(bytes.len() as u64)?;
         let temporary = self.store.directory().join(format!(

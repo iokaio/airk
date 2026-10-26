@@ -3,6 +3,8 @@
 test-threads = 4
 retries = 0
 fail-fast = false
+# Long workload/measurement campaigns remain available with --ignore-default-filter.
+default-filter = 'not (test(two_hundred_current_edits_reach_object_and_database_plateau) | test(compact_measurements_compare_small_reads_from_large_catalog) | test(manual_backlog_larger_than_one_page_advances_without_unprotected_deletion) | test(measure_small_and_larger_sparse_catalog_edits))'
 slow-timeout = { period = "120s", terminate-after = 30 }
 
 [profile.ci.junit]
@@ -14,6 +16,14 @@ store-failure-output = false
 max-threads = 2
 
 [[profile.ci.overrides]]
+filter = 'package(airk-process)'
+slow-timeout = { period = "10s", terminate-after = 3 }
+
+[[profile.ci.overrides]]
+filter = 'test(manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated) | test(legacy_review_never_executes_the_selected_old_binary_or_creates_project_state) | test(distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations) | test(guardian_keeps_direct_pipes_and_drains_after_worker_death) | test(graceful_pool_stop_closes_an_explicitly_held_idle_model_session)'
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
 filter = 'test(two_hundred_real_edits)'
 priority = 100
 test-group = "storage-heavy"
@@ -23,3 +33,12 @@ threads-required = 2
 filter = 'package(airk-kernel) | package(airk-store) | package(airk-retrieval)'
 test-group = "storage-heavy"
 
+
+# These integration binaries contain complete owned native service/process fixtures.
+# Their internal concurrency remains tested; unrelated library cases stay parallel.
+[test-groups.native-service]
+max-threads = 1
+
+[[profile.ci.overrides]]
+filter = 'package(airk-cli) & (binary(native_read_retry) | binary(legacy_native) | binary(pdf_worker) | binary(unix_guardian))'
+test-group = "native-service"

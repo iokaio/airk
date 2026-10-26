@@ -20,6 +20,229 @@ fn fact(name: &str, kind: &str) -> airk_core::extraction::LocalFact {
     }
 }
 
+fn written_call(target: &str) -> airk_core::extraction::LocalFact {
+    let mut value = fact(target, "call");
+    value.code = Some(airk_core::extraction::LocalCodeEvidence {
+        fingerprints: None,
+        syntax_id: airk_core::extraction::LocalSyntaxId(0),
+        owner_id: None,
+        qualified_name: target.into(),
+        scope: vec![],
+        signature: None,
+        span: None,
+        signature_span: None,
+        parameters: None,
+        return_type: None,
+        modifiers: vec![],
+        documentation: None,
+        target: Some(target.into()),
+        basis: airk_core::EvidenceBasis::Syntax,
+        producer: "test-native".into(),
+        producer_version: "1".into(),
+        coverage: "written syntax".into(),
+        details_truncated: false,
+    });
+    value
+}
+
+#[test]
+fn physical_repack_preserves_legacy_posting_format_before_later_deletion() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let source = "body".repeat(10_000);
+    let mut original = retained_input_with_facts(
+        &fixture,
+        "one.txt",
+        &source,
+        vec![written_call("x.reclaim_objects")],
+    )?;
+    original.postings_version = 0;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let first = current
+        .commit_artifact(&fixture.head.token()?, "one.txt", Some(&original))?
+        .token;
+    drop(current);
+    drop(writer);
+    let reservation = fixture.quota.reserve(&fixture.scope.collection, 4 << 20)?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let mut captured = read.captured_input("one.txt")?.context("capture missing")?;
+    assert_eq!(captured.postings_version, 0);
+    let retained = fixture.store.load_retrieval_artifact(&captured.artifact)?;
+    captured.artifact = fixture.store.retain_payload_encoded(
+        &retained.artifact,
+        &retained.payload,
+        &retained.profile,
+        Some(source.as_bytes()),
+        Some(&reservation),
+        airk_core::compression::CompressionMode::Space,
+    )?;
+    assert!(
+        captured
+            .artifact
+            .retained
+            .as_ref()
+            .unwrap()
+            .source_encoding
+            .is_some()
+    );
+    let sealed = graph::GraphOverlay::new(
+        &reservation,
+        read,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1 << 20,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let mut wrong = captured.clone();
+    wrong.postings_version = 1;
+    assert!(
+        current
+            .prepare_repack(&first, &sealed, &[wrong], None)
+            .unwrap_err()
+            .to_string()
+            .contains("posting format")
+    );
+    assert_eq!(current.head()?.token()?, first);
+    assert!(current.pending()?.is_none());
+    let pending = current.prepare_repack(&first, &sealed, &[captured], None)?;
+    current.mark_applying(&pending)?;
+    let repacked = current
+        .commit(&pending, pending.target.lexical_commit)?
+        .token;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let captured = read.captured_input("one.txt")?.unwrap();
+    assert_eq!(captured.postings_version, 0);
+    assert_eq!(
+        fixture.store.read_retained_source(&captured.artifact)?,
+        source.as_bytes()
+    );
+    drop(read);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.commit_artifact(&repacked, "one.txt", None)?;
+    drop(current);
+    drop(writer);
+    assert!(
+        fixture
+            .store
+            .current_read(&fixture.scope)?
+            .lookup_paths(Lookup::Files, "", None, 10)?
+            .paths
+            .is_empty()
+    );
+    Ok(())
+}
+
+#[test]
+fn terminal_call_postings_retire_legacy_memberships_and_preserve_exact_candidates() -> Result<()> {
+    for version in [0, 1] {
+        let fixture = Fixture::new()?;
+        let mut input = retained_input_with_facts(
+            &fixture,
+            "one.txt",
+            "body",
+            vec![written_call("x.reclaim_objects")],
+        )?;
+        input.postings_version = version;
+        if version == 0 {
+            assert!(!String::from_utf8(input.bytes()?)?.contains("postings_version"));
+        }
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        let token = current
+            .commit_artifact(&fixture.head.token()?, &input.artifact.path, Some(&input))?
+            .token;
+        drop(current);
+        drop(writer);
+        let read = fixture.store.current_read(&fixture.scope)?;
+        assert_eq!(read.terminal_call_postings_complete()?, version == 1);
+        assert_eq!(
+            read.lookup_paths(Lookup::FactName("reclaim_objects"), "", None, 10)?
+                .paths
+                .len(),
+            version as usize
+        );
+        let mut q = query();
+        q.exact_name = true;
+        q.kind = Some("call".into());
+        q.name = Some("reclaim_objects".into());
+        let found = read.native_facts_page(&fixture.store, &q, true, &Default::default())?;
+        assert_eq!(found.facts.len(), 1);
+        assert_eq!(found.facts[0].name, "x.reclaim_objects");
+        assert!(found.facts[0].candidate);
+        q.name = Some("Reclaim_objects".into());
+        assert!(
+            read.native_facts_page(&fixture.store, &q, true, &Default::default())?
+                .facts
+                .is_empty()
+        );
+        drop(read);
+        let replacement = retained_input_with_facts(
+            &fixture,
+            "one.txt",
+            "next",
+            vec![written_call("factory().release_objects")],
+        )?;
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        let token = current
+            .commit_artifact(&token, "one.txt", Some(&replacement))?
+            .token;
+        drop(current);
+        drop(writer);
+        let read = fixture.store.current_read(&fixture.scope)?;
+        assert!(
+            read.lookup_paths(Lookup::FactName("reclaim_objects"), "", None, 10)?
+                .paths
+                .is_empty()
+        );
+        q.name = Some("release_objects".into());
+        assert_eq!(
+            read.native_facts_page(&fixture.store, &q, true, &Default::default())?
+                .facts
+                .len(),
+            1
+        );
+        assert_eq!(read.terminal_call_postings_complete()?, version == 1);
+        drop(read);
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        current.commit_artifact(&token, "one.txt", None)?;
+        drop(current);
+        drop(writer);
+        let read = fixture.store.current_read(&fixture.scope)?;
+        assert!(
+            read.lookup_paths(Lookup::FactName("release_objects"), "", None, 10)?
+                .paths
+                .is_empty()
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn many_missing_extractions_retire_shared_postings_with_one_traversal_and_replay() -> Result<()> {
     use airk_core::identity::framed_digest;
@@ -526,7 +749,8 @@ fn catalog_postings_follow_replacement_deletion_and_exact_case() -> Result<()> {
             .paths
             .is_empty()
     );
-    assert!(read.map_entries(map::MapVisitLimits::default())?.is_empty());
+    assert!(read.terminal_call_postings_complete()?);
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 7);
     Ok(())
 }
 
@@ -647,6 +871,7 @@ fn fact_pages_bind_filters_revision_and_retained_evidence() -> Result<()> {
     assert_eq!(first.facts[0].name, "Alpha");
     assert!(first.truncated);
     let options = DiscoveryOptions {
+        minimal: false,
         cursor: first.page.cursor,
         compact: false,
     };
@@ -657,6 +882,7 @@ fn fact_pages_bind_filters_revision_and_retained_evidence() -> Result<()> {
         &q,
         false,
         &DiscoveryOptions {
+            minimal: false,
             cursor: second.page.cursor,
             compact: false,
         },
@@ -700,6 +926,7 @@ fn fact_pages_bind_filters_revision_and_retained_evidence() -> Result<()> {
         &q,
         false,
         &DiscoveryOptions {
+            minimal: false,
             cursor: None,
             compact: true,
         },
@@ -724,6 +951,98 @@ fn fact_pages_bind_filters_revision_and_retained_evidence() -> Result<()> {
     assert!(
         read.native_facts_page(&fixture.store, &query(), false, &options)
             .is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn minimal_fact_pages_charge_bindings_and_keep_cursor_evidence_identity() -> Result<()> {
+    use airk_core::discovery::DiscoveryOptions;
+    let fixture = Fixture::new()?;
+    let mut facts = vec![fact("Alpha", "heading"), fact("Beta", "label")];
+    facts[1].id = 1;
+    let input = retained_input_with_facts(&fixture, "evidence.txt", "body", facts)?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.commit_artifact(&fixture.head.token()?, &input.artifact.path, Some(&input))?;
+    drop(current);
+    drop(writer);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let options = DiscoveryOptions {
+        minimal: true,
+        ..Default::default()
+    };
+    let mut q = query();
+    q.limit = 100;
+    let all = read.native_facts_page(&fixture.store, &q, false, &options)?;
+    let page = all.minimal.as_ref().unwrap();
+    assert_eq!(page.items.len(), 2);
+    assert_eq!(page.files.len(), 1);
+    assert_eq!(page.provenance.len(), 1);
+    assert_eq!(page.files[0].content_hash, input.artifact.content_hash);
+    assert_eq!(page.items[1].file, Some(0));
+    let charged = page
+        .items
+        .iter()
+        .map(serde_json::to_vec)
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .map(Vec::len)
+        .sum::<usize>()
+        + serde_json::to_vec(&page.files[0])?.len()
+        + serde_json::to_vec(&page.provenance[0])?.len();
+    assert_eq!(all.page.record_bytes, Some(charged));
+    q.max_bytes = 1;
+    let empty = read.native_facts_page(&fixture.store, &q, false, &options)?;
+    let page = empty.minimal.unwrap();
+    assert!(page.items.is_empty() && page.files.is_empty() && page.provenance.is_empty());
+    let required = empty.page.required_record_bytes.unwrap();
+    q.max_bytes = required;
+    let first = read.native_facts_page(&fixture.store, &q, false, &options)?;
+    assert_eq!(first.minimal.as_ref().unwrap().items.len(), 1);
+    assert_eq!(first.page.record_bytes, Some(required));
+    let cursor = first.page.cursor.unwrap();
+    q.max_bytes = 16_384;
+    let next = DiscoveryOptions {
+        cursor: Some(cursor.clone()),
+        ..options
+    };
+    let second = read.native_facts_page(&fixture.store, &q, false, &next)?;
+    assert_eq!(second.minimal.unwrap().items[0].name, "Beta");
+    assert!(!second.truncated);
+    assert!(
+        read.native_facts_page(
+            &fixture.store,
+            &q,
+            false,
+            &DiscoveryOptions {
+                cursor: Some(cursor),
+                ..Default::default()
+            }
+        )
+        .is_err()
+    );
+    q.path_exact = true;
+    q.path_prefix = "evidence.txt".into();
+    let exact = read.native_facts_page(
+        &fixture.store,
+        &q,
+        false,
+        &DiscoveryOptions {
+            minimal: true,
+            ..Default::default()
+        },
+    )?;
+    assert!(
+        exact
+            .minimal
+            .unwrap()
+            .items
+            .iter()
+            .all(|row| row.file.is_none())
     );
     Ok(())
 }
@@ -908,6 +1227,7 @@ fn empty_fact_pages_make_bounded_progress_without_skipping_later_matches() -> Re
         &query(),
         false,
         &airk_core::discovery::DiscoveryOptions {
+            minimal: false,
             cursor: first.page.cursor,
             compact: false,
         },

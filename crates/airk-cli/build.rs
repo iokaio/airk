@@ -4,6 +4,17 @@ use sha2::{Digest, Sha256};
 use std::{env, fs, path::PathBuf};
 
 fn main() {
+    println!("cargo:rerun-if-changed=src/service_manager_macos.m");
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        cc::Build::new()
+            .file("src/service_manager_macos.m")
+            .flag("-fobjc-arc")
+            .flag("-Werror")
+            .compile("airk_macos_login");
+        println!("cargo:rustc-link-lib=framework=Foundation");
+        println!("cargo:rustc-link-lib=framework=ServiceManagement");
+        println!("cargo:rustc-link-lib=objc");
+    }
     println!("cargo:rerun-if-env-changed=AIRK_BUNDLED_MODEL_DIR");
     let workspace = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let catalog = workspace.join("crates/airk-retrieval/src/model_catalog.json");
@@ -15,6 +26,15 @@ fn main() {
     assert_eq!(catalog["profiles"].as_array().unwrap().len(), 1);
     assert_eq!(profile["id"], catalog["default_profile"]);
     assert_eq!(profile["precision"], "fp32");
+    if env::var_os("CARGO_FEATURE_BUNDLED_MODEL").is_none() {
+        let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+        fs::write(
+            output.join("model.json"),
+            serde_json::to_vec(&profile["manifest"]).unwrap(),
+        )
+        .unwrap();
+        return;
+    }
     let directory = env::var_os("AIRK_BUNDLED_MODEL_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace.join("target/local-vector-model"));
@@ -64,7 +84,13 @@ fn main() {
         ));
     }
     let output = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    fs::write(output.join("model.json"), manifest).unwrap();
+    // Both executable roles expose the same canonical metadata bytes. The
+    // provisioned input's harmless whitespace must not change shared asset IDs.
+    fs::write(
+        output.join("model.json"),
+        serde_json::to_vec(&profile["manifest"]).unwrap(),
+    )
+    .unwrap();
     generated.push_str(&format!(
         "(\"model.json\", include_bytes!({:?})),\n];\n",
         output.join("model.json").to_str().unwrap()

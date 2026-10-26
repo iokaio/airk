@@ -68,7 +68,7 @@ exports.checkUsage = async (port, folder) => {
     const report = expression => document(`!!document.querySelector('[data-usage=refresh]') && document.body.innerText.includes(${JSON.stringify(selected.collection)})`, expression);
     const reportContains = text => until(async () => (await report(`document.body.innerText.includes(${JSON.stringify(text)})`))?.value, text);
     const click = async action => {
-        await until(async () => (await report(`document.querySelector('[data-usage=${action}]').click();true`))?.value, `report ${action}`);
+        await until(async () => (await report(`(()=>{const b=document.querySelector('[data-usage=${action}]');if(!b||b.matches(':disabled')||document.body.getAttribute('aria-busy')==='true')return false;b.click();return true;})()`))?.value, `report ${action}`);
     };
     const input = async (value, title) => {
         const result = await until(async () => {
@@ -103,7 +103,7 @@ exports.checkUsage = async (port, folder) => {
         await reportContains('Recorded AIRK calls');
         await report("document.getElementById('usage-days').value='7';document.getElementById('usage-days').dispatchEvent(new Event('change',{bubbles:true}));true");
         await delay(400);
-        await until(async () => (await report("document.getElementById('usage-days').value==='7'"))?.value, '7 day report');
+        await until(async () => (await report("document.getElementById('usage-days').value==='7'&&document.body.getAttribute('aria-busy')!=='true'"))?.value, '7 day report');
         for (const [action, name] of [['csv', 'report.csv'], ['markdown', 'report.md']]) {
             await click(action);
             await input(path.join(folder, name), '');
@@ -137,9 +137,10 @@ exports.checkUsage = async (port, folder) => {
         await click('recording'); await button('Turn recording off'); await reportContains('Recording is off.');
         await click('recording'); await button('Record daily totals'); await reportContains('Recording: Daily totals.');
         checks.push('recording off/on through actual quick picks');
-        // Open the other collection using its real sidebar button.
+        // The editor driver opens the other reviewed binding through the public command.
         selected = specs[1];
-        await until(async () => (await document("!!document.getElementById('dashboard')", `document.getElementById(${JSON.stringify(selected.collection + '-usage')}).click();true`))?.value, 'second collection sidebar report');
+        await fs.writeFile(path.join(folder, 'usage-open-second.json'), '{}');
+        await until(() => exists(path.join(folder, 'a-usage-second-open.json')), 'second reviewed collection report');
         await reportContains(selected.collection);
         assert.equal((await report("document.body.innerText.includes('12,000')"))?.value, false);
         selected = specs[0]; await activateReport(); await reportContains('12,000');

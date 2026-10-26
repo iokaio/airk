@@ -17,6 +17,8 @@ const FILE_END: i64 = i64::MAX;
 
 #[derive(Debug, Serialize)]
 pub struct CurrentFactPage {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimal: Option<discovery::MinimalFacts>,
     pub revision: CurrentToken,
     pub collection: String,
     pub facts: Vec<FactHit>,
@@ -41,10 +43,12 @@ fn matches(artifact: &Artifact, fact: &Fact, q: &FactQuery, code_only: bool) -> 
         && q.name.as_ref().is_none_or(|name| {
             if q.exact_name {
                 &fact.name == name
-                    || fact
-                        .code
-                        .as_ref()
-                        .is_some_and(|code| &code.qualified_name == name || &code.symbol_id == name)
+                    || fact.code.as_ref().is_some_and(|code| {
+                        &code.qualified_name == name
+                            || &code.symbol_id == name
+                            || airk_core::code::terminal_call_name(code, &fact.kind)
+                                == Some(name.as_str())
+                    })
             } else {
                 fact.name.to_lowercase().contains(&name.to_lowercase())
             }
@@ -64,6 +68,10 @@ fn order_key(artifact: &Artifact, ordinal: usize) -> DiscoveryKey {
 
 pub(crate) fn fact_hit(artifact: &Artifact, fact: &Fact) -> FactHit {
     FactHit {
+        candidate: fact
+            .code
+            .as_ref()
+            .is_some_and(|code| code.is_call_candidate(&fact.kind)),
         continuity_key: None,
         name: fact.name.clone(),
         kind: fact.kind.clone(),
@@ -95,6 +103,10 @@ impl CurrentRead {
     ) -> Result<CurrentFactPage> {
         airk_core::validate_budget(query.limit, query.max_bytes)?;
         ensure!(
+            !options.compact || !options.minimal,
+            "choose compact facts or minimal navigation, not both"
+        );
+        ensure!(
             query.path_prefix.len() <= 4096
                 && query.name.as_ref().is_none_or(|name| name.len() <= 1024)
                 && query.kind.as_ref().is_none_or(|kind| kind.len() <= 128)
@@ -116,7 +128,7 @@ impl CurrentRead {
         let binding = discovery::binding(
             &serde_json::to_string(&revision)?,
             "current-native-facts/1",
-            (filters, code_only, options.compact),
+            (filters, code_only, options.compact, options.minimal),
         )?;
         let after = discovery::decode(options.cursor.as_deref(), &binding)?;
         if let Some(after) = &after {
@@ -128,7 +140,15 @@ impl CurrentRead {
             );
         }
         let lookup = if let Some(name) = query.name.as_deref().filter(|_| query.exact_name) {
-            Lookup::FactName(name)
+            if self.terminal_call_postings_complete()?
+                || query.kind.as_deref().is_some_and(|kind| kind != "call")
+            {
+                Lookup::FactName(name)
+            } else if query.kind.as_deref() == Some("call") {
+                Lookup::FactKind("call")
+            } else {
+                Lookup::Files
+            }
         } else if let Some(kind) = query.kind.as_deref() {
             Lookup::FactKind(kind)
         } else if let Some(language) = query.language.as_deref() {
@@ -176,6 +196,7 @@ impl CurrentRead {
             paths.insert(0, after.path.clone());
         }
         let mut response = CurrentFactPage {
+            minimal: options.minimal.then(Default::default),
             revision,
             collection: self.head().scope.collection.clone(),
             facts: Vec::new(),
@@ -267,6 +288,32 @@ impl CurrentRead {
                 if matches(&artifact, fact, query, code_only) {
                     let mut hit = fact_hit(&artifact, fact);
                     hit.continuity_key = keys.key(ordinal, fact);
+                    if let Some(minimal) = response.minimal.as_mut() {
+                        let Some(candidate) =
+                            minimal.candidate(&hit, &artifact, query.path_exact)?
+                        else {
+                            response.truncated = true;
+                            break 'files;
+                        };
+                        let used = response
+                            .page
+                            .record_bytes
+                            .as_mut()
+                            .expect("initialized above");
+                        if minimal.items.len() >= query.limit
+                            || candidate.bytes > query.max_bytes.saturating_sub(*used)
+                        {
+                            response.truncated = true;
+                            if minimal.items.is_empty() {
+                                response.page.required_record_bytes = Some(candidate.bytes);
+                            }
+                            break 'files;
+                        }
+                        *used += candidate.bytes;
+                        minimal.admit(candidate)?;
+                        last = Some(key);
+                        continue;
+                    }
                     let compact_hit = options.compact.then(|| CompactFact::from(&hit));
                     let bytes = match &compact_hit {
                         Some(hit) => serde_json::to_vec(hit)?.len(),

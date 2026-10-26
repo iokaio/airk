@@ -13,6 +13,26 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
+/// Only a read-only SQLite operation returning BUSY/LOCKED carries this marker.
+/// Corruption, expired revisions, permissions and other I/O errors never do.
+#[derive(Clone, Copy, Debug)]
+pub struct CurrentReadContention;
+impl std::fmt::Display for CurrentReadContention {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("current publication read is temporarily busy")
+    }
+}
+impl std::error::Error for CurrentReadContention {}
+
+fn read_error(error: anyhow::Error) -> anyhow::Error {
+    if matches!(error.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(code, _)) if matches!(code.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked))
+    {
+        error.context(CurrentReadContention)
+    } else {
+        error
+    }
+}
+
 /// The connection/read transaction drops before the gate. Providers may clone
 /// the Arc for one request, but neither a kernel cache nor a sealed delta owns it.
 pub struct CurrentRead {
@@ -20,6 +40,7 @@ pub struct CurrentRead {
     head: CurrentHead,
     pub(super) lexical_path: std::path::PathBuf,
     pub(super) lexical_verified: std::sync::OnceLock<()>,
+    deadline: Option<std::time::Instant>,
     _gate: Gate,
 }
 
@@ -163,6 +184,10 @@ impl CurrentRead {
     /// Authenticates the compact record and path. Call FileStore's verified
     /// retained-object reader before using referenced source or extraction bytes.
     pub fn artifact(&self, path: &str) -> Result<Option<airk_core::Artifact>> {
+        Ok(self.captured_input(path)?.map(|input| input.artifact))
+    }
+    /// Retains the authenticated posting format for physical-only maintenance.
+    pub fn captured_input(&self, path: &str) -> Result<Option<CapturedInput>> {
         let Some(bytes) = self.map_get(map::MapDomain::Artifact, path.as_bytes())? else {
             return Ok(None);
         };
@@ -171,7 +196,7 @@ impl CurrentRead {
             captured.artifact.path == path && captured.bytes()? == bytes,
             "current artifact record binding mismatch"
         );
-        Ok(Some(captured.artifact))
+        Ok(Some(captured))
     }
     /// Returns authenticated current-map bytes. Referenced retained objects must
     /// still be loaded through FileStore's verified object readers.
@@ -208,7 +233,7 @@ impl CurrentRead {
             Ok(
                 connection.query_row("SELECT phase FROM current_state WHERE id=1", [], |row| {
                     row.get::<_, String>(0)
-                })? == "prepared",
+                })? != "ready",
             )
         })
     }
@@ -216,6 +241,7 @@ impl CurrentRead {
         &self.head
     }
     pub fn token(&self) -> Result<CurrentToken> {
+        self.live()?;
         self.head.token()
     }
     pub fn require_token(&self, token: &CurrentToken) -> Result<()> {
@@ -226,11 +252,22 @@ impl CurrentRead {
         Ok(())
     }
     pub(crate) fn with_connection<T>(&self, f: impl FnOnce(&Connection) -> Result<T>) -> Result<T> {
+        self.live()?;
         let connection = self
             .connection
             .lock()
             .map_err(|_| anyhow::anyhow!("current reader connection poisoned"))?;
-        f(&connection)
+        let result = f(&connection).map_err(read_error)?;
+        self.live()?;
+        Ok(result)
+    }
+    fn live(&self) -> Result<()> {
+        ensure!(
+            self.deadline
+                .is_none_or(|deadline| std::time::Instant::now() < deadline),
+            "current request snapshot expired; repeat against the current revision"
+        );
+        Ok(())
     }
 }
 
@@ -239,6 +276,7 @@ impl GraphRecordReader for CurrentRead {
         &self.head.graph_head.scope
     }
     fn counts(&self) -> Result<GraphCounts> {
+        self.live()?;
         Ok(self.head.graph_head.counts())
     }
     fn read(&self, id: u32) -> Result<GraphRecord> {
@@ -248,30 +286,60 @@ impl GraphRecordReader for CurrentRead {
 
 impl FileStore {
     pub fn current_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
+        super::admission::admit_open(|| self.current_read_once(scope).map_err(read_error))
+    }
+    fn current_read_once(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
         scope.validate()?;
         ensure!(
-            self.directory().file_name().and_then(|name| name.to_str())
-                == Some(scope.collection.as_str()),
+            self.collection_id()? == scope.collection,
             "foreign current collection path"
         );
         let gate = Gate::shared(self)?;
+        let deadline = super::wal::enabled(self.directory())
+            .then(|| std::time::Instant::now() + std::time::Duration::from_secs(120));
         database::reject_legacy_collection(self.directory())?;
         self.ensure_index_ready()?;
         let capacity = database::check_owner(self.directory(), scope)?;
+        let mut legacy_budget = false;
+        if super::wal::enabled(self.directory()) {
+            let allowance = crate::quota::Quota::for_store(self)?.verify_current_allowance(
+                &crate::quota::CurrentGrantScope {
+                    collection: scope.collection.clone(),
+                    incarnation: scope.incarnation,
+                    transaction: super::wal::id(scope),
+                },
+                super::wal::legacy_total(capacity)?,
+            )?;
+            legacy_budget = allowance < super::wal::total(capacity)?;
+            if legacy_budget {
+                // Retained reads must remain available before the first upgraded
+                // writer can reserve more capacity, including during recovery.
+                super::wal::validate_legacy_files(self.directory(), capacity)?;
+            }
+        }
         ensure!(
             std::fs::metadata(self.directory().join("current.sqlite3"))?.len() <= capacity,
             "current database exceeds captured capacity"
         );
-        let connection = database::open_reader(&self.directory().join("current.sqlite3"))?;
+        let connection =
+            database::open_reader_budget(&self.directory().join("current.sqlite3"), legacy_budget)
+                .map_err(read_error)?;
+        if let Some(deadline) = deadline {
+            connection
+                .progress_handler(1000, Some(move || std::time::Instant::now() >= deadline))?;
+        }
         let (phase, bytes): (String, Vec<u8>) = connection
             .query_row(
                 "SELECT phase,head FROM current_state WHERE id=1 AND length(head)<=65536",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
+            .map_err(|error| read_error(error.into()))
             .context("current index metadata missing")?;
         ensure!(
-            phase == "ready" || phase == "prepared",
+            phase == "ready"
+                || phase == "prepared"
+                || (phase == "applying" && super::wal::enabled(self.directory())),
             "current index requires writer recovery before reads"
         );
         let head = decode_head(&bytes, scope)?;
@@ -280,7 +348,38 @@ impl FileStore {
             head,
             lexical_path: self.directory().join("current.sqlite3"),
             lexical_verified: std::sync::OnceLock::new(),
+            deadline,
             _gate: gate,
         }))
+    }
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::*;
+    #[test]
+    fn only_sqlite_busy_and_locked_read_errors_gain_a_retry_marker() {
+        for (code, retryable) in [
+            (rusqlite::ffi::SQLITE_BUSY, true),
+            (rusqlite::ffi::SQLITE_LOCKED, true),
+            (rusqlite::ffi::SQLITE_CORRUPT, false),
+            (rusqlite::ffi::SQLITE_IOERR, false),
+            (rusqlite::ffi::SQLITE_PERM, false),
+            (rusqlite::ffi::SQLITE_READONLY, false),
+        ] {
+            let error = rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(code),
+                Some("busy fixture wording".into()),
+            );
+            let marked = read_error(anyhow::Error::new(error).context("read-only query"));
+            assert_eq!(
+                marked.downcast_ref::<CurrentReadContention>().is_some(),
+                retryable
+            );
+            assert!(marked.downcast_ref::<rusqlite::Error>().is_some());
+        }
+        let io =
+            read_error(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "busy").into());
+        assert!(io.downcast_ref::<CurrentReadContention>().is_none());
     }
 }

@@ -44,22 +44,15 @@ fn acquired(
 }
 
 fn open(store: &FileStore) -> Result<File> {
+    crate::managed_collection::validate_ancestors(store.directory())?;
     let directory = store.directory().canonicalize()?;
-    let parent = directory
-        .parent()
-        .context("current collection parent missing")?;
-    ensure!(
-        parent
-            .file_name()
-            .is_some_and(|name| name == "collections-1.2"),
-        "current store requires a managed collection"
-    );
-    let name = directory
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("current collection name missing")?
-        .to_owned();
-    crate::validate_collection(&name)?;
+    let managed = crate::managed_collection::ManagedPath::parse(&directory)?;
+    let parent = if managed.slot.is_some() {
+        managed.logical
+    } else {
+        managed.logical.parent().context("gate parent missing")?
+    };
+    let name = managed.slot.unwrap_or(managed.collection).to_owned();
     let locks = parent.join(".current-gates");
     fs::create_dir_all(&locks)?;
     for path in [parent.to_path_buf(), directory, locks.clone()] {
@@ -93,6 +86,22 @@ pub(crate) fn check_writer(store: &FileStore, writer: &WriterLock) -> Result<Pat
 }
 
 impl Gate {
+    /// Convert this writer's object-protection lease into reclamation exclusion.
+    /// If a reader is present, restore shared protection and defer cleanup.
+    pub(crate) fn try_exclusive(&self) -> Result<bool> {
+        self.file.unlock()?;
+        match self.file.try_lock() {
+            Ok(()) => Ok(true),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                self.file.try_lock_shared()?;
+                Ok(false)
+            }
+            Err(error) => {
+                self.file.try_lock_shared()?;
+                Err(error.into())
+            }
+        }
+    }
     pub(crate) fn shared(store: &FileStore) -> Result<Self> {
         let lifecycle = store.lifecycle(false)?;
         let file = open(store)?;

@@ -3,6 +3,9 @@
 import argparse
 import ctypes
 import hashlib
+import importlib.util
+from functools import wraps
+from inspect import signature
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -17,6 +20,72 @@ CPYTHON_REVISION = "ebf955df7a89ed0c7968f79faec1de49f61ed7cb"
 CPYTHON_URL = f"https://codeload.github.com/python/cpython/tar.gz/{CPYTHON_REVISION}"
 CPYTHON_ARCHIVE_SHA256 = "57601e7fdcf7ce150e76e0af106768ec7491c39b246b45a1599c06d0c6f61bdc"
 QUALIFICATION_QUOTA = {"root_bytes": 32 * 1024**3, "default_collection_bytes": 16 * 1024**3, "collections": {}}
+
+spec = importlib.util.spec_from_file_location("airk_scale_fixture", Path(__file__).with_name("check-service-clients.py"))
+clients = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(clients)
+
+
+def native_corpus(operation):
+    @wraps(operation)
+    def invoke(binary, directory, *args, **kwargs):
+        owner = directory / (operation.__name__ + "-native")
+        owner.mkdir()
+        timeout = signature(operation).bind_partial(binary, directory, *args, **kwargs).arguments.get("command_timeout", 1800)
+        with clients.Fixture(binary.parent, owner, command_timeout=timeout, job_timeout=timeout) as fixture:
+            assert fixture.binary == binary
+            return operation(binary, directory, *args, fixture=fixture, **kwargs)
+    return invoke
+
+
+def native_runner(fixture, root, state, directory, prefix, measurements, timeout):
+    state.mkdir()
+    fixture.register(prefix, root, state)
+    binding = fixture.projects[prefix]["binding"]
+    fixture.rpc({"configure_watch": {"project": binding, "enabled": False}})
+    fixture.configure(prefix, {"operation": "vectors", "enabled": False})
+    fixture.configure(prefix, {"operation": "usage", "mode": "aggregates_only"})
+
+    def run(label, *args):
+        started = time.monotonic()
+        if args[:2] == ("configure", "--file"):
+            draft = json.loads(Path(args[2]).read_text(encoding="utf-8"))
+            receipt = fixture.configure(prefix, draft)
+            measurements.append({"label": prefix + "-" + label,
+                                 "wall_ms": round((time.monotonic() - started) * 1000, 3),
+                                 "accepted_job": receipt["id"],
+                                 "scope": "durable inspection/configuration completion; process counters not sampled"})
+            return fixture.rpc({"configuration_result": {"id": receipt["id"]}})["result"]
+        value, metrics = measured([str(fixture.binary), *fixture.arguments(prefix), *args], directory,
+                                  prefix + "-" + label, timeout=timeout, environment=fixture.environment)
+        if "content" in value:
+            assert not value.get("isError"), value
+            value = clients.tool_value(value)
+        metrics["scope"] = "client process only; service, project and helper counters are in native usage"
+        if "job" in value:
+            receipt = fixture.wait(value)
+            metrics["accepted_job"] = receipt["id"]
+            metrics["completion_wall_ms"] = round((time.monotonic() - started) * 1000, 3)
+            if args[0] == "index":
+                value = {"job": receipt, "status": fixture.published_status(prefix),
+                         "usage": json.loads(fixture.run(*fixture.arguments(prefix), "usage", "report").stdout)}
+            else:
+                value = fixture.rpc({"configuration_result": {"id": receipt["id"]}})["result"]
+        measurements.append(metrics)
+        return value
+    return run
+
+
+def configure_file(run, directory, label, operation, path):
+    draft = directory / (label + "-configuration.json")
+    draft.write_text(json.dumps({"operation": operation, "path": str(path)}), encoding="utf-8")
+    return run(label, "configure", "--file", str(draft))
+
+
+def work_delta(before, after, key):
+    def counter(value):
+        return int(value["usage"]["report"]["operations"].get("index", {}).get("index_work", {}).get(key, 0))
+    return counter(after) - counter(before)
 
 
 def hash_file(path):
@@ -73,7 +142,7 @@ def process_metrics(process, expected_executable=None):
     return {"counter_basis": "OS counters unavailable in this harness; inspect native usage resource report"}
 
 
-def measured(command, output_directory, label, timeout=1800):
+def measured(command, output_directory, label, timeout=1800, environment=None):
     started = time.monotonic()
     path = output_directory / (label + ".json")
     errors = output_directory / (label + ".stderr")
@@ -83,7 +152,7 @@ def measured(command, output_directory, label, timeout=1800):
         executable = shutil.which(str(command[0])) or str(command[0])
         expected_executable = Path(executable).resolve(strict=True)
     with path.open("wb") as output, errors.open("wb") as error:
-        process = subprocess.Popen(command, stdout=output, stderr=error, stdin=subprocess.DEVNULL)
+        process = subprocess.Popen(command, stdout=output, stderr=error, stdin=subprocess.DEVNULL, env=environment)
         try:
             while True:
                 if platform.system() == "Linux":
@@ -173,26 +242,25 @@ def fixture_bytes(index, size, revised=False):
     return (first + filler * ((size // len(filler)) + 1))[:size - 1] + b"\n"
 
 
-def synthetic(binary, directory, count, size, measurements, command_timeout=1800):
+@native_corpus
+def synthetic(binary, directory, count, size, measurements, command_timeout=1800, *, fixture):
     root, state = directory / "synthetic", directory / "synthetic-state"
     root.mkdir()
+    config = directory / "synthetic-limits.json"
+    config.write_text(json.dumps(limits(count, count * size)), encoding="utf-8")
+    run = native_runner(fixture, root, state, directory, "synthetic", measurements, command_timeout)
+    configure_file(run, directory, "synthetic-limits", "scan_limits", config)
+    quota = directory / "synthetic-quota.json"
+    quota.write_text(json.dumps(QUALIFICATION_QUOTA), encoding="utf-8")
+    configure_file(run, directory, "synthetic-quota", "quota_policy", quota)
+    # Configure the empty owned project before adding source bytes. Policy
+    # changes can schedule a scan; they must not consume the measured first index.
     for index in range(count):
         folder = root / f"group{index // 256:04d}"
         folder.mkdir(exist_ok=True)
         (folder / f"item{index:08d}.txt").write_bytes(fixture_bytes(index, size))
-    config = directory / "synthetic-limits.json"
-    config.write_text(json.dumps(limits(count, count * size)), encoding="utf-8")
-    base = [str(binary), "--root", str(root), "--data-dir", str(state)]
-    def run(label, *args):
-        result, metrics = measured(base + list(args), directory, "synthetic-" + label, timeout=command_timeout)
-        measurements.append(metrics)
-        return result
-    run("configure", "collections", "limits", "set", str(config))
-    quota = directory / "synthetic-quota.json"
-    quota.write_text(json.dumps(QUALIFICATION_QUOTA), encoding="utf-8")
-    run("configure-quota", "collections", "quota", "set", str(quota))
     first = run("index", "index")
-    if first["indexed"] != count or first["source_bytes"] != count * size:
+    if first["status"]["files"] != count or source_digest(root)["bytes"] != count * size:
         raise AssertionError("synthetic corpus was not indexed completely")
     probes = sorted(set([0, count // 4, count // 2, count - 1]))
     for sample in range(3):
@@ -202,17 +270,22 @@ def synthetic(binary, directory, count, size, measurements, command_timeout=1800
             if len(found["hits"]) != 1 or found["hits"][0]["citation"]["path"] != expected:
                 raise AssertionError("exact sentinel retrieval gate failed")
     unchanged = run("reuse", "index")
-    if unchanged["reused"] != count or unchanged["indexed"] != 0 or unchanged["generation"] != first["generation"]:
+    if (unchanged["status"]["publication"] != first["status"]["publication"]
+            or work_delta(first, unchanged, "reused") < count or work_delta(first, unchanged, "indexed") != 0):
         raise AssertionError("unchanged streaming revision was not reused")
     path = "group0000/item00000000.txt"
     before = run("read-before", "read", path, "--start-line", "1", "--end-line", "1")
+    fixture.rpc({"pause": {"project": fixture.projects["synthetic"]["binding"], "paused": True}})
     (root / path).write_bytes(fixture_bytes(0, size, revised=True))
     (root / "group0000/item00000001.txt").unlink()
     retained = run("read-retained", "read", path, "--start-line", "1", "--end-line", "1")
     if any(retained[key] != before[key] for key in ("collection", "generation", "hits", "truncated")):
         raise AssertionError("live source changes altered retained evidence before publication")
+    fixture.rpc({"pause": {"project": fixture.projects["synthetic"]["binding"], "paused": False}})
     changed = run("changed", "index")
-    if changed["indexed"] != 1 or changed["removed"] != 1 or changed["generation"] <= first["generation"]:
+    if (changed["status"]["files"] != count - 1
+            or changed["status"]["generation"] <= first["status"]["generation"]
+            or work_delta(unchanged, changed, "indexed") != 1 or work_delta(unchanged, changed, "removed") != 1):
         raise AssertionError("changed/deleted source revision gate failed")
     revised = run("search-revised", "search", "--mode", "lexical", "revisedprobe00000000", "--limit", "1")
     deleted = run("search-deleted", "search", "--mode", "lexical", "airkprobe00000001", "--limit", "1")
@@ -265,21 +338,18 @@ def fetch_cpython(directory):
                   "archive_sha256": digest.hexdigest(), "download_bytes": count, "omitted_nonregular_entries": skipped_links}
 
 
-def public_corpus(binary, directory, measurements, command_timeout=1800):
+@native_corpus
+def public_corpus(binary, directory, measurements, command_timeout=1800, *, fixture):
     root, provenance = fetch_cpython(directory)
     before = source_digest(root)
     state = directory / "cpython-state"
     config = directory / "cpython-limits.json"
     config.write_text(json.dumps(limits(before["files"], before["bytes"])), encoding="utf-8")
-    base = [str(binary), "--root", str(root), "--data-dir", str(state)]
-    def run(label, *args):
-        result, metrics = measured(base + list(args), directory, "cpython-" + label, timeout=command_timeout)
-        measurements.append(metrics)
-        return result
-    run("configure", "collections", "limits", "set", str(config))
+    run = native_runner(fixture, root, state, directory, "cpython", measurements, command_timeout)
+    configure_file(run, directory, "cpython-limits", "scan_limits", config)
     quota = directory / "cpython-quota.json"
     quota.write_text(json.dumps(QUALIFICATION_QUOTA), encoding="utf-8")
-    run("configure-quota", "collections", "quota", "set", str(quota))
+    configure_file(run, directory, "cpython-quota", "quota_policy", quota)
     report = run("index", "index")
     status = run("status", "status")
     for label, query, prefix in [("interpreter", "_PyEval_EvalFrameDefault", "Python/ceval.c"),
@@ -290,7 +360,7 @@ def public_corpus(binary, directory, measurements, command_timeout=1800):
         expected_hash = hash_file(root / prefix)[0]
         if any(hit["citation"]["content_hash"] != expected_hash for hit in hits):
             raise AssertionError("public-corpus source citation hash differs")
-    symbols = run("symbol", "symbol", "Path", "--language", "python", "--path-prefix", "Lib/pathlib")["facts"]
+    symbols = run("symbol", "symbol", "Path", "--language", "python", "--path-prefix", "Lib/pathlib")["items"]
     if not any(fact["name"] == "Path" for fact in symbols):
         raise AssertionError("public-corpus Python definition gate failed")
     after = source_digest(root)
@@ -320,9 +390,9 @@ def main():
     directory.mkdir(parents=True, exist_ok=False)
     binary = args.binary.resolve(strict=True)
     measurements = []
-    result = {"schema": 1, "platform": platform.platform(), "machine": machine_environment(directory),
+    result = {"schema": 2, "platform": platform.platform(), "machine": machine_environment(directory),
               "binary_sha256": hash_file(binary)[0],
-              "cache_conditions": "fresh index directory; OS caches are neither flushed nor controlled; repeated CLI calls have fresh process caches",
+              "cache_conditions": "fresh native project; shared service and project process; OS caches are neither flushed nor controlled; client process counters exclude service work",
               "model": "none; this harness measures lexical/exact storage and lifecycle, not transformer quality",
               "quota_policy": QUALIFICATION_QUOTA,
               "command_timeout_seconds": args.command_timeout_seconds,

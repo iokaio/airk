@@ -177,7 +177,7 @@ impl CurrentWriter<'_> {
                     .context("FTS5 admission estimate overflow")?;
             }
         }
-        let used = fs::metadata(self.store.directory().join("current.sqlite3"))?.len();
+        let used = database::logical_bytes(self.connection()?)?;
         let needed = used.checked_add(growth).context("FTS5 capacity overflow")?;
         if needed > self.capacity {
             self.grow_capacity(

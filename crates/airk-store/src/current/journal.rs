@@ -10,7 +10,6 @@ use super::{
 };
 use crate::{
     FileStore, WriterLock,
-    model_objects::ModelObjects,
     quota::{CurrentGrant, CurrentGrantScope, Quota},
 };
 use airk_core::{
@@ -157,6 +156,8 @@ impl TransactionPhase {
 #[serde(deny_unknown_fields)]
 pub struct CapturedInput {
     pub artifact: Artifact,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub postings_version: u32,
 }
 
 /// A changed source path in a single current-index publication. Upserts carry
@@ -194,8 +195,22 @@ pub(crate) fn valid_current_path(path: &str) -> bool {
         && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
 }
 
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
 impl CapturedInput {
+    pub fn new(artifact: Artifact) -> Self {
+        Self {
+            artifact,
+            postings_version: 1,
+        }
+    }
     pub(super) fn bytes(&self) -> Result<Vec<u8>> {
+        ensure!(
+            self.postings_version <= 1,
+            "unsupported captured posting version"
+        );
         let artifact = &self.artifact;
         ensure!(
             valid_current_path(&artifact.path),
@@ -596,7 +611,7 @@ fn verify_model(store: &FileStore, model: &Option<ModelObjectSet>) -> Result<()>
             sum.checked_add(item.bytes)
                 .context("model verification budget overflow")
         })?;
-        ModelObjects::new(store.directory()).verify(model, maximum)?;
+        store.validate_model_reference(model, maximum)?;
     }
     Ok(())
 }
@@ -640,6 +655,9 @@ impl Drop for CurrentWriter<'_> {
 }
 
 impl CurrentWriter<'_> {
+    pub(super) fn reclaim_exclusive(&self) -> Result<bool> {
+        self._gate.try_exclusive()
+    }
     pub(super) fn has_object_captures(&self) -> bool {
         self.writer.has_object_captures()
     }
@@ -663,11 +681,26 @@ impl FileStore {
         database::validate_capacity(database_capacity_bytes)?;
         crate::maintenance::check_writer(self, writer, quota)?;
         ensure!(
-            self.directory().file_name().and_then(|name| name.to_str())
-                == Some(scope.collection.as_str()),
+            self.collection_id()? == scope.collection,
             "foreign current writer collection"
         );
-        let gate = Gate::exclusive(self, writer)?;
+        let service_publication = super::wal::enabled(self.directory());
+        let gate = if service_publication {
+            Gate::shared(self)?
+        } else {
+            Gate::exclusive(self, writer)?
+        };
+        let _wal = if service_publication {
+            Some(super::wal::reserve(
+                self,
+                writer,
+                quota,
+                scope,
+                database_capacity_bytes,
+            )?)
+        } else {
+            None
+        };
         database::reject_legacy_collection(self.directory())?;
         let path = self.directory().join("current.sqlite3");
         let bootstrap = read_bootstrap(self, scope)?;
@@ -799,6 +832,9 @@ impl CurrentWriter<'_> {
             return Err(error);
         }
         observe(CapacityStage::BeforeOwner)?;
+        if super::wal::enabled(self.store.directory()) {
+            super::wal::reserve(&self.store, self.writer, &self.quota, &self.scope, next)?;
+        }
         database::grow_owner(self.store.directory(), &self.scope, previous, next)?;
         observe(CapacityStage::AfterOwner)?;
         self.capacity = next;
@@ -907,10 +943,13 @@ impl CurrentWriter<'_> {
             );
         }
         let id = bootstrap_id(&head)?;
-        let allowance = self
-            .capacity
-            .checked_add(database::journal_bound(16, 65_536)?)
-            .context("initial capacity overflow")?;
+        let allowance = if super::wal::enabled(self.store.directory()) {
+            65536
+        } else {
+            self.capacity
+                .checked_add(database::journal_bound(16, 65_536)?)
+                .context("initial capacity overflow")?
+        };
         let mut grant = match self
             .quota
             .current_grant(self.writer, &self.grant_scope(id))?
@@ -946,7 +985,11 @@ impl CurrentWriter<'_> {
         {
             let transaction = connection.transaction()?;
             transaction.pragma_update(None, "application_id", 0x4149_524bi32)?;
-            transaction.pragma_update(None, "user_version", database::DATABASE_VERSION)?;
+            transaction.pragma_update(
+                None,
+                "user_version",
+                super::wal::version(self.store.directory()),
+            )?;
             create(&transaction)?;
             transaction.execute(
                 "INSERT OR ROLLBACK INTO current_state(id,phase,head) VALUES(1,'ready',?1)",
@@ -1131,13 +1174,15 @@ impl CurrentWriter<'_> {
                 previous.as_ref().map(|input| &input.artifact),
                 input.map(|input| &input.artifact),
             )?;
-            let mut postings = super::postings::PostingChanges::default();
+            let mut postings = super::postings::PostingChanges::new(
+                base.sequence == 0 && input.is_some_and(|value| value.postings_version == 1),
+            );
             postings.update(
                 &mut plan,
                 &self.scope,
                 &self.store,
-                previous.as_ref().map(|input| &input.artifact),
-                input.map(|input| &input.artifact),
+                previous.as_ref(),
+                input,
             )?;
             plan.put(identity, changes[0].value())?;
             changes.extend(postings.finish(&mut plan, &self.scope)?);
@@ -1165,15 +1210,17 @@ impl CurrentWriter<'_> {
         );
         committed_lexical_manifest(self.connection()?, &base)?;
         if let Some(model) = &configuration.model {
-            ModelObjects::new(self.store.directory()).verify(model, MAX_CAPTURED_OBJECT_BYTES)?;
+            self.store
+                .validate_model_reference(model, MAX_CAPTURED_OBJECT_BYTES)?;
         }
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
         let collection =
             super::collection::CollectionPlan::load(&plan, &self.scope, Some(configuration))?;
-        let changes = collection
+        let mut changes = collection
             .finish(&mut plan, &self.scope)?
             .into_iter()
-            .collect();
+            .collect::<Vec<_>>();
+        changes.extend(super::postings::PostingChanges::new(true).finish(&mut plan, &self.scope)?);
         let root = plan.root()?;
         self.commit_catalog_changes(expected, base, changes, root)
     }
@@ -1182,9 +1229,27 @@ impl CurrentWriter<'_> {
         &mut self,
         expected: &CurrentToken,
         base: CurrentHead,
-        changes: Vec<map::MapChange>,
+        mut changes: Vec<map::MapChange>,
         planned_root: Sha256Digest,
     ) -> Result<CurrentCommit> {
+        let planned_root = {
+            let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+            for change in &changes {
+                plan.put(change.key(), change.value())?;
+            }
+            ensure!(
+                plan.root()? == planned_root,
+                "catalog changes differ before change retention"
+            );
+            changes.extend(super::recent::prepare(
+                &self.scope,
+                &mut plan,
+                &base,
+                super::recent::Observation::omitted(),
+                super::recent::unix_seconds(),
+            )?);
+            plan.root()?
+        };
         let id = framed_digest(
             b"current-catalog-only-update/2",
             &[&serde_json::to_vec(expected)?, planned_root.as_bytes()],
@@ -1484,13 +1549,53 @@ impl CurrentWriter<'_> {
             "changed-artifact publication base expired"
         );
         let mut plan = map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+        if let Some(inputs) = vector_inputs {
+            for input in inputs {
+                let key = map::key(
+                    &self.scope,
+                    map::MapDomain::Artifact,
+                    input.artifact.path.as_bytes(),
+                )?;
+                ensure!(
+                    plan.get(key)?.as_deref() == Some(input.bytes()?.as_slice()),
+                    "vector-only input differs from current artifact"
+                );
+                prior_sources.insert(
+                    input.artifact.path.clone(),
+                    Some(input.artifact.content_hash.parse()?),
+                );
+            }
+        }
+        // Validate bootstrap configuration against the committed base. Retained
+        // change metadata below mutates the plan even when no artifacts exist.
         let mut collection =
             super::collection::CollectionPlan::load(&plan, &self.scope, update.configuration)?;
+        let recent_observation = super::recent_events::observe(
+            &self.store,
+            &self.scope,
+            &plan,
+            &base,
+            changes,
+            metadata,
+        )?;
+        map_changes.extend(super::recent::prepare(
+            &self.scope,
+            &mut plan,
+            &base,
+            recent_observation,
+            super::recent::unix_seconds(),
+        )?);
         if base.graph_head.scope != target.graph_head.scope {
             collection.require_all_previous()?;
         }
         collection.verify_model(&model)?;
-        let mut postings = super::postings::PostingChanges::default();
+        let mut postings = super::postings::PostingChanges::new(
+            base.sequence == 0
+                && changes.iter().all(|change| match change {
+                    ArtifactChange::Upsert(input) => input.postings_version == 1,
+                    ArtifactChange::Delete(_) => true,
+                }),
+        );
         for change in changes {
             let key = map::key(
                 &self.scope,
@@ -1503,7 +1608,7 @@ impl CurrentWriter<'_> {
                     previous.artifact.path == change.path() && previous.bytes()? == bytes,
                     "changed artifact has invalid prior catalog binding"
                 );
-                Some(previous.artifact)
+                Some(previous)
             } else {
                 None
             };
@@ -1511,11 +1616,11 @@ impl CurrentWriter<'_> {
                 change.path().to_owned(),
                 previous
                     .as_ref()
-                    .map(|a| a.content_hash.parse::<Sha256Digest>())
+                    .map(|a| a.artifact.content_hash.parse::<Sha256Digest>())
                     .transpose()?,
             );
             collection.update(
-                previous.as_ref(),
+                previous.as_ref().map(|input| &input.artifact),
                 match change {
                     ArtifactChange::Upsert(input) => Some(&input.artifact),
                     ArtifactChange::Delete(_) => None,
@@ -1527,7 +1632,7 @@ impl CurrentWriter<'_> {
                 &self.store,
                 previous.as_ref(),
                 match change {
-                    ArtifactChange::Upsert(input) => Some(&input.artifact),
+                    ArtifactChange::Upsert(input) => Some(input.as_ref()),
                     ArtifactChange::Delete(_) => None,
                 },
             )?;
@@ -1609,7 +1714,7 @@ impl CurrentWriter<'_> {
             .checked_add(graph.record_bytes)
             .and_then(|n| n.checked_add(graph.node_count.checked_mul(96)?))
             .context("current growth estimate overflow")?;
-        let used = fs::metadata(self.store.directory().join("current.sqlite3"))?.len();
+        let used = database::logical_bytes(self.connection()?)?;
         let needed = used
             .checked_add(
                 pending
@@ -1668,6 +1773,10 @@ impl CurrentWriter<'_> {
             )?;
             let old: CapturedInput =
                 serde_json::from_slice(&plan.get(key)?.context("repack source missing")?)?;
+            ensure!(
+                input.postings_version == old.postings_version,
+                "repack changed posting format"
+            );
             let old = old.artifact;
             let mut comparison = input.artifact.clone();
             let prior = old
@@ -1699,6 +1808,13 @@ impl CurrentWriter<'_> {
             .sequence
             .checked_add(1)
             .context("repack sequence overflow")?;
+        changes.extend(super::recent::prepare(
+            &self.scope,
+            &mut plan,
+            &base,
+            super::recent::Observation::empty(),
+            super::recent::unix_seconds(),
+        )?);
         target.artifact_root = plan.root()?;
         drop(plan);
         ensure!(
@@ -1711,8 +1827,7 @@ impl CurrentWriter<'_> {
             .iter()
             .map(|c| c.value().map_or(0, |v| v.len()) as u64 + 128)
             .sum();
-        let needed = fs::metadata(self.store.directory().join("current.sqlite3"))?
-            .len()
+        let needed = database::logical_bytes(self.connection()?)?
             .checked_add(
                 additional
                     .checked_mul(8)
@@ -2124,11 +2239,22 @@ impl CurrentWriter<'_> {
         ensure!(
             grants
                 .iter()
-                .all(|grant| grant.scope().incarnation == self.scope.incarnation),
+                .all(|grant| grant.scope().incarnation == self.scope.incarnation
+                    || super::wal::enabled(self.store.directory())),
             "foreign current recovery capacity grant"
         );
         let mut released = 0;
         for grant in grants {
+            if super::wal::enabled(self.store.directory())
+                && grant.scope().incarnation != self.scope.incarnation
+            {
+                continue;
+            }
+            if super::wal::enabled(self.store.directory())
+                && grant.scope().transaction == super::wal::id(&self.scope)
+            {
+                continue;
+            }
             grant.release(self.writer)?;
             released += 1;
         }

@@ -37,18 +37,36 @@ fn historical_suggestions_are_unavailable_without_redirecting_current_reads() ->
         ..Default::default()
     };
     let first = kernel.changes(&request)?;
-    assert_eq!(first.baseline_status, BaselineStatus::BaselineUnavailable);
+    assert_eq!(first.baseline_status, BaselineStatus::Verified);
     assert_eq!(
         first.suggestion_coverage.unwrap().status,
         SuggestionStatus::Unavailable
     );
     assert!(first.suggestions.is_empty());
-    assert_eq!(first.validations[0].outcome, ValidationOutcome::Unknown);
-    request.cursor = first.cursor;
-    assert_eq!(
-        kernel.changes(&request)?.validations[0].outcome,
-        ValidationOutcome::Current
-    );
+    let initial_cursor = first
+        .cursor
+        .clone()
+        .expect("bounded retained changes need continuation");
+    let mut validations = first.validations;
+    let mut cursor = first.cursor;
+    while let Some(next) = cursor {
+        request.cursor = Some(next);
+        let page = kernel.changes(&request)?;
+        assert!(
+            page.changes.len()
+                + page.validations.len()
+                + page.invalidations.len()
+                + page.suggestions.len()
+                <= 1
+        );
+        validations.extend(page.validations);
+        cursor = page.cursor;
+    }
+    validations.sort_by_key(|validation| validation.ordinal);
+    assert_eq!(validations.len(), 2);
+    assert_eq!(validations[0].outcome, ValidationOutcome::Unknown);
+    assert_eq!(validations[1].outcome, ValidationOutcome::Current);
+    request.cursor = Some(initial_cursor);
     request.include_suggestions = false;
     assert_eq!(
         kernel.changes(&request)?.status,

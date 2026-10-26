@@ -21,30 +21,42 @@ COPY crates ./crates
 COPY .config/nextest.toml ./.config/nextest.toml
 COPY scripts/ci-metrics.py scripts/ci-prune-target.py ./scripts/
 COPY scripts/license-notices.py scripts/provision-local-model.py ./scripts/
+COPY scripts/build-service-runtime.py scripts/build-service-container.py ./scripts/
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY third_party/models ./third_party/models
 RUN python3 scripts/provision-local-model.py --destination /build/model-assets --download
 ENV AIRK_BUNDLED_MODEL_DIR=/build/model-assets
 COPY third_party/licenses ./third_party/licenses
 
 FROM source AS test
+ARG AIRK_QUALIFICATION=false
+RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
+    --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
+    --mount=type=cache,id=airk-linux-target,target=/build/target \
+    rustup show active-toolchain \
+    && useradd --create-home --uid 10001 airkbuild \
+    && chown -R airkbuild:airkbuild /build /usr/local/cargo /usr/local/rustup
+USER 10001:10001
 RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=airk-linux-target,target=/build/target \
     cargo fetch --locked \
-    && python3 scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --locked --offline --no-run \
-    && python3 scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --locked --offline \
-    && python3 scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --offline \
-    && python3 scripts/ci-metrics.py summary \
     && mkdir -p /build/ci-report \
-    && cp target/nextest/ci/junit.xml artifacts/ci/timings.jsonl /build/ci-report/
+    && case "$AIRK_QUALIFICATION" in \
+      true) python3 scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --all-features --locked --offline --no-run \
+        && python3 scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --all-features --locked --offline --ignore-default-filter \
+        && python3 scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --offline \
+        && python3 scripts/ci-metrics.py summary \
+        && cp target/nextest/ci/junit.xml artifacts/ci/timings.jsonl /build/ci-report/ ;; \
+      false) printf '%s\n' 'Container workspace qualification not requested; image smoke runs separately.' > /build/ci-report/scope.txt ;; \
+      *) exit 1 ;; \
+    esac
 
 FROM test AS build
 RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
     --mount=type=cache,id=airk-linux-target,target=/build/target \
-    python3 scripts/ci-metrics.py run --name release-compile -- cargo build --release --locked --offline -p airk-cli \
-    && python3 scripts/license-notices.py --output /build/notices \
-    && mkdir -p /build/out && cp /build/target/release/airk /build/out/airk \
+    python3 scripts/ci-metrics.py run --name release-pair -- python3 scripts/build-service-container.py --destination /build/out \
     && cp artifacts/ci/timings.jsonl /build/ci-report/ \
     && python3 scripts/ci-prune-target.py
 
@@ -52,13 +64,15 @@ FROM scratch AS report
 COPY --from=build /build/ci-report/ /
 
 FROM debian:bookworm-slim AS runtime
-RUN groupadd --gid 10001 airk && useradd --uid 10001 --gid airk --no-create-home airk \
+RUN groupadd --gid 10001 airk && useradd --uid 10001 --gid airk --home-dir /data --no-create-home airk \
     && mkdir -p /data /workspaces /usr/share/licenses/airk \
     && chown airk:airk /data
-COPY --from=build /build/out/airk /usr/local/bin/airk
-COPY --from=build /build/notices /usr/share/licenses/airk/dependencies
+COPY --from=build /build/out/runtime /usr/lib/airk
+COPY --from=build /build/out/airk-container /usr/local/bin/airk-container
+RUN ln -s /usr/lib/airk/airk /usr/local/bin/airk
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /usr/share/licenses/airk/
 USER 10001:10001
+ENV XDG_DATA_HOME=/data/share XDG_STATE_HOME=/data/state XDG_CONFIG_HOME=/data/config XDG_CACHE_HOME=/data/cache
 WORKDIR /workspaces
-ENTRYPOINT ["airk", "--root", "/workspaces", "--data-dir", "/data"]
-CMD ["host"]
+ENTRYPOINT ["airk-container"]
+CMD []

@@ -722,6 +722,7 @@ fn old_namespace_is_untouched_and_exact_tokens_and_cursors_expire() -> Result<()
                 1,
                 4096,
                 &DiscoveryOptions {
+                    minimal: false,
                     cursor,
                     ..Default::default()
                 }

@@ -103,6 +103,15 @@ fn working_budget(mode: ExecutionMode, memory: Option<u64>, slots: usize) -> usi
 pub(crate) fn acquire(root: &Path) -> Result<ExecutionLease> {
     airk_store::quota::ensure_current_root(root)?;
     std::fs::create_dir_all(root)?;
+    if let Some(plan) = crate::service_execution::plan(root)? {
+        let lifecycle = airk_store::quota::service_indexing_lifecycle_lease(root)?;
+        airk_store::quota::ensure_current_root(root)?;
+        return Ok(ExecutionLease {
+            plan,
+            _files: Vec::new(),
+            _lifecycle: lifecycle,
+        });
+    }
     let lifecycle = airk_store::quota::indexing_lifecycle_lease(root)?;
     airk_store::quota::ensure_current_root(root)?;
     let desired = if mode()? == ExecutionMode::Throughput {
@@ -146,6 +155,9 @@ pub(crate) fn acquire(root: &Path) -> Result<ExecutionLease> {
 
 impl crate::Kernel {
     pub fn execution_status(&self) -> Result<ExecutionPlan> {
+        if let Some(plan) = crate::service_execution::status(&self.data_root)? {
+            return Ok(plan);
+        }
         plan(if mode()? == ExecutionMode::Throughput {
             2
         } else {

@@ -418,6 +418,10 @@ fn insert_artifact(
         insert_fact(
             tx,
             &FactHit {
+                candidate: fact
+                    .code
+                    .as_ref()
+                    .is_some_and(|code| code.is_call_candidate(&fact.kind)),
                 continuity_key: keys.key(ordinal, fact),
                 name: fact.name.clone(),
                 kind: fact.kind.clone(),

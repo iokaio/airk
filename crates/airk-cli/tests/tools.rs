@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use serde_json::{Value, json};
+mod common;
 use std::{
     fs,
     io::Write,
@@ -8,15 +9,7 @@ use std::{
 };
 
 fn command(root: &Path, state: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_airk"));
-    command
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(state)
-        .args(["--collection", "tools-test"])
-        .env("AIRK_USAGE_MODE", "disabled");
-    command
+    common::command(root, state, "tools-test")
 }
 
 fn success(output: Output) -> Value {
@@ -46,7 +39,44 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .unwrap(),
     );
     let tools = list["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 16);
+    assert!(tools.iter().any(|tool| tool["name"] == "airk_help"));
+    let help = evidence(
+        command(&root, &state)
+            .args(["tools", "call", "airk_help"])
+            .output()
+            .unwrap(),
+    );
+    assert!(help["topics"].as_array().unwrap().len() >= 25);
+    let help = evidence(
+        command(&root, &state)
+            .args([
+                "tools",
+                "call",
+                "airk_help",
+                "--args",
+                r#"{"command":"runtime retire-previous"}"#,
+            ])
+            .output()
+            .unwrap(),
+    );
+    assert!(
+        help["content"]
+            .as_str()
+            .unwrap()
+            .contains("--expected-active")
+    );
+    assert!(!root.exists() && !state.exists());
+    let status = tools
+        .iter()
+        .find(|tool| tool["name"] == "airk_status")
+        .unwrap();
+    assert!(
+        status["description"]
+            .as_str()
+            .unwrap()
+            .contains("runtime JSON bundle")
+    );
     for tool in tools {
         let help = success(
             command(&root, &state)
@@ -84,45 +114,95 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
         "# Fixture\nAuthenticate the local account.\n",
     )
     .unwrap();
-    success(
-        command(root.path(), state.path())
-            .args(["collections", "vectors", "set", "--enabled", "false"])
-            .output()
-            .unwrap(),
-    );
-    success(
+    let service = common::Service::start(root.path(), state.path(), "tools-test");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    let accepted = success(
         command(root.path(), state.path())
             .arg("index")
             .output()
             .unwrap(),
     );
+    service.wait(serde_json::from_value(accepted["job"]["id"].clone()).unwrap());
     let query = state.path().join("query with spaces.json");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    let status = loop {
+        let status = evidence(
+            common::read_retry::output_until(
+                command(root.path(), state.path()).args(["tools", "call", "airk_status"]),
+                deadline,
+            )
+            .unwrap(),
+        );
+        common::read_retry::publication_pending(
+            &status,
+            "tools-test",
+            &service.project.binding.to_string(),
+        )
+        .unwrap();
+        assert!(
+            std::time::Instant::now() < deadline,
+            "runtime observation deadline exhausted"
+        );
+        if !status["runtime"]["index_worker"]["process"]["executable_sha256"].is_null() {
+            break status;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    let runtime = &status["runtime"];
+    assert_eq!(runtime["schema"], 1);
+    assert_eq!(runtime["versions_match"], true);
+    assert_eq!(
+        runtime["mcp_frontend"]["process"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(
+        runtime["index_worker"]["process"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
+    assert_eq!(runtime["service"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        status["work"]["serving_worker"]["project"],
+        serde_json::to_value(service.project.binding).unwrap()
+    );
+    assert!(
+        status["work"]["pending_job"].is_null()
+            || status["work"]["pending_job"]["project"]
+                == status["work"]["serving_worker"]["project"]
+    );
+    assert!(status["work"]["watch"]["enabled"].is_boolean());
+    assert_eq!(
+        runtime["index_worker"]["identity"]["service"],
+        runtime["service"]["instance"]
+    );
+    assert_eq!(
+        runtime["index_worker"]["process"]["executable_sha256"],
+        runtime["service"]["executable_sha256"]
+    );
     fs::write(
         &query,
         br#"{"query":"Authenticate","mode":"lexical","limit":1}"#,
     )
     .unwrap();
     let found = evidence(
-        command(root.path(), state.path())
-            .args(["tools", "call", "airk_search", "--args-file"])
-            .arg(&query)
-            .output()
-            .unwrap(),
+        common::read_retry::output(
+            command(root.path(), state.path())
+                .args(["tools", "call", "airk_search", "--args-file"])
+                .arg(&query),
+        )
+        .unwrap(),
     );
     assert_eq!(found["collection"], "tools-test");
     assert_eq!(found["hits"][0]["citation"]["path"], "README.md");
     let read = json!({"path":"README.md","start_line":1,"end_line":2,"revision":found["publication"]["token"]});
     let read = evidence(
-        command(root.path(), state.path())
-            .args([
-                "tools",
-                "call",
-                "airk_read_file",
-                "--args",
-                &read.to_string(),
-            ])
-            .output()
-            .unwrap(),
+        common::read_retry::output(command(root.path(), state.path()).args([
+            "tools",
+            "call",
+            "airk_read_file",
+            "--args",
+            &read.to_string(),
+        ]))
+        .unwrap(),
     );
     assert_eq!(read["publication"], found["publication"]);
     assert_eq!(
@@ -184,6 +264,7 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
 fn interactive_tools_show_help_and_recover_from_invalid_requests() {
     let root = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
+    let _service = common::Service::start(root.path(), state.path(), "tools-test");
     let query = root.path().join("arguments with spaces.json");
     fs::write(&query, "{}").unwrap();
     let mut child = command(root.path(), state.path())

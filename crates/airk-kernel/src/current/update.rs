@@ -2,7 +2,7 @@
 //! One changed-path publication across retained evidence, SQLite FTS5 and DiskANN.
 use airk_core::{
     embedding::{EmbeddingDescriptor, embedding_key},
-    graph_storage::{GraphRecordOverlay, PreparedGraphDelta},
+    graph_storage::{GraphRecordOverlay, GraphRecordReader, PreparedGraphDelta},
     identity::Sha256Digest,
     model_objects::ModelObjectSet,
     vector_selection::VectorSelectionPolicy,
@@ -106,6 +106,7 @@ struct VectorMembership {
 struct VectorPlan<'a> {
     read: &'a CurrentRead,
     replacing: bool,
+    recomputed_from: Option<u64>,
     registry: BTreeMap<Sha256Digest, Option<u32>>,
     memberships: BTreeMap<Sha256Digest, VectorMembership>,
     occurrences: Vec<PreparedOccurrence>,
@@ -151,9 +152,13 @@ impl VectorPlan<'_> {
     }
 
     fn retire(&mut self, changes: &[ArtifactChange]) -> Result<()> {
+        self.retire_paths(changes.iter().map(path))
+    }
+
+    fn retire_paths<'a>(&mut self, paths: impl Iterator<Item = &'a str>) -> Result<()> {
         let mut work = 0usize;
-        for change in changes {
-            let Some(index) = self.read.path_occurrences(path(change))? else {
+        for path in paths {
+            let Some(index) = self.read.path_occurrences(path)? else {
                 continue;
             };
             for ordinal in 0..index.count {
@@ -169,7 +174,7 @@ impl VectorPlan<'_> {
                     .context("current occurrence missing")?;
                 let pointer = OccurrencePointer::decode(&bytes, id)?;
                 ensure!(
-                    pointer.path == path(change)
+                    pointer.path == path
                         && pointer.path_ordinal == ordinal
                         && pointer.source_hash == index.source_hash,
                     "current occurrence differs from changed path"
@@ -219,7 +224,12 @@ impl VectorPlan<'_> {
                 self.registry.len() < MAX_PENDING_VECTOR_INPUTS,
                 "current vector registry work limit exceeded"
             );
-            if let Some(id) = self.existing(key)? {
+            if let Some(id) = self.existing(key)?
+                && (!semantic.cache.bypass
+                    || self
+                        .recomputed_from
+                        .is_some_and(|first_id| u64::from(id) >= first_id))
+            {
                 self.registry.insert(key, Some(id));
             } else {
                 missing.entry(key).or_insert(index);
@@ -249,6 +259,12 @@ impl VectorPlan<'_> {
                 self.registry.len() < MAX_PENDING_VECTOR_INPUTS,
                 "current vector registry work limit exceeded"
             );
+            let retained_members = if let Some(prior) = self.memberships.get(&key) {
+                graph.set_live(prior.id, key, false)?;
+                prior.remaining
+            } else {
+                0
+            };
             let id = if let Some(vector) = vector {
                 ensure!(
                     self.memberships.len() < MAX_PENDING_VECTOR_INPUTS,
@@ -258,11 +274,20 @@ impl VectorPlan<'_> {
                 let id = graph.insert(key, &vector)?;
                 semantic.cache.stats.graph_insert_us +=
                     u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                self.memberships
-                    .insert(key, VectorMembership { id, remaining: 0 });
+                self.memberships.insert(
+                    key,
+                    VectorMembership {
+                        id,
+                        remaining: retained_members,
+                    },
+                );
                 semantic.cache.stats.vector_graph_nodes += 1;
                 Some(id)
             } else {
+                ensure!(
+                    retained_members == 0,
+                    "recomputed vector omitted retained occurrences"
+                );
                 None
             };
             self.registry.insert(key, id);
@@ -379,6 +404,12 @@ impl CurrentUpdater<'_> {
         semantic: SemanticUpdate<'_>,
         work: &mut super::enrichment::SemanticWork,
     ) -> Result<CurrentUpdateResult> {
+        ensure!(
+            semantic.cache.bypass == work.force_recompute
+                && semantic.objects.pipeline_digest == work.pipeline_digest
+                && semantic.selection.digest()? == work.selection_digest,
+            "semantic turn differs from its authenticated work policy"
+        );
         self.apply_resources_observed(
             &[],
             Some(semantic),
@@ -398,9 +429,10 @@ impl CurrentUpdater<'_> {
         resources: &[airk_store::current::resources::ResourceChange],
         moves: Option<&BTreeMap<String, String>>,
         semantic_inputs: Option<&[CapturedInput]>,
-        semantic_work: Option<&mut super::enrichment::SemanticWork>,
+        mut semantic_work: Option<&mut super::enrichment::SemanticWork>,
         observer: &mut dyn FnMut(CurrentUpdateStage),
     ) -> Result<CurrentUpdateResult> {
+        crate::service_execution::progress_phase(airk_core::service_progress::WorkPhase::Preparing);
         ensure!(
             (!changes.is_empty()
                 || self.configuration.is_some()
@@ -528,9 +560,34 @@ impl CurrentUpdater<'_> {
             GraphOverlay::new(self.reservation, read.clone(), graph_limits)
                 .context("open current graph overlay")?
         });
+        let recomputed_from = if let Some(work) = semantic_work.as_deref_mut()
+            && work.force_recompute
+        {
+            let graph = overlay.scope().graph_instance;
+            let count = overlay.counts()?.allocated_count;
+            if work
+                .recompute_boundary
+                .as_ref()
+                .is_none_or(|boundary| boundary.graph != graph)
+            {
+                work.recompute_boundary = Some(super::enrichment::RecomputeBoundary {
+                    graph,
+                    first_id: count,
+                });
+            }
+            let boundary = work.recompute_boundary.as_ref().expect("set above");
+            ensure!(
+                boundary.first_id <= count,
+                "forced semantic boundary exceeds authenticated graph"
+            );
+            Some(boundary.first_id)
+        } else {
+            None
+        };
         let mut plan = VectorPlan {
             read: &read,
             replacing,
+            recomputed_from,
             registry: BTreeMap::new(),
             memberships: BTreeMap::new(),
             occurrences: Vec::new(),
@@ -538,6 +595,9 @@ impl CurrentUpdater<'_> {
         };
         if !replacing {
             plan.retire(changes)?;
+            if let Some(inputs) = semantic_inputs {
+                plan.retire_paths(inputs.iter().map(|input| input.artifact.path.as_str()))?;
+            }
         }
         let descriptor = semantic
             .as_ref()
@@ -545,11 +605,8 @@ impl CurrentUpdater<'_> {
                 let descriptor = semantic.model.cache_descriptor()?;
                 ensure!(
                     descriptor.identity()? == semantic.objects.pipeline_digest
-                        && airk_retrieval::model::descriptor_from_objects_metadata(
-                            self.store.directory(),
-                            &semantic.objects
-                        )?
-                        .identity()?
+                        && crate::shared_models::descriptor(self.store, &semantic.objects)?
+                            .identity()?
                             == descriptor.identity()?,
                     "current model objects differ from loaded pipeline"
                 );
@@ -828,7 +885,13 @@ impl CurrentUpdater<'_> {
                 &resources,
             )
             .context("prepare current journal")?;
+        crate::service_execution::progress_prepared(
+            semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
+        );
         observer(CurrentUpdateStage::Prepared);
+        crate::service_execution::progress_phase(
+            airk_core::service_progress::WorkPhase::Publishing,
+        );
         writer
             .mark_applying(&pending)
             .context("mark current journal applying")?;
@@ -836,6 +899,9 @@ impl CurrentUpdater<'_> {
         let mut committed = writer
             .commit(&pending, pending.target.lexical_commit)
             .context("commit current journal")?;
+        crate::service_execution::progress_committed(
+            semantic_inputs.map_or(changes.len(), |inputs| inputs.len()) as u64,
+        );
         observer(CurrentUpdateStage::Committed);
         drop(writer);
         let cleanup = reclaim_current_objects(self.store, self.quota, self.scope, self.writer);

@@ -7,7 +7,7 @@ import { VectorStatus } from './vectorModel';
 export interface ControlGroup { label: string; commands: [string, string, string][] }
 export interface McpVerification {
     phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
-    indexState?: 'not_indexed' | 'published';
+    indexState?: 'not_indexed' | 'unavailable' | 'published';
 }
 export type IndexDetail = 'agent_lean' | 'essential' | 'balanced' | 'detailed';
 export function detailLabel(level: IndexDetail): string {
@@ -31,6 +31,7 @@ export interface SidebarState {
     trusted: boolean; paused: boolean; mode: IndexMode; changingStorage: boolean;
     collections: SidebarCollection[]; groups: ControlGroup[];
     registrationEnabled?: boolean;
+    responseMode?: 'terse' | 'full';
     cliStatus?: 'ready' | 'failed' | 'disabled';
 }
 export function semanticCompletion(vectors?: VectorStatus, progress?: SidebarCollection['semanticProgress']):
@@ -46,6 +47,7 @@ export function semanticCompletion(vectors?: VectorStatus, progress?: SidebarCol
         Math.round(100 * completed / total)) };
 }
 export type SidebarAction = { type: 'vectors'; collection: string; dataDir: string; enabled: boolean } | { type: 'detail'; collection: string; dataDir: string; level: IndexDetail } | { type: 'ready' } | { type: 'mode'; value: IndexMode }
+    | { type: 'responseMode'; value: 'terse' | 'full' }
     | { type: 'registration'; enabled: boolean }
     | { type: 'command'; command: string }
     | { type: 'collection'; action: 'index' | 'reindex' | 'status' | 'usage' | 'verify' | 'mcpDetails' | 'tools' | 'compression' | 'diagnose'; collection: string; dataDir: string };
@@ -60,6 +62,7 @@ export function sidebarAction(value: unknown, allowed: Set<string>): SidebarActi
         && typeof item.level === 'string' && ['agent_lean', 'essential', 'balanced', 'detailed'].includes(item.level)) {
         return { type: 'detail', collection: item.collection, dataDir: item.dataDir, level: item.level as IndexDetail };
     }
+    if (item.type === 'responseMode' && (item.value === 'terse' || item.value === 'full')) { return { type: 'responseMode', value: item.value }; }
     if (item.type === 'ready') { return { type: 'ready' }; }
     if (item.type === 'registration' && typeof item.enabled === 'boolean') { return { type: 'registration', enabled: item.enabled }; }
     if (item.type === 'mode' && typeof item.value === 'string' && ['manual', 'onSave', 'debounced', 'idle'].includes(item.value)) {
@@ -131,7 +134,9 @@ export function sidebarContent(state: SidebarState): string {
         const semanticLabel = semantic?.state === 'pending' || semantic?.state === 'partial'
             ? `Semantic indexing${semanticPercent !== undefined ? ` ${semanticPercent}%` : ''}: ${semanticDone} of ${semanticTotal} selected files complete${semanticRemaining !== undefined ? `; ${semanticRemaining} remaining` : ''}`
             : semantic?.state === 'failed' ? `Semantic enrichment failed: ${semantic.completed_artifacts} of ${semantic.selected_artifacts} selected files complete`
-            : semantic?.state === 'ready' ? (discovery && discovery.state !== 'ready'
+            : semantic?.state === 'ready' ? (item.state === 'indexing'
+                ? 'Last observed publication: semantic evidence ready; source indexing is in progress'
+                : discovery && discovery.state !== 'ready'
                 ? 'Semantic evidence ready for committed files; discovery incomplete' : 'Semantic evidence ready') : '';
         const vectors = `<div class="mcp"><h3>Vector search</h3>
             <label class="toggle"><input id="${escape(item.collection)}-vectors" type="checkbox" role="switch" ${attributes} data-vectors="true"${item.vectors?.enabled !== false ? ' checked' : ''}${disabled || !item.vectors || indexing || state.changingStorage ? ' disabled' : ''}> Include meaning-based matches</label>
@@ -150,12 +155,12 @@ export function sidebarContent(state: SidebarState): string {
         const elapsed = activity ? `${Math.floor(activity.elapsedSeconds / 60)}m ${activity.elapsedSeconds % 60}s` : '';
         const published = !!(activity?.revision || item.vectors?.published || item.detail?.published_detail);
         const waitMessage = activity?.phase === 'waiting_capacity' ? 'Waiting for indexing capacity' : activity?.phase === 'waiting_collection' ? 'This project is already indexing in another window or process' : 'Waiting for this project’s indexing request';
-        const activeIndex = activity && ['waiting', 'waiting_collection', 'waiting_capacity'].includes(activity.phase) ? `<p class="muted" role="status">${escape(waitMessage)} (${escape(elapsed)}). The request remains queued. ${published ? 'Published evidence remains available.' : 'MCP can start; search awaits the first publication.'}</p>` : activity ? `<p class="muted" role="status">Indexing for ${escape(elapsed)}: ${escape(activity.committed_artifacts)} files committed, ${escape(activity.processed_artifacts)} processed. ${published ? 'Published evidence is available to MCP now; discovery remains incomplete.' : 'MCP can start; search awaits the first publication.'}</p>${activity.quietSeconds >= 120 ? `<p class="notice" role="status">No new progress for ${escape(Math.floor(activity.quietSeconds / 60))} minutes. Open Diagnose &amp; Repair if this persists; a stalled scan stops after ten minutes without progress.</p>` : ''}` : '';
+        const activeIndex = activity && ['waiting', 'waiting_collection', 'waiting_capacity'].includes(activity.phase) ? `<p class="muted" role="status">${escape(waitMessage)} (${escape(elapsed)}). The request remains queued. ${published ? 'Published evidence remains available.' : 'MCP can start; search awaits the first publication.'}</p>` : activity ? `<p class="semantic-running" role="status">Indexing for ${escape(elapsed)}: ${escape(activity.committed_artifacts)} files committed, ${escape(activity.processed_artifacts)} processed. ${published ? 'Published evidence is available to MCP now; discovery remains incomplete.' : 'MCP can start; search awaits the first publication.'}</p>${activity.quietSeconds >= 120 ? `<p class="notice" role="status">No new progress for ${escape(Math.floor(activity.quietSeconds / 60))} minutes. Open Diagnose &amp; Repair if this persists; a stalled scan stops after ten minutes without progress.</p>` : ''}` : '';
         const last = item.lastIndexed ? new Date(item.lastIndexed).toLocaleString() : 'Not indexed in this editor yet';
         const error = item.error || view?.error;
         const mcp = item.mcp, checking = mcp?.phase === 'checking' || mcp?.phase === 'preparing';
         const mcpLabel = !mcp ? 'Not checked' : mcp.phase === 'preparing' ? 'Preparing collection…' : mcp.phase === 'checking' ? 'Checking MCP…'
-            : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available${mcp.indexState === 'not_indexed' ? '; indexing pending' : ''}` : 'Verification failed';
+            : mcp.phase === 'verified' ? `Verified · ${mcp.tools?.length ?? 0} tools available${mcp.indexState === 'not_indexed' ? '; indexing pending' : mcp.indexState === 'unavailable' ? '; index status unavailable' : ''}` : 'Verification failed';
         const connection = `<div class="mcp"><h3>AIRK helper check</h3><p role="status" aria-live="polite">Helper: <strong>${escape(mcpLabel)}</strong></p>
             ${mcp?.checkedAt ? `<p class="muted">Last checked: ${escape(new Date(mcp.checkedAt).toLocaleString())}</p>` : ''}
             ${mcp?.error ? `<p class="error">${escape(mcp.error.slice(0, 600))}</p>` : ''}
@@ -166,11 +171,11 @@ export function sidebarContent(state: SidebarState): string {
             <p class="muted">Call tools directly in the Terminal panel. Includes help, examples and JSON results for this collection.</p></div>`;
         return `<section class="collection"><div class="heading"><h2>${escape(item.name)}</h2><span class="badge${indexing ? ' working' : ''}">${escape(status)}</span></div>
             <p class="path" title="${escape(item.root)}">${escape(item.root)}</p>
-            <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}${activeIndex}
+            <div class="coverage"><strong>${escape(label)}</strong><span>saved-file coverage</span></div>${progress}
             <div class="metrics">${metric('Current', report?.current)}${metric('Eligible', report?.eligible)}${metric('Stale', report?.stale)}${metric('Missing', report?.missing)}</div>
             ${report ? `<p class="muted">${escape(report.extraction_failed)} extraction failures · ${escape(report.unsupported)} unsupported · ${escape(report.capacity_blocked)} capacity blocked</p>` : '<p class="muted">Coverage pending rescan. Inventories refresh every five minutes or on explicit refresh.</p>'}
             ${view?.pending && report ? '<p class="muted">Files changed; these counts are from the previous scan.</p>' : ''}
-            ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}
+            ${error ? `<p class="error" role="status">${escape(error.slice(0, 600))}</p>` : ''}${actions}${activeIndex}
             <div class="actions"><button class="secondary" data-action="diagnose" ${attributes}${disabled || state.changingStorage ? ' disabled' : ''}>Diagnose &amp; Repair</button></div>
             <p class="muted">${item.usage ? `Last 30 days: ${escape(item.usage.calls)} recorded calls · ${escape(item.usage.reduction ?? 'Not measured')} estimated tokens avoided versus complete cited files (${escape(item.usage.compared)} comparisons). ${item.usage.disabled ? 'Recording is off. ' : ''}Updated ${escape(new Date(item.usage.checkedAt).toLocaleTimeString())}.` : 'Open Usage &amp; Savings to see activity and estimated savings.'}</p>${vectors}${detail}
             <details id="location-${escape(item.collection)}"><summary>Storage and last index</summary><dl><dt>Index size</dt><dd>${bytes(item.diskBytes)}</dd><dt>Eligible source size</dt><dd>${bytes(report?.eligible_source_bytes)}</dd><dt>Last indexed</dt><dd>${escape(last)}</dd><dt>Index folder</dt><dd class="path">${escape(item.dataDir)}</dd></dl></details>${connection}</section>`;
@@ -190,7 +195,7 @@ export function sidebarContent(state: SidebarState): string {
         ${capacityBlocked && !state.paused ? '<p class="notice">A collection reached its storage limit. Reclaim eligible space or adjust its quota, then Resume.</p>' : ''}
         ${state.changingStorage ? '<p class="notice" role="status">Choosing storage. New indexing jobs are held until this finishes.</p>' : ''}</section>
         ${collections || '<section><h2>No workspace collection</h2><p>Open a folder and trust the workspace to start indexing.</p></section>'}
-        <section><h2>Agent connections</h2><label class="toggle"><input id="registration" type="checkbox" role="switch"${state.registrationEnabled !== false ? ' checked' : ''}${disabled ? ' disabled' : ''}> VS Code registration: ${state.registrationEnabled !== false ? 'On' : 'Off'}</label>
+        <section><h2>Agent connections</h2><label for="response-mode">MCP response mode</label><select id="response-mode"${disabled ? ' disabled' : ''}><option value="terse"${state.responseMode !== 'full' ? ' selected' : ''}>Terse response mode (default)</option><option value="full"${state.responseMode === 'full' ? ' selected' : ''}>Full response mode</option></select><p class="muted">Use Full to investigate provenance, coverage or unexpected results. Reload the agent’s MCP connection after changing this setting.</p><label class="toggle"><input id="registration" type="checkbox" role="switch"${state.registrationEnabled !== false ? ' checked' : ''}${disabled ? ' disabled' : ''}> VS Code registration: ${state.registrationEnabled !== false ? 'On' : 'Off'}</label>
         <p class="muted">Automatically offer AIRK collections to VS Code on this extension host. This is not a connection status or a global MCP kill switch.</p>
         ${button('Connect coding agent…', 'airk.manageMcp', disabled, false)}
         ${button('VS Code / Copilot MCP controls', 'airk.manageVscodeMcp', disabled)}
@@ -217,7 +222,7 @@ export function renderSidebar(state: SidebarState): string {
     setInterval(()=>{document.querySelectorAll('[data-semantic-started]').forEach(el=>{const started=Number(el.getAttribute('data-semantic-started'));if(!Number.isFinite(started))return;const seconds=Math.max(0,Math.floor((Date.now()-started)/1000));el.textContent=Math.floor(seconds/60)+'m '+seconds%60+'s';});},1000);
     dashboard.addEventListener('toggle',remember,true);window.addEventListener('scroll',remember);
     dashboard.addEventListener('click',event=>{const button=event.target.closest('button');if(!button||button.disabled)return;if(button.dataset.action){vscode.postMessage({type:'collection',action:button.dataset.action,collection:button.dataset.collection,dataDir:button.dataset.storage});}else if(button.dataset.command){vscode.postMessage({type:'command',command:button.dataset.command});}});
-    dashboard.addEventListener('change',event=>{if(event.target.dataset.vectors)vscode.postMessage({type:'vectors',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,enabled:event.target.checked});if(event.target.dataset.detail)vscode.postMessage({type:'detail',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,level:event.target.value});if(event.target.id==='mode')vscode.postMessage({type:'mode',value:event.target.value});if(event.target.id==='registration')vscode.postMessage({type:'registration',enabled:event.target.checked});});
+    dashboard.addEventListener('change',event=>{if(event.target.dataset.vectors)vscode.postMessage({type:'vectors',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,enabled:event.target.checked});if(event.target.dataset.detail)vscode.postMessage({type:'detail',collection:event.target.dataset.collection,dataDir:event.target.dataset.storage,level:event.target.value});if(event.target.id==='response-mode')vscode.postMessage({type:'responseMode',value:event.target.value});if(event.target.id==='mode')vscode.postMessage({type:'mode',value:event.target.value});if(event.target.id==='registration')vscode.postMessage({type:'registration',enabled:event.target.checked});});
     window.addEventListener('message',event=>{if(event.data.type!=='render')return;remember();const state=vscode.getState(),focus=document.activeElement?.id;dashboard.innerHTML=event.data.html;restore(state);if(focus)document.getElementById(focus)?.focus({preventScroll:true});});
     vscode.postMessage({type:'ready'});
     </script></body></html>`;

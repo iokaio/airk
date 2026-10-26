@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { configureShellPath, installCli, publishCli, windowsPathScript } from '../cliInstall';
+import { configureShellPath, installCli, installLauncherCli, publishCli, publishLauncherCommand, retireCliExecutables, windowsPathScript } from '../cliInstall';
 import * as native from '../native';
 
 async function fixture(context: { after(fn: () => Promise<void>): void }): Promise<string> {
@@ -13,6 +13,86 @@ async function fixture(context: { after(fn: () => Promise<void>): void }): Promi
     context.after(() => fs.rm(root, { recursive: true, force: true }));
     return fs.realpath(root);
 }
+
+test('service CLI forwards to the original launcher and updates idempotently',async context=>{
+    const root=await fixture(context),launcher=path.join(root,'approved runtime','airk-launcher.exe');
+    const directory=await publishLauncherCommand(launcher,root,'win32'),command=path.join(directory,'airk.cmd');
+    const content=await fs.readFile(command,'utf8');
+    assert.ok(content.includes(`"${launcher}" %*`));assert.match(content,/exit \/b %errorlevel%/);
+    const before=await fs.stat(command);await publishLauncherCommand(launcher,root,'win32');
+    assert.equal((await fs.stat(command)).mtimeMs,before.mtimeMs);
+    await assert.rejects(publishLauncherCommand(path.join(root,'bad%PATH%'),root,'win32'),/cannot be represented/);
+    if(process.platform!=='win32'){
+        const executable=path.join(root,"launcher with ' quotes");
+        await fs.writeFile(executable,'#!/bin/sh\nprintf "%s\\n" "$@"\nexit 7\n',{mode:0o755});
+        const bin=await publishLauncherCommand(executable,root);
+        const result=require('node:child_process').spawnSync(path.join(bin,'airk'),['space argument','$(literal)'],{encoding:'utf8'});
+        assert.equal(result.status,7);assert.equal(result.stdout,'space argument\n$(literal)\n');
+    }
+});
+
+test('CLI retirement removes previous binaries of any version while preserving current commands and unrelated files',async context=>{
+    const root=await fixture(context),launcher=path.join(root,'approved','airk-launcher.exe');
+    const bin=await publishLauncherCommand(launcher,root,'win32');
+    await fs.mkdir(path.join(root,'cli','bin'),{recursive:true});
+    const old=path.join(root,'cli','bin','airk.exe'),shadow=path.join(bin,'airk.exe');
+    const unrelated=path.join(root,'cli','bin','notes.txt');await fs.writeFile(unrelated,'preserve');
+    for(const version of ['1.3.1','1.4.0','1.5.0']){
+        await fs.writeFile(old,`old AIRK ${version}`);await fs.writeFile(shadow,`previous AIRK ${version}`);
+        assert.deepEqual(await retireCliExecutables(root,'win32'),[]);
+        await assert.rejects(fs.access(old),/ENOENT/);await assert.rejects(fs.access(shadow),/ENOENT/);
+    }
+    const wrapper=await fs.readFile(path.join(bin,'airk.cmd'),'utf8');assert.ok(wrapper.includes(launcher));
+    assert.equal(await fs.readFile(unrelated,'utf8'),'preserve');
+    await fs.writeFile(path.join(root,'cli','bin','airk'),'previous POSIX CLI');
+    assert.deepEqual(await retireCliExecutables(root,'linux'),[]);
+    await assert.rejects(fs.access(path.join(root,'cli','bin','airk')),/ENOENT/);
+    assert.deepEqual(await retireCliExecutables(root,'win32'),[]);
+});
+
+test('locked CLI retirement reports failure, continues independent cleanup and succeeds on retry',async context=>{
+    const root=await fixture(context),old=path.join(root,'cli','bin','airk.exe'),shadow=path.join(root,'service-cli','bin','airk.exe');
+    await fs.mkdir(path.dirname(old),{recursive:true});await fs.mkdir(path.dirname(shadow),{recursive:true});
+    await fs.writeFile(old,'locked');await fs.writeFile(shadow,'obsolete');
+    const promises=require('node:fs/promises') as typeof fs,unlink=promises.unlink;
+    let locked=true;
+    context.mock.method(promises,'unlink',async(file:Parameters<typeof fs.unlink>[0])=>{
+        if(file===old&&locked)throw Object.assign(new Error('Sharing violation'),{code:'EPERM'});
+        return unlink(file);
+    });
+    const errors=await retireCliExecutables(root,'win32');assert.equal(errors.length,1);
+    assert.match(errors[0],/Disconnect clients.*Install or Repair CLI/);
+    assert.equal(await fs.readFile(old,'utf8'),'locked');await assert.rejects(fs.access(shadow),/ENOENT/);
+    locked=false;assert.deepEqual(await retireCliExecutables(root,'win32'),[]);
+    await assert.rejects(fs.access(old),/ENOENT/);
+});
+
+test('CLI retirement preserves redirected directories, hard links and non-file targets',async context=>{
+    const root=await fixture(context),target=path.join(root,'unrelated');await fs.mkdir(target);
+    await fs.mkdir(path.join(root,'cli'));await fs.symlink(target,path.join(root,'cli','bin'),process.platform==='win32'?'junction':'dir');
+    await fs.writeFile(path.join(target,'airk.exe'),'preserve');
+    assert.equal((await retireCliExecutables(root,'win32')).length,1);
+    assert.equal(await fs.readFile(path.join(target,'airk.exe'),'utf8'),'preserve');
+    await fs.unlink(path.join(root,'cli','bin'));await fs.mkdir(path.join(root,'cli','bin'));
+    const old=path.join(root,'cli','bin','airk.exe');await fs.link(path.join(target,'airk.exe'),old);
+    assert.equal((await retireCliExecutables(root,'win32')).length,1);await fs.unlink(old);
+    await fs.mkdir(old);assert.equal((await retireCliExecutables(root,'win32')).length,1);
+    assert.equal(await fs.readFile(path.join(target,'airk.exe'),'utf8'),'preserve');
+});
+
+test('service CLI install retries retirement even when its current wrapper is unchanged',{skip:process.platform!=='win32'},async context=>{
+    const root=await fixture(context),old=path.join(root,'cli','bin','airk.exe');
+    await fs.mkdir(path.dirname(old),{recursive:true});await fs.writeFile(old,'previous version');
+    context.mock.method(native,'runText',async()=> '');
+    const variables={persistent:false,description:'',prepend:()=>{}};
+    const host={globalStorageUri:{fsPath:root},environmentVariableCollection:variables} as any;
+    await publishLauncherCommand(process.execPath,root);
+    assert.deepEqual(await installLauncherCli(process.execPath,host),[]);
+    await assert.rejects(fs.access(old),/ENOENT/);
+    await fs.writeFile(old,'another previous version');
+    assert.deepEqual(await installLauncherCli(process.execPath,host),[]);
+    await assert.rejects(fs.access(old),/ENOENT/);
+});
 
 test('stable executable updates without stale copies, preserves old binary on missing input, and is idempotent', async context => {
     const root = await fixture(context), helper = path.join(root, 'verified-helper');
@@ -135,7 +215,7 @@ ${script}
 @{ value = $airkFake.Value; writes = $airkFake.Writes } | ConvertTo-Json -Compress`;
     const powershell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
     const result = JSON.parse(await native.runText(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(harness, 'utf16le').toString('base64')]));
-    assert.equal(result.value, `%USERPROFILE%\\existing;C:\\Tools;${directory}`);
+    assert.equal(result.value, `${directory};%USERPROFILE%\\existing;C:\\Tools`);
     assert.equal(result.writes, 1);
 });
 
@@ -156,4 +236,16 @@ test('Windows installer exposes a real executable in fresh terminal PATH without
         ['-NoProfile', '-NonInteractive', '-Command', 'airk --version'],
         { encoding: 'utf8', env: { ...process.env, PATH: terminalPath + process.env.PATH } });
     assert.equal(output.trim(), process.version);
+});
+
+test('Windows service command executes the selected launcher with original arguments and exit code', {skip:process.platform!=='win32'},async context=>{
+    const root=await fixture(context),bin=await publishLauncherCommand(process.execPath,root);
+    const powershell=path.join(process.env.SystemRoot!,'System32/WindowsPowerShell/v1.0/powershell.exe');
+    const version=execFileSync(powershell,['-NoProfile','-NonInteractive','-Command','airk --version'],
+        {encoding:'utf8',env:{...process.env,PATH:bin+path.delimiter+process.env.PATH}});
+    assert.equal(version.trim(),process.version);
+    const script=path.join(root,'arguments.js');await fs.writeFile(script,'console.log(JSON.stringify(process.argv.slice(2)));process.exit(7);');
+    const result=require('node:child_process').spawnSync(powershell,['-NoProfile','-NonInteractive','-Command',`airk '${script.replaceAll("'","''")}' 'space argument' 'literal-value'; exit $LASTEXITCODE`],
+        {encoding:'utf8',env:{...process.env,PATH:bin+path.delimiter+process.env.PATH}});
+    assert.equal(result.status,7);assert.deepEqual(JSON.parse(result.stdout),['space argument','literal-value']);
 });

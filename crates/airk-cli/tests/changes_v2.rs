@@ -1,38 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original CLI fixtures for exact remembered evidence and conditional reads.
 use anyhow::{Context, Result};
+mod common;
 use serde_json::{Value, json};
-use std::{
-    fs,
-    path::Path,
-    process::{Command, Output},
-};
+use std::{fs, path::Path, process::Output};
 
 fn run(root: &Path, state: &Path, args: &[&str]) -> Result<Output> {
-    Ok(Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(state)
-        .env("AIRK_USAGE_MODE", "disabled")
+    Ok(common::command(root, state, "default")
         .args(args)
         .output()?)
 }
 
 fn call(root: &Path, state: &Path, args: &[&str]) -> Result<Value> {
-    let output = run(root, state, args)?;
-    anyhow::ensure!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(serde_json::from_slice(&output.stdout)?)
+    common::call(root, state, "default", args)
 }
 
 #[test]
 fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let _service = common::Service::start(root.path(), state.path(), "default");
     fs::write(
         root.path().join("weather.py"),
         "def aurora_temperature():\n    return 17\n",
@@ -103,7 +90,7 @@ fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Resu
         &["changes", "--since", token, "--path", "weather.py"],
     )?;
     assert_eq!(unchanged["baseline_status"], "verified");
-    assert_eq!(unchanged["validations"][0]["outcome"], "current");
+    assert_eq!(unchanged["validations"][0]["outcome"], "index-current");
     assert!(
         unchanged["changes"]
             .as_array()
@@ -124,8 +111,9 @@ fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Resu
         &["changes", "--since", token, "--path", "weather.py"],
     )?;
     assert_ne!(changed["to"], token);
-    assert_eq!(changed["baseline_status"], "baseline_unavailable");
-    assert_eq!(changed["validations"][0]["outcome"], "current");
+    assert_eq!(changed["baseline_status"], "verified");
+    assert!(!changed["changes"].as_array().unwrap().is_empty());
+    assert_eq!(changed["validations"][0]["outcome"], "index-current");
     Ok(())
 }
 
@@ -133,6 +121,7 @@ fn four_conditional_reads_and_remembered_paths_preserve_exact_identity() -> Resu
 fn changes_rejects_invalid_scope_and_bounds_and_preserves_selector_ordinals() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let _service = common::Service::start(root.path(), state.path(), "default");
     fs::write(
         root.path().join("scope.txt"),
         "Original northern observatory evidence.\n",
@@ -172,6 +161,8 @@ fn equal_generation_foreign_and_forked_tokens_are_rejected() -> Result<()> {
     let root = tempfile::tempdir()?;
     let first_state = tempfile::tempdir()?;
     let second_state = tempfile::tempdir()?;
+    let _first = common::Service::start(root.path(), first_state.path(), "default");
+    let _second = common::Service::start(root.path(), second_state.path(), "default");
     fs::write(
         root.path().join("identity.txt"),
         "Independent original polar evidence.\n",

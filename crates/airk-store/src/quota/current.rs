@@ -77,7 +77,7 @@ impl CurrentGrant {
         validate_writer(&self.quota, writer, &self.record.scope.collection)?;
         let _lock = self.quota.lock()?;
         self.require_current()?;
-        let directory = self.quota.root.join(".quota-1.2/current-grants");
+        let directory = self.quota.control_path().join("current-grants");
         fs::remove_file(directory.join(self.record.scope.filename()))?;
         crate::maintenance::sync_parent(&directory)?;
         Ok(())
@@ -86,8 +86,8 @@ impl CurrentGrant {
     fn require_current(&self) -> Result<()> {
         let path = self
             .quota
-            .root
-            .join(".quota-1.2/current-grants")
+            .control_path()
+            .join("current-grants")
             .join(self.record.scope.filename());
         let current = read_record(&path)?;
         ensure!(
@@ -99,6 +99,24 @@ impl CurrentGrant {
 }
 
 impl Quota {
+    pub(crate) fn verify_current_allowance(
+        &self,
+        scope: &CurrentGrantScope,
+        minimum: u64,
+    ) -> Result<u64> {
+        let _lock = self.lock()?;
+        let record = read_record(
+            &self
+                .control_path()
+                .join("current-grants")
+                .join(scope.filename()),
+        )?;
+        ensure!(
+            record.scope == *scope && record.bytes >= minimum,
+            "missing or insufficient service WAL recovery allowance"
+        );
+        Ok(record.bytes)
+    }
     /// Call under lifecycle -> collection writer -> exclusive current gate. The
     /// ledger lock is released before callers start any SQLite transaction.
     pub fn reserve_current(
@@ -111,8 +129,8 @@ impl Quota {
         ensure!(bytes > 0, "current quota grant must be positive");
         let _lock = self.lock()?;
         let path = self
-            .root
-            .join(".quota-1.2/current-grants")
+            .control_path()
+            .join("current-grants")
             .join(scope.filename());
         ensure!(
             !path.try_exists()?,
@@ -139,8 +157,8 @@ impl Quota {
         validate_writer(self, writer, &scope.collection)?;
         let _lock = self.lock()?;
         let path = self
-            .root
-            .join(".quota-1.2/current-grants")
+            .control_path()
+            .join("current-grants")
             .join(scope.filename());
         if !path.try_exists()? {
             return Ok(None);
@@ -156,12 +174,12 @@ impl Quota {
     /// Conservative orphan discovery. The collection journal, inspected outside
     /// the ledger lock, decides whether each grant is adopted or explicitly retired.
     pub fn current_grants(&self, writer: &crate::WriterLock) -> Result<Vec<CurrentGrant>> {
-        let collection = writer
+        let directory = writer
             .path
             .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
             .context("invalid current grant writer")?;
+        let managed = crate::managed_collection::ManagedPath::parse(directory)?;
+        let collection = managed.collection;
         validate_writer(self, writer, collection)?;
         let _lock = self.lock()?;
         Ok(read_records(self, true, None)?
@@ -177,10 +195,20 @@ impl Quota {
 
 fn validate_writer(quota: &Quota, writer: &crate::WriterLock, collection: &str) -> Result<()> {
     crate::validate_collection(collection)?;
-    let expected = quota.root.join("collections-1.2").join(collection);
+    let directory = writer.path.parent().context("writer directory missing")?;
+    let store = crate::FileStore::new(directory);
+    ensure!(
+        store.collection_namespace()? == quota.collection_namespace(),
+        "current quota writer namespace mismatch"
+    );
+    let expected = quota
+        .root
+        .join(store.collection_namespace()?)
+        .join(collection);
     unlinked(&expected)?;
     ensure!(
-        writer.path.parent().context("writer has no directory")? == expected.canonicalize()?,
+        store.managed_path()?.logical.canonicalize()? == expected.canonicalize()?
+            && store.managed_path()?.collection == collection,
         "current quota grant requires its collection writer"
     );
     Ok(())
@@ -245,7 +273,7 @@ fn read_records(
     cleanup: bool,
     deadline: Option<Instant>,
 ) -> Result<Vec<DurableRecord>> {
-    let directory = quota.root.join(".quota-1.2/current-grants");
+    let directory = quota.control_path().join("current-grants");
     let entries = match fs::read_dir(&directory) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(vec![]),
@@ -306,10 +334,10 @@ pub(super) fn records(
 }
 
 fn persist(quota: &Quota, record: &DurableRecord, create: bool) -> Result<()> {
-    let directory = quota.root.join(".quota-1.2/current-grants");
+    let directory = quota.control_path().join("current-grants");
     fs::create_dir_all(&directory)?;
     unlinked(&directory)?;
-    crate::maintenance::sync_parent(&quota.root.join(".quota-1.2"))?;
+    crate::maintenance::sync_parent(&quota.control_path())?;
     let path = directory.join(record.scope.filename());
     if create {
         ensure!(!path.try_exists()?, "current quota grant already exists");

@@ -8,6 +8,8 @@
 !scripts/
 !scripts/provision-local-model.py
 !scripts/license-notices.py
+!scripts/build-service-runtime.py
+!scripts/build-service-container.py
 !scripts/ci-metrics.py
 !scripts/ci-prune-target.py
 !.config/

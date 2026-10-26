@@ -8,7 +8,7 @@ use airk_store::{
     current::{
         ArtifactChange, CapturedInput, analysis::AnalysisEvidence, resources::ResourceChange,
     },
-    quota::{Quota, Reservation},
+    quota::Reservation,
 };
 use anyhow::{Context, Result, ensure};
 
@@ -40,9 +40,7 @@ impl Kernel {
             {
                 changes.insert(
                     path.clone(),
-                    ArtifactChange::Upsert(Box::new(CapturedInput {
-                        artifact: artifact.clone(),
-                    })),
+                    ArtifactChange::Upsert(Box::new(CapturedInput::new(artifact.clone()))),
                 );
             }
         }
@@ -79,9 +77,7 @@ impl Kernel {
             configuration
                 .model
                 .as_ref()
-                .map(|m| {
-                    airk_retrieval::model::EmbeddingModel::open_objects(self.store.directory(), m)
-                })
+                .map(|m| self.open_configured_model(m))
                 .transpose()?
         } else {
             None
@@ -100,7 +96,7 @@ impl Kernel {
                 working_memory_bytes: 256 << 20,
             },
         });
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let result = CurrentUpdater {
             store: &self.store,
             quota: &quota,

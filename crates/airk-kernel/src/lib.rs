@@ -27,13 +27,30 @@ pub mod maintenance;
 /// Read-only native capability/catalog inspection; does not open collection state.
 pub use airk_retrieval::model_catalog::inspect_catalog as inspect_model_catalog;
 mod publication;
+mod remote_tokenization;
 mod resources;
+pub mod retrieval_retry;
 pub mod roots;
 pub mod scheduler;
-pub mod service;
+pub mod service_broker;
+pub mod service_configuration;
+mod service_enrichment;
+pub mod service_execution;
+mod service_freshness;
+pub mod service_inspection;
+pub mod service_projects;
+mod service_publication;
+pub mod service_resource_observations;
+pub mod service_resources;
+mod shared_models;
+pub mod source_watch;
 pub mod storage;
+#[cfg(feature = "local-inference")]
 mod tokenization;
+#[cfg(not(feature = "local-inference"))]
+use remote_tokenization as tokenization;
 pub mod usage;
+pub mod usage_page;
 pub mod vectors;
 pub mod watcher;
 use airk_retrieval::truncate_utf8;
@@ -43,6 +60,13 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+#[cfg(test)]
+fn unlinked_tempdir() -> Result<tempfile::TempDir> {
+    // Strict model/registration fixtures use the same physical paths that
+    // native client preparation supplies, including on macOS's /var alias.
+    Ok(tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?)
+}
+
 #[derive(Clone)]
 pub struct Kernel {
     progress: Option<ProgressObserver>,
@@ -50,6 +74,9 @@ pub struct Kernel {
     collection: String,
     data_root: PathBuf,
     store: FileStore,
+    service_collection: Option<airk_store::service::collection::Collection>,
+    service_selection: Option<Arc<airk_store::service::collection::Selection>>,
+    service_freshness: Option<Arc<service_freshness::Cache>>,
 }
 
 type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
@@ -90,6 +117,8 @@ fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
 
 #[derive(Serialize)]
 pub struct Status {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_availability: Option<service_projects::SourceObservation>,
     pub execution: airk_core::execution::ExecutionPlan,
     pub indexing: airk_core::extraction::IndexCoverage,
     pub freshness: airk_core::changes::FreshnessObservation,
@@ -165,7 +194,26 @@ impl Kernel {
         data_dir: Option<PathBuf>,
         collection: &str,
     ) -> Result<Self> {
-        Self::open_collection_with_recovery(root, data_dir, collection, true)
+        Self::open_collection_with_layout(root, data_dir, collection, true, false)
+    }
+
+    /// Service-only fresh storage. Never migrates or opens a legacy collection.
+    pub fn open_service_collection(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, true, true)
+    }
+
+    /// The project owner can report failed captured recovery and accept an explicit
+    /// fresh rebuild without silently discarding the failed journal on startup.
+    pub fn open_service_collection_for_diagnostics(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+    ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, false, true)
     }
 
     /// Open retained state for inspection without replaying pending publications
@@ -175,7 +223,7 @@ impl Kernel {
         data_dir: Option<PathBuf>,
         collection: &str,
     ) -> Result<Self> {
-        Self::open_collection_with_recovery(root, data_dir, collection, false)
+        Self::open_collection_with_layout(root, data_dir, collection, false, false)
     }
 
     fn open_collection_with_recovery(
@@ -184,16 +232,35 @@ impl Kernel {
         collection: &str,
         recover: bool,
     ) -> Result<Self> {
+        Self::open_collection_with_layout(root, data_dir, collection, recover, false)
+    }
+
+    fn open_collection_with_layout(
+        root: impl AsRef<Path>,
+        data_dir: Option<PathBuf>,
+        collection: &str,
+        recover: bool,
+        service: bool,
+    ) -> Result<Self> {
         airk_store::validate_collection(collection)?;
-        let root = root
-            .as_ref()
-            .canonicalize()
-            .context("resolve workspace root")?;
+        let (root, source_available) = if service && !recover {
+            service_projects::retained_root(root.as_ref())?
+        } else {
+            (
+                root.as_ref()
+                    .canonicalize()
+                    .context("resolve workspace root")?,
+                true,
+            )
+        };
         ensure!(
             root.to_str().is_some(),
             "non-UTF-8 workspace root is unsupported; collection identities must be lossless"
         );
-        ensure!(root.is_dir(), "workspace root must be a directory");
+        ensure!(
+            !source_available || root.is_dir(),
+            "workspace root must be a directory"
+        );
         let directory = data_dir.unwrap_or_else(|| root.join(".airk"));
         #[cfg(windows)]
         let directory = managed_data_path(directory)?;
@@ -208,12 +275,44 @@ impl Kernel {
                 "data directory must not contain the workspace root"
             );
         }
+        let service_collection = if service {
+            let collection = if source_available {
+                std::fs::create_dir_all(&directory)?;
+                airk_store::service::collection::Collection::initialize(
+                    &directory,
+                    root.to_str().context("non-UTF-8 workspace")?,
+                    collection,
+                    service_broker::new_instance_id()?,
+                )?
+            } else {
+                airk_store::service::collection::Collection::existing(
+                    &directory,
+                    root.to_str().context("non-UTF-8 workspace")?,
+                    collection,
+                )
+                .context("source unavailable and no matching retained service collection exists")?
+            };
+            if source_available {
+                collection.recover_abandoned_replacement()?;
+            }
+            Some(collection)
+        } else {
+            None
+        };
+        let store = if let Some(collection) = &service_collection {
+            collection.selected_store()?
+        } else {
+            FileStore::new(directory.join("collections-1.2").join(collection))
+        };
         let kernel = Self {
             progress: None,
             root,
             collection: collection.into(),
             data_root: directory.clone(),
-            store: FileStore::new(directory.join("collections-1.2").join(collection)),
+            store,
+            service_collection,
+            service_selection: None,
+            service_freshness: None,
         };
         if recover {
             kernel.recover_runtime_bootstrap()?;
@@ -233,11 +332,7 @@ impl Kernel {
                     Err(_) => true,
                 };
                 if needs_recovery {
-                    current::recover_current(
-                        &kernel.store,
-                        &airk_store::quota::Quota::open(&kernel.data_root)?,
-                        &scope,
-                    )?;
+                    current::recover_current(&kernel.store, &kernel.collection_quota()?, &scope)?;
                 }
             }
         }
@@ -248,8 +343,49 @@ impl Kernel {
         self.root.to_string_lossy().into_owned()
     }
 
+    fn collection_quota(&self) -> Result<airk_store::quota::Quota> {
+        airk_store::quota::Quota::for_store(&self.store)
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
+    }
+    /// Validate configured source locations before a service operation captures originals.
+    /// Native adapters must keep one resident materialization budget shared
+    /// across every client and across transport cancellation.
+    pub fn is_service_collection(&self) -> bool {
+        self.service_collection.is_some()
+    }
+
+    pub fn require_service_sources(&self) -> Result<()> {
+        if self.service_collection.is_some() {
+            service_projects::require_source(&self.root)?;
+            let roots =
+                airk_store::roots::RootConfig::load(self.store.directory(), &self.root_id())?;
+            for root in roots.roots.values() {
+                service_projects::require_source(Path::new(root))?;
+            }
+        }
+        Ok(())
+    }
+    fn service_source_observation(&self) -> Option<service_projects::SourceObservation> {
+        self.service_collection.as_ref()?;
+        use service_projects::SourceState;
+        let (state, reason) = match self.require_service_sources() {
+            Ok(()) => (SourceState::Available, None),
+            Err(error) if error.is::<service_projects::SourceUnavailable>() => (
+                SourceState::Unavailable,
+                Some(service_projects::problem(&error)),
+            ),
+            Err(_) => (SourceState::Unknown, None),
+        };
+        Some(service_projects::SourceObservation {
+            state,
+            reason,
+            observed_unix_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
+        })
     }
     /// Observers receive stage updates and committed boundaries and must not reenter the writer.
     pub fn with_index_progress(
@@ -260,6 +396,7 @@ impl Kernel {
         self
     }
     pub(crate) fn emit_progress(&self, mut progress: airk_core::readiness::IndexProgress) {
+        crate::service_execution::progress_indexed(&progress);
         progress.collection = self.collection.clone();
         if let Some(observer) = &self.progress {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer(&progress)));
@@ -352,6 +489,11 @@ impl Kernel {
     }
 
     fn configured_model(&self) -> Result<Option<String>> {
+        if self.store.shared_model_runtime().is_some() {
+            return Ok(self
+                .configured_model_objects(false)?
+                .map(|set| set.legacy_identity));
+        }
         if !self.vectors_enabled()? {
             return Ok(None);
         }
@@ -371,7 +513,7 @@ impl Kernel {
         &self,
         maximum: u64,
     ) -> Result<airk_store::quota::Reservation> {
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         // The reservation includes temporary and retained bytes together. Each
         // provider charges before writes; exhausting it leaves the active pin intact.
         let status = quota.status()?;

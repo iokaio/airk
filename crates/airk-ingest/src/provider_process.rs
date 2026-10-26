@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::mpsc,
     thread,
     time::{Duration, Instant},
@@ -47,11 +47,14 @@ impl ProviderCommand {
 }
 
 pub(crate) struct Process {
-    pub child: Child,
+    #[cfg(windows)]
+    pub child: std::process::Child,
+    #[cfg(unix)]
+    pub child: airk_process::GroupChild,
     #[cfg(target_os = "macos")]
     memory_limit: Option<usize>,
     #[cfg(windows)]
-    job: windows_sys::Win32::Foundation::HANDLE,
+    job: airk_process::ChildJob,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct ProcessLimits {
@@ -88,36 +91,13 @@ impl Process {
             command.env("RAYON_NUM_THREADS", "1");
         }
         #[cfg(unix)]
-        {
-            use std::os::unix::process::CommandExt;
-            command.process_group(0);
-            if let Some(limits) = limits {
-                // SAFETY: only async-signal-safe setrlimit calls run between fork and exec.
-                unsafe {
-                    command.pre_exec(move || {
-                        #[cfg(not(target_os = "macos"))]
-                        let resources = [
-                            (libc::RLIMIT_AS, limits.memory_bytes as libc::rlim_t),
-                            (libc::RLIMIT_CPU, limits.cpu_seconds as libc::rlim_t),
-                        ];
-                        // Darwin rejects a finite RLIMIT_AS below the inherited
-                        // parent's existing VM mappings. Observe physical footprint
-                        // from the parent instead; CPU remains a kernel-enforced limit.
-                        #[cfg(target_os = "macos")]
-                        let resources = [(libc::RLIMIT_CPU, limits.cpu_seconds as libc::rlim_t)];
-                        for (resource, value) in resources {
-                            let limit = libc::rlimit {
-                                rlim_cur: value,
-                                rlim_max: value,
-                            };
-                            if libc::setrlimit(resource, &limit) != 0 {
-                                return Err(std::io::Error::last_os_error());
-                            }
-                        }
-                        Ok(())
-                    });
-                }
-            }
+        let native_limits = limits.map(|limits| airk_process::child_group::ProviderLimits {
+            memory_bytes: limits.memory_bytes,
+            cpu_seconds: limits.cpu_seconds,
+        });
+        #[cfg(unix)]
+        if let Some(limits) = native_limits {
+            limits.configure(&mut command);
         }
         #[cfg(windows)]
         {
@@ -125,26 +105,28 @@ impl Process {
             // No provider instruction can execute before job containment is installed.
             command.creation_flags(0x08000000 | 0x00000004); // CREATE_NO_WINDOW | CREATE_SUSPENDED
         }
+        #[cfg(windows)]
+        let job = airk_process::ChildJob::unassigned()?;
+        #[cfg(windows)]
         let child = command
             .spawn()
+            .context("start explicitly provisioned local provider")?;
+        #[cfg(unix)]
+        let child = airk_process::GroupChild::spawn_provider(&mut command, native_limits)
             .context("start explicitly provisioned local provider")?;
         #[cfg(windows)]
         {
             use std::os::windows::io::AsRawHandle;
-            use windows_sys::Win32::{Foundation::CloseHandle, System::JobObjects::*};
+            use windows_sys::Win32::System::JobObjects::*;
             // SAFETY: all pointers reference initialized structs, and owned handles remain
             // valid until Drop. Closing this job terminates its descendant processes.
-            let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
             let mut process = Self { child, job };
-            if job.is_null() {
-                anyhow::bail!(
-                    "create provider process job: {}",
-                    std::io::Error::last_os_error()
-                );
-            }
+            let job = process.job.as_raw_handle();
             let mut job_limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION =
                 unsafe { std::mem::zeroed() };
-            job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            job_limits.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_ACTIVE_PROCESS;
+            job_limits.BasicLimitInformation.ActiveProcessLimit = 32;
             if let Some(limits) = limits {
                 job_limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_PROCESS_MEMORY
                     | JOB_OBJECT_LIMIT_JOB_MEMORY
@@ -171,10 +153,6 @@ impl Process {
                 let error = std::io::Error::last_os_error();
                 let _ = process.child.kill();
                 let _ = process.child.wait();
-                unsafe {
-                    CloseHandle(job);
-                }
-                process.job = std::ptr::null_mut();
                 anyhow::bail!("contain provider process job: {error}");
             }
             resume_suspended(process.child.id()).context("resume contained provider")?;
@@ -193,7 +171,7 @@ impl Process {
     fn check_memory_budget(&mut self) -> Result<()> {
         #[cfg(target_os = "macos")]
         if let Some(limit) = self.memory_limit {
-            // A reaped child has no further allocations. A concurrent exit between
+            // An exited leader has no further allocations. A concurrent exit between
             // this check and proc_pid_rusage is handled by the second try_wait.
             if self.child.try_wait()?.is_some() {
                 return Ok(());
@@ -280,22 +258,14 @@ fn resume_suspended(pid: u32) -> Result<()> {
 impl Drop for Process {
     fn drop(&mut self) {
         #[cfg(windows)]
-        if !self.job.is_null() {
-            // SAFETY: this is the unique owned job handle.
-            unsafe {
-                windows_sys::Win32::Foundation::CloseHandle(self.job);
-            }
-        }
+        self.job.drain();
         #[cfg(unix)]
+        self.child.drain();
+        #[cfg(windows)]
         {
-            // SAFETY: a negative child PID addresses the private process group created
-            // above; the provider never shares AIRK's process group.
-            unsafe {
-                libc::kill(-(self.child.id() as i32), libc::SIGKILL);
-            }
+            let _ = self.child.kill();
+            let _ = self.child.wait();
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 

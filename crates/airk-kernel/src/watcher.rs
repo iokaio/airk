@@ -58,7 +58,7 @@ pub struct NativeWatcher {
     backend_error: Option<String>,
 }
 
-fn deliver(
+pub(crate) fn deliver(
     sender: &SyncSender<Vec<PathBuf>>,
     overflow: &AtomicBool,
     result: notify::Result<notify::Event>,
@@ -434,7 +434,7 @@ fn canonical_managed_path(path: &Path) -> Result<PathBuf> {
     }
 }
 
-fn comparison_path(path: &Path) -> PathBuf {
+pub(crate) fn comparison_path(path: &Path) -> PathBuf {
     #[cfg(windows)]
     {
         PathBuf::from(
@@ -449,7 +449,7 @@ fn comparison_path(path: &Path) -> PathBuf {
     }
 }
 
-fn relevant(path: &Path, root: &Path, data: &Path) -> bool {
+pub(crate) fn relevant(path: &Path, root: &Path, data: &Path) -> bool {
     let path = comparison_path(path);
     let root = comparison_path(root);
     if path.starts_with(comparison_path(data)) {

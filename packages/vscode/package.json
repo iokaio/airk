@@ -1,8 +1,8 @@
 {
   "name": "airk",
   "displayName": "AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents",
-  "description": "Give Claude Code, Codex, Gemini CLI, Copilot and other MCP agents a local index of code and documents. Index projects concurrently with a bundled offline model and get bounded, cited evidence. No cloud service or API key.",
-  "version": "1.3.1",
+  "description": "Local indexed evidence for coding agents, with a native service, direct MCP retrieval and a shared offline model. No cloud service or API key.",
+  "version": "1.4.4",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -100,8 +100,14 @@
           "type": "webview"
         },
         {
+          "id": "airk.service",
+          "name": "Service Console",
+          "type": "webview",
+          "visibility": "collapsed"
+        },
+        {
           "id": "airk.collectionsView",
-          "name": "Collections",
+          "name": "Workspace Projects",
           "visibility": "collapsed"
         }
       ]
@@ -115,7 +121,7 @@
           {
             "id": "airk.indexStep",
             "title": "Index this workspace",
-            "description": "AIRK runs only in trusted workspaces. If this folder is not trusted yet, use [Manage Workspace Trust](command:workbench.trust.manage). Automatic indexing uses per-user storage by default. To use another drive, [Choose Index Storage Folder](command:airk.chooseStorage). The picker holds new indexing jobs; if a pass is already running, AIRK waits for it to finish before switching folders. Existing indexes stay in their previous location.\n[Index Now](command:airk.index)\nThe AIRK status-bar item shows measured coverage when the scan finishes.",
+            "description": "AIRK registers trusted roots with the per-user native service. If needed, use [Manage Workspace Trust](command:workbench.trust.manage). Review the source, collection and separate index storage before registration. Choose manual indexing or automatic watching; native watching continues after editor windows close. [Choose Index Storage Folder](command:airk.chooseStorage) reviews a new storage binding and preserves previous indexes.\n[Index Now](command:airk.index)\n[Open Service Console](command:airk.serviceConnect) to inspect cached readiness, native jobs and failures.",
             "media": {
               "image": "images/index-to-context.png",
               "altText": "Saved files become a published index before an agent retrieves evidence."
@@ -126,8 +132,8 @@
           },
           {
             "id": "airk.indexModeStep",
-            "title": "Choose when to index",
-            "description": "By default AIRK updates the index a few seconds after file changes settle, which also catches edits made by coding agents. Switch to When idle, On save or Manual if you prefer.\n[Choose Indexing Mode](command:airk.indexMode)",
+            "title": "Choose native automatic watching",
+            "description": "Choose manual indexing or automatic native watching for the selected project. The native service coalesces source changes and reconciles missed notifications independently of editor windows. Project pause/resume applies across clients.\n[Choose Native Automatic Watching](command:airk.indexMode)\nThe retired editor idle/save timers and soft storage budget do not control native work.",
             "media": {
               "image": "images/index-to-context.png",
               "altText": "Edits are batched into a new published index revision."
@@ -139,7 +145,7 @@
           {
             "id": "airk.setupAgentStep",
             "title": "Connect a coding agent",
-            "description": "Choose the agent you want to use. The guide shows the correct workspace, configuration and reload steps. For Codex, create a missing project config directly or open an existing file to merge the entry. Claude Code, Gemini CLI and Google Antigravity can install project configuration while preserving existing settings. Enable AIRK for Copilot opens VS Code’s MCP controls for start/trust prompts. Remaining agents get setup guidance.\n[Connect Coding Agent](command:airk.setupAgent)",
+            "description": "Choose the agent and review the stable-launcher MCP configuration for this registered project. Recognized legacy Claude Code, Gemini CLI and Antigravity JSON entries have an explicit diff and guarded replacement; existing TOML and other formats use manual merges. Unrelated settings are preserved. Use the agent’s own controls to enable and verify its connection.\n[Connect Coding Agent](command:airk.setupAgent)",
             "media": {
               "image": "images/local-evidence.png",
               "altText": "Several coding agents connect to the same workspace-scoped AIRK collection."
@@ -151,7 +157,7 @@
           {
             "id": "airk.verifyMcpStep",
             "title": "Verify the connection",
-            "description": "Check AIRK’s helper, then copy the verification prompt from the connection guide and send it in your coding agent. A successful helper check does not establish the agent’s connection.\n[Check AIRK MCP Helper](command:airk.verifyMcp)",
+            "description": "Check the native MCP handshake and retained readiness without scheduling indexing, then send the connection guide’s verification prompt in your coding agent. This separate bounded check does not establish the agent’s connection.\n[Check AIRK MCP Helper](command:airk.verifyMcp)",
             "media": {
               "image": "images/local-evidence.png",
               "altText": "An agent retrieves bounded evidence from a published local collection."
@@ -192,23 +198,18 @@
       "view/item/context": [
         {
           "command": "airk.treeIndex",
-          "when": "view == airk.collectionsView && viewItem == airkActiveCollection",
+          "when": "view == airk.collectionsView && viewItem == airkServiceProject",
           "group": "inline@1"
         },
         {
           "command": "airk.treeReindex",
-          "when": "view == airk.collectionsView && viewItem == airkActiveCollection",
+          "when": "view == airk.collectionsView && viewItem == airkServiceProject",
           "group": "inline@2"
         },
         {
           "command": "airk.treePause",
-          "when": "view == airk.collectionsView && viewItem == airkActiveCollection",
+          "when": "view == airk.collectionsView && viewItem == airkServiceProject",
           "group": "inline@3"
-        },
-        {
-          "command": "airk.treeRemove",
-          "when": "view == airk.collectionsView && viewItem == airkInactiveCollection",
-          "group": "inline@1"
         }
       ]
     },
@@ -245,19 +246,19 @@
       {
         "command": "airk.treePause",
         "category": "AIRK",
-        "title": "Pause Auto-indexing in This Window",
+        "title": "Pause Native Project",
         "icon": "$(debug-pause)"
       },
       {
         "command": "airk.treeRemove",
         "category": "AIRK",
-        "title": "Remove This Inactive Collection…",
+        "title": "Review Project Unregister and Cleanup…",
         "icon": "$(trash)"
       },
       {
         "command": "airk.menu",
         "category": "AIRK",
-        "title": "Open Controls"
+        "title": "Open Service Console"
       },
       {
         "command": "airk.index",
@@ -272,17 +273,17 @@
       {
         "command": "airk.indexMode",
         "category": "AIRK",
-        "title": "Choose Indexing Mode…"
+        "title": "Choose Native Automatic Watching…"
       },
       {
         "command": "airk.pause",
         "category": "AIRK",
-        "title": "Pause Auto-indexing"
+        "title": "Pause Native Project"
       },
       {
         "command": "airk.resume",
         "category": "AIRK",
-        "title": "Resume Auto-indexing"
+        "title": "Resume Native Project"
       },
       {
         "command": "airk.chooseStorage",
@@ -292,12 +293,12 @@
       {
         "command": "airk.collections",
         "category": "AIRK",
-        "title": "Manage Collections and Disk Space"
+        "title": "Manage Native Projects and Disk Space"
       },
       {
         "command": "airk.removeCollection",
         "category": "AIRK",
-        "title": "Remove Unneeded Collection…"
+        "title": "Review Project Unregister and Cleanup…"
       },
       {
         "command": "airk.extractionPolicy",
@@ -356,7 +357,7 @@
       },
       {
         "command": "airk.storageLimits",
-        "title": "Configure Storage Limits…",
+        "title": "Review Native Storage Quotas…",
         "category": "AIRK"
       },
       {
@@ -366,24 +367,117 @@
       },
       {
         "command": "airk.currentMaintenance",
-        "title": "Reclaim Unreferenced Index Objects",
+        "title": "Review Native Index Maintenance…",
         "category": "AIRK"
+      },
+      {
+        "command": "airk.serviceConnect",
+        "category": "AIRK",
+        "title": "Connect / Reconnect Service"
+      },
+      {
+        "command": "airk.serviceStart",
+        "category": "AIRK",
+        "title": "Start Service"
+      },
+      {
+        "command": "airk.serviceRestart",
+        "category": "AIRK",
+        "title": "Restart Service"
+      },
+      {
+        "command": "airk.serviceStop",
+        "category": "AIRK",
+        "title": "Stop Service"
+      },
+      {
+        "command": "airk.serviceLogs",
+        "category": "AIRK",
+        "title": "Open Service Logs"
+      },
+      {
+        "command": "airk.serviceResources",
+        "category": "AIRK",
+        "title": "Service Resource Settings"
+      },
+      {
+        "command": "airk.serviceDiagnostics",
+        "category": "AIRK",
+        "title": "Preview Service Diagnostics"
       }
     ],
     "configuration": [
       {
         "title": "AIRK: Command Line",
         "properties": {
+          "airk.mcp.responseMode": {
+            "type": "string",
+            "enum": [
+              "terse",
+              "full"
+            ],
+            "enumDescriptions": [
+              "Compact evidence for routine discovery and navigation.",
+              "Detailed provenance, coverage limitations and readiness for investigation."
+            ],
+            "default": "terse",
+            "scope": "machine",
+            "markdownDescription": "MCP response detail. Terse is the default. Choose Full for provenance audits, parser/coverage limitations or missing/surprising results. Reload the MCP connection after changing this setting. Agents can override a single call with `response_mode`."
+          },
           "airk.cli.autoInstall": {
             "type": "boolean",
             "default": true,
             "scope": "machine",
-            "markdownDescription": "Install the bundled CLI on first trusted activation and update it with the extension. Adds AIRK to new VS Code terminals and the user PATH (Windows) or Bash, Zsh and fish startup files (macOS/Linux). Restart external terminal applications after installation. Disable in User settings to skip future automatic setup; existing CLI files and PATH entries remain. Use **AIRK: Install or Repair CLI** to retry setup."
+            "markdownDescription": "Install the native runtime and airk terminal command on trusted activation; register new workspace folders and start automatic indexing. Preserve existing 1.4 storage and watching selections during compatible runtime updates. Adds AIRK to new VS Code terminals and the user PATH (Windows) or Bash, Zsh and fish startup files (macOS/Linux). Restart external terminal applications after installation. Disable in User settings to skip future automatic installation and workspace registration; existing CLI files and PATH entries remain. Use **AIRK: Install or Repair CLI** to retry setup."
+          },
+          "airk.service.channel": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "preview"
+            ],
+            "default": "stable",
+            "markdownDescription": "Service runtime channel on this execution host. Only user settings are read; workspace values cannot redirect service discovery.",
+            "scope": "machine"
+          },
+          "airk.service.installDir": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Absolute user installation directory on this execution host. Empty uses native account defaults. Workspace values are ignored.",
+            "scope": "machine"
+          },
+          "airk.service.managedSource": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Absolute organization-provided read-only runtime directory. Requires a separately approved inventory digest. Workspace values are ignored.",
+            "scope": "machine"
+          },
+          "airk.service.managedSha256": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Separately supplied SHA-256 approval for the organization runtime inventory. A manifest checksum alone is not approval.",
+            "scope": "machine"
+          },
+          "airk.service.managedLifecycle": {
+            "type": "string",
+            "enum": [
+              "external",
+              "user-on-demand"
+            ],
+            "default": "external",
+            "markdownDescription": "Who owns the organization runtime lifetime. External mode disables competing user start, stop and restart.",
+            "scope": "machine"
+          },
+          "airk.service.managedStateDir": {
+            "type": "string",
+            "default": "",
+            "markdownDescription": "Optional absolute writable state directory for the organization runtime. Workspace values are ignored.",
+            "scope": "machine"
           }
         }
       },
       {
-        "title": "AIRK: Indexing",
+        "title": "AIRK: Agent connections",
         "order": 1,
         "properties": {
           "airk.mcp.registrationEnabled": {
@@ -391,67 +485,6 @@
             "default": true,
             "scope": "machine",
             "markdownDescription": "Offer AIRK collections through VS Code's MCP registration provider on this extension host. Turning this off removes automatic definitions and prevents new provider resolutions; use **MCP: List Servers** to manage running connections. It does not pause indexing, remove manual MCP entries or disable external coding agents."
-          },
-          "airk.index.mode": {
-            "type": "string",
-            "enum": [
-              "debounced",
-              "idle",
-              "onSave",
-              "manual"
-            ],
-            "enumItemLabels": [
-              "After edits settle (default)",
-              "When idle",
-              "On save",
-              "Manual"
-            ],
-            "markdownEnumDescriptions": [
-              "Index once file changes have been quiet for `#airk.index.quietMs#`. Catches edits made by coding agents and other tools, not just this editor.",
-              "Wait until file changes have settled **and** the editor has had no typing or selection activity for `#airk.index.idleMs#`. Fewest interruptions; slowest to update.",
-              "Index documents you save in this editor. Changes made outside VS Code, for example by a coding agent, wait for **AIRK: Index Now**.",
-              "Never index automatically. Use **AIRK: Index Now** from the status-bar controls or the Command Palette."
-            ],
-            "default": "debounced",
-            "scope": "window",
-            "order": 1,
-            "markdownDescription": "When AIRK updates the index automatically. In every mode, **Index Now**, **Check AIRK MCP Helper** and an agent's first connection to an unindexed folder still index explicitly. Pausing auto-indexing overrides this setting until you resume."
-          },
-          "airk.index.quietMs": {
-            "type": "number",
-            "default": 2000,
-            "minimum": 250,
-            "maximum": 60000,
-            "scope": "window",
-            "order": 2,
-            "markdownDescription": "Milliseconds without new file changes before an automatic batch starts. Lower values index sooner but may start in the middle of a multi-file change; raise this if a coding agent that writes many files triggers repeated small batches. Not used in **Manual** mode."
-          },
-          "airk.index.idleMs": {
-            "type": "number",
-            "default": 10000,
-            "minimum": 1000,
-            "maximum": 300000,
-            "scope": "window",
-            "order": 3,
-            "markdownDescription": "**When idle** mode only. Milliseconds without editor activity (typing or moving the selection) before indexing starts; the quiet period `#airk.index.quietMs#` must also have passed. Idle mode never uses `#airk.index.maxDelayMs#` to start a batch while you are active."
-          },
-          "airk.index.maxDelayMs": {
-            "type": "number",
-            "default": 30000,
-            "minimum": 1000,
-            "maximum": 300000,
-            "scope": "window",
-            "order": 4,
-            "markdownDescription": "**After edits settle** and **On save** modes. The longest a continuous stream of changes can postpone a batch, so a folder that a coding agent edits non-stop is still indexed at least this often. Still subject to `#airk.index.minIntervalMs#`, pause state and the storage budget."
-          },
-          "airk.index.minIntervalMs": {
-            "type": "number",
-            "default": 1000,
-            "minimum": 0,
-            "maximum": 300000,
-            "scope": "window",
-            "order": 5,
-            "markdownDescription": "Minimum milliseconds between the end of one automatic indexing job for a folder and the start of the next. Jobs run one at a time in each VS Code window. Raise this on slow disks or for large collections. Manual **Index Now** is not delayed."
           }
         }
       },
@@ -464,15 +497,7 @@
             "default": "",
             "scope": "machine",
             "order": 1,
-            "markdownDescription": "Absolute folder for index data on **this machine**. Empty uses VS Code's per-user extension storage. AIRK reads only your user setting; workspace settings cannot redirect storage. Prefer **AIRK: Choose Index Storage Folder…**, which rejects a folder that is, or contains, an open workspace folder.\n\nChanging this builds new indexes at the new location. Existing indexes stay where they were and remain available in **Manage Collections and Disk Space**. Restart agents that are already connected so they use the new location."
-          },
-          "airk.storage.maxBytes": {
-            "type": "number",
-            "default": 0,
-            "minimum": 0,
-            "scope": "machine",
-            "order": 2,
-            "markdownDescription": "Soft limit, in bytes, on all index data in the current storage folder. `0` turns the limit off. Source files and the helper cache are not counted. Example: `2147483648` is 2 GiB.\n\nWhen usage reaches the limit, automatic indexing stops and the status bar shows **Storage budget**. **Index Now** still runs and can exceed the limit. Nothing is deleted automatically: reclaim unreferenced current objects or remove an unneeded collection, or raise the limit, then run **Resume Auto-indexing**."
+            "markdownDescription": "Absolute folder for newly reviewed project index storage on this execution host. Empty uses the native service’s per-user data directory. Only your user setting is read; workspace settings cannot redirect storage. **AIRK: Choose Index Storage Folder…** reviews a fresh native binding. Existing indexes stay owned at their previous locations; the Service Console offers separate unregister and guarded cleanup. Native storage quotas apply to manual and automatic work and are configured through project settings."
           }
         }
       }

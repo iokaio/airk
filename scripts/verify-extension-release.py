@@ -54,10 +54,11 @@ def verify(directory, commit, version, channel, *, receipts=None):
         package.verify_vsix(archive, receipt["payload"], executable, platform, version,
                             channel == "preview", receipt["display_name"])
         with zipfile.ZipFile(archive) as zipped:
-            native_bytes = zipped.read("extension/native/manifest.json")
+            paired = tuple(int(part) for part in version.split(".")[:2]) >= (1, 4)
+            native_bytes = zipped.read("extension/native/candidate.json" if paired else "extension/native/manifest.json")
             native = json.loads(native_bytes)
             if (package.digest(native_bytes) != receipt["native_manifest_sha256"]
-                    or native.get("schema") != "airk-native-candidate/1"
+                    or native.get("schema") != ("airk-native-candidate/2" if paired else "airk-native-candidate/1")
                     or native.get("target") != targets[platform]
                     or native.get("toolchain_file_sha256") != toolchain_digest
                     or native["commit"] != commit or native["version"] != version
@@ -65,10 +66,25 @@ def verify(directory, commit, version, channel, *, receipts=None):
                     or native["archive_sha256"] != receipt["native_archive_sha256"]
                     or native["cargo_lock_sha256"] != package.digest((ROOT / "Cargo.lock").read_bytes())):
                 raise ValueError("Embedded native candidate provenance differs or checkout is dirty")
-            for entry, digest in native["payload"].items():
+            prefix = "extension/native/runtime/" if paired else "extension/native/"
+            for entry, expected in native["payload"].items():
                 package.safe_name(entry)
-                if package.digest(zipped.read("extension/native/" + entry)) != digest:
+                if package.digest(zipped.read(prefix + entry)) != expected:
                     raise ValueError("Embedded native payload digest mismatch")
+            if paired:
+                helper = "airk-embed.exe" if platform == "win32-x64" else "airk-embed"
+                if platform.startswith("darwin-"):
+                    executable = "AIRK.app/Contents/MacOS/airk"
+                    helper = "AIRK.app/Contents/MacOS/airk-embed"
+                wrapper = json.loads(zipped.read("extension/native/manifest.json"))
+                expected = {"schema": 2, "version": version, "vsix_target": platform, "runtime_dir": "runtime",
+                            "install_manifest_sha256": native["payload"]["airk-install.json"],
+                            "payload": {name: native["payload"][name] for name in (executable, helper)}}
+                if wrapper != expected or native.get("install_manifest_sha256") != expected["install_manifest_sha256"]:
+                    raise ValueError("Embedded service wrapper differs from native candidate")
+                install = json.loads(zipped.read(prefix + "airk-install.json"))
+                if install.get("files") != {name: value for name, value in native["payload"].items() if name != "airk-install.json"}:
+                    raise ValueError("Embedded installer inventory differs from complete native pair")
         archives.append(str(archive.resolve()))
     return archives
 

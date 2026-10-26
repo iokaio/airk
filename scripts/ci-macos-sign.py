@@ -62,7 +62,7 @@ def cleanup(directory):
         shutil.rmtree(directory)
 
 
-def sign(target):
+def sign(target, paired=False):
     directory = runner_directory()
     values = {name: os.environ.pop(name, "") for name in SECRET_NAMES}
     if not all(values.values()):
@@ -96,6 +96,7 @@ def sign(target):
                     input=values["APPLE_APP_SPECIFIC_PASSWORD"] + "\n")
         values.clear()
         subprocess.run([sys.executable, str(ROOT / "scripts/sign-native.py"),
+                        *(["--runtime-dir", f"artifacts/runtime/{target}"] if paired else []),
                         "--target", target, "--identity", IDENTITY, "--team-id", TEAM,
                         "--notarize", "--keychain-profile", "airk-ci", "--keychain", str(keychain),
                         "--output", f"artifacts/signed/{target}"], cwd=ROOT, check=True)
@@ -110,11 +111,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=("aarch64-apple-darwin", "x86_64-apple-darwin"))
     parser.add_argument("--cleanup", action="store_true")
+    parser.add_argument("--pair", action="store_true")
     args = parser.parse_args()
     if args.cleanup:
         cleanup(runner_directory())
     elif args.target:
-        sign(args.target)
+        sign(args.target, args.pair)
     else:
         parser.error("Supply --target or --cleanup")
 

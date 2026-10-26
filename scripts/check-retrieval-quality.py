@@ -20,6 +20,10 @@ import tempfile
 import threading
 import time
 
+fixture_spec = importlib.util.spec_from_file_location("airk_service_fixture", Path(__file__).with_name("check-service-clients.py"))
+clients = importlib.util.module_from_spec(fixture_spec)
+fixture_spec.loader.exec_module(clients)
+
 
 CASES = [
     {"name": "code", "query": "revoke_session", "mode": "lexical", "expected": "code/auth.rs"},
@@ -59,11 +63,10 @@ def source_identity():
 
 
 class Session:
-    def __init__(self, command, disabled):
+    def __init__(self, command):
         environment = dict(os.environ)
         environment.pop("AIRK_USAGE_MODE", None)
-        if disabled:
-            environment["AIRK_USAGE_MODE"] = "disabled"
+        environment["AIRK_MCP_RESPONSE_MODE"] = "full"
         self.process = subprocess.Popen(command + ["mcp"], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=environment)
         self.messages = queue.Queue(maxsize=64)
@@ -84,7 +87,7 @@ class Session:
         self.reader = threading.Thread(target=read, daemon=True)
         self.reader.start()
         try:
-            self.request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {},
+            self.request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
                                        "clientInfo": {"name": "airk-qualification", "version": "1"}})
             self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         except BaseException:
@@ -95,13 +98,14 @@ class Session:
         self.process.stdin.write(json.dumps(value).encode() + b"\n")
         self.process.stdin.flush()
 
-    def request(self, method, arguments):
+    def request(self, method, arguments, deadline=None):
+        deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 120)
+        clients.remaining(deadline, 120)
         self.sequence += 1
         self.send({"jsonrpc": "2.0", "id": self.sequence, "method": method, "params": arguments})
-        deadline = time.monotonic() + 120
         while True:
             try:
-                message = self.messages.get(timeout=max(0.001, deadline - time.monotonic()))
+                message = self.messages.get(timeout=clients.remaining(deadline, 120))
             except queue.Empty as error:
                 raise TimeoutError("MCP qualification deadline") from error
             if isinstance(message, BaseException):
@@ -117,9 +121,11 @@ class Session:
 
     def search(self, case):
         arguments = {key: case[key] for key in ("query", "mode", "path_prefix") if key in case}
-        arguments.update(limit=5, max_bytes=65536)
+        arguments.update(limit=5, max_bytes=65536, response_mode="full")
         start = time.perf_counter_ns()
-        result = self.request("tools/call", {"name": "airk_search", "arguments": arguments})
+        retry_deadline = time.monotonic() + 15
+        params = {"name": "airk_search", "arguments": arguments}
+        result, attempt = clients.read_envelope(lambda until: self.request("tools/call", params, until), retry_deadline, 601)
         elapsed = (time.perf_counter_ns() - start) / 1_000_000
         if result.get("isError"):
             raise RuntimeError(str(result["content"]))
@@ -136,7 +142,7 @@ class Session:
             raise AssertionError(f"fixed retrieval judgment failed: {case['name']}; returned {paths}")
         if value["hits"][rank - 1]["citation"]["content_hash"] != case["source_sha256"]:
             raise AssertionError(f"fixture citation hash differs: {case['name']}")
-        return {"case": case["name"], "latency_ms": elapsed, "recall_at_5": 1,
+        return {"case": case["name"], "latency_ms": elapsed, "admission_retries": attempt, "recall_at_5": 1,
                 "reciprocal_rank_at_5": 1 / rank, "publication": publication}
 
     def close(self):
@@ -187,52 +193,62 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
         word = f"word{index}"
         vocabulary[word] = [1.0, (index + 1) / (count * 10)]
         (root / "distractors" / f"{index:05d}.txt").write_text(word + "\n", encoding="utf-8")
-    model = state / "models" / "local"
+    state.mkdir()
+    model = base / "model-input"
     model.mkdir(parents=True)
     (model / "vocabulary.json").write_text(json.dumps(vocabulary), encoding="utf-8")
     (model / "model.json").write_text(json.dumps({"schema": 1, "name": "original-qualification-fixture",
         "license": "Apache-2.0", "dimensions": 2, "sha256": digest(model / "vocabulary.json")}), encoding="utf-8")
-    command = [str(binary), "--root", str(root), "--data-dir", str(state), "--collection", "qualification"]
-    def cli(*arguments):
-        result = subprocess.run(command + list(arguments), capture_output=True, timeout=300,
-                                env={**os.environ, "AIRK_USAGE_MODE": "disabled"})
-        if result.returncode:
-            raise RuntimeError(result.stderr.decode(errors="replace")[:4000])
-        return json.loads(result.stdout)
-    cli("collections", "roots", "add", "specs", str(alias))
-    cli("collections", "extraction", "detail", detail)
-    cli("index")
-    cases = [dict(case, source_sha256=digest(
-        alias / case["expected"].removeprefix("@specs/")
-        if case["expected"].startswith("@specs/") else root / case["expected"])) for case in CASES]
-    modes = {}
-    publications = set()
-    for disabled in (True, False):
-        session = Session(command, disabled)
-        try:
-            cold = [session.search(cases[0])]
-            warm = [session.search(case) for _ in range(trials) for case in cases]
-            publications.add(session.publication)
-            resources = metrics_module.process_metrics(session.process, binary)
-        finally:
-            session.close()
-        modes["usage_disabled" if disabled else "usage_enabled"] = {"cold": stats(cold), "warm": stats(warm),
-            "process_counters": resources, "judgments": warm[:len(CASES)]}
-    def concurrent(_):
-        session = Session(command, False)
-        try:
-            return session.search(cases[-1])
-        finally:
-            session.close()
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        parallel = list(pool.map(concurrent, range(8)))
-    publications.update(record["publication"] for record in parallel)
-    if len(publications) != 1:
-        raise AssertionError("usage modes/processes observed different fixture publications")
-    modes["four_processes"] = stats(parallel)
-    return {"distractors": count, "publication": publications.pop(),
-            "source_hashes": {case["expected"]: case["source_sha256"] for case in cases},
-            "modes": modes, "usage": cli("usage", "report")["report"]}
+    service = clients.Fixture(binary.parent, base)
+    assert service.binary == binary
+    with service:
+        service.register("qualification", root, state)
+        service.configure("qualification", {"operation": "add_root", "alias": "specs", "path": str(alias)})
+        service.configure("qualification", {"operation": "detail", "level": detail})
+        service.configure("qualification", {"operation": "install_model", "directory": str(model)})
+        service.job("qualification", "index")
+        deadline = time.monotonic() + 300
+        while True:
+            status = service.published_status("qualification", deadline)
+            readiness = clients.semantic_readiness(status)
+            assert readiness["state"] != "failed", "Semantic work explicitly failed"
+            if readiness["state"] == "ready" and readiness["completed_artifacts"] == count + 8:
+                break
+            assert time.monotonic() < deadline, readiness
+            time.sleep(0.05)
+        command = [str(binary), *service.arguments("qualification")]
+        cases = [dict(case, source_sha256=digest(
+            alias / case["expected"].removeprefix("@specs/")
+            if case["expected"].startswith("@specs/") else root / case["expected"])) for case in CASES]
+        modes = {}
+        publications = set()
+        for disabled in (True, False):
+            service.configure("qualification", {"operation": "usage", "mode": "disabled" if disabled else "aggregates_only"})
+            session = Session(command)
+            try:
+                cold = [session.search(cases[0])]
+                warm = [session.search(case) for _ in range(trials) for case in cases]
+                publications.add(session.publication)
+                resources = metrics_module.process_metrics(session.process, binary)
+            finally:
+                session.close()
+            modes["usage_disabled" if disabled else "usage_enabled"] = {"cold": stats(cold), "warm": stats(warm),
+                "process_counters": resources, "judgments": warm[:len(CASES)]}
+        def concurrent(_):
+            session = Session(command)
+            try:
+                return session.search(cases[-1])
+            finally:
+                session.close()
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            parallel = list(pool.map(concurrent, range(8)))
+        publications.update(record["publication"] for record in parallel)
+        if len(publications) != 1:
+            raise AssertionError("usage modes/processes observed different fixture publications")
+        modes["four_processes"] = stats(parallel)
+        return {"distractors": count, "publication": publications.pop(),
+                "source_hashes": {case["expected"]: case["source_sha256"] for case in cases},
+                "modes": modes, "usage": json.loads(service.run(*service.arguments("qualification"), "usage", "report").stdout)["report"]}
 
 
 def main():
@@ -253,10 +269,10 @@ def main():
         "binary_sha256": digest(binary), "binary_version": subprocess.check_output([str(binary), "--version"], text=True, timeout=15).strip(),
         "platform": platform.platform(), "architecture": platform.machine(),
         "judgments_sha256": hashlib.sha256(json.dumps(CASES, sort_keys=True).encode()).hexdigest(),
-        "cache_conditions": "cold means first query in a new MCP process; OS caches uncontrolled; warm reuses process",
+        "cache_conditions": "cold means first query in a new MCP process; warm reuses its direct project connection and shared worker; OS caches uncontrolled",
         "source_binding": "Observed checkout and binary digests must stay stable during this run. Local dirty-tree receipts do not prove binary build provenance; CI associates a clean checkout with its build.",
         "ranking_units": "Top five returned chunks, with each fixed judgment requiring its expected path and any expected text. Repeated paths retain their chunk rank.",
-        "process_cleanup": "MCP child must exit successfully after stdin closes; a 15-second shutdown timeout terminates the child and fails qualification. These fixtures invoke no external providers or document workers.",
+        "process_cleanup": "Owned MCP children must exit successfully after stdin closes; each owned service must drain. Static vectors use the shared helper. No external provider or source deletion.",
         "scope": "Original synthetic static vectors and fixed judgments outside indexed sources. No production semantic-quality, larger-than-memory, physical-I/O, installed-editor or power-loss qualification.",
         "workloads": []}
     with tempfile.TemporaryDirectory(prefix="airk-retrieval-qualification-") as temporary:

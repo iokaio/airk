@@ -59,6 +59,12 @@ pub struct UsageView {
 }
 
 impl crate::Kernel {
+    fn usage_directory(&self) -> std::path::PathBuf {
+        self.store
+            .managed_collection_directory()
+            .unwrap_or(self.store.directory())
+            .to_path_buf()
+    }
     pub fn usage_scope(&self) -> UsageScope {
         UsageScope {
             collection: self.collection.clone(),
@@ -73,20 +79,20 @@ impl crate::Kernel {
                 ..UsagePolicy::default()
             });
         }
-        airk_store::usage::policy(self.store.directory())
+        airk_store::usage::policy(&self.usage_directory())
     }
 
     pub fn configure_usage(&self, mode: RecordingMode) -> Result<UsagePolicy> {
         self.initialize()?;
-        let mut policy = airk_store::usage::policy(self.store.directory())?;
+        let mut policy = airk_store::usage::policy(&self.usage_directory())?;
         policy.mode = mode;
-        airk_store::usage::configure(self.store.directory(), &policy)?;
+        airk_store::usage::configure(&self.usage_directory(), &policy)?;
         Ok(policy)
     }
 
     pub fn clear_usage(&self) -> Result<Value> {
         self.load()?;
-        airk_store::usage::clear(self.store.directory())?;
+        airk_store::usage::clear(&self.usage_directory())?;
         Ok(
             serde_json::json!({"cleared":true,"collection":self.collection,"source_files_preserved":true}),
         )
@@ -94,12 +100,12 @@ impl crate::Kernel {
 
     pub fn usage_feedback(&self, request_id: &str, usefulness: Usefulness) -> Result<Value> {
         airk_store::usage::validate_binding(
-            self.store.directory(),
+            &self.usage_directory(),
             &self.root_id(),
             &self.collection,
         )?;
         airk_store::usage::feedback(
-            self.store.directory(),
+            &self.usage_directory(),
             &self.usage_scope(),
             request_id,
             usefulness,
@@ -109,9 +115,9 @@ impl crate::Kernel {
 
     pub fn usage_report(&self, days: u16) -> Result<UsageView> {
         ensure!((1..=30).contains(&days), "usage report days must be 1..30");
-        if self.store.directory().exists() {
+        if self.usage_directory().exists() {
             airk_store::usage::validate_binding(
-                self.store.directory(),
+                &self.usage_directory(),
                 &self.root_id(),
                 &self.collection,
             )?;
@@ -120,7 +126,7 @@ impl crate::Kernel {
         let end = (unix_ms() / DAY_MS + 1) * DAY_MS;
         let start = end.saturating_sub(u64::from(days) * DAY_MS);
         let scope = self.usage_scope();
-        let stored = UsageStore::read(self.store.directory(), &scope, start, end)?;
+        let stored = UsageStore::read(&self.usage_directory(), &scope, start, end)?;
         let mut report = summarize(&scope, start, end, [], ByteTokenHeuristic::default())?;
         for bucket in &stored.buckets {
             report.merge(bucket)?;
@@ -176,16 +182,16 @@ impl crate::Kernel {
             Err(_) => true,
         };
         let store = if enabled
-            && self.store.directory().exists()
+            && self.usage_directory().exists()
             && airk_store::usage::validate_binding(
-                self.store.directory(),
+                &self.usage_directory(),
                 &self.root_id(),
                 &self.collection,
             )
             .is_ok()
         {
             policy.ok().and_then(|p| {
-                UsageStore::open_best_effort(self.store.directory(), &self.usage_scope(), &p)
+                UsageStore::open_best_effort(&self.usage_directory(), &self.usage_scope(), &p)
                     .ok()
                     .flatten()
             })
@@ -203,7 +209,7 @@ impl crate::Kernel {
             disk_before: if enabled
                 && matches!(operation, UsageOperation::Index | UsageOperation::Reindex)
             {
-                bounded_disk_bytes(self.store.directory())
+                bounded_disk_bytes(&self.usage_directory())
             } else {
                 None
             },
@@ -235,7 +241,7 @@ impl crate::Kernel {
                 )
             {
                 store = UsageStore::open_best_effort(
-                    self.store.directory(),
+                    &self.usage_directory(),
                     &self.usage_scope(),
                     &self.usage_policy()?,
                 )?;
@@ -252,7 +258,10 @@ impl crate::Kernel {
             let result = logical.and_then(|v| v.get("evidence")).or(logical);
             let returned_items = result
                 .and_then(|v| {
-                    v.get("hits")
+                    v.get("minimal")
+                        .and_then(|minimal| minimal.get("items"))
+                        .or_else(|| v.get("items"))
+                        .or_else(|| v.get("hits"))
                         .or_else(|| {
                             v.get("outline").filter(|value| {
                                 value.as_array().is_some_and(|items| !items.is_empty())
@@ -324,7 +333,7 @@ impl crate::Kernel {
                 UsageOperation::Index | UsageOperation::Reindex
             ) && let Some(value) = logical
             {
-                let disk_after = bounded_disk_bytes(self.store.directory());
+                let disk_after = bounded_disk_bytes(&self.usage_directory());
                 event.index_work = Some(IndexWork {
                     indexed: value["indexed"].as_u64().unwrap_or(0),
                     reused: value["reused"].as_u64().unwrap_or(0),
@@ -391,6 +400,15 @@ impl crate::Kernel {
         fn citations<'a>(value: &'a Value, sources: &mut BTreeSet<(&'a str, &'a str)>) {
             match value {
                 Value::Object(object) => {
+                    if let Some(files) = object.get("files").and_then(Value::as_array) {
+                        for file in files {
+                            if let (Some(path), Some(hash)) =
+                                (file["path"].as_str(), file["content_hash"].as_str())
+                            {
+                                sources.insert((path, hash));
+                            }
+                        }
+                    }
                     if let Some(citation) = object.get("citation")
                         && let (Some(path), Some(hash)) =
                             (citation["path"].as_str(), citation["content_hash"].as_str())
@@ -673,6 +691,50 @@ pub struct CalibrationRequest<'a> {
     pub record: bool,
 }
 
+// Service calibration always uses the direct helper, even when Cargo feature
+// unification also compiles native transformer tokenization into this process.
+enum CalibrationTokenizer {
+    Shared(crate::remote_tokenization::LocalTokenizer),
+    #[cfg(feature = "local-inference")]
+    Local(crate::tokenization::LocalTokenizer),
+}
+impl CalibrationTokenizer {
+    fn open(shared: bool, path: &std::path::Path) -> Result<Self> {
+        #[cfg(feature = "local-inference")]
+        if !shared {
+            return Ok(Self::Local(crate::tokenization::LocalTokenizer::open(
+                path,
+            )?));
+        }
+        #[cfg(not(feature = "local-inference"))]
+        let _ = shared;
+        Ok(Self::Shared(
+            crate::remote_tokenization::LocalTokenizer::open(path)?,
+        ))
+    }
+    fn identity(&self) -> &TokenizerIdentity {
+        match self {
+            Self::Shared(tokenizer) => tokenizer.identity(),
+            #[cfg(feature = "local-inference")]
+            Self::Local(tokenizer) => tokenizer.identity(),
+        }
+    }
+    fn count(&self, text: &str) -> Result<u64> {
+        match self {
+            Self::Shared(tokenizer) => tokenizer.count(text),
+            #[cfg(feature = "local-inference")]
+            Self::Local(tokenizer) => tokenizer.count(text),
+        }
+    }
+    fn description(&self) -> Value {
+        match self {
+            Self::Shared(tokenizer) => tokenizer.description(),
+            #[cfg(feature = "local-inference")]
+            Self::Local(tokenizer) => tokenizer.description(),
+        }
+    }
+}
+
 impl crate::Kernel {
     pub fn usage_import(&self, event: &SupplementalMeasurement) -> Result<Value> {
         ensure!(
@@ -690,11 +752,11 @@ impl crate::Kernel {
             "usage recording is disabled"
         );
         airk_store::usage::validate_binding(
-            self.store.directory(),
+            &self.usage_directory(),
             &self.root_id(),
             &self.collection,
         )?;
-        let store = UsageStore::open(self.store.directory(), &self.usage_scope(), &policy)?
+        let store = UsageStore::open(&self.usage_directory(), &self.usage_scope(), &policy)?
             .ok_or_else(|| anyhow::anyhow!("usage recording is disabled"))?;
         let recorded = store.record_supplement(event)?;
         Ok(
@@ -703,6 +765,24 @@ impl crate::Kernel {
     }
 
     pub fn usage_calibrate(&self, request: CalibrationRequest<'_>) -> Result<Value> {
+        self.usage_calibrate_inner(request, None)
+    }
+    pub fn usage_calibrate_verified(
+        &self,
+        request: CalibrationRequest<'_>,
+        hashes: [airk_core::identity::Sha256Digest; 3],
+    ) -> Result<Value> {
+        ensure!(
+            self.store.shared_model_runtime().is_some(),
+            "service calibration binding required"
+        );
+        self.usage_calibrate_inner(request, Some(hashes))
+    }
+    fn usage_calibrate_inner(
+        &self,
+        request: CalibrationRequest<'_>,
+        hashes: Option<[airk_core::identity::Sha256Digest; 3]>,
+    ) -> Result<Value> {
         // Opt-out prohibits persistence, not an explicitly requested transient calculation.
         if request.record {
             ensure!(
@@ -710,9 +790,30 @@ impl crate::Kernel {
                 "usage recording is disabled"
             );
         }
-        let tokenizer = crate::tokenization::LocalTokenizer::open(request.tokenizer)?;
         let baseline = String::from_utf8(read_usage_input(request.baseline, 262_144)?)?;
         let returned = String::from_utf8(read_usage_input(request.returned, 262_144)?)?;
+        if let Some(hashes) = hashes {
+            ensure!(
+                airk_core::identity::Sha256Digest::from_bytes(
+                    Sha256::digest(baseline.as_bytes()).into()
+                ) == hashes[1]
+                    && airk_core::identity::Sha256Digest::from_bytes(
+                        Sha256::digest(returned.as_bytes()).into()
+                    ) == hashes[2],
+                "selected calibration samples changed before execution"
+            );
+        }
+        let tokenizer = if let Some(hashes) = hashes {
+            CalibrationTokenizer::Shared(crate::remote_tokenization::LocalTokenizer::open_checked(
+                request.tokenizer,
+                Some(hashes[0]),
+            )?)
+        } else {
+            CalibrationTokenizer::open(
+                self.store.shared_model_runtime().is_some(),
+                request.tokenizer,
+            )?
+        };
         // The explicit inputs are logical JSON results; framing cannot be silently mixed.
         let _: Value = serde_json::from_str(&baseline)?;
         let _: Value = serde_json::from_str(&returned)?;
@@ -750,7 +851,9 @@ impl crate::Kernel {
             None
         };
         Ok(
-            serde_json::json!({"summary":summary,"recording":recording,"tokenization":tokenizer.description(),"notice":"Exact counts for the digest-bound local tokenizer and explicit framing, with truncation and padding disabled. User-supplied logical JSON samples; same-generation comparability and provider framing compatibility require independent verification. No source text or sample hash is retained. This is not provider token usage."}),
+            serde_json::json!({"summary":summary,"recording":recording,"tokenization":tokenizer.description(),"notice":if hashes.is_some() {
+                "Exact local-tokenizer counts for explicit logical JSON samples. Provider framing and same-generation comparability need independent verification. Usage records retain no sample text; durable configuration requests retain exact file selectors and hashes. This is not provider token usage."
+            } else { "Exact counts for the digest-bound local tokenizer and explicit framing, with truncation and padding disabled. User-supplied logical JSON samples; same-generation comparability and provider framing compatibility require independent verification. No source text or sample hash is retained. This is not provider token usage." }}),
         )
     }
 
@@ -829,6 +932,24 @@ struct ByteBpeDefinition {
 pub(crate) struct LocalByteBpe {
     pub(crate) identity: TokenizerIdentity,
     ranks: std::collections::BTreeMap<(Vec<u8>, Vec<u8>), usize>,
+}
+
+/// Opaque offline tokenizer adapter for the dedicated embedding executable.
+pub struct OfflineTokenizer(crate::tokenization::LocalTokenizer);
+
+impl OfflineTokenizer {
+    pub fn open(path: &std::path::Path) -> Result<Self> {
+        Ok(Self(crate::tokenization::LocalTokenizer::open(path)?))
+    }
+    pub fn identity(&self) -> &TokenizerIdentity {
+        self.0.identity()
+    }
+    pub fn count(&self, text: &str) -> Result<u64> {
+        self.0.count(text)
+    }
+    pub fn description(&self) -> Value {
+        self.0.description()
+    }
 }
 
 impl LocalByteBpe {
@@ -954,6 +1075,55 @@ mod tests {
         )?;
         assert!(span.enabled && span.store.is_some());
         Ok(span)
+    }
+
+    #[test]
+    fn minimal_file_bindings_use_authenticated_source_baselines() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        std::fs::write(root.path().join("one.rs"), "fn alpha() {}\nfn beta() {}\n")?;
+        let kernel = crate::Kernel::open(root.path(), None)?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let response = kernel.outline_conditional_page(
+            "one.rs",
+            100,
+            65536,
+            &Default::default(),
+            &airk_core::discovery::DiscoveryOptions {
+                minimal: true,
+                ..Default::default()
+            },
+        )?;
+        let mut value = serde_json::to_value(response.content.unwrap())?;
+        let generation = value["generation"].as_u64();
+        let (baseline, _) = kernel
+            .usage_baseline(
+                &value,
+                generation,
+                ResponseRepresentation::McpToolResultJson,
+            )
+            .map_err(|reason| anyhow::anyhow!("{reason:?}"))?;
+        assert_eq!(baseline.unique_sources, 1);
+        let file = value["minimal"]["files"][0].clone();
+        value["minimal"]["files"].as_array_mut().unwrap().push(file);
+        let (deduplicated, _) = kernel
+            .usage_baseline(
+                &value,
+                generation,
+                ResponseRepresentation::McpToolResultJson,
+            )
+            .map_err(|reason| anyhow::anyhow!("{reason:?}"))?;
+        assert_eq!(deduplicated.utf8_bytes, baseline.utf8_bytes);
+        value["minimal"]["files"][0]["content_hash"] = "b".repeat(64).into();
+        assert!(matches!(
+            kernel.usage_baseline(
+                &value,
+                generation,
+                ResponseRepresentation::McpToolResultJson
+            ),
+            Err(BaselineUnavailable::SourceMismatch)
+        ));
+        Ok(())
     }
 
     #[test]
@@ -1110,6 +1280,37 @@ mod tests {
             "The former full-text cap must not reject compact counters"
         );
         assert_eq!(baseline.unique_sources, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn shared_calibration_uses_helper_even_with_local_inference_compiled() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let bytes = serde_json::to_vec(
+            &serde_json::json!({"version":"1.0","truncation":null,"padding":null,
+            "added_tokens":[],"normalizer":null,"pre_tokenizer":{"type":"Whitespace"},
+            "post_processor":null,"decoder":null,"model":{"type":"WordLevel","vocab":{"[UNK]":0,"copper":1},"unk_token":"[UNK]"}}),
+        )?;
+        std::fs::write(directory.path().join("tokenizer.json"), &bytes)?;
+        let path = directory.path().join("definition.json");
+        use sha2::{Digest, Sha256};
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({"schema":2,
+            "tokenizer_file":"tokenizer.json","tokenizer_sha256":format!("{:x}",Sha256::digest(&bytes)),
+            "model_revision_sha256":"a".repeat(64),"add_special_tokens":false,"framing":{"prefix":"","suffix":""}}))?,
+        )?;
+        #[cfg(feature = "local-inference")]
+        assert_eq!(
+            CalibrationTokenizer::open(false, &path)?.count("copper copper")?,
+            2
+        );
+        let result = CalibrationTokenizer::open(true, &path);
+        let error = match result {
+            Ok(_) => anyhow::bail!("service bypassed absent helper"),
+            Err(error) => error,
+        };
+        assert!(format!("{error:#}").contains("native adapter not installed"));
         Ok(())
     }
 

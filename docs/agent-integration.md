@@ -1,5 +1,7 @@
 # Coding-agent MCP setup research
 
+Current 1.4.0 source exposes sixteen read-only tools, including airk_help; see the [current MCP catalog](mcp.md). The fifteen-tool 1.3 statements below describe that historical source.
+
 Reviewed against official client documentation on **13 October 2026**. This is a dated compatibility/design matrix, not a claim of live testing every client. The unreleased 1.3.0 source exposes fifteen read-only tools. Native protocol tests exercise its real stdio lifecycle, changes and conditional reads with CLI/MCP parity. The extension registers a VS Code MCP provider and previews supported native client formats, plus connection details/guidance for Amazon Q and Windsurf/Devin. The current inventory includes bounded code facts, relationships and [remembered-evidence validation](changes.md); historical reads and checkpoints are unsupported in 1.2. Client versions, precedence and policy require live integration checks.
 
 The common launch is one native binary with explicit --root, --data-dir and --collection followed by mcp. The container alternative is docker exec -i airk airk followed by the same scope arguments. No agent-specific retrieval server is needed, but registration and configuration formats differ.

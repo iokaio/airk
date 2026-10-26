@@ -134,7 +134,7 @@ impl Kernel {
         policy.version = 3;
         policy.detail = Some(detail);
         self.validate_extraction_policy(&policy)?;
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         self.store.configure_extraction_policy_bytes(
             &writer,
             &quota,
@@ -149,7 +149,7 @@ impl Kernel {
     ) -> Result<ExtractionPolicyStatus> {
         let writer = self.store.lock()?;
         self.validate_extraction_policy(&policy)?;
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         self.store.configure_extraction_policy_bytes(
             &writer,
             &quota,

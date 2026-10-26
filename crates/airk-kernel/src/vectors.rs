@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 struct VectorPolicy {
     enabled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<airk_core::model_objects::ModelObjectSet>,
     // Saved user configuration survives derived-index rebuilds. Absence means
     // no explicit exclusions, preserving an existing collection's enable switch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -30,6 +32,7 @@ pub struct VectorStatus {
     pub applied_selection_digest: Option<Sha256Digest>,
     pub selection_pending_reindex: bool,
     pub pending_reindex: bool,
+    pub model_pending_reindex: bool,
     pub default_search_mode: &'static str,
 }
 
@@ -58,6 +61,21 @@ pub struct VectorSelectionPreview {
 }
 
 impl Kernel {
+    /// Explicit trusted setup; source scans never provision or load model weights.
+    pub fn install_service_default_vector_model(&self) -> Result<VectorStatus> {
+        anyhow::ensure!(
+            self.store.shared_model_runtime().is_some(),
+            "service model binding required"
+        );
+        let _writer = self.store.lock()?;
+        anyhow::ensure!(
+            self.vectors_enabled()?,
+            "vector search is disabled for this collection"
+        );
+        self.configured_model_objects(true)?;
+        self.vector_status()
+    }
+
     /// Install an offline default once; never overwrite an existing/custom model.
     pub fn install_default_vector_model(&self, source: &std::path::Path) -> Result<VectorStatus> {
         let _writer = self.store.lock()?;
@@ -65,11 +83,18 @@ impl Kernel {
             self.vectors_enabled()?,
             "vector search is disabled for this collection"
         );
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         anyhow::ensure!(
             !self.root.starts_with(quota.root()),
             "index storage must not contain its source root"
         );
+        if self.store.shared_model_runtime().is_some() {
+            if self.selected_shared_model()?.is_some() {
+                return self.vector_status();
+            }
+            self.configured_model_objects(true)?;
+            return self.vector_status();
+        }
         let set = airk_retrieval::model::inspect_object_plan(source)?;
         let installed = airk_store::model_objects::install_input_model_if_missing(
             source,
@@ -85,18 +110,91 @@ impl Kernel {
     }
 
     pub fn install_vector_model(&self, source: &std::path::Path) -> Result<VectorStatus> {
+        self.install_vector_model_checked(source, None)
+    }
+
+    pub fn install_service_vector_model(
+        &self,
+        source: &std::path::Path,
+        manifest: Sha256Digest,
+    ) -> Result<VectorStatus> {
+        anyhow::ensure!(
+            self.store.shared_model_runtime().is_some(),
+            "service model binding required"
+        );
+        self.install_vector_model_checked(source, Some(manifest))
+    }
+
+    fn install_vector_model_checked(
+        &self,
+        source: &std::path::Path,
+        expected: Option<Sha256Digest>,
+    ) -> Result<VectorStatus> {
         let _writer = self.store.lock()?;
         anyhow::ensure!(
             self.vectors_enabled()?,
             "vector search is disabled for this collection"
         );
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         anyhow::ensure!(
             !self.root.starts_with(quota.root()),
             "index storage must not contain its source root"
         );
+        if self.store.shared_model_runtime().is_some() {
+            let objects = airk_retrieval::embedding_worker::connector()?
+                .provision_model(&source.canonicalize()?)?;
+            anyhow::ensure!(
+                expected.is_none_or(|expected| objects
+                    .assets
+                    .get(&airk_core::model_objects::ModelAssetName::ModelJson)
+                    .is_some_and(|manifest| manifest.sha256 == expected)),
+                "selected model definition changed during setup"
+            );
+            self.store.installed_model(&objects)?;
+            let mut policy = self.vector_policy()?;
+            policy.model = Some(objects);
+            self.store.configure_vector_policy_bytes(
+                &_writer,
+                &quota,
+                &self.root_id(),
+                &serde_json::to_vec(&policy)?,
+            )?;
+            return self.vector_status();
+        }
         let set = airk_retrieval::model::inspect_object_plan(source)?;
         airk_store::model_objects::install_input_model(source, &set, &quota, &self.collection)?;
+        self.vector_status()
+    }
+
+    /// Explicitly replace a custom selection with the paired bundled default.
+    pub fn select_service_bundled_model(&self) -> Result<VectorStatus> {
+        anyhow::ensure!(
+            self.store.shared_model_runtime().is_some(),
+            "service model binding required"
+        );
+        let writer = self.store.lock()?;
+        anyhow::ensure!(
+            self.vectors_enabled()?,
+            "vector search is disabled for this collection"
+        );
+        let objects = airk_retrieval::embedding_worker::connector()?.provision_bundled()?;
+        anyhow::ensure!(
+            objects.shared.is_some()
+                && self
+                    .store
+                    .shared_model_default()
+                    .is_some_and(|default| *default == objects.local_set()),
+            "shared helper default model differs from paired metadata"
+        );
+        self.store.installed_model(&objects)?;
+        let mut policy = self.vector_policy()?;
+        policy.model = Some(objects);
+        self.store.configure_vector_policy_bytes(
+            &writer,
+            &self.collection_quota()?,
+            &self.root_id(),
+            &serde_json::to_vec(&policy)?,
+        )?;
         self.vector_status()
     }
 
@@ -108,15 +206,28 @@ impl Kernel {
             Some(bytes) => serde_json::from_slice::<VectorPolicy>(&bytes)?,
             None => VectorPolicy {
                 enabled: true,
+                model: None,
                 selection: None,
             },
         };
+        if let Some(model) = &policy.model {
+            model.validate()?;
+            anyhow::ensure!(
+                model.shared.is_some() && self.store.shared_model_runtime().is_some(),
+                "installed model policy requires its bound service runtime"
+            );
+        }
         if let Some(selection) = &policy.selection {
             selection.validate()?;
         }
         Ok(policy)
     }
 
+    pub(crate) fn selected_shared_model(
+        &self,
+    ) -> Result<Option<airk_core::model_objects::ModelObjectSet>> {
+        Ok(self.vector_policy()?.model)
+    }
     pub fn vectors_enabled(&self) -> Result<bool> {
         Ok(self.vector_policy()?.enabled)
     }
@@ -162,6 +273,18 @@ impl Kernel {
             .digest()?;
         let status = self.published_vector_status()?;
         let published = status.as_ref().is_some_and(|s| s.local_model_ready);
+        let model_pending_reindex = if self.store.shared_model_runtime().is_some() {
+            let applied = if self.current_scope()?.is_some() {
+                self.current_reader()?
+                    .collection_state()?
+                    .and_then(|s| s.configuration.model)
+            } else {
+                None
+            };
+            applied != self.configured_model_objects(false)?
+        } else {
+            false
+        };
         let applied_selection_digest = status.as_ref().and_then(|s| s.vector_selection_digest);
         let selection_pending_reindex = applied_selection_digest != Some(selection_digest);
         Ok(VectorStatus {
@@ -173,7 +296,10 @@ impl Kernel {
             selection_digest,
             applied_selection_digest,
             selection_pending_reindex,
-            pending_reindex: enabled != published || selection_pending_reindex,
+            pending_reindex: enabled != published
+                || selection_pending_reindex
+                || model_pending_reindex,
+            model_pending_reindex,
             default_search_mode: if enabled
                 && status.as_ref().is_some_and(|s| {
                     s.semantic_readiness.state == airk_core::readiness::SemanticState::Disabled
@@ -205,11 +331,12 @@ impl Kernel {
         policy.enabled = enabled;
         let status = self.status_for_vector_policy(VectorPolicy {
             enabled: policy.enabled,
+            model: policy.model.clone(),
             selection: policy.selection.clone(),
         })?;
         self.store.configure_vector_policy_bytes(
             &writer,
-            &airk_store::quota::Quota::open(&self.data_root)?,
+            &self.collection_quota()?,
             &self.root_id(),
             &serde_json::to_vec(&policy)?,
         )?;
@@ -327,7 +454,7 @@ impl Kernel {
         let status = self.selection_status(selection, "explicit")?;
         self.store.configure_vector_policy_bytes(
             &writer,
-            &airk_store::quota::Quota::open(&self.data_root)?,
+            &self.collection_quota()?,
             &self.root_id(),
             &serde_json::to_vec(&policy)?,
         )?;

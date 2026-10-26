@@ -668,6 +668,7 @@ fn production_row_reuse_matches_full_build_and_reloads_changed_inputs_only() -> 
                 index_sha256: None,
             });
             inventory.imported_facts.push(FactHit {
+                candidate: false,
                 continuity_key: None,
                 name: "new provider assertion".into(),
                 kind: "definition".into(),
@@ -786,6 +787,7 @@ fn global_profile_roots_and_import_changes_choose_full_rebuild() -> Result<()> {
         index_sha256: None,
     });
     inventory.imported_facts.push(FactHit {
+        candidate: false,
         continuity_key: None,
         name: "independent-provider".into(),
         kind: "function".into(),

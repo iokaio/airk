@@ -10,7 +10,7 @@ use airk_store::{
     current::{
         ArtifactChange, CapturedInput, CurrentRead, MAX_PENDING_INPUTS, resources::ResourceChange,
     },
-    quota::{Quota, Reservation},
+    quota::Reservation,
 };
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
@@ -67,6 +67,13 @@ pub(super) struct PendingArtifact {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct RecomputeBoundary {
+    pub graph: airk_core::identity::Incarnation,
+    pub first_id: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct SemanticWork {
     pub version: u32,
     pub selection_digest: Sha256Digest,
@@ -81,6 +88,12 @@ pub(super) struct SemanticWork {
     pub fully_ready_unix_ms: Option<u64>,
     pub pending: Vec<PendingArtifact>,
     pub failure: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub regeneration_job: Option<Sha256Digest>,
+    /// Authenticated append-only graph boundary for this forced work chain.
+    /// Earlier nodes and embedding-cache entries remain ineligible for reuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recompute_boundary: Option<RecomputeBoundary>,
 }
 
 impl SemanticWork {
@@ -145,6 +158,12 @@ impl SemanticWork {
                 "invalid semantic work path"
             );
         }
+        ensure!(
+            self.recompute_boundary.as_ref().is_none_or(
+                |boundary| self.force_recompute && boundary.first_id <= u64::from(u32::MAX) + 1
+            ),
+            "invalid forced semantic work boundary"
+        );
         Ok(())
     }
 
@@ -301,11 +320,8 @@ pub(super) fn prepare_work(
         } else {
             all_units_countable
         },
-        force_recompute: if unchanged {
-            compatible.is_some_and(|p| p.force_recompute)
-        } else {
-            full
-        },
+        force_recompute: full
+            || compatible.is_some_and(|p| p.force_recompute && !p.pending.is_empty()),
         first_ready_unix_ms: if unchanged {
             compatible.map_or(now_unix_ms()?, |p| p.first_ready_unix_ms)
         } else {
@@ -320,18 +336,141 @@ pub(super) fn prepare_work(
         },
         pending,
         failure: None,
+        regeneration_job: compatible
+            .filter(|prior| !full && prior.force_recompute && !prior.pending.is_empty())
+            .and_then(|prior| prior.regeneration_job),
+        recompute_boundary: compatible
+            .filter(|prior| !full && prior.force_recompute && !prior.pending.is_empty())
+            .and_then(|prior| prior.recompute_boundary.clone()),
     };
     work.validate()?;
     Ok(work)
 }
 
 impl Kernel {
+    /// Queue every eligible retained extraction without scanning live sources or
+    /// discarding readable vectors. Subsequent service turns replace bounded batches.
+    pub fn begin_service_vector_regeneration(
+        &self,
+        job: Sha256Digest,
+    ) -> Result<SemanticReadiness> {
+        ensure!(
+            self.is_service_collection(),
+            "service project owner required"
+        );
+        crate::service_execution::checkpoint()?;
+        let scope = self.current_scope()?.context("workspace is not indexed")?;
+        let quota = self.collection_quota()?;
+        super::recover_current(&self.store, &quota, &scope)?;
+        let writer = self.store.lock()?;
+        let read = self.store.current_read(&scope)?;
+        if let Some(work) = read_work(&read, &self.store)?
+            && work.regeneration_job == Some(job)
+        {
+            return Ok(work.readiness(read_policy(&read, &self.store)?));
+        }
+        let state = read
+            .collection_state()?
+            .context("current configuration missing")?;
+        let configuration = state.configuration;
+        let model = configuration
+            .model
+            .context("vector regeneration requires an indexed model")?;
+        ensure!(
+            self.vectors_enabled()?,
+            "vectors are disabled for this project"
+        );
+        let mut pending = Vec::new();
+        let mut bytes = 0usize;
+        let mut after = None;
+        loop {
+            crate::service_execution::checkpoint()?;
+            let page = read.lookup_paths(
+                airk_store::current::postings::Lookup::Files,
+                "",
+                after.as_deref(),
+                256,
+            )?;
+            for path in page.paths {
+                let artifact = read.artifact(&path)?.context("current artifact missing")?;
+                let retained = artifact
+                    .retained
+                    .as_ref()
+                    .context("retained extraction missing")?;
+                let profile = retained
+                    .profile
+                    .as_ref()
+                    .context("retained profile missing")?;
+                if !configuration
+                    .vector_selection
+                    .decision(&path, profile, &artifact.language)?
+                    .eligible
+                {
+                    continue;
+                }
+                let item = PendingArtifact {
+                    path,
+                    source_hash: artifact.content_hash.parse()?,
+                    extraction_object: retained.object.parse()?,
+                };
+                bytes = bytes
+                    .checked_add(serde_json::to_vec(&item)?.len())
+                    .context("semantic manifest overflow")?;
+                ensure!(
+                    pending.len() < MAX_PENDING_INPUTS && bytes <= 64 << 20,
+                    "semantic regeneration admission exceeded"
+                );
+                pending.push(item);
+            }
+            after = page.next_after;
+            if after.is_none() {
+                break;
+            }
+        }
+        pending.sort_unstable_by(|left, right| left.path.cmp(&right.path));
+        let now = now_unix_ms()?;
+        let work = SemanticWork {
+            version: 1,
+            selection_digest: configuration.vector_selection.digest()?,
+            pipeline_digest: model.pipeline_digest,
+            selected_artifacts: pending.len() as u64,
+            completed_artifacts: 0,
+            selected_units: None,
+            completed_units: 0,
+            all_units_countable: true,
+            force_recompute: true,
+            first_ready_unix_ms: now,
+            fully_ready_unix_ms: pending.is_empty().then_some(now),
+            pending,
+            failure: None,
+            regeneration_job: Some(job),
+            recompute_boundary: None,
+        };
+        let policy = read_policy(&read, &self.store)?;
+        drop(read);
+        let reservation = self.publication_reservation()?;
+        CurrentUpdater {
+            store: &self.store,
+            quota: &quota,
+            scope: &scope,
+            writer: &writer,
+            reservation: &reservation,
+            configuration: None,
+        }
+        .apply_with_resources(
+            &[],
+            None,
+            &[work.resource_change(&self.store, &reservation)?],
+        )?;
+        Ok(work.readiness(policy))
+    }
+
     pub fn set_default_semantic_search_policy(
         &self,
         policy: DefaultSearchPolicy,
     ) -> Result<SemanticReadiness> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)
+        super::recover_current(&self.store, &self.collection_quota()?, &scope)
             .context("recover current before semantic enrichment")?;
         let writer = self.store.lock()?;
         let read = self.store.current_read(&scope)?;
@@ -339,7 +478,7 @@ impl Kernel {
             return readiness(&read, &self.store);
         }
         drop(read);
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         let bytes = serde_json::to_vec(&SavedSearchPolicy { version: 1, policy })?;
         let reference = self.store.retain_current_resource(&bytes, &reservation)?;
@@ -376,7 +515,7 @@ impl Kernel {
         }
         work.failure = Some(format!("{error:#}").chars().take(1024).collect());
         drop(read);
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         CurrentUpdater {
             store: &self.store,
@@ -395,11 +534,7 @@ impl Kernel {
     }
 
     fn semantic_failure(&self, error: anyhow::Error) -> anyhow::Error {
-        if error.is::<crate::execution::CapacityBusy>()
-            || error
-                .downcast_ref::<crate::CurrentGateContention>()
-                .is_some()
-        {
+        if Self::service_enrichment_contention(&error) {
             // A reader may release its gate before this handler runs. Temporary
             // publication exclusion must not become durable semantic failure.
             return error;
@@ -440,7 +575,7 @@ impl Kernel {
     /// Each batch publishes its vectors and reduced pending set in one transaction.
     pub fn resume_current_enrichment(&self) -> Result<Option<u64>> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)
+        super::recover_current(&self.store, &self.collection_quota()?, &scope)
             .context("recover current before semantic enrichment")?;
         let read = self.store.current_read(&scope)?;
         let Some(work) = read_work(&read, &self.store)? else {
@@ -469,7 +604,7 @@ impl Kernel {
                 && work.selection_digest == configuration.vector_selection.digest()?,
             "pending semantic work differs from current configuration"
         );
-        let model = match EmbeddingModel::open_objects(self.store.directory(), objects) {
+        let model = match self.open_configured_model(objects) {
             Ok(model) => model,
             Err(error) => {
                 drop(read);
@@ -510,7 +645,7 @@ impl Kernel {
         );
         let started = std::time::Instant::now();
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)?;
+        super::recover_current(&self.store, &self.collection_quota()?, &scope)?;
         let read = self.store.current_read(&scope)?;
         let Some(work) = read_work(&read, &self.store)? else {
             let report = self.semantic_report(&read, &EmbeddingCacheStats::default(), started)?;
@@ -536,7 +671,7 @@ impl Kernel {
             .as_ref()
             .context("pending semantic model missing")?;
         let model_started = std::time::Instant::now();
-        let model = match EmbeddingModel::open_objects(self.store.directory(), objects) {
+        let model = match self.open_configured_model(objects) {
             Ok(model) => model,
             Err(error) => {
                 drop(read);
@@ -564,13 +699,14 @@ impl Kernel {
             .map_err(|error| self.semantic_failure(error))?;
         let read = self.store.current_read(&scope)?;
         let mut report = self.semantic_report(&read, &stats, started)?;
-        report.yield_to_source = airk_store::scheduler::Queue::new(&self.data_root)
-            .status(&self.collection, &self.root_id())?
-            .is_some_and(|job| {
-                job.requested_revision > job.completed_revision
-                    && !job.blocked
-                    && (!job.paused || job.manual)
-            });
+        report.yield_to_source = self.service_collection.is_none()
+            && airk_store::scheduler::Queue::new(&self.data_root)
+                .status(&self.collection, &self.root_id())?
+                .is_some_and(|job| {
+                    job.requested_revision > job.completed_revision
+                        && !job.blocked
+                        && (!job.paused || job.manual)
+                });
         report.current = Some(current_work);
         report.maintenance_error = result.maintenance_error;
         Ok((result.generation, report))
@@ -611,15 +747,20 @@ impl Kernel {
         let execution = admission.execution;
         let deadline = admission.deadline;
         let writer = self.store.lock()?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let captures = writer.capture_objects();
         let mut generation = None;
         for batch in 0..max_batches {
+            crate::service_execution::checkpoint()?;
             if batch > 0 && deadline.is_some_and(|end| std::time::Instant::now() >= end) {
                 break;
             }
-            let job = airk_store::scheduler::Queue::new(&self.data_root)
-                .status(&self.collection, &self.root_id())?;
+            let job = if self.service_collection.is_some() {
+                None
+            } else {
+                airk_store::scheduler::Queue::new(&self.data_root)
+                    .status(&self.collection, &self.root_id())?
+            };
             if max_batches <= 8
                 && job.as_ref().is_some_and(|job| {
                     job.paused || job.blocked || job.requested_revision > job.completed_revision
@@ -710,7 +851,7 @@ impl Kernel {
                             == pending.extraction_object,
                     "pending semantic input binding expired"
                 );
-                changes.push(CapturedInput { artifact });
+                changes.push(CapturedInput::new(artifact));
             }
             drop(read);
             self.emit_progress(airk_core::readiness::IndexProgress {

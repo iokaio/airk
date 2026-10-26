@@ -1,37 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Original command fixtures for exact retained reads and explicit history controls.
-use anyhow::{Result, ensure};
+use anyhow::Result;
+mod common;
 use serde_json::Value;
-use std::{
-    fs,
-    path::Path,
-    process::{Command, Output},
-};
+use std::{fs, path::Path, process::Output};
 
 fn run(root: &Path, data: &Path, args: &[&str]) -> Result<Output> {
-    Ok(Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(data)
-        .env("AIRK_USAGE_MODE", "disabled")
-        .args(args)
-        .output()?)
+    Ok(common::command(root, data, "default").args(args).output()?)
 }
 fn call(root: &Path, data: &Path, args: &[&str]) -> Result<Value> {
-    let output = run(root, data, args)?;
-    ensure!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(serde_json::from_slice(&output.stdout)?)
+    common::call(root, data, "default", args)
 }
 
 #[test]
 fn cli_current_revision_expiry_and_unsupported_history_leave_sources_untouched() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
+    let _service = common::Service::start(root.path(), data.path(), "default");
     fs::write(
         root.path().join("original.py"),
         "def original():\n    return 17\n",
@@ -64,7 +49,14 @@ fn cli_current_revision_expiry_and_unsupported_history_leave_sources_untouched()
         exact.extend(["--revision", old]);
         let output = run(root.path(), data.path(), &exact)?;
         assert!(!output.status.success());
-        assert!(String::from_utf8_lossy(&output.stderr).contains("expired"));
+        assert!(
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .contains("expired")
+        );
         let mut exact = args;
         exact.extend(["--revision", current]);
         let response = call(root.path(), data.path(), &exact)?;

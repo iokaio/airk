@@ -250,6 +250,7 @@ impl Kernel {
             .iter()
             .enumerate()
             .map(|(ordinal, fact)| FactHit {
+                candidate: fact.code.as_ref().is_some_and(|code| code.is_call_candidate(&fact.kind)),
                 continuity_key: continuity.key(ordinal, fact),
                 name: fact.name.clone(),
                 kind: fact.kind.clone(),
@@ -286,6 +287,7 @@ impl Kernel {
             ))
         });
         let mut payload = FactsResponse {
+            minimal: None,
             page: Default::default(),
             outline: Vec::new(),
             indexing: catalog

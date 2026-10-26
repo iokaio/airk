@@ -21,6 +21,16 @@ pub mod mapped_binding;
 pub mod model_objects;
 pub mod publication;
 pub mod readiness;
+pub mod service;
+pub mod service_cleanup;
+pub mod service_configuration;
+pub mod service_events;
+pub mod service_inspection;
+pub mod service_logs;
+pub mod service_maintenance;
+pub mod service_progress;
+pub mod service_resources;
+pub mod service_watch;
 pub mod usage;
 pub mod vector_evidence;
 pub mod vector_selection;
@@ -345,8 +355,14 @@ pub struct DocumentQuantity {
     pub unit: String,
 }
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FactHit {
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub candidate: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuity_key: Option<continuity::ContinuityKey>,
     pub name: String,
@@ -362,6 +378,8 @@ pub struct FactHit {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FactsResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimal: Option<discovery::MinimalFacts>,
     #[serde(flatten)]
     pub page: discovery::DiscoveryPage,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -385,3 +403,6 @@ pub trait EmbeddingProvider: Send + Sync {
     fn specification(&self) -> &str;
     fn embed(&self, text: &[String]) -> anyhow::Result<Vec<Vec<f32>>>;
 }
+
+pub mod service_console;
+pub mod service_lifecycle;

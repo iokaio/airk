@@ -2,6 +2,34 @@
 use super::*;
 use std::{os::windows::fs::OpenOptionsExt, time::Instant};
 
+#[test]
+fn sqlite_last_close_can_remove_a_sidecar_name_while_its_validation_handle_is_open() -> Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    let owner = tempfile::tempdir()?;
+    let path = owner.path().join("baseline.sqlite3");
+    let connection = Connection::open(&path)?;
+    connection.execute_batch(
+        "PRAGMA journal_mode=WAL; CREATE TABLE fixture(value); INSERT INTO fixture VALUES(1);",
+    )?;
+    let wal = fs::File::open(owner.path().join("baseline.sqlite3-wal"))?;
+    drop(connection);
+    let mut information = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+    // SAFETY: this is the exact still-open read handle, with correctly sized output.
+    ensure!(
+        unsafe { GetFileInformationByHandle(wal.as_raw_handle(), information.as_mut_ptr()) } != 0,
+        "sidecar handle inspection failed"
+    );
+    let links = unsafe { information.assume_init() }.nNumberOfLinks;
+    assert_eq!(
+        links, 0,
+        "last-close unlink did not reproduce a zero-link validation handle"
+    );
+    Ok(())
+}
+
 struct Fixture {
     _directory: tempfile::TempDir,
     path: std::path::PathBuf,

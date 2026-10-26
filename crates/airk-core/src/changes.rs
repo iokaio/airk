@@ -101,6 +101,7 @@ pub struct CoalescedChange {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ValidationOutcome {
+    #[serde(rename = "index-current")]
     Current,
     Unchanged,
     Modified,
@@ -145,6 +146,9 @@ pub enum FreshnessState {
 #[serde(deny_unknown_fields)]
 pub struct FreshnessObservation {
     pub observed_unix_ms: u64,
+    /// Latest observed service source attempt; distinct from an index token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_job: Option<Sha256Digest>,
     pub state: FreshnessState,
     pub requested_watermark: Option<u64>,
     pub completed_watermark: Option<u64>,
@@ -503,6 +507,7 @@ pub enum PublicationReason {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CoverageReason {
+    Corrupt,
     BaselineUnavailable,
     Expired,
     Overflow,

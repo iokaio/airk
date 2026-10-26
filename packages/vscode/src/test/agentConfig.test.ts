@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { parse } from 'jsonc-parser';
-import { installJsonConfig, JsonClient, jsonConfigPath, mergeJsonConfig, readJsonConfig } from '../agentConfig';
+import { installJsonConfig, JsonClient, jsonConfigPath, mergeJsonConfig, readJsonConfig, reviewLegacyJsonConfig, replaceReviewedLegacyJsonConfig } from '../agentConfig';
 import { LaunchSpec, launchArgs } from '../model';
 
 const spec: LaunchSpec = { command: 'C:\\Program Files\\AIRK\\airk.exe', root: '/fixture', dataDir: '/index with spaces', collection: 'project-fixture', name: 'Fixture' };
@@ -45,6 +45,69 @@ test('JSON installation rejects malformed, ambiguous, oversized and conflicting 
         assert.throws(() => mergeJsonConfig('claude', spec, source), /valid JSON|must be an object|duplicate|different settings|limit/);
     }
 });
+
+test('legacy replacement reviews only the selected bound server and preserves policies and other entries', async () => fixture(async root => {
+    const legacy = { ...spec, root, command: path.join(root, 'old', process.platform === 'win32' ? 'airk.exe' : 'airk') };
+    const selected = { ...legacy, command: path.join(root, 'launcher', process.platform === 'win32' ? 'airk.exe' : 'airk'),
+        dataDir: path.join(root, 'fresh-index'), service: { installDir: path.join(root, 'install'), project: 'a'.repeat(64) } };
+    for (const client of clients) {
+        await installJsonConfig(client, legacy, () => {}, async () => assert.fail('new configuration'));
+        const destination = jsonConfigPath(client, legacy);
+        const value = parse(await fs.readFile(destination, 'utf8'));
+        value.mcpServers.other = { command: 'preserve', trust: false };
+        value.mcpServers[`airk-${legacy.collection}`].trust = false;
+        value.approvalPolicy = ['ask'];
+        const before = '// Preserve this comment\r\n' + JSON.stringify(value, null, '\t') + '\r\n';
+        await fs.writeFile(destination, before);
+        const review = await reviewLegacyJsonConfig(client, selected, () => {});
+        assert.equal(await fs.readFile(destination, 'utf8'), before, 'review never writes');
+        assert.match(review.after, /Preserve this comment\r\n/);
+        assert.deepEqual(parse(review.after).mcpServers.other, value.mcpServers.other);
+        assert.deepEqual(parse(review.after).approvalPolicy, ['ask']);
+        assert.equal(parse(review.after).mcpServers[`airk-${legacy.collection}`].trust, false);
+        assert.deepEqual(parse(review.after).mcpServers[`airk-${legacy.collection}`].args, launchArgs(selected));
+        await replaceReviewedLegacyJsonConfig(client, selected, review, () => {}, async (file, original, after) => {
+            assert.equal(original, before); await fs.writeFile(file, after);
+        });
+        await assert.rejects(replaceReviewedLegacyJsonConfig(client, selected, review, () => {}, async () => assert.fail('replay')), /expired/);
+    }
+}));
+
+test('legacy review rejects foreign bindings, ambiguous configuration and redirected files', async () => fixture(async root => {
+    const legacy = { ...spec, root, command: path.join(root, 'airk.exe') };
+    const selected = { ...legacy, service: { installDir: path.join(root, 'install'), project: 'b'.repeat(64) } };
+    const destination = jsonConfigPath('claude', selected);
+    for (const entry of [
+        { command: legacy.command, args: launchArgs({ ...legacy, root: path.join(root, 'foreign') }) },
+        { command: legacy.command, args: [...launchArgs(legacy), '--extra'] },
+        { command: path.join(root, 'unknown.exe'), args: launchArgs(legacy) },
+        { command: legacy.command, args: launchArgs(legacy), url: '' },
+        { command: legacy.command, args: launchArgs(legacy), type: false },
+    ]) {
+        const before = JSON.stringify({ mcpServers: { [`airk-${legacy.collection}`]: entry } });
+        await fs.writeFile(destination, before);
+        await assert.rejects(reviewLegacyJsonConfig('claude', selected, () => {}), /does not match/);
+        assert.equal(await fs.readFile(destination, 'utf8'), before);
+    }
+    await fs.writeFile(destination, '{"mcpServers":{},"mcpServers":{}}');
+    await assert.rejects(reviewLegacyJsonConfig('claude', selected, () => {}), /duplicate/);
+    const linked = path.join(root, 'linked.json'); await fs.link(destination, linked);
+    await assert.rejects(reviewLegacyJsonConfig('claude', selected, () => {}), /regular, unlinked/);
+}));
+
+test('reviewed legacy replacement refuses edits, forged proposals and revoked workspace trust', async () => fixture(async root => {
+    const legacy = { ...spec, root, command: path.join(root, 'airk.exe') };
+    const selected = { ...legacy, service: { installDir: path.join(root, 'install'), project: 'c'.repeat(64) } };
+    const destination = jsonConfigPath('claude', selected);
+    await installJsonConfig('claude', legacy, () => {}, async () => assert.fail('new configuration'));
+    const review = await reviewLegacyJsonConfig('claude', selected, () => {});
+    const save = async () => assert.fail('stale or unapproved proposal must not write');
+    await assert.rejects(replaceReviewedLegacyJsonConfig('claude', selected, { ...review }, () => {}, save), /expired/);
+    await assert.rejects(replaceReviewedLegacyJsonConfig('claude', selected, review, () => { throw new Error('trust revoked'); }, save), /trust revoked/);
+    await fs.writeFile(destination, review.before + '\n// Concurrent edit\n');
+    await assert.rejects(replaceReviewedLegacyJsonConfig('claude', selected, review, () => {}, save), /expired/);
+    assert.match(await fs.readFile(destination, 'utf8'), /Concurrent edit/);
+}));
 
 test('install creates exact project destinations and merges through the guarded editor callback', async () => fixture(async root => {
     const selected = { ...spec, root };

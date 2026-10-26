@@ -342,6 +342,7 @@ fn prepare(
             index_sha256: None,
         }),
         imported_facts: vec![airk_core::FactHit {
+            candidate: false,
             continuity_key: Some(key(0)),
             name: "Original imported claim".into(),
             kind: "provider_assertion".into(),

@@ -34,14 +34,16 @@ try {
     }
     if (-not $SkipChecks) {
         Invoke-AirkTool cargo @('fmt', '--all', '--check')
-        Invoke-AirkTool cargo @('clippy', '--workspace', '--all-targets', '--locked', '--target', $airkTarget, '--', '-D', 'warnings')
-        Invoke-AirkTool cargo @('test', '--workspace', '--locked', '--target', $airkTarget)
+        Invoke-AirkTool cargo @('clippy', '--workspace', '--all-targets', '--all-features', '--locked', '--target', $airkTarget, '--', '-D', 'warnings')
+        Invoke-AirkTool cargo @('test', '--workspace', '--all-features', '--locked', '--target', $airkTarget)
+        Invoke-AirkTool cargo @('test', '--doc', '--workspace', '--locked', '--target', $airkTarget)
         Invoke-AirkTool $airkPython @('-m', 'unittest', 'discover', '-s', 'scripts/tests', '-v')
         & (Join-Path $PSScriptRoot 'check-repo.ps1')
         Invoke-AirkTool git @('diff', '--check')
     }
-    Invoke-AirkTool cargo @('build', '--release', '--locked', '-p', 'airk-cli', '--target', $airkTarget)
-    $env:AIRK_TEST_BINARY = Join-Path $airkRoot "target/$airkTarget/release/airk.exe"
+    $airkRuntime = Join-Path $airkOutput 'runtime'
+    Invoke-AirkTool $airkPython @('scripts/build-service-runtime.py', '--profile', 'release', '--destination', $airkRuntime)
+    $env:AIRK_TEST_BINARY = Join-Path $airkRuntime 'airk.exe'
     # Default retrieval is hybrid: even a quick build must prove the real model/graph works.
     $airkVectorReport = Join-Path $airkOutput 'vector-check.json'
     Invoke-AirkTool $airkPython @('scripts/check-transformer-model.py', '--binary', $env:AIRK_TEST_BINARY, '--report', $airkVectorReport)
@@ -53,7 +55,7 @@ try {
     }
     if ($SkipChecks) { Invoke-AirkTool npm.cmd @('run', 'compile', '--prefix', 'packages/vscode') }
     else { Invoke-AirkTool npm.cmd @('test', '--prefix', 'packages/vscode') }
-    Invoke-AirkTool $airkPython @('scripts/package-native.py', '--target', $airkTarget, '--output', (Join-Path $airkOutput 'native'))
+    Invoke-AirkTool $airkPython @('scripts/package-native.py', '--target', $airkTarget, '--runtime-dir', $airkRuntime, '--output', (Join-Path $airkOutput 'native'))
     Invoke-AirkTool $airkPython @('scripts/package-extension.py', '--target', $airkTarget, '--native-dir', (Join-Path $airkOutput 'native/publish'), '--output', (Join-Path $airkOutput 'vscode'))
     $airkReceipt = Get-Content (Join-Path $airkOutput 'vscode/publish/manifest.json') -Raw | ConvertFrom-Json
     $airkVsix = Join-Path $airkOutput "vscode/publish/$($airkReceipt.archive)"
@@ -63,13 +65,19 @@ try {
         $airkExtensions = Join-Path $airkOutput 'review-extensions'
         $airkWorkspace = Join-Path $airkOutput 'review-workspace'
         Copy-Item -LiteralPath (Join-Path $airkRoot 'examples/workspaces/project-a') -Destination $airkWorkspace -Recurse
+        New-Item -ItemType Directory -Path (Join-Path $airkProfile 'User') -Force | Out-Null
+        @{'airk.service.installDir' = (Join-Path $airkOutput 'review-native-service'); 'airk.storage.path' = (Join-Path $airkOutput 'review-index-data')} |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $airkProfile 'User/settings.json') -Encoding utf8NoBOM
         Invoke-AirkTool $airkCode @('--user-data-dir', $airkProfile, '--extensions-dir', $airkExtensions, '--install-extension', $airkVsix, '--force')
         if ($RunEditorTests) {
             $airkEditor = Join-Path (Split-Path (Split-Path $airkCode -Parent) -Parent) 'Code.exe'
             if (-not (Test-Path -LiteralPath $airkEditor -PathType Leaf)) { throw 'Cannot locate Code.exe beside the code.cmd launcher.' }
-            $airkExtracted = Join-Path $airkOutput 'verified-vsix'
-            [IO.Compression.ZipFile]::ExtractToDirectory($airkVsix, $airkExtracted)
-            Invoke-AirkTool node @('packages/vscode/scripts/editor-test.cjs', $airkEditor, (Join-Path $airkExtracted 'extension'), $airkProfile, $airkExtensions, $airkWorkspace)
+            $airkLauncherText = Get-Content -LiteralPath $airkCode -Raw
+            $airkCliRelative = [regex]::Match($airkLauncherText, '"%~dp0\.\.\\([^"\r\n]*resources\\app\\out\\cli\.js)"').Groups[1].Value
+            if (-not $airkCliRelative) { throw 'Cannot locate the matching VS Code CLI script from code.cmd.' }
+            $airkCli = Join-Path (Split-Path (Split-Path $airkCode -Parent) -Parent) $airkCliRelative
+            if (-not (Test-Path -LiteralPath $airkCli -PathType Leaf)) { throw 'The matching VS Code CLI script is missing.' }
+            Invoke-AirkTool node @('scripts/check-native-editor.cjs', $airkEditor, $airkCli, $airkVsix)
         }
         if ($OpenReview) {
             Invoke-AirkTool $airkCode @('--user-data-dir', $airkProfile, '--extensions-dir', $airkExtensions, '--new-window', $airkWorkspace)

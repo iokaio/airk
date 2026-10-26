@@ -98,6 +98,10 @@ struct ProgressiveBase<'a> {
 
 impl ProgressiveBase<'_> {
     fn check_pause(&mut self) -> Result<()> {
+        crate::service_execution::checkpoint()?;
+        if crate::service_execution::installed() {
+            return Ok(());
+        }
         self.last_pause_check = std::time::Instant::now();
         if airk_store::scheduler::Queue::new(&self.kernel.data_root)
             .status(&self.kernel.collection, &self.kernel.root_id())?
@@ -108,6 +112,7 @@ impl ProgressiveBase<'_> {
         Ok(())
     }
     fn observe(&mut self, artifact: &Artifact) -> Result<()> {
+        crate::service_execution::source_bytes(artifact.bytes as u64)?;
         if self.last_pause_check.elapsed() >= std::time::Duration::from_secs(2) {
             self.check_pause()?;
         }
@@ -134,9 +139,7 @@ impl ProgressiveBase<'_> {
                 .insert(artifact.path.clone(), artifact.clone());
             self.batch.insert(
                 artifact.path.clone(),
-                ArtifactChange::Upsert(Box::new(CapturedInput {
-                    artifact: artifact.clone(),
-                })),
+                ArtifactChange::Upsert(Box::new(CapturedInput::new(artifact.clone()))),
             );
             self.batch_bytes = self.batch_bytes.saturating_add(artifact.bytes);
             if self.batch.len() >= self.next_batch || self.batch_bytes >= 64 << 20 {
@@ -339,7 +342,7 @@ impl Kernel {
         );
         recipe.configuration.validate()?;
         let lock = self.store.lock()?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let mut current = self
             .store
             .current_write(&lock, &quota, &recipe.head.scope, 16 << 20)?;
@@ -360,26 +363,17 @@ impl Kernel {
             return self.status();
         }
         let writer = self.store.lock()?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         let policy = self.rebuild_extraction_policy()?.policy;
-        let directory = self.data_root.join("models/local");
-        let model = if self.vectors_enabled()? && directory.try_exists()? {
-            Some(EmbeddingModel::open(&directory)?)
-        } else {
-            None
-        };
-        let objects = model
-            .as_ref()
-            .map(|_| airk_retrieval::model::inspect_object_plan(&directory))
-            .transpose()?;
+        let objects = self.configured_model_objects(false)?;
         if let Some(objects) = &objects {
-            airk_store::model_objects::ModelObjects::new(self.store.directory()).retain(
-                &directory,
-                objects,
-                &reservation,
-            )?;
+            self.retain_configured_model(objects, &reservation)?;
         }
+        let model = objects
+            .as_ref()
+            .map(|objects| self.open_configured_model(objects))
+            .transpose()?;
         let configuration = CollectionConfiguration {
             roots: self.configured_roots()?,
             extractor_version: airk_core::EXTRACTOR_VERSION.into(),
@@ -410,7 +404,10 @@ impl Kernel {
         let scope = CurrentScope {
             root: self.root_id(),
             collection: self.collection.clone(),
-            incarnation: incarnation()?,
+            incarnation: self
+                .store
+                .service_incarnation()?
+                .map_or_else(incarnation, Ok)?,
         };
         let graph_scope = GraphScope {
             root: scope.root.clone(),
@@ -542,9 +539,10 @@ impl Kernel {
         let started = std::time::Instant::now();
         let mut delay = std::time::Duration::from_millis(25);
         loop {
-            if airk_store::scheduler::Queue::new(&self.data_root)
-                .status(&self.collection, &self.root_id())?
-                .is_some_and(|job| job.paused && !job.manual)
+            if self.service_collection.is_none()
+                && airk_store::scheduler::Queue::new(&self.data_root)
+                    .status(&self.collection, &self.root_id())?
+                    .is_some_and(|job| job.paused && !job.manual)
             {
                 return Err(crate::scheduler::ScanPaused.into());
             }
@@ -572,7 +570,7 @@ impl Kernel {
         let Some(scope) = self.current_scope()? else {
             return Ok(false);
         };
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         let capacity = self.store.current_database_capacity(&scope)?;
         let current = self
             .store
@@ -589,7 +587,7 @@ impl Kernel {
         let writer = self.store.lock()?;
         self.store.rebuild_obsolete_index(
             &writer,
-            &Quota::open(&self.data_root)?,
+            &self.collection_quota()?,
             &self.root_id(),
             &self.collection,
         )
@@ -602,6 +600,7 @@ impl Kernel {
         repaired_retained_artifacts: &mut usize,
         paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<airk_ingest::IndexReport> {
+        self.require_service_sources()?;
         let execution_lease = crate::execution::acquire(&self.data_root)?;
         if full {
             self.prepare_full_rebuild()?;
@@ -613,7 +612,11 @@ impl Kernel {
             ..Default::default()
         });
         self.recover_runtime_bootstrap()?;
-        let mut execution = crate::limits::configured_extraction_execution()?;
+        let mut execution = if self.service_collection.is_some() {
+            crate::limits::execution_from_grant(&execution_lease.plan)?
+        } else {
+            crate::limits::configured_extraction_execution()?
+        };
         execution.requested = execution_lease.plan.requested_extraction_workers;
         execution.execution.workers = execution_lease.plan.extraction_workers;
         execution.execution.max_in_flight_source_bytes = execution.execution.workers
@@ -621,10 +624,10 @@ impl Kernel {
         execution.execution.validate()?;
         // Recovery takes its own writer lock, before this scan owns one.
         if let Some(scope) = self.current_scope()? {
-            super::recover_current(&self.store, &Quota::open(&self.data_root)?, &scope)?;
+            super::recover_current(&self.store, &self.collection_quota()?, &scope)?;
         }
         let writer = self.store.lock()?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         ensure!(
             !self.root.starts_with(quota.root()),
             "index storage must not contain sources"
@@ -662,25 +665,16 @@ impl Kernel {
             &self.collection,
             (root_free.min(collection_free) / 2).min(MAX_INDEX_RESERVATION_BYTES),
         )?;
-        let model_directory = self.data_root.join("models/local");
         let model_started = std::time::Instant::now();
-        let model = if self.vectors_enabled()? && model_directory.try_exists()? {
-            Some(EmbeddingModel::open(&model_directory)?)
-        } else {
-            None
-        };
-        let model_load_us = u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-        let objects = model
-            .as_ref()
-            .map(|_| airk_retrieval::model::inspect_object_plan(&model_directory))
-            .transpose()?;
+        let objects = self.configured_model_objects(false)?;
         if let Some(objects) = &objects {
-            airk_store::model_objects::ModelObjects::new(self.store.directory()).retain(
-                &model_directory,
-                objects,
-                &reservation,
-            )?;
+            self.retain_configured_model(objects, &reservation)?;
         }
+        let model = objects
+            .as_ref()
+            .map(|objects| self.open_configured_model(objects))
+            .transpose()?;
+        let model_load_us = u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let configuration = CollectionConfiguration {
             roots: roots.clone(),
             extractor_version: airk_core::EXTRACTOR_VERSION.into(),
@@ -739,15 +733,16 @@ impl Kernel {
                             .unwrap_or(false)
                 })
         });
+        // A newly initialized (or format-rebuilt) empty index needs the same
+        // bounded first publications as a collection with no current store.
+        // A full scan of an empty base cannot mix old and rebuilt evidence.
+        // Populated full/configuration rebuilds retain their atomic boundary.
         let progressive_enabled = defer_completion
-            && !full
             && paths.is_none()
-            && (existing.is_none()
-                || (!configuration_changed
-                    && (!previous.artifacts.is_empty()
-                        || prior_scan_work
-                            .as_ref()
-                            .is_some_and(|work| !work.complete()))));
+            && (previous.artifacts.is_empty() || (!full && !configuration_changed));
+        let publish_scan_start = progressive_enabled
+            && previous.artifacts.is_empty()
+            && prior_scan_work.as_ref().is_none_or(|work| !work.complete());
         let mut stats = EmbeddingCacheStats {
             model_load_us,
             ..Default::default()
@@ -770,7 +765,7 @@ impl Kernel {
         };
         let mut progressive = if let Some(scope) = &progressive_scope {
             let scan_work = progress::ScanWork::start()?;
-            if previous.artifacts.is_empty() {
+            if publish_scan_start {
                 let publication =
                     self.publication_reservation_with_limit(MAX_INDEX_RESERVATION_BYTES)?;
                 CurrentUpdater {
@@ -900,6 +895,13 @@ impl Kernel {
                 }))
             },
             |profile, artifact, bytes, payload| {
+                crate::service_execution::progress_capture();
+                if payload.is_some() {
+                    crate::service_execution::progress_extracted();
+                }
+                crate::service_execution::progress_phase(
+                    airk_core::service_progress::WorkPhase::Extracting,
+                );
                 let retained = if artifact
                     .retained
                     .as_ref()
@@ -947,6 +949,9 @@ impl Kernel {
         report.execution = Some(execution_lease.plan.clone());
         report.scan_extract_us =
             u64::try_from(scan_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        // An unavailable root is not a complete inventory of zero files. Preserve
+        // committed evidence instead of constructing a root-wide deletion batch.
+        self.require_service_sources()?;
         let committed_previous = if progressive_enabled
             && progressive_current
                 .as_ref()
@@ -965,12 +970,10 @@ impl Kernel {
                 .map(|old| same_artifact(old, artifact))
                 .transpose()?
                 .unwrap_or(false);
-            if full || (configuration_changed && !progressive_enabled) || !same {
+            if ((full || configuration_changed) && !progressive_enabled) || !same {
                 changes.insert(
                     path.clone(),
-                    ArtifactChange::Upsert(Box::new(CapturedInput {
-                        artifact: artifact.clone(),
-                    })),
+                    ArtifactChange::Upsert(Box::new(CapturedInput::new(artifact.clone()))),
                 );
             }
         }
@@ -987,6 +990,7 @@ impl Kernel {
                 .is_none_or(|work| work.changed_artifacts == 0)
             && existing.is_some()
             && prior_scan_work.as_ref().is_none_or(|work| work.complete())
+            && !publish_scan_start
         {
             final_scan_work = None;
         }
@@ -1073,7 +1077,10 @@ impl Kernel {
                         defer: true,
                         cache: EmbeddingCacheContext {
                             cache: None,
-                            bypass: full,
+                            // Empty full rebuilds already published compatible
+                            // batches. Replacing their graph here would discard
+                            // those bindings and require rewriting every path.
+                            bypass: full && !progressive_enabled,
                             stats: &mut stats,
                             max_workers: airk_retrieval::embedding_batch::worker_limit(
                                 std::env::var("AIRK_INDEX_WORKERS").ok().as_deref(),

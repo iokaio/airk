@@ -4,19 +4,28 @@ pub mod analysis;
 pub mod collection;
 mod database;
 pub mod discovery;
-mod gate;
+pub(crate) mod gate;
 pub mod graph;
 mod journal;
+pub mod legacy_retirement;
 pub mod lexical;
 pub mod maintenance;
 pub mod map;
 pub mod metadata;
 pub mod postings;
+#[cfg(test)]
+mod publication_spike_tests;
 mod read;
 mod rebuild;
+pub mod recent;
+mod recent_events;
 pub mod relationships;
 pub mod resources;
 pub mod vector_map;
+mod wal;
+mod wal_budget;
+#[cfg(test)]
+mod wal_budget_spike;
 
 pub use database::{DATABASE_VERSION, PAGE_BYTES, journal_bound};
 pub use gate::CurrentGateContention;
@@ -24,7 +33,24 @@ pub use journal::{
     ArtifactChange, ArtifactVectorChanges, CapturedInput, CapturedInputs, CurrentCapacityChange,
     CurrentCommit, CurrentWriter, PendingTransaction, TransactionPhase,
 };
-pub use read::CurrentRead;
+mod admission;
+pub use admission::{CurrentOpenContention, with_work_admission};
+pub use read::{CurrentRead, CurrentReadContention};
+/// Protect retained assets used by a helper without opening its project database.
+pub struct CurrentObjectLease {
+    _gate: gate::Gate,
+}
+impl crate::FileStore {
+    pub fn pin_service_objects(&self) -> anyhow::Result<CurrentObjectLease> {
+        anyhow::ensure!(
+            self.collection_namespace()? == "collections-1.4",
+            "service object lease requires service storage"
+        );
+        Ok(CurrentObjectLease {
+            _gate: gate::Gate::shared(self)?,
+        })
+    }
+}
 
 /// Idle verification observers must not pin Windows files during derived-state
 /// disposal or data-root relocation. No active request gates are released here.
@@ -142,7 +168,8 @@ impl CurrentHead {
     }
 }
 
-/// Equality is the only supported revision relationship. There is no ancestry API.
+/// Exact source reads remain single-current. Bounded older parent identities
+/// are available only through authenticated recent-change metadata.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CurrentToken {
@@ -200,7 +227,7 @@ impl crate::FileStore {
         let _gate = gate::Gate::shared(self)?;
         let scope = database::owned_scope(self.directory())?;
         ensure!(
-            self.directory().file_name().and_then(|n| n.to_str()) == Some(&scope.collection),
+            self.collection_id()? == scope.collection,
             "foreign current owner"
         );
         Ok(Some(scope))
@@ -219,7 +246,7 @@ impl crate::FileStore {
         );
         crate::validate_collection(collection)?;
         ensure!(
-            self.directory().file_name().and_then(|name| name.to_str()) == Some(collection),
+            self.collection_id()? == collection,
             "foreign current collection path"
         );
         if !self.directory().try_exists()? {
@@ -245,8 +272,7 @@ impl crate::FileStore {
     pub fn current_database_capacity(&self, scope: &CurrentScope) -> Result<u64> {
         scope.validate()?;
         ensure!(
-            self.directory().file_name().and_then(|name| name.to_str())
-                == Some(scope.collection.as_str()),
+            self.collection_id()? == scope.collection,
             "foreign current capacity collection"
         );
         database::check_owner(self.directory(), scope)

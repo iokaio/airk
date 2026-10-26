@@ -82,7 +82,11 @@ impl CurrentRead {
                     )));
             }
         }
-        if let Some(model) = state.configuration.model {
+        if let Some(model) = state
+            .configuration
+            .model
+            .filter(|model| model.shared.is_none())
+        {
             for asset in model.assets.values() {
                 retained.insert(PathBuf::from("objects/models").join(asset.sha256.to_string()));
             }
@@ -128,6 +132,15 @@ impl CurrentWriter<'_> {
         // A current-head proof does not include the writer's next captured
         // batch or its prior reuse inputs. Defer until that owner releases them.
         if self.has_object_captures() {
+            return Ok(ReclamationReport {
+                pending: true,
+                ..Default::default()
+            });
+        }
+        // A WAL snapshot protects SQL pages, not external retained files. The
+        // request's shared OS lease survives commits and disconnect; only actual
+        // release/process exit permits this exclusion and subsequent deletion.
+        if !self.reclaim_exclusive()? {
             return Ok(ReclamationReport {
                 pending: true,
                 ..Default::default()

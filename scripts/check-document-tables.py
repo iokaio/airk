@@ -1,13 +1,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise original DOCX/XLSX table evidence through the built public CLI."""
 import argparse
+import contextlib
 import hashlib
+import importlib.util
 import json
-import os
 from pathlib import Path
-import subprocess
 import tempfile
 import zipfile
+
+
+spec = importlib.util.spec_from_file_location("airk_service_fixture", Path(__file__).with_name("check-service-clients.py"))
+clients = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(clients)
 
 
 def write_package(path, parts):
@@ -21,8 +26,8 @@ def main():
     parser.add_argument("--binary", type=Path, required=True)
     args = parser.parse_args()
     binary = args.binary.resolve(strict=True)
-    with tempfile.TemporaryDirectory(prefix="airk-table-smoke-") as temporary:
-        base = Path(temporary)
+    with tempfile.TemporaryDirectory(prefix="airk-table-smoke-") as temporary, contextlib.ExitStack() as resources:
+        base = Path(temporary).resolve(strict=True)
         root = base / "sources"
         root.mkdir()
         xlsx = root / "requirements.xlsx"
@@ -36,22 +41,46 @@ def main():
             "word/document.xml": '<w:document xmlns:w="w"><w:body><w:tbl><w:tr><w:trPr><w:tblHeader/></w:trPr><w:tc><w:p><w:r><w:t>ID</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Requirement</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>REQ-8</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>The cache must hold at least 8 MiB.</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>Ordinary background information.</w:t></w:r></w:p></w:body></w:document>',
         })
         originals = {path.name: hashlib.sha256(path.read_bytes()).hexdigest() for path in [xlsx, docx]}
-        environment = dict(os.environ)
-        environment.pop("AIRK_USAGE_MODE", None)
+        state = base / "state"
+        state.mkdir()
+        fixture = clients.Fixture(binary.parent, base)
+        assert fixture.binary == binary
+        resources.callback(fixture.close)
+        fixture.start()
+        fixture.register("tables", root, state)
+        fixture.configure("tables", {"operation": "vectors", "enabled": False})
 
         def run(*command):
-            completed = subprocess.run([str(binary), "--root", str(root), "--data-dir", str(base / "state"),
-                                        "--collection", "tables", *command], capture_output=True, check=True, timeout=120, env=environment)
-            return json.loads(completed.stdout)
+            if command == ("collections", "extraction", "show"):
+                return json.loads(fixture.run(*fixture.arguments("tables"), "settings", "extraction_policy").stdout)
+            if command[:3] == ("collections", "extraction", "detail"):
+                return fixture.configure("tables", {"operation": "detail", "level": command[3]})
+            if command == ("index",):
+                fixture.job("tables", "index")
+                return fixture.published_status("tables")
+            if command == ("usage", "report"):
+                return json.loads(fixture.run(*fixture.arguments("tables"), "usage", "report").stdout)
+            if command[0] == "facts":
+                arguments = {"path_prefix": command[1], "compact": False, "response_mode": "full"}
+                for option, value in zip(command[2::2], command[3::2]):
+                    assert option in ("--kind", "--name")
+                    arguments[option[2:]] = value
+                return fixture.tool("tables", "airk_document_facts", arguments)
+            assert command[:3] == ("search", "--mode", "lexical")
+            arguments = {"query": command[3], "mode": "lexical", "response_mode": "full"}
+            for option, value in zip(command[4::2], command[5::2]):
+                assert option in ("--path-prefix", "--max-bytes")
+                arguments[option[2:].replace("-", "_")] = int(value) if option == "--max-bytes" else value
+            return fixture.tool("tables", "airk_search", arguments)
 
         assert run("collections", "extraction", "show")["configured_detail"] == "agent_lean"
         indexed = run("index")
-        assert indexed["indexed"] == 2, indexed
+        assert indexed["files"] == 2, indexed
         for filename, location in [
             (xlsx.name, {"WorksheetRow": {"sheet": "Requirements", "row": 14}}),
             (docx.name, {"TableRow": {"table": 1, "row": 2}}),
         ]:
-            facts = run("facts", filename, "--kind", "requirement")["facts"]
+            facts = run("facts", filename, "--kind", "requirement")["items"]
             table_fact = next(fact for fact in facts if fact["citation"]["location"] == location)
             assert table_fact["citation"]["content_hash"] == originals[filename]
             assert table_fact["document"]["table"]["cells"][1]["header"] == "Requirement"
@@ -60,20 +89,20 @@ def main():
         # individual-cell/header inventory requires Rich Structure.
         run("collections", "extraction", "detail", "balanced")
         indexed = run("index")
-        assert indexed["indexed"] == 2, indexed
-        formula = run("facts", xlsx.name, "--kind", "table_cell", "--name", "C14")["facts"][0]
+        assert indexed["files"] == 2, indexed
+        formula = run("facts", xlsx.name, "--kind", "table_cell", "--name", "C14")["items"][0]
         assert formula["document"]["table"]["cells"][0]["formula"] == "1+1"
         assert formula["document"]["table"]["cells"][0]["cached_value"] is True
         for address, present in [("D14", True), ("E14", False), ("F14", False)]:
-            cell = run("facts", xlsx.name, "--kind", "table_cell", "--name", address)["facts"][0]
+            cell = run("facts", xlsx.name, "--kind", "table_cell", "--name", address)["items"][0]
             assert cell["document"]["table"]["cells"][0]["cached_value"] is present
-        continuation = run("facts", xlsx.name, "--kind", "table_cell", "--name", "B21")["facts"][0]
+        continuation = run("facts", xlsx.name, "--kind", "table_cell", "--name", "B21")["items"][0]
         assert continuation["document"]["table"]["cells"][0]["address"] == "B21"
         assert continuation["document"]["table"]["cells"][0]["column_span"] == 1
         assert continuation["document"]["table"]["cells"][0]["merged_range"] == "A20:C21"
-        docx_requirements = run("facts", docx.name, "--kind", "requirement")["facts"]
+        docx_requirements = run("facts", docx.name, "--kind", "requirement")["items"]
         assert len(docx_requirements) == 1, "Header/body paragraphs must not become duplicate requirements"
-        header = next(fact for fact in run("facts", docx.name, "--kind", "table_row")["facts"]
+        header = next(fact for fact in run("facts", docx.name, "--kind", "table_row")["items"]
                       if fact["citation"]["location"]["TableRow"]["row"] == 1)
         assert header["document"]["table"]["is_header"] is True
         search = run("search", "--mode", "lexical", "200", "--path-prefix", xlsx.name)
@@ -95,11 +124,13 @@ def main():
         assert run("search", "--mode", "lexical", "200", "--path-prefix", xlsx.name)["generation"] == search["generation"]
         changed = run("index")
         assert changed["generation"] > indexed["generation"]
-        assert not run("facts", xlsx.name)["facts"], "Failed replacement must not retain stale evidence"
+        assert not run("facts", xlsx.name)["items"], "Failed replacement must not retain stale evidence"
         for name in ("wrong-part.xlsx", "duplicate-values.xlsx"):
-            assert not run("facts", name)["facts"], "Malformed input must not publish table evidence"
-            assert any(item["path"] == name for item in changed["skipped"]), changed
-        assert run("facts", docx.name, "--kind", "table_row")["facts"], "Unrelated document lost"
+            assert not run("facts", name)["items"], "Malformed input must not publish table evidence"
+        # Native source jobs expose numeric work separately from acceptance.
+        work = run("usage", "report")["report"]["operations"]["index"]["index_work"]
+        assert int(work["skipped"]) >= 3, work
+        assert run("facts", docx.name, "--kind", "table_row")["items"], "Unrelated document lost"
         report = run("usage", "report")["report"]
         assert report["missing_baseline_calls"] == 0, report
         assert report["comparisons"]["full_returned_sources"]["compared_calls"] == report["eligible_evidence_calls"]

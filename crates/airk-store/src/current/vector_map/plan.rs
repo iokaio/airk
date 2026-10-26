@@ -280,7 +280,13 @@ pub(crate) fn attach_new_occurrences(
         }
         by_path.entry(&pointer.path).or_default().push(occurrence);
     }
-    let affected_ids = graph_keys.keys().copied().collect::<BTreeSet<_>>();
+    let mut affected_ids = graph_keys.keys().copied().collect::<BTreeSet<_>>();
+    for key in graph_keys.values() {
+        let binding_key = map::key(scope, map::MapDomain::Vector, key.as_bytes())?;
+        if let Some(bytes) = plan.get(binding_key)? {
+            affected_ids.insert(VectorBinding::decode(&bytes, target, *key)?.graph_id);
+        }
+    }
     let mut afterimages = BTreeMap::<u32, GraphRecord>::new();
     delta.visit_records(&mut |id, record| {
         if affected_ids.contains(&id) {
@@ -363,10 +369,29 @@ pub(crate) fn attach_new_occurrences(
             let binding = bindings
                 .get_mut(&pointer.embedding_key)
                 .context("new current vector binding disappeared")?;
-            ensure!(
-                binding.graph_id == item.graph_id,
-                "new current occurrence graph ID differs from binding"
-            );
+            if binding.graph_id != item.graph_id {
+                let old = match afterimages.get(&binding.graph_id) {
+                    Some(record) => record.clone(),
+                    None => {
+                        let record =
+                            graph::read_record(connection, &base.graph_head, binding.graph_id)?;
+                        ensure!(
+                            !record.live && binding.occurrence_ids.is_empty(),
+                            "replaced graph node has no sealed afterimage"
+                        );
+                        record
+                    }
+                };
+                ensure!(
+                    base.graph_head.scope == target.graph_head.scope
+                        && u64::from(binding.graph_id) < base.graph_head.allocated_count
+                        && u64::from(item.graph_id) >= base.graph_head.allocated_count
+                        && old.embedding_key == Some(pointer.embedding_key)
+                        && !old.live,
+                    "new current occurrence graph ID differs from binding"
+                );
+                binding.graph_id = item.graph_id;
+            }
             let position = binding
                 .occurrence_ids
                 .binary_search(&occurrence_id)

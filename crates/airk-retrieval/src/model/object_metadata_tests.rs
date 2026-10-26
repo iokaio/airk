@@ -84,6 +84,7 @@ impl Fixture {
         }
         let set = ModelObjectSet {
             version: 1,
+            shared: None,
             pipeline_digest: descriptor.identity()?,
             legacy_identity: identity,
             assets: references,
@@ -226,5 +227,54 @@ fn metadata_descriptor_rejects_invalid_or_changed_contracts_and_bounds() -> Resu
     word.set.assets = onnx.set.assets.clone();
     word.set.assets.insert(ModelAssetName::ModelJson, metadata);
     assert!(descriptor_from_objects_metadata(word.collection.path(), &word.set).is_err());
+    Ok(())
+}
+
+#[test]
+fn verified_byte_source_planning_matches_existing_assets_without_directory_staging() -> Result<()> {
+    for onnx in [false, true] {
+        let fixture = Fixture::new(onnx)?;
+        let source = ObjectAssets {
+            collection: fixture.collection.path(),
+            set: &fixture.set,
+        };
+        assert_eq!(inspect_asset_plan(&source)?, fixture.set);
+        assert_eq!(
+            descriptor_from_asset_metadata(&source, &fixture.set)?,
+            fixture.descriptor
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_model_metadata_is_lazy_even_with_native_inference_enabled() -> Result<()> {
+    struct MetadataOnly(Vec<u8>);
+    impl ModelAssetSource for MetadataOnly {
+        fn read_asset(&self, name: ModelAssetName, maximum: u64) -> Result<Vec<u8>> {
+            ensure!(
+                name == ModelAssetName::ModelJson,
+                "weights opened during metadata setup"
+            );
+            ensure!(self.0.len() as u64 <= maximum, "metadata exceeds budget");
+            Ok(self.0.clone())
+        }
+    }
+    for onnx in [false, true] {
+        let fixture = Fixture::new(onnx)?;
+        let source = MetadataOnly(fs::read(fixture.path(ModelAssetName::ModelJson))?);
+        let shared = fixture.set.shared_with(Sha256Digest::from_bytes([7; 32]))?;
+        let model = EmbeddingModel::open_shared(&source, &shared)?;
+        assert!(matches!(model, EmbeddingModel::Remote(_)));
+        assert_eq!(model.cache_descriptor()?, fixture.descriptor);
+        assert!(
+            model.embed_text("original beacon").is_err(),
+            "inference bypassed absent connector"
+        );
+        assert!(EmbeddingModel::open_shared(&source, &fixture.set).is_err());
+        let mut tampered = source.0.clone();
+        tampered[0] = b' ';
+        assert!(EmbeddingModel::open_shared(&MetadataOnly(tampered), &shared).is_err());
+    }
     Ok(())
 }

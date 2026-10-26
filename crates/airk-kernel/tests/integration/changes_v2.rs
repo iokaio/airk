@@ -7,6 +7,140 @@ use anyhow::Result;
 use std::fs;
 
 #[test]
+fn retained_baselines_coalesce_delayed_file_and_unit_changes_and_keep_index_current_explicit()
+-> Result<()> {
+    use airk_core::extraction::IndexDetail;
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    fs::write(
+        root.path().join("one.rs"),
+        "pub fn alpha(value: u32) -> u32 { value + 1 }\n",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.configure_index_detail(IndexDetail::Balanced)?;
+    kernel.index()?;
+    let baseline = kernel
+        .file_info_conditional("one.rs", &Default::default())?
+        .read
+        .publication
+        .unwrap()
+        .token;
+    fs::write(
+        root.path().join("one.rs"),
+        "pub fn alpha(value: u32) -> u32 { value + 2 }\n",
+    )?;
+    kernel.index()?;
+    fs::write(
+        root.path().join("one.rs"),
+        "pub fn alpha(value: u32) -> u32 { value + 3 }\n",
+    )?;
+    kernel.index()?;
+    let request = ChangesRequest {
+        since: Some(baseline),
+        include_symbols: true,
+        selectors: vec![RememberedSelector::Path {
+            path: "one.rs".into(),
+        }],
+        limit: 100,
+        max_bytes: 65_536,
+        ..Default::default()
+    };
+    let changes = kernel.changes(&request)?;
+    assert_eq!(changes.baseline_status, BaselineStatus::Verified);
+    let file = changes
+        .changes
+        .iter()
+        .find(|row| matches!(row.subject, ChangeSubject::Artifact { .. }))
+        .unwrap();
+    assert_eq!(file.observations, 2);
+    assert!(file.dimensions.contains(&ChangeDimension::Content));
+    assert_ne!(
+        file.before.as_ref().unwrap().source_hash,
+        file.after.as_ref().unwrap().source_hash
+    );
+    assert!(
+        changes
+            .changes
+            .iter()
+            .any(|row| matches!(row.subject, ChangeSubject::Symbol { .. }))
+    );
+    assert_eq!(
+        serde_json::to_value(&changes.validations[0])?["outcome"],
+        "index-current"
+    );
+    assert!(!changes.freshness.live_source_verified);
+    let reopened = Kernel::open(root.path(), Some(data.path().into()))?;
+    let repeated = reopened.changes(&request)?;
+    assert_eq!(
+        serde_json::to_value(&changes.changes)?,
+        serde_json::to_value(&repeated.changes)?
+    );
+    let first = reopened.changes(&ChangesRequest {
+        limit: 1,
+        ..request.clone()
+    })?;
+    let mut changed_flags = request.clone();
+    changed_flags.cursor = first.cursor.clone();
+    changed_flags.include_documents = true;
+    assert_eq!(
+        reopened.changes(&changed_flags)?.status,
+        ChangesStatus::CursorExpired
+    );
+    let mut tiny = request.clone();
+    tiny.max_bytes = 1;
+    assert!(reopened.changes(&tiny).is_err());
+    let mut paged = request.clone();
+    paged.limit = 1;
+    let mut rows = Vec::new();
+    let mut validations = Vec::new();
+    loop {
+        let page = reopened.changes(&paged)?;
+        rows.extend(page.changes);
+        validations.extend(page.validations);
+        let Some(cursor) = page.cursor else {
+            assert!(!page.truncated);
+            break;
+        };
+        paged.cursor = Some(cursor);
+    }
+    assert_eq!(
+        serde_json::to_value(rows)?,
+        serde_json::to_value(&changes.changes)?
+    );
+    assert_eq!(validations.len(), 1);
+    let before_repack = reopened.status()?.publication.unwrap().token;
+    reopened.configure_compression(airk_core::compression::CompressionMode::Space)?;
+    reopened.repack_current(None, 32)?;
+    let physical = reopened.changes(&ChangesRequest {
+        since: Some(before_repack),
+        ..Default::default()
+    })?;
+    assert_eq!(physical.baseline_status, BaselineStatus::Verified);
+    assert!(physical.changes.is_empty());
+    let after_repack = reopened.changes(&request)?;
+    assert_eq!(
+        serde_json::to_value(after_repack.coverage)?,
+        serde_json::to_value(changes.coverage)?
+    );
+    assert_eq!(
+        serde_json::to_value(after_repack.changes)?,
+        serde_json::to_value(&changes.changes)?
+    );
+    let mut foreign = request;
+    foreign.since.as_mut().unwrap().revision =
+        airk_core::identity::Sha256Digest::from_bytes([77; 32]);
+    let rejected = reopened.changes(&foreign)?;
+    assert_eq!(
+        rejected.baseline_status,
+        BaselineStatus::BaselineUnavailable
+    );
+    assert!(rejected.changes.is_empty());
+    assert_eq!(rejected.validations[0].outcome, ValidationOutcome::Current);
+    Ok(())
+}
+
+#[test]
 fn obsolete_conditional_reads_require_rebuild_without_evidence_fallback() -> Result<()> {
     use airk_core::{Artifact, Chunk, DocumentLocation, Snapshot};
     let root = tempfile::tempdir()?;
@@ -90,8 +224,13 @@ fn historical_alias_paths_keep_prefix_and_remembered_identity_after_rebinding() 
         ..Default::default()
     };
     let removed = kernel.changes(&request)?;
-    assert!(removed.changes.is_empty());
-    assert_eq!(removed.baseline_status, BaselineStatus::BaselineUnavailable);
+    assert_eq!(removed.baseline_status, BaselineStatus::Verified);
+    assert!(removed.changes.iter().any(|row| {
+        row.before
+            .as_ref()
+            .is_some_and(|endpoint| endpoint.citation_path.as_deref() == Some("@docs/note.md"))
+            && row.after.is_none()
+    }));
     assert_eq!(removed.validations[0].outcome, ValidationOutcome::Unknown);
     let read = kernel.file_info_conditional(
         "@docs/note.md",
@@ -204,7 +343,7 @@ fn equivalent_copy_candidates_are_bounded_scoped_and_never_redirected() -> Resul
 }
 
 #[test]
-fn expired_baseline_cannot_claim_complete_edit_history() -> Result<()> {
+fn retained_baseline_reports_round_trip_edits_without_restoring_old_reads() -> Result<()> {
     let root = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
@@ -222,14 +361,29 @@ fn expired_baseline_cannot_claim_complete_edit_history() -> Result<()> {
         }],
         ..Default::default()
     })?;
+    assert_eq!(response.baseline_status, BaselineStatus::Verified);
+    let file = response
+        .changes
+        .iter()
+        .find(|row| matches!(row.subject, ChangeSubject::Artifact { .. }))
+        .unwrap();
+    assert_eq!(file.observations, 2);
     assert_eq!(
-        response.baseline_status,
-        BaselineStatus::BaselineUnavailable
+        file.before.as_ref().unwrap().source_hash,
+        file.after.as_ref().unwrap().source_hash
     );
-    assert!(response.changes.is_empty());
-    assert_eq!(
-        response.coverage.unwrap().files.reason,
-        Some(CoverageReason::Unsupported)
+    assert!(file.dimensions.contains(&ChangeDimension::Content));
+    assert!(response.coverage.unwrap().files.complete_after <= baseline.generation);
+    assert!(
+        kernel
+            .file_info_conditional(
+                "note.txt",
+                &airk_core::evidence::EvidenceReadOptions {
+                    revision: Some(baseline),
+                    ..Default::default()
+                }
+            )
+            .is_err()
     );
     assert_eq!(response.validations[0].outcome, ValidationOutcome::Current);
     Ok(())

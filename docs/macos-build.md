@@ -67,7 +67,7 @@ Use the original public fixture and a separate derived-state directory:
 
 Setup prints a configuration fragment; it does not overwrite editor settings. Merge its entry into the selected client's configuration, then verify that the agent connects and can call `airk_status`, `airk_symbols` and `airk_search`. Use `--client codex`, `claude` or another supported renderer as appropriate; [agent integration](agent-integration.md) explains the formats and client steps.
 
-The Cargo test suite also exercises real stdio initialization and all fifteen tools in the unreleased source through the native binary. Confirm extraction fixtures, collection isolation, source-preserving removal and Unix symlink tests pass on the Mac.
+The Cargo test suite also exercises real stdio initialization and all sixteen tools in the unreleased source through the native binary. Confirm extraction fixtures, collection isolation, source-preserving removal and Unix symlink tests pass on the Mac.
 
 When finished, disconnect the fixture's MCP worker and remove only its derived collection:
 
@@ -94,7 +94,7 @@ cargo build --release --locked -p airk-cli --target x86_64-apple-darwin
 
 Cross-building also compiles native grammar code and requires a matching Clang/SDK configuration. Adding a Rust target on Windows or Linux alone does not supply the Apple linker and SDK. Prefer macOS runners, and test each binary on its intended architecture. [Rust's macOS target documentation](https://doc.rust-lang.org/rustc/platform-support/apple-darwin.html) describes the targets, SDK discovery and cross-compilation requirements.
 
-AIRK's minimum supported macOS versions have not been selected. Before release, choose and record the deployment baseline for each architecture, set `MACOSX_DEPLOYMENT_TARGET` consistently during builds, and test the oldest macOS version claimed. Compiler support alone does not establish AIRK's support range.
+The 1.4 runtime builder fixes `MACOSX_DEPLOYMENT_TARGET=13.0` for both architectures and declares that minimum in its GUI-less app bundle. Set the same value for native Cargo checks. The two existing executables, static login plists, signing and ownership contract are described in [Mac service login](service-macos-login.md). Qualification on the oldest claimed OS and both architectures remains pending; compiler support alone does not establish that support range. Earlier native records describe their original artifacts.
 
 ## CI candidates and release work still required
 

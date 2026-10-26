@@ -193,6 +193,7 @@ fn prepare_with_model(
             index_sha256: None,
         }),
         imported_facts: vec![airk_core::FactHit {
+            candidate: false,
             continuity_key: None,
             name: "original_provider_fact".into(),
             kind: "function".into(),
@@ -987,6 +988,7 @@ fn shared_model_assets_follow_full_reader_roots_but_not_historical_packages() ->
         fs::write(source.join("vocabulary.json"), vocabulary)?;
         let set = ModelObjectSet {
             version: 1,
+            shared: None,
             pipeline_digest: digest(name.as_bytes()),
             legacy_identity: digest(config.as_bytes()).to_string(),
             assets: BTreeMap::from([

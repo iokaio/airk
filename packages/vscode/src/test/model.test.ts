@@ -31,3 +31,13 @@ test('all agent fragments preserve separate absolute paths and unique collection
         }
     }
 });
+
+test('service agent entries use the stable launcher and opaque binding without a worker endpoint',()=>{
+    const spec:LaunchSpec={command:path.resolve('installed','airk-launcher'),root:path.resolve('source'),dataDir:path.resolve('data'),
+        collection:'fixture',name:'Fixture',service:{installDir:path.resolve('installed'),project:'ab'.repeat(32)}};
+    const args=launchArgs(spec);
+    assert.deepEqual(args,['runtime','launch','--install-dir',spec.service!.installDir,'--','--root',spec.root,'--data-dir',spec.dataDir,
+        '--collection','fixture','--service-project','ab'.repeat(32),'mcp']);
+    for(const client of clients)assert.ok(configFor(client,spec).includes('runtime'));
+    assert.throws(()=>launchArgs({...spec,service:{...spec.service!,project:'forged'}}),/Invalid trusted service/);
+});

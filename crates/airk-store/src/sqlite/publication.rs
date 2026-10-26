@@ -641,6 +641,10 @@ fn save_connection(
                     &tx,
                     &mut writer,
                     &FactHit {
+                        candidate: f
+                            .code
+                            .as_ref()
+                            .is_some_and(|code| code.is_call_candidate(&f.kind)),
                         continuity_key: keys.key(ordinal, f),
                         name: f.name.clone(),
                         kind: f.kind.clone(),

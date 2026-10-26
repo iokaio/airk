@@ -31,6 +31,65 @@ fn pending_fixture() -> Result<(tempfile::TempDir, Kernel)> {
 }
 
 #[test]
+fn source_changes_preserve_forced_recomputation_for_unfinished_semantic_work() -> Result<()> {
+    let (_directory, kernel) = pending_fixture()?;
+    let read = kernel.current_reader()?;
+    let mut previous = read_work(&read, &kernel.store)?.unwrap();
+    previous.force_recompute = true;
+    let job = Sha256Digest::from_bytes([42; 32]);
+    previous.regeneration_job = Some(job);
+    previous.recompute_boundary = Some(RecomputeBoundary {
+        graph: read.head().graph_head.scope.graph_instance,
+        first_id: read.head().graph_head.allocated_count,
+    });
+    let configuration = read.collection_state()?.unwrap().configuration;
+    let snapshot = kernel.current_scan_projection(&read)?;
+    let (path, artifact) = snapshot.artifacts.first_key_value().unwrap();
+    let changes = BTreeMap::from([(
+        path.clone(),
+        ArtifactChange::Upsert(Box::new(CapturedInput::new(artifact.clone()))),
+    )]);
+    let next = prepare_work(
+        &snapshot,
+        &changes,
+        Some(&previous),
+        &configuration.vector_selection,
+        configuration.model.as_ref().unwrap().pipeline_digest,
+        false,
+    )?;
+    assert!(next.force_recompute);
+    assert_eq!(next.regeneration_job, Some(job));
+    assert_eq!(next.pending.len(), 1);
+    assert_eq!(
+        next.recompute_boundary.as_ref().unwrap().first_id,
+        previous.recompute_boundary.as_ref().unwrap().first_id
+    );
+    let full = prepare_work(
+        &snapshot,
+        &changes,
+        Some(&previous),
+        &configuration.vector_selection,
+        configuration.model.as_ref().unwrap().pipeline_digest,
+        true,
+    )?;
+    assert!(
+        full.recompute_boundary.is_none(),
+        "new forced rebuild cannot reuse a preceding work boundary"
+    );
+    assert!(
+        full.regeneration_job.is_none(),
+        "new full work cannot inherit an older job identity"
+    );
+    // Older canonical manifests omit the additive field and remain readable.
+    previous.regeneration_job = None;
+    previous.recompute_boundary = None;
+    let bytes = previous.canonical_bytes()?;
+    assert!(!String::from_utf8_lossy(&bytes).contains("regeneration_job"));
+    assert!(SemanticWork::from_bytes(&bytes)?.regeneration_job.is_none());
+    Ok(())
+}
+
+#[test]
 fn bounded_drain_prioritizes_edits_and_docs_yields_on_pause_and_sweeps_once() -> Result<()> {
     let (_directory, kernel) = pending_fixture()?;
     for index in 0..64 {
@@ -230,7 +289,7 @@ fn resolved_gate_contention_does_not_publish_failed_semantic_state() -> Result<(
     let read = kernel.current_reader()?;
     let token = read.token()?;
     let scope = read.head().scope.clone();
-    let quota = Quota::open(&kernel.data_root)?;
+    let quota = kernel.collection_quota()?;
     let writer = kernel.store.lock()?;
     let capacity = kernel.store.current_database_capacity(&scope)?;
     let original = kernel

@@ -1,13 +1,21 @@
 # Storage and retrieval scale qualification
 
+The 1.4 native load campaign uses private service scopes and original source fixtures:
+
+```console
+python scripts/benchmark-service.py --runtime-dir target/service-runtime --output target/service-load.json
+```
+
+It crosses 1/4/10 registered projects with 1/10/50 persistent MCP clients, measures idle and source-job waves, reports successful and explicitly rejected read latency separately, samples service health including CLI startup, and verifies collection/citation isolation and source preservation. Idle connections must add no worker or model load. A completed source job can precede later wave samples; the receipt records observed job states instead of claiming every query overlapped indexing. This single-host lexical campaign does not establish the full hardware/platform matrix or a guaranteed latency objective.
+
 `scripts/benchmark-scale.py` measures an explicitly bounded workload using the public CLI. Its default original fixture has 16,384 files of 8,192 bytes each: 128 MiB of source, exceeding the bootstrap's former 10,000-file and 64 MiB defaults. The harness explicitly configures collection scan limits and a 16 GiB collection/32 GiB root quota. This qualification profile is recorded in its report; the historical measurements below use that explicit profile, independently of the [automatic ingestion defaults introduced in 1.1.0](ingestion-limits.md).
 
 ~~~console
-cargo build --release -p airk-cli --locked
-python scripts/benchmark-scale.py --binary target/release/airk --output target/scale-qualification --cpython
+python scripts/build-service-runtime.py --profile release --destination target/scale-runtime
+python scripts/benchmark-scale.py --binary target/scale-runtime/airk --output target/scale-qualification --cpython
 ~~~
 
-On Windows use `target/release/airk.exe`. The output directory must be new. It retains original fixtures, local index state, command JSON, stderr and `report.json` for inspection. These files are ignored development artifacts; do not package or publish retained index/source contents. Omit `--cpython` for a completely offline run.
+On Windows use `target/scale-runtime/airk.exe`; on Mac use `target/scale-runtime/AIRK.app/Contents/MacOS/airk`. The main must belong to the verified separate runtime pair. The output directory must be new. It retains original fixtures, local index state, command JSON, stderr and `report.json` for inspection. These files are ignored development artifacts; do not package or publish retained index/source contents. Omit `--cpython` for a completely offline run.
 
 `--command-timeout-seconds` sets a per-command deadline from 1 to 5,400 seconds; the default is 1,800 seconds. Timeout or any failed acceptance check leaves `passed: false`. Increasing a deadline does not qualify a workload that has not completed.
 

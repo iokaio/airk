@@ -21,6 +21,7 @@ pub mod extraction_policy;
 pub mod history;
 pub mod history_policy;
 pub mod maintenance;
+mod managed_collection;
 pub mod model_objects;
 mod normalized;
 pub mod quota;
@@ -30,6 +31,7 @@ pub use reset::IndexFormat;
 pub mod retention;
 pub mod roots;
 pub mod scheduler;
+pub mod service;
 mod sqlite;
 pub mod usage;
 pub mod vector_cache;
@@ -40,6 +42,8 @@ mod verified_cache;
 #[derive(Clone, Debug)]
 pub struct FileStore {
     directory: PathBuf,
+    shared_model_runtime: Option<PathBuf>,
+    shared_model_default: Option<airk_core::model_objects::ModelObjectSet>,
 }
 
 /// Small metadata pin for disk retrieval, committed with the corresponding revision.
@@ -108,10 +112,75 @@ impl FileStore {
     pub fn new(directory: impl Into<PathBuf>) -> Self {
         Self {
             directory: directory.into(),
+            shared_model_runtime: None,
+            shared_model_default: None,
         }
+    }
+    pub fn with_service_models(
+        mut self,
+        runtime: &Path,
+        default: airk_core::model_objects::ModelObjectSet,
+    ) -> Result<Self> {
+        anyhow::ensure!(
+            self.collection_namespace()? == "collections-1.4" && default.shared.is_none(),
+            "shared models require service collection ownership"
+        );
+        default.validate()?;
+        self.shared_model_runtime = Some(runtime.canonicalize()?);
+        self.shared_model_default = Some(default);
+        Ok(self)
+    }
+    pub fn shared_model_runtime(&self) -> Option<&Path> {
+        self.shared_model_runtime.as_deref()
+    }
+    pub fn shared_model_default(&self) -> Option<&airk_core::model_objects::ModelObjectSet> {
+        self.shared_model_default.as_ref()
+    }
+    pub fn installed_model(
+        &self,
+        set: &airk_core::model_objects::ModelObjectSet,
+    ) -> Result<service::model_files::InstalledModel> {
+        service::model_files::InstalledModel::open(
+            self.shared_model_runtime()
+                .context("shared model runtime is not bound")?,
+            set,
+        )
+    }
+    pub fn validate_model_reference(
+        &self,
+        set: &airk_core::model_objects::ModelObjectSet,
+        maximum_local_bytes: u64,
+    ) -> Result<()> {
+        if set.shared.is_some() {
+            use airk_core::model_objects::ModelAssetSource;
+            // Publication captures installed identity, not live model availability.
+            // Inference and explicit verification hash their actual asset bytes.
+            self.installed_model(set)?
+                .read_asset(airk_core::model_objects::ModelAssetName::ModelJson, 16384)?;
+        } else {
+            model_objects::ModelObjects::new(self.directory()).verify(set, maximum_local_bytes)?;
+        }
+        Ok(())
     }
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+    /// Exact owned layout, shared by gates and quota adapters. A sibling is not
+    /// admitted merely because its collection name happens to match.
+    pub(crate) fn collection_namespace(&self) -> Result<&str> {
+        Ok(self.managed_path()?.namespace)
+    }
+    pub(crate) fn managed_path(&self) -> Result<managed_collection::ManagedPath<'_>> {
+        managed_collection::ManagedPath::parse(&self.directory)
+    }
+    pub(crate) fn collection_id(&self) -> Result<&str> {
+        Ok(self.managed_path()?.collection)
+    }
+    pub fn service_incarnation(&self) -> Result<Option<airk_core::identity::Incarnation>> {
+        self.managed_path()?.slot.map(str::parse).transpose()
+    }
+    pub fn managed_collection_directory(&self) -> Result<&Path> {
+        Ok(self.managed_path()?.logical)
     }
     pub fn expected_head(&self) -> Result<ExpectedHead> {
         let _lifecycle = self.lifecycle(false)?;
@@ -211,15 +280,10 @@ impl FileStore {
         sqlite::publish_catalog_v2(&self.directory, inventory, receipt, expected, reservation)
     }
     pub(crate) fn lifecycle(&self, create: bool) -> Result<Option<Arc<File>>> {
-        let Some(collections) = self.directory.parent().filter(|path| {
-            path.file_name()
-                .is_some_and(|name| name == "collections-1.2")
-        }) else {
+        let Ok(managed) = self.managed_path() else {
             return Ok(None);
         };
-        let root = collections
-            .parent()
-            .context("collection has no data root")?;
+        let root = managed.root;
         quota::ensure_current_root(root)?;
         if !root.exists() {
             if !create {
@@ -227,7 +291,11 @@ impl FileStore {
             }
             fs::create_dir_all(root)?;
         }
-        let lease = quota::lifecycle_lease(root, false)?;
+        let lease = if managed.namespace == "collections-1.4" {
+            quota::service_lifecycle_lease(root, false)?
+        } else {
+            quota::lifecycle_lease(root, false)?
+        };
         quota::ensure_current_root(root)?;
         Ok(Some(Arc::new(lease)))
     }
@@ -296,15 +364,23 @@ impl FileStore {
     /// OS-backed exclusivity releases after process death. Legacy lock markers
     /// still fail closed until an operator establishes that their writer exited.
     pub fn lock(&self) -> Result<WriterLock> {
+        if self.managed_path().is_ok() {
+            managed_collection::validate_ancestors(&self.directory)?;
+        }
         let lifecycle = self.lifecycle(true)?;
-        let parent = self
+        let physical_parent = self
             .directory
             .parent()
             .context("index directory has no parent")?;
-        let name = self
-            .directory
-            .file_name()
-            .context("index directory has no name")?;
+        fs::create_dir_all(physical_parent)?;
+        let logical = self
+            .managed_path()
+            .ok()
+            .map_or(self.directory.as_path(), |path| path.logical);
+        let parent = logical
+            .parent()
+            .context("logical collection parent missing")?;
+        let name = logical.file_name().context("index directory has no name")?;
         fs::create_dir_all(parent)?;
         ensure!(
             !fs::symlink_metadata(parent)?.file_type().is_symlink(),
@@ -625,6 +701,33 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
 impl Drop for WriterLock {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
+        // A concurrent fork can temporarily inherit this open file description
+        // until exec. Release logical ownership explicitly rather than letting
+        // the inherited descriptor extend it beyond this guard's lifetime.
+        let _ = self._file.unlock();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod writer_lock_tests {
+    use super::*;
+
+    #[test]
+    fn writer_release_is_not_extended_by_an_inherited_open_file_description() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let store = FileStore::new(root.path().join("collection"));
+        let writer = store.lock()?;
+        // dup shares the same open file description as a descriptor inherited
+        // through fork, without introducing a fork into the threaded test host.
+        let inherited = writer._file.try_clone()?;
+        assert!(store.lock().is_err());
+        drop(writer);
+        let replacement = store.lock()?;
+        drop(inherited);
+        assert!(store.lock().is_err());
+        drop(replacement);
+        drop(store.lock()?);
+        Ok(())
     }
 }
 

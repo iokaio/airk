@@ -26,7 +26,7 @@ pub(crate) fn envelope(read: &CurrentRead) -> Result<RevisionEnvelope> {
 impl Kernel {
     pub fn maintain_current(&self) -> Result<airk_store::current::maintenance::ReclamationReport> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        let quota = airk_store::quota::Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         super::recover_current(&self.store, &quota, &scope)?;
         let writer = self.store.lock()?;
         let read = self.store.current_read(&scope)?;
@@ -105,6 +105,7 @@ impl Kernel {
         let semantic_readiness = super::enrichment::readiness(&read, &self.store)?;
         let discovery_readiness = super::progress::readiness(&read, &self.store)?;
         Ok(Status {
+            source_availability: self.service_source_observation(),
             execution: self.execution_status()?,
             indexing: c.index_detail.into(),
             freshness: self.changes_freshness(),
@@ -281,6 +282,7 @@ impl Kernel {
             .collection_state()?
             .context("current configuration missing")?;
         Ok(FactsResponse {
+            minimal: page.minimal,
             page: page.page,
             outline: page.outline,
             indexing: state.configuration.index_detail.into(),

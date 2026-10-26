@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-use airk_kernel::Kernel;
-use airk_mcp::local::{LocalTools, tools};
+use airk_mcp::local::tools;
 use anyhow::{Context, Result, ensure};
 use clap::Subcommand;
 use serde_json::{Map, Value, json};
@@ -10,6 +9,21 @@ use std::{
 };
 
 const MAX_ARGUMENT_BYTES: usize = 64 * 1024;
+
+trait ToolSession {
+    async fn call(&self, tool: String, arguments: Map<String, Value>) -> Result<Value>;
+}
+
+struct RemoteSession(std::sync::Arc<dyn airk_mcp::remote::RemoteTools>);
+impl ToolSession for RemoteSession {
+    async fn call(&self, tool: String, mut arguments: Map<String, Value>) -> Result<Value> {
+        arguments.entry("response_mode").or_insert_with(|| {
+            serde_json::to_value(airk_mcp::response::ResponseMode::from_environment())
+                .expect("scalar response mode")
+        });
+        self.0.call(tool, arguments).await
+    }
+}
 
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
@@ -50,6 +64,18 @@ fn print_json(value: &impl serde::Serialize) -> Result<()> {
 /// Metadata inspection works even before a workspace has been indexed.
 pub fn inspect(action: &ToolsCommand) -> Result<bool> {
     match action {
+        ToolsCommand::Call {
+            tool,
+            args,
+            args_file,
+        } if tool == "airk_help" => {
+            let result = serde_json::to_value(airk_mcp::help::call(Value::Object(arguments(
+                args.as_deref(),
+                args_file.as_deref(),
+            )?)))?;
+            print_json(&result)?;
+            ensure!(result["isError"] != true, "AIRK help request failed");
+        }
         ToolsCommand::List { json: true } => print_json(&json!({"tools": tools()}))?,
         ToolsCommand::List { json: false } => {
             for tool in tools() {
@@ -144,20 +170,24 @@ fn arguments(text: Option<&str>, file: Option<&Path>) -> Result<Map<String, Valu
 }
 
 async fn call(
-    session: &LocalTools,
+    session: &impl ToolSession,
     tool: String,
     args: Map<String, Value>,
     raw: bool,
 ) -> Result<()> {
     let result = session.call(tool, args).await?;
+    ensure!(
+        result.is_object() && result["content"].is_array(),
+        "invalid native tool response"
+    );
     if raw {
         print_json(&result)?;
     } else {
         // Make JSON text content readable in a terminal; one-shot calls retain the wire envelope.
-        let envelope = serde_json::to_value(&result)?;
+        let envelope = &result;
         println!(
             "{}",
-            if result.is_error.unwrap_or(false) {
+            if result["isError"].as_bool().unwrap_or(false) {
                 "MCP error:"
             } else {
                 "Result:"
@@ -176,28 +206,41 @@ async fn call(
         }
     }
     ensure!(
-        !result.is_error.unwrap_or(false),
+        !result["isError"].as_bool().unwrap_or(false),
         "MCP tool failed; see the result above"
     );
     Ok(())
 }
 
-pub async fn run(action: ToolsCommand, kernel: Kernel) -> Result<()> {
-    let mut session = LocalTools::new(kernel.clone()).await?;
-    let result = match action {
+pub async fn run_remote(
+    action: ToolsCommand,
+    control: PathBuf,
+    project: airk_core::service::ProjectBinding,
+    root: &Path,
+    data: &Path,
+    collection: &str,
+) -> Result<()> {
+    if inspect(&action)? {
+        return Ok(());
+    }
+    let session = RemoteSession(airk_cli::project_client::tools(control, project));
+    match action {
         ToolsCommand::Call {
             tool,
             args,
             args_file,
-        } => match arguments(args.as_deref(), args_file.as_deref()) {
-            Ok(args) => call(&session, tool, args, true).await,
-            Err(error) => Err(error),
-        },
-        ToolsCommand::Shell => shell(&session, &kernel).await,
-        _ => unreachable!("inspection is handled before opening the kernel"),
-    };
-    let closed = session.close().await;
-    result.and(closed)
+        } => {
+            call(
+                &session,
+                tool,
+                arguments(args.as_deref(), args_file.as_deref())?,
+                true,
+            )
+            .await
+        }
+        ToolsCommand::Shell => shell(&session, root, data, collection).await,
+        _ => unreachable!("tool metadata handled before connection"),
+    }
 }
 
 fn shell_help() {
@@ -206,13 +249,16 @@ fn shell_help() {
     );
 }
 
-async fn shell(session: &LocalTools, kernel: &Kernel) -> Result<()> {
+async fn shell(
+    session: &impl ToolSession,
+    root: &Path,
+    data: &Path,
+    collection: &str,
+) -> Result<()> {
     // Debug formatting escapes control characters in user-selected paths/names.
     println!(
         "AIRK Tools\nCollection: {:?}\nWorkspace: {:?}\nStorage: {:?}\n",
-        kernel.collection(),
-        kernel.root(),
-        kernel.data_dir()
+        collection, root, data
     );
     shell_help();
     let stdin = std::io::stdin();
@@ -250,7 +296,7 @@ async fn shell(session: &LocalTools, kernel: &Kernel) -> Result<()> {
             shell_help();
             continue;
         }
-        let result = console_command(session, kernel.root(), line).await;
+        let result = console_command(session, root, line).await;
         if let Err(error) = result {
             eprintln!("Error: {error:#}");
         }
@@ -258,7 +304,7 @@ async fn shell(session: &LocalTools, kernel: &Kernel) -> Result<()> {
     Ok(())
 }
 
-async fn console_command(session: &LocalTools, root: &Path, line: &str) -> Result<()> {
+async fn console_command(session: &impl ToolSession, root: &Path, line: &str) -> Result<()> {
     let (command, rest) = line.split_once(char::is_whitespace).unwrap_or((line, ""));
     let rest = rest.trim();
     match command {

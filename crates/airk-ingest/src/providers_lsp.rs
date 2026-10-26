@@ -432,6 +432,7 @@ impl SymbolCollector<'_> {
                 code.details_truncated = detail.len() > 1024;
             }
             self.output.facts.push(FactHit {
+                candidate: false,
                 continuity_key: None,
                 name: name.into(),
                 kind: "definition".into(),
@@ -631,6 +632,7 @@ pub fn run_lsp(
                 });
                 code.owner_id = Some(owner.clone());
                 output.facts.push(FactHit {
+                    candidate: false,
                     continuity_key: None,
                     name: symbol.name.clone(),
                     kind: "reference".into(),

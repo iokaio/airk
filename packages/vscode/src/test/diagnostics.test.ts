@@ -34,6 +34,14 @@ const nativeOutcome = (message: string, busy = false) => JSON.stringify({ airk_e
     code: busy ? 'current_gate_busy' : 'operation_failed', retryable: busy, message });
 const gate = nativeOutcome('current index is busy applying an update: lock acquisition failed because the operation would block', true);
 
+test('metadata-only status remains unknown rather than claiming a publication and keeps exports bounded',async()=>{
+    const responses=replies();responses.status={collection:spec.collection,index_state:'unavailable',files:null,publication:null,
+        index_error:{code:'index_status_unavailable',message:'PRIVATE_INDEX_ERROR'},runtime:{private:'PRIVATE_RUNTIME'},work:{private:'PRIVATE_WORK'}};
+    const report=await collectDiagnostics(spec,{expectedVersion:'1.2.4',runner:fakeRunner(responses)});
+    assert.equal(report.assessment.state,'unknown');assert.equal(report.probes.status.value?.index_state,'unavailable');
+    assert.equal(report.probes.status.value?.files,null);assert.ok(!JSON.stringify(report).includes('PRIVATE_'));
+});
+
 test('diagnostics use bounded read-only collection probes and whitelist metadata', async () => {
     const responses = replies(), calls: string[] = []; let active = 0, peak = 0;
     const report = await collectDiagnostics(spec, { expectedVersion: '1.2.4', runner: async (selected, command, extra, timeout) => {

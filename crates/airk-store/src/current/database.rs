@@ -75,19 +75,37 @@ pub(super) fn obsolete_lexical_scope(directory: &Path) -> Result<Option<CurrentS
     }
     let owner = read_owner_any(directory)?;
     ensure!(
-        matches!(owner.version, 120 | 125 | DATABASE_VERSION),
+        matches!(
+            owner.version,
+            120 | 125 | DATABASE_VERSION | super::wal::VERSION
+        ),
         "unrecognized collection format; refusing rebuild"
     );
-    Ok((owner.version != DATABASE_VERSION).then_some(owner.scope))
+    Ok((owner.version != super::wal::version(directory)).then_some(owner.scope))
 }
 
 fn read_owner(directory: &Path) -> Result<Owner> {
     let owner = read_owner_any(directory)?;
+    if let Some(incarnation) = crate::FileStore::new(directory).service_incarnation()? {
+        ensure!(
+            owner.scope.incarnation == incarnation,
+            "current owner differs from managed incarnation directory"
+        );
+    }
     ensure!(
-        owner.version == DATABASE_VERSION,
+        owner.version == super::wal::version(directory),
         "incompatible collection format; run airk index --full (or Rebuild in the extension) to rebuild for SQLite FTS5 in 1.3.0"
     );
     Ok(owner)
+}
+
+pub(super) fn legacy_retirement_scope(directory: &Path) -> Result<CurrentScope> {
+    let owner = read_owner_any(directory)?;
+    ensure!(
+        owner.version == DATABASE_VERSION,
+        "legacy retirement requires a recognized 1.3 ownership header"
+    );
+    Ok(owner.scope)
 }
 
 fn read_owner_any(directory: &Path) -> Result<Owner> {
@@ -115,6 +133,12 @@ fn read_owner_any(directory: &Path) -> Result<Owner> {
 }
 
 pub(crate) fn create_owner(directory: &Path, scope: &CurrentScope, capacity: u64) -> Result<()> {
+    if let Some(incarnation) = crate::FileStore::new(directory).service_incarnation()? {
+        ensure!(
+            scope.incarnation == incarnation,
+            "current scope differs from managed incarnation directory"
+        );
+    }
     if directory.join(OWNER_FILE).try_exists()? {
         ensure!(
             check_owner(directory, scope)? == capacity,
@@ -123,7 +147,7 @@ pub(crate) fn create_owner(directory: &Path, scope: &CurrentScope, capacity: u64
         return Ok(());
     }
     let bytes = serde_json::to_vec(&Owner {
-        version: DATABASE_VERSION,
+        version: super::wal::version(directory),
         scope: scope.clone(),
         capacity,
     })?;
@@ -151,7 +175,7 @@ pub(crate) fn grow_owner(
         "current database capacity changed under writer"
     );
     let bytes = serde_json::to_vec(&Owner {
-        version: DATABASE_VERSION,
+        version: super::wal::version(directory),
         scope: scope.clone(),
         capacity: next,
     })?;
@@ -173,6 +197,11 @@ pub(crate) fn validate_capacity(bytes: u64) -> Result<u64> {
 }
 
 pub(crate) fn plain_database(path: &Path) -> Result<()> {
+    if super::wal::enabled(path.parent().context("database parent missing")?) {
+        let directory = path.parent().context("database parent missing")?;
+        let owner = read_owner(directory)?;
+        return super::wal::validate_files(directory, owner.capacity);
+    }
     let metadata = fs::symlink_metadata(path)?;
     ensure!(
         metadata.is_file()
@@ -206,7 +235,12 @@ pub(crate) fn require_version(connection: &Connection) -> Result<()> {
     let version: u32 = connection.pragma_query_value(None, "user_version", |r| r.get(0))?;
     let application: i32 = connection.pragma_query_value(None, "application_id", |r| r.get(0))?;
     ensure!(
-        version == DATABASE_VERSION && application == APPLICATION_ID,
+        version
+            == connection
+                .path()
+                .and_then(|path| Path::new(path).parent())
+                .map_or(DATABASE_VERSION, super::wal::version)
+            && application == APPLICATION_ID,
         "obsolete current index format; run airk index --full to rebuild for SQLite FTS5"
     );
     let page: i64 = connection.pragma_query_value(None, "page_size", |r| r.get(0))?;
@@ -218,16 +252,32 @@ pub(crate) fn require_version(connection: &Connection) -> Result<()> {
 }
 
 pub(crate) fn open_reader(path: &Path) -> Result<Connection> {
+    open_reader_budget(path, false)
+}
+
+pub(crate) fn open_reader_budget(path: &Path, legacy_budget: bool) -> Result<Connection> {
     plain_database(path)?;
     let journal = path.with_file_name("current.sqlite3-journal");
     ensure!(
         !journal.try_exists()?,
         "current index requires writer recovery before reads"
     );
-    let connection = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let service = super::wal::enabled(path.parent().context("database parent missing")?);
+    let mut connection = if service {
+        let capacity = read_owner(path.parent().context("database parent missing")?)?.capacity;
+        let vfs = if legacy_budget {
+            super::wal::legacy_vfs()?
+        } else {
+            super::wal::vfs(capacity)?
+        };
+        Connection::open_with_flags_and_vfs(path, flags, vfs.as_str())?
+    } else {
+        Connection::open_with_flags(path, flags)?
+    };
+    if service {
+        super::wal::retain_sidecars(&mut connection)?;
+    }
     connection.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH, 64 << 20)?;
     connection.busy_timeout(Duration::ZERO)?;
     connection.execute_batch("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-4096; BEGIN;")?;
@@ -251,6 +301,18 @@ fn open_writer_mode(
     create: bool,
     bootstrap: bool,
 ) -> Result<Connection> {
+    super::admission::admit_open(|| {
+        open_writer_mode_once(path, capacity, create, bootstrap)
+            .map_err(super::admission::writer_open_error)
+    })
+}
+
+fn open_writer_mode_once(
+    path: &Path,
+    capacity: u64,
+    create: bool,
+    bootstrap: bool,
+) -> Result<Connection> {
     let pages = validate_capacity(capacity)?;
     if !create {
         plain_database(path)?;
@@ -259,7 +321,19 @@ fn open_writer_mode(
     if create {
         flags |= OpenFlags::SQLITE_OPEN_CREATE;
     }
-    let connection = open_writer_connection(path, flags)?;
+    let service = super::wal::enabled(path.parent().context("database parent missing")?);
+    let mut connection = if service {
+        Connection::open_with_flags_and_vfs(path, flags, super::wal::vfs(capacity)?.as_str())?
+    } else {
+        open_writer_connection(path, flags)?
+    };
+    if service {
+        super::wal::retain_sidecars(&mut connection)?;
+    }
+    ensure!(
+        !connection.is_readonly("main")?,
+        "SQLite writer opened read-only"
+    );
     connection.set_limit(rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH, 64 << 20)?;
     connection.busy_timeout(Duration::ZERO)?;
     if create {
@@ -279,7 +353,12 @@ fn open_writer_mode(
             require_version(&connection)?;
         }
     }
-    connection.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=EXTRA; PRAGMA locking_mode=NORMAL; PRAGMA auto_vacuum=NONE; PRAGMA temp_store=MEMORY; PRAGMA trusted_schema=OFF; PRAGMA cache_size=-16384; PRAGMA cache_spill=ON; PRAGMA mmap_size=0;")?;
+    if service {
+        connection.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA wal_autocheckpoint=256; PRAGMA journal_size_limit=0;")?;
+    } else {
+        connection.execute_batch("PRAGMA journal_mode=DELETE; PRAGMA synchronous=EXTRA;")?;
+    }
+    connection.execute_batch("PRAGMA locking_mode=NORMAL; PRAGMA auto_vacuum=NONE; PRAGMA temp_store=MEMORY; PRAGMA trusted_schema=OFF; PRAGMA cache_size=-16384; PRAGMA cache_spill=ON; PRAGMA mmap_size=0;")?;
     let actual: i64 =
         connection.query_row(&format!("PRAGMA max_page_count={pages}"), [], |r| r.get(0))?;
     ensure!(
@@ -461,6 +540,15 @@ pub(crate) fn effective_sector(connection: &mut Connection) -> Result<u64> {
 
 pub(crate) fn allowance(connection: &mut Connection, capacity: u64) -> Result<u64> {
     validate_capacity(capacity)?;
+    if connection
+        .path()
+        .and_then(|path| Path::new(path).parent())
+        .is_some_and(super::wal::enabled)
+    {
+        // Main growth, checkpoint overlap and bounded sidecars already have a
+        // durable lifetime allowance. Transaction metadata is separately bounded.
+        return Ok(65536);
+    }
     let pages: i64 = connection.pragma_query_value(None, "page_count", |r| r.get(0))?;
     let pages = u64::try_from(pages)?;
     let used = pages
@@ -473,6 +561,15 @@ pub(crate) fn allowance(connection: &mut Connection, capacity: u64) -> Result<u6
     growth
         .checked_add(journal)
         .context("current write capacity overflow")
+}
+
+/// Main-file length excludes committed pages still in WAL. Admission must use
+/// SQLite's logical image, including those pages, rather than checkpoint timing.
+pub(crate) fn logical_bytes(connection: &Connection) -> Result<u64> {
+    let pages: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
+    u64::try_from(pages)?
+        .checked_mul(PAGE_BYTES)
+        .context("current database size overflow")
 }
 
 /// Bound crash recovery before SQLite is allowed to read a hot journal. The

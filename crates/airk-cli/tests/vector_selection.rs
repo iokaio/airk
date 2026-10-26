@@ -1,239 +1,203 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Explicit vector selection stays separate from extraction and the enable switch.
-use anyhow::{Result, ensure};
-use serde_json::{Value, json};
-use std::{
-    fs,
-    path::Path,
-    process::{Command, Output},
-};
-
-fn run(root: &Path, state: &Path, args: &[&str]) -> Result<Output> {
-    Ok(Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--root")
-        .arg(root)
-        .arg("--data-dir")
-        .arg(state)
-        .env("AIRK_USAGE_MODE", "disabled")
-        .args(args)
-        .output()?)
-}
-
-fn call(root: &Path, state: &Path, args: &[&str]) -> Result<Value> {
-    let output = run(root, state, args)?;
-    ensure!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Ok(serde_json::from_slice(&output.stdout)?)
-}
+//! Vector policy clients preserve opt-out and let native source jobs apply selection.
+mod common;
+use airk_core::service::JobState;
+use anyhow::Result;
+use serde_json::json;
+use std::fs;
 
 #[test]
-fn selection_cli_preserves_opt_out_and_applies_only_on_indexing() -> Result<()> {
+fn native_selection_preserves_opt_out_and_publishes_through_source_jobs() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let input = tempfile::tempdir()?;
     let source = root.path().join("original.rs");
-    let bytes = b"pub fn original_selection_fixture() -> u32 { 7 }\n";
-    fs::write(&source, bytes)?;
-    call(
+    let original = b"pub fn original_selection_fixture() -> u32 { 7 }\n";
+    fs::write(&source, original)?;
+    let service = common::Service::start(root.path(), state.path(), "default");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    common::call(root.path(), state.path(), "default", &["index"])?;
+    let initial = common::call(
         root.path(),
         state.path(),
-        &["collections", "vectors", "set", "--enabled", "false"],
-    )?;
-    call(root.path(), state.path(), &["index"])?;
-    let initial = call(
-        root.path(),
-        state.path(),
-        &["collections", "vectors", "selection", "show"],
+        "default",
+        &["settings", "vector_selection"],
     )?;
     assert_eq!(initial["origin"], "default");
     assert_eq!(initial["pending_reindex"], false);
-    let policy = json!({"version":1,"exclusions":[{"id":"selected-rust","basename":"original.rs","language":"rust"}]}).to_string();
-    let preview = call(
+    let policy = json!({"version":1,"exclusions":[{"id":"selected-rust","basename":"original.rs","language":"rust"}]});
+    let file = input.path().join("selection.json");
+    fs::write(&file, policy.to_string())?;
+    let preview = common::call(
         root.path(),
         state.path(),
+        "default",
         &[
-            "collections",
-            "vectors",
-            "selection",
-            "validate",
-            "--json",
-            &policy,
+            "settings",
+            "vector_selection",
+            "--validate-file",
+            file.to_str().unwrap(),
         ],
     )?;
     assert_eq!(preview["origin"], "preview");
     assert_eq!(
-        call(
+        common::call(
             root.path(),
             state.path(),
-            &["collections", "vectors", "selection", "show"]
+            "default",
+            &["settings", "vector_selection"]
         )?["digest"],
         initial["digest"]
     );
-    let configured = call(
-        root.path(),
-        state.path(),
-        &[
-            "collections",
-            "vectors",
-            "selection",
-            "set",
-            "--json",
-            &policy,
-        ],
-    )?;
-    assert_eq!(configured["pending_reindex"], true);
-    let vectors = call(
-        root.path(),
-        state.path(),
-        &["collections", "vectors", "show"],
-    )?;
-    assert_eq!(vectors["enabled"], false);
-    assert_eq!(vectors["selection_pending_reindex"], true);
     assert_eq!(
-        call(root.path(), state.path(), &["info", "original.rs"])?["vector_selection"]["eligible"],
-        true
-    );
-    call(root.path(), state.path(), &["index"])?;
-    let applied = call(
-        root.path(),
-        state.path(),
-        &["collections", "vectors", "selection", "show"],
-    )?;
-    assert_eq!(applied["pending_reindex"], false);
-    assert_eq!(applied["applied_digest"], configured["digest"]);
-    let info = call(root.path(), state.path(), &["info", "original.rs"])?;
-    assert_eq!(info["vector_selection"]["excluded_by"], "selected-rust");
-    call(
-        root.path(),
-        state.path(),
-        &["collections", "vectors", "set", "--enabled", "true"],
-    )?;
-    assert_eq!(
-        call(
+        common::call(
             root.path(),
             state.path(),
-            &["collections", "vectors", "selection", "show"]
-        )?["digest"],
-        configured["digest"]
+            "default",
+            &["info", "original.rs"]
+        )?["vector_selection"]["eligible"],
+        true
     );
-    assert_eq!(fs::read(source)?, bytes);
+    let configured = common::configure_cli(
+        &service,
+        root.path(),
+        state.path(),
+        "default",
+        json!({"operation":"vector_selection","policy":policy}),
+    )?;
+    assert_eq!(configured.state, JobState::Succeeded);
+    common::call(root.path(), state.path(), "default", &["index"])?;
+    let applied = common::call(
+        root.path(),
+        state.path(),
+        "default",
+        &["settings", "vector_selection"],
+    )?;
+    assert_eq!(applied["digest"], preview["digest"]);
+    assert_eq!(applied["applied_digest"], preview["digest"]);
+    assert_eq!(applied["pending_reindex"], false);
+    assert_eq!(
+        common::call(
+            root.path(),
+            state.path(),
+            "default",
+            &["settings", "vector_status"]
+        )?["enabled"],
+        false
+    );
+    assert_eq!(
+        common::call(
+            root.path(),
+            state.path(),
+            "default",
+            &["info", "original.rs"]
+        )?["vector_selection"]["excluded_by"],
+        "selected-rust"
+    );
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: true });
+    assert_eq!(
+        common::call(
+            root.path(),
+            state.path(),
+            "default",
+            &["settings", "vector_selection"]
+        )?["digest"],
+        preview["digest"]
+    );
+    assert_eq!(fs::read(source)?, original);
     Ok(())
 }
 
 #[test]
-fn selection_cli_rejects_invalid_bounded_inputs_without_changing_configuration() -> Result<()> {
+fn native_selection_rejects_invalid_bounded_inputs_and_supports_explicit_reset() -> Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let input = tempfile::tempdir()?;
-    let policy_file = input.path().join("selection.json");
-    let valid = r#"{"version":1,"exclusions":[{"id":"text","suffix":".txt"}]}"#;
-    fs::write(&policy_file, valid)?;
-    let file = policy_file.to_str().unwrap();
-    let saved = call(
+    let service = common::Service::start(root.path(), state.path(), "default");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    let saved = common::configure_cli(
+        &service,
         root.path(),
         state.path(),
-        &["collections", "vectors", "selection", "set", "--file", file],
+        "default",
+        json!({"operation":"vector_selection","policy":{"version":1,"exclusions":[{"id":"text","suffix":".txt"}]}}),
     )?;
-    for action in ["validate", "set"] {
-        assert!(
-            !run(
-                root.path(),
-                state.path(),
-                &["collections", "vectors", "selection", action]
-            )?
-            .status
-            .success()
-        );
-        assert!(
-            !run(
-                root.path(),
-                state.path(),
-                &[
-                    "collections",
-                    "vectors",
-                    "selection",
-                    action,
-                    "--file",
-                    file,
-                    "--json",
-                    valid
-                ]
-            )?
-            .status
-            .success()
-        );
-        for invalid in [
-            r#"{"version":3,"exclusions":[]}"#,
-            r#"{"version":1,"exclusions":[],"unknown":true}"#,
-            r#"{"version":1,"exclusions":[{"id":"all"}]}"#,
-            r#"{"version":1,"exclusions":[{"id":"same","suffix":".txt"},{"id":"same","suffix":".rs"}]}"#,
-            r#"{"version":1,"exclusions":[{"id":"outside","path_prefix":"../"}]}"#,
-        ] {
-            assert!(
-                !run(
-                    root.path(),
-                    state.path(),
-                    &[
-                        "collections",
-                        "vectors",
-                        "selection",
-                        action,
-                        "--json",
-                        invalid
-                    ]
-                )?
-                .status
-                .success(),
-                "accepted {invalid}"
-            );
-        }
-    }
-    fs::write(&policy_file, vec![b' '; 131_073])?;
-    assert!(
-        !run(
-            root.path(),
-            state.path(),
-            &["collections", "vectors", "selection", "set", "--file", file]
-        )?
-        .status
-        .success()
-    );
-    assert_eq!(
-        call(
-            root.path(),
-            state.path(),
-            &["collections", "vectors", "selection", "show"]
-        )?["digest"],
-        saved["digest"]
-    );
-    let foreign = tempfile::tempdir()?;
-    for args in [
-        vec!["show"],
-        vec!["validate", "--json", valid],
-        vec!["set", "--json", valid],
+    assert_eq!(saved.state, JobState::Succeeded);
+    common::call(root.path(), state.path(), "default", &["index"])?;
+    let before = common::call(
+        root.path(),
+        state.path(),
+        "default",
+        &["settings", "vector_selection"],
+    )?;
+    let file = input.path().join("selection.json");
+    for invalid in [
+        r#"{"version":3,"exclusions":[]}"#,
+        r#"{"version":1,"exclusions":[],"unknown":true}"#,
+        r#"{"version":1,"exclusions":[{"id":"all"}]}"#,
+        r#"{"version":1,"exclusions":[{"id":"same","suffix":".txt"},{"id":"same","suffix":".rs"}]}"#,
+        r#"{"version":1,"exclusions":[{"id":"outside","path_prefix":"../"}]}"#,
     ] {
-        let mut command = vec!["collections", "vectors", "selection"];
-        command.extend(args);
+        fs::write(&file, invalid)?;
         assert!(
-            !run(foreign.path(), state.path(), &command)?
+            !common::command(root.path(), state.path(), "default")
+                .args(["settings", "vector_selection", "--validate-file"])
+                .arg(&file)
+                .output()?
                 .status
                 .success()
         );
+        assert!(common::configure_cli(&service, root.path(), state.path(), "default",
+            json!({"operation":"vector_selection","policy":serde_json::from_str::<serde_json::Value>(invalid)?})).is_err());
     }
-    let reset = call(
+    fs::write(&file, vec![b' '; 131073])?;
+    assert!(
+        !common::command(root.path(), state.path(), "default")
+            .args(["settings", "vector_selection", "--validate-file"])
+            .arg(&file)
+            .output()?
+            .status
+            .success()
+    );
+    let oversized = json!({"operation":"vector_selection","policy":{"version":1,"exclusions":(0..512).map(|id|json!({"id":format!("rule-{id}"),"path_prefix":"original-".repeat(16)})).collect::<Vec<_>>()}});
+    assert!(
+        common::configure_cli(&service, root.path(), state.path(), "default", oversized).is_err()
+    );
+    assert_eq!(
+        common::call(
+            root.path(),
+            state.path(),
+            "default",
+            &["settings", "vector_selection"]
+        )?["digest"],
+        before["digest"]
+    );
+    let wrong = "fe".repeat(32);
+    assert!(
+        !common::native_command()
+            .arg("--service-runtime-dir")
+            .arg(&service.control)
+            .args(["--service-project", &wrong, "settings", "vector_selection"])
+            .output()?
+            .status
+            .success()
+    );
+    let reset = common::configure_cli(
+        &service,
         root.path(),
         state.path(),
-        &[
-            "collections",
-            "vectors",
-            "selection",
-            "set",
-            "--json",
-            r#"{"version":1,"exclusions":[]}"#,
-        ],
+        "default",
+        json!({"operation":"vector_selection","policy":{"version":1,"exclusions":[]}}),
     )?;
-    assert_eq!(reset["policy"]["exclusions"], json!([]));
+    assert_eq!(reset.state, JobState::Succeeded);
+    assert_eq!(
+        common::call(
+            root.path(),
+            state.path(),
+            "default",
+            &["settings", "vector_selection"]
+        )?["policy"]["exclusions"],
+        json!([])
+    );
     Ok(())
 }

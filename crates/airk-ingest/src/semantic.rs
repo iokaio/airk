@@ -383,6 +383,7 @@ fn add_document(
             "SCIP display name too long"
         );
         snapshot.imported_facts.push(FactHit {
+            candidate: false,
             continuity_key: None,
             name: name.into(),
             kind: if is_definition {

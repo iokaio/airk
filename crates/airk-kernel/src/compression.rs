@@ -2,13 +2,9 @@
 //! Explicit bounded physical repacking reuses the current publication journal.
 use crate::Kernel;
 use airk_core::compression::CompressionMode;
-use airk_store::{
-    current::{
-        CapturedInput,
-        graph::{GraphOverlay, GraphOverlayLimits},
-        postings::Lookup,
-    },
-    quota::Quota,
+use airk_store::current::{
+    graph::{GraphOverlay, GraphOverlayLimits},
+    postings::Lookup,
 };
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -37,7 +33,7 @@ impl Kernel {
         let writer = self.store.lock()?;
         self.store.configure_compression(
             &writer,
-            &Quota::open(&self.data_root)?,
+            &self.collection_quota()?,
             &self.root_id(),
             mode,
         )?;
@@ -122,7 +118,7 @@ impl Kernel {
         );
         let _execution = crate::execution::acquire(&self.data_root)?;
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        let quota = Quota::open(&self.data_root)?;
+        let quota = self.collection_quota()?;
         crate::current::recover_current(&self.store, &quota, &scope)?;
         let writer = self.store.lock()?;
         let reservation = quota.reserve_available(&self.collection, 256 << 20)?;
@@ -145,7 +141,10 @@ impl Kernel {
         let mut inputs = Vec::new();
         let mut admitted = 0usize;
         for path in page.paths.iter().take(max_files) {
-            let artifact = read.artifact(path)?.context("repack artifact missing")?;
+            let mut captured = read
+                .captured_input(path)?
+                .context("repack artifact missing")?;
+            let artifact = &captured.artifact;
             let reference = artifact
                 .retained
                 .as_ref()
@@ -164,8 +163,8 @@ impl Kernel {
                 break;
             }
             admitted += bytes;
-            let retained = self.store.load_retrieval_artifact(&artifact)?;
-            let source = self.store.read_retained_source(&artifact)?;
+            let retained = self.store.load_retrieval_artifact(artifact)?;
+            let source = self.store.read_retained_source(artifact)?;
             let updated = self.store.retain_payload_encoded(
                 &retained.artifact,
                 &retained.payload,
@@ -174,8 +173,9 @@ impl Kernel {
                 Some(&reservation),
                 mode,
             )?;
-            if serde_json::to_vec(&updated)? != serde_json::to_vec(&artifact)? {
-                inputs.push(CapturedInput { artifact: updated });
+            if serde_json::to_vec(&updated)? != serde_json::to_vec(artifact)? {
+                captured.artifact = updated;
+                inputs.push(captured);
             }
             report.examined += 1;
             report.next_after = Some(path.clone());

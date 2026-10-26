@@ -144,7 +144,8 @@ export class NativeProcessError extends Error {
 }
 
 export function runText(command: string, args: string[], cwd?: string, timeout = 300000,
-    onStderrLine?: (line: string) => boolean, idleTimeout = 0): Promise<string> {
+    onStderrLine?: (line: string) => boolean, idleTimeout = 0, input?: string): Promise<string> {
+    if (input !== undefined && Buffer.byteLength(input, 'utf8') > 65536) { return Promise.reject(new Error('AIRK native control input exceeds 64 KiB.')); }
     return new Promise((resolve, reject) => {
         const started = performance.now();
         let idleExpired = false;
@@ -155,6 +156,10 @@ export function runText(command: string, args: string[], cwd?: string, timeout =
             if (error) { reject(new NativeProcessError(command, error, stderr, Math.round(performance.now() - started), timeout)); }
             else { resolve(stdout); }
         });
+        if (input !== undefined) {
+            child.stdin?.on('error', () => { /* The exit result/deadline owns error reporting. */ });
+            child.stdin?.end(input);
+        }
         const armIdle = () => {
             if (!idleTimeout) { return; }
             if (idleTimer) { clearTimeout(idleTimer); }
@@ -211,9 +216,9 @@ export async function joinScheduledIndex<T>(initialArgs: string[],
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
-export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 15, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
+export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
     return new Promise((resolve, reject) => {
-        const child = spawn(spec.command, launchArgs(spec), { cwd: spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
+        const child = spawn(spec.command, launchArgs(spec), { cwd: spec.service?path.dirname(spec.command):spec.root, env: { ...process.env, AIRK_CLIENT: 'vscode' }, windowsHide: true, stdio: 'pipe' });
         let buffer = '', stderr = '', total = 0, done = false;
         const requests = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
         const finish = (error?: Error, result?: { tools: string[]; status: unknown }) => {
@@ -223,7 +228,7 @@ export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 15, cli
             requests.clear();
             if (error) { reject(error); } else { resolve(result!); }
         };
-        const timer = setTimeout(() => finish(new Error('AIRK MCP probe timed out.')), 15000);
+        const timer = setTimeout(() => finish(new Error('AIRK MCP probe timed out.')), spec.service?90000:15000);
         child.on('error', error => finish(error));
         child.on('exit', code => { if (!done) { finish(new Error(`AIRK MCP exited (${code}): ${stderr}`)); } });
         child.stdin.on('error', error => finish(error));
@@ -256,13 +261,18 @@ export function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 15, cli
             child.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n');
             const listed = await request(2, 'tools/list', {});
             const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);
-            const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : [])];
+            const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
             if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
             const status = await request(3, 'tools/call', { name: 'airk_status', arguments: {} });
             if (status.isError) {
                 const message = status.content?.map((part: { text?: string }) => part.text ?? '').join('\n') ?? '';
                 if (!message.includes('workspace is not indexed')) { throw new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`); }
                 finish(undefined, { tools, status: { state: 'not_indexed' } }); return;
+            }
+            if(expectedTools>=16){
+                const text=status.content?.find((part:any)=>part.type==='text')?.text;
+                const payload=JSON.parse(text??'null');
+                if(payload?.index_state==='unavailable')status.state='index_unavailable';
             }
             finish(undefined, { tools, status });
         })().catch(error => finish(error instanceof Error ? error : new Error(String(error))));

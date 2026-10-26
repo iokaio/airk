@@ -2,9 +2,7 @@
 //! One request gate for lexical selection, current DiskANN and exact citations.
 use super::{MAX_LEXICAL_VALIDATION_BYTES, open_selected_lexical};
 use airk_core::{Hit, SearchQuery, identity::Sha256Digest};
-use airk_retrieval::{
-    bounded::Charge, model::EmbeddingModel, terms, truncate_utf8, vector::mutable::MutableDiskIndex,
-};
+use airk_retrieval::{bounded::Charge, terms, truncate_utf8, vector::mutable::MutableDiskIndex};
 use airk_store::current::lexical::{CurrentLexicalCandidate, stable_id};
 use airk_store::{
     FileStore,
@@ -244,7 +242,7 @@ fn vector_candidates(
         .configuration
         .model
         .context("semantic retrieval not ready: no indexed model")?;
-    let model = EmbeddingModel::open_objects(store.directory(), &objects)?;
+    let model = crate::shared_models::open_model(store, &objects)?;
     let vector = model
         .embed_text(&query.text)?
         .context("semantic retrieval not ready: no recognized model tokens")?;

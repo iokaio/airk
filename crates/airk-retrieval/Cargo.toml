@@ -9,6 +9,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["local-inference"]
+local-inference = ["dep:tract-onnx", "dep:tokenizers"]
+
 [dependencies]
 airk-core.workspace = true
 anyhow.workspace = true
@@ -19,5 +23,5 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-tract-onnx.workspace = true
-tokenizers.workspace = true
+tract-onnx = { workspace = true, optional = true }
+tokenizers = { workspace = true, optional = true }

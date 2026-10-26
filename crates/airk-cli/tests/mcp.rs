@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Real stdio protocol lifecycle and collection-scoped tools through the shipped binary.
+mod common;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -16,16 +17,22 @@ struct Session {
 }
 impl Session {
     fn start(root: &std::path::Path, state: &std::path::Path) -> anyhow::Result<Self> {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .args([
-                "--root",
-                root.to_str().expect("test root"),
-                "--data-dir",
-                state.to_str().expect("test state"),
-                "--collection",
-                "project-a",
-                "mcp",
-            ])
+        // Existing rich-payload parity and publication tests explicitly use Full.
+        Self::with_mode(root, state, Some("full"))
+    }
+    fn with_mode(
+        root: &std::path::Path,
+        state: &std::path::Path,
+        mode: Option<&str>,
+    ) -> anyhow::Result<Self> {
+        let mut command = common::command(root, state, "project-a");
+        if let Some(mode) = mode {
+            command.env("AIRK_MCP_RESPONSE_MODE", mode);
+        } else {
+            command.env_remove("AIRK_MCP_RESPONSE_MODE");
+        }
+        let mut child = command
+            .arg("mcp")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -53,8 +60,18 @@ impl Session {
         Ok(())
     }
     fn receive(&self, id: u64) -> anyhow::Result<Value> {
+        self.receive_until(id, std::time::Instant::now() + Duration::from_secs(60))
+    }
+    fn receive_until(&self, id: u64, deadline: std::time::Instant) -> anyhow::Result<Value> {
         for _ in 0..10 {
-            let line = self.output.recv_timeout(Duration::from_secs(10))?;
+            let remaining = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .ok_or_else(|| anyhow::anyhow!("stdio observation deadline exhausted"))?;
+            let line = self.output.recv_timeout(remaining)?;
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "stdio observation deadline exhausted"
+            );
             let value: Value = serde_json::from_str(&line)?;
             if value["id"] == id {
                 return Ok(value);
@@ -66,6 +83,44 @@ impl Session {
         self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":arguments}}))?;
         self.receive(id)
     }
+    fn published_status(&mut self, id: u64, project: &str) -> anyhow::Result<Value> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "publication observation deadline exhausted"
+            );
+            self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"airk_status","arguments":{"response_mode":"full"}}}))?;
+            let reply = self.receive_until(id, deadline)?;
+            if let Some(retry) = common::read_retry::within(&reply["result"], deadline) {
+                std::thread::sleep(retry.delay);
+                continue;
+            }
+            anyhow::ensure!(
+                reply.get("error").is_none() && reply["result"]["isError"] != true,
+                "status read rejected"
+            );
+            let value: Value = serde_json::from_str(
+                reply["result"]["content"][0]["text"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing status payload"))?,
+            )?;
+            if !common::read_retry::publication_pending(&value, "project-a", project)? {
+                return Ok(reply);
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
+    fn read_retry(&mut self, id: u64, name: &str, arguments: Value) -> anyhow::Result<Value> {
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let reply = self.call(id, name, arguments.clone())?;
+            let Some(retry) = common::read_retry::within(&reply["result"], until) else {
+                return Ok(reply);
+            };
+            std::thread::sleep(retry.delay);
+        }
+    }
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -75,10 +130,98 @@ impl Drop for Session {
 }
 
 #[test]
+fn default_terse_stdio_supports_full_and_requested_status_without_changing_revision()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let _service = common::Service::start(root.path(), state.path(), "project-a");
+    fs::write(
+        root.path().join("one.rs"),
+        "fn response_fixture() -> bool { true }\n",
+    )?;
+    common::call(root.path(), state.path(), "project-a", &["index"])?;
+    let mut session = Session::with_mode(root.path(), state.path(), None)?;
+    session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"response-mode-fixture","version":"1"}}}))?;
+    let initialized = session.receive(1)?;
+    let instructions = initialized["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.len() <= 512 && instructions.contains("response_mode=full"));
+    session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    let mut values: Vec<Value> = Vec::new();
+    for (id, args) in [
+        (2, json!({"query":"response_fixture","mode":"lexical"})),
+        (3, json!({"query":"response_fixture","mode":"lexical"})),
+        (
+            4,
+            json!({"query":"response_fixture","mode":"lexical","response_mode":"full"}),
+        ),
+        (
+            5,
+            json!({"query":"response_fixture","mode":"lexical","include_status":true}),
+        ),
+    ] {
+        let response = session.read_retry(id, "airk_search", args)?;
+        anyhow::ensure!(response["result"]["isError"] != true, "{response}");
+        let mut value = serde_json::from_str::<Value>(
+            response["result"]["content"][0]["text"].as_str().unwrap(),
+        )?;
+        if id == 3 {
+            // Freshness observations can settle after the index job completes
+            // without changing its publication. Only unchanged status is omitted.
+            let mut prior = values[0]["freshness"].clone();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let mut next_id = 6;
+            while let Some(freshness) = value.get("freshness") {
+                let mut before = prior.clone();
+                let mut after = freshness.clone();
+                before.as_object_mut().unwrap().remove("observed_unix_ms");
+                after.as_object_mut().unwrap().remove("observed_unix_ms");
+                assert_ne!(before, after, "unchanged freshness was repeated");
+                assert_eq!(
+                    value["publication"]["token"],
+                    values[0]["publication"]["token"]
+                );
+                assert_eq!(value["hits"], values[0]["hits"]);
+                prior = freshness.clone();
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "freshness observations never settled: {value}"
+                );
+                let response = session.read_retry(
+                    next_id,
+                    "airk_search",
+                    json!({"query":"response_fixture","mode":"lexical"}),
+                )?;
+                anyhow::ensure!(response["result"]["isError"] != true, "{response}");
+                value = serde_json::from_str(
+                    response["result"]["content"][0]["text"].as_str().unwrap(),
+                )?;
+                next_id += 1;
+            }
+        }
+        values.push(value);
+    }
+    assert!(values[0].get("generation").is_none());
+    assert!(values[0].get("freshness").is_some());
+    assert!(values[1].get("freshness").is_none());
+    assert!(values[2]["publication"]["generation"].is_u64());
+    assert!(values[3].get("freshness").is_some());
+    for value in &values[1..] {
+        assert_eq!(
+            value["publication"]["token"],
+            values[0]["publication"]["token"]
+        );
+        assert_eq!(value["hits"], values[0]["hits"]);
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "embedding-worker")]
 fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() -> anyhow::Result<()>
 {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
+    let service = common::Service::with_helper(root.path(), state.path(), "project-a");
     fs::write(root.path().join("auth.txt"), "authenticate")?;
     let model = state.path().join("models/local");
     fs::create_dir_all(&model)?;
@@ -94,22 +237,11 @@ fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() 
         }))?,
     )?;
     let cli = |args: &[&str]| -> anyhow::Result<Value> {
-        let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .arg("--root")
-            .arg(root.path())
-            .arg("--data-dir")
-            .arg(state.path())
-            .args(["--collection", "project-a"])
-            .args(args)
-            .output()?;
-        anyhow::ensure!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(serde_json::from_slice(&output.stdout)?)
+        common::call(root.path(), state.path(), "project-a", args)
     };
+    service.configure(airk_cli::service_configuration::Draft::InstallModel { directory: model });
     cli(&["index"])?;
+    service.wait_semantic(1)?;
     assert_eq!(
         cli(&["search", "login"])?["hits"][0]["citation"]["path"],
         "auth.txt"
@@ -133,19 +265,26 @@ fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() 
             reply["result"]["content"][0]["text"].as_str().unwrap(),
         )?)
     };
-    let first = evidence(session.call(2, "airk_search", json!({"query":"login"}))?)?;
+    let first = evidence(session.read_retry(2, "airk_search", json!({"query":"login"}))?)?;
     assert_eq!(first["hits"][0]["citation"]["path"], "auth.txt");
-    cli(&["collections", "vectors", "set", "--enabled", "false"])?;
-    let disabled = evidence(session.call(3, "airk_search", json!({"query":"login"}))?)?;
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    let disabled = evidence(session.read_retry(3, "airk_search", json!({"query":"login"}))?)?;
     assert_eq!(disabled["hits"], json!([]));
-    assert_eq!(first["publication"], disabled["publication"]);
+    // Native source turns may publish after the policy job; the live session
+    // must observe opt-out without relying on a race against that publication.
+    assert_eq!(
+        first["publication"]["incarnation"],
+        disabled["publication"]["incarnation"]
+    );
     assert_eq!(
         session.call(4, "airk_search", json!({"query":"login","mode":"vector"}))?["result"]["isError"],
         true
     );
-    cli(&["collections", "vectors", "set", "--enabled", "true"])?;
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: true });
+    cli(&["index"])?;
+    service.wait_semantic(1)?;
     assert_eq!(
-        evidence(session.call(5, "airk_search", json!({"query":"login"}))?)?["hits"][0]["citation"]
+        evidence(session.read_retry(5, "airk_search", json!({"query":"login"}))?)?["hits"][0]["citation"]
             ["path"],
         "auth.txt"
     );
@@ -156,6 +295,7 @@ fn default_search_uses_vectors_and_live_mcp_connections_observe_panel_opt_out() 
 fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let service = common::Service::start(root.path(), state.path(), "project-a");
     fs::write(
         root.path().join("original.rs"),
         "pub fn original_evidence() -> u32 { 7 }\n",
@@ -165,33 +305,27 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
         "# Original evidence\n\nThe original client must retain its local evidence.\n",
     )?;
     let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_airk"))
-            .arg("--root")
-            .arg(root.path())
-            .arg("--data-dir")
-            .arg(state.path())
-            .args(["--collection", "project-a"])
-            .env("AIRK_USAGE_MODE", "disabled")
+        common::command(root.path(), state.path(), "project-a")
             .args(args)
             .output()
     };
-    let cli = |args: &[&str]| -> anyhow::Result<Value> {
-        let output = run(args)?;
-        anyhow::ensure!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(serde_json::from_slice(&output.stdout)?)
-    };
-    cli(&["collections", "extraction", "detail", "detailed"])?;
+    let cli = |args: &[&str]| common::call(root.path(), state.path(), "project-a", args);
+    service.configure(airk_cli::service_configuration::Draft::Detail {
+        level: airk_core::extraction::IndexDetail::Detailed,
+    });
     cli(&["index"])?;
-    let code = cli(&["code-facts", "--name", "original_evidence"])?;
-    let symbol_key = code["facts"][0]["continuity_key"]["key"]
+    let code = cli(&[
+        "code-facts",
+        "--compact",
+        "false",
+        "--name",
+        "original_evidence",
+    ])?;
+    let symbol_key = code["items"][0]["continuity_key"]["key"]
         .as_str()
         .expect("qualified symbol key");
-    let documents = cli(&["facts", "--kind", "section"])?;
-    let document_key = documents["facts"][0]["continuity_key"]["key"]
+    let documents = cli(&["facts", "--compact", "false", "--kind", "section"])?;
+    let document_key = documents["items"][0]["continuity_key"]["key"]
         .as_str()
         .expect("qualified document key");
     let mut session = Session::start(root.path(), state.path())?;
@@ -204,7 +338,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             .as_array()
             .unwrap()
             .len(),
-        15
+        16
     );
     for (id, command, option, tool, field, key) in [
         (
@@ -224,8 +358,9 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             document_key,
         ),
     ] {
-        let mut expected = cli(&[command, option, key, "--limit", "10"])?;
-        let result = session.call(id, tool, json!({(field):key,"limit":10}))?;
+        let mut expected = cli(&[command, option, key, "--compact", "false", "--limit", "10"])?;
+        let result =
+            session.read_retry(id, tool, json!({(field):key,"compact":false,"limit":10}))?;
         assert_ne!(result["result"]["isError"], true, "{result}");
         let mut actual: Value = serde_json::from_str(
             result["result"]["content"][0]["text"]
@@ -233,10 +368,10 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
                 .expect("tool payload"),
         )?;
         for response in [&mut expected, &mut actual] {
-            response.as_object_mut().unwrap().remove("request_id");
+            common::read_retry::evidence_for_comparison(response)?;
         }
         assert_eq!(actual, expected);
-        assert!(!actual["facts"].as_array().unwrap().is_empty());
+        assert!(!actual["items"].as_array().unwrap().is_empty());
         assert!(
             !run(&[command, option, key, "--name", "original"])?
                 .status
@@ -252,25 +387,13 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
 fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let _service = common::Service::start(root.path(), state.path(), "project-a");
     fs::write(
         root.path().join("aurora.py"),
         "def northern_observation():\n    return 71\n",
     )?;
     let cli = |args: &[&str]| -> anyhow::Result<Value> {
-        let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .arg("--root")
-            .arg(root.path())
-            .arg("--data-dir")
-            .arg(state.path())
-            .args(["--collection", "project-a"])
-            .args(args)
-            .output()?;
-        anyhow::ensure!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(serde_json::from_slice(&output.stdout)?)
+        common::call(root.path(), state.path(), "project-a", args)
     };
     cli(&["index"])?;
     let mut session = Session::start(root.path(), state.path())?;
@@ -296,22 +419,22 @@ fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Res
         )?)
     };
     let mut expected = cli(&["changes", "--path", "aurora.py"])?;
-    let mut actual = payload(session.call(
+    let mut actual = payload(session.read_retry(
         2,
         "airk_changes",
         json!({"selectors":[{"kind":"path","path":"aurora.py"}]}),
     )?)?;
     for value in [&mut expected, &mut actual] {
-        value.as_object_mut().unwrap().remove("request_id");
-        value["freshness"]
-            .as_object_mut()
-            .unwrap()
-            .remove("observed_unix_ms");
+        assert!(
+            value.get("freshness").is_some(),
+            "changes omitted freshness"
+        );
+        common::read_retry::evidence_for_comparison(value)?;
     }
     assert_eq!(actual, expected);
     let info = cli(&["info", "aurora.py"])?;
     let validator = info["read"]["validator"].as_str().expect("validator");
-    let unchanged = payload(session.call(
+    let unchanged = payload(session.read_retry(
         3,
         "airk_file_info",
         json!({"path":"aurora.py","if_evidence":validator}),
@@ -348,27 +471,14 @@ fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Res
 fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let _service = common::Service::start(root.path(), state.path(), "project-a");
     let old_text = "def authenticate():\n    return 'revisionone'\n";
     let new_text = "def authenticate():\n    return 'revisiontwo'\n";
     fs::write(root.path().join("auth.py"), old_text)?;
     let index = || -> anyhow::Result<Value> {
-        let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .args([
-                "--root",
-                root.path().to_str().expect("root"),
-                "--data-dir",
-                state.path().to_str().expect("state"),
-                "--collection",
-                "project-a",
-                "index",
-            ])
-            .output()?;
-        anyhow::ensure!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(serde_json::from_slice(&output.stdout)?)
+        // Index admission retains one exact request key across bounded metadata replies.
+        _service.job(airk_core::service::JobKind::Index);
+        common::published_status(root.path(), state.path(), "project-a")
     };
     let old_generation = index()?["generation"].as_u64().expect("generation");
     let mut agents = [
@@ -395,8 +505,22 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
         )?)
     };
     // Queries do not acquire or wait for the collection's exclusive writer lock.
-    let lock_path = state.path().join("collections-1.2/project-a/writer.lock");
-    let writer_lock = fs::File::create_new(&lock_path)?;
+    // Activate the native worker first; startup recovery has its own writer gate.
+    for agent in &mut agents {
+        let ready = evidence(agent.read_retry(
+            90,
+            "airk_search",
+            json!({"query":"authenticate", "mode":"lexical"}),
+        )?)?;
+        assert_eq!(ready["hits"][0]["text"], old_text);
+    }
+    let collection = airk_store::service::collection::Collection::existing(
+        state.path(),
+        &_service.project.root,
+        "project-a",
+    )?;
+    let store = collection.selected_store()?;
+    let writer_lock = store.lock()?;
     let barrier = std::sync::Barrier::new(2);
     std::thread::scope(|scope| -> anyhow::Result<()> {
         let readers: Vec<_> = agents
@@ -404,7 +528,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
             .map(|agent| {
                 scope.spawn(|| -> anyhow::Result<()> {
                     barrier.wait();
-                    let payload = evidence(agent.call(
+                    let payload = evidence(agent.read_retry(
                         2,
                         "airk_search",
                         json!({"query":"authenticate", "mode":"lexical"}),
@@ -422,7 +546,6 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
         Ok(())
     })?;
     drop(writer_lock);
-    fs::remove_file(&lock_path)?;
 
     fs::write(root.path().join("auth.py"), new_text)?;
     let barrier = std::sync::Barrier::new(3);
@@ -440,8 +563,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
                         )?;
                         if result["result"]["isError"] == true {
                             assert!(
-                                result.to_string().contains("busy")
-                                    || result.to_string().contains("active readers"),
+                                common::read_retry::classify(&result["result"]).is_some(),
                                 "{result}"
                             );
                             continue;
@@ -484,7 +606,7 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
     assert_eq!(published["generation"], old_generation + 1);
     let mut shared_hash = None;
     for agent in &mut agents {
-        let payload = evidence(agent.call(
+        let payload = evidence(agent.read_retry(
             100,
             "airk_search",
             json!({"query":"authenticate", "mode":"lexical"}),
@@ -505,8 +627,10 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
 fn client_setup_formats_preserve_collection_scope_and_command_arguments() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let _service = common::Service::start(root.path(), state.path(), "project-a");
     fs::write(root.path().join("a.txt"), "fixture")?;
     for client in [
+        "claude",
         "codex",
         "vscode",
         "cursor",
@@ -515,48 +639,16 @@ fn client_setup_formats_preserve_collection_scope_and_command_arguments() -> any
         "copilot-cli",
         "kilo",
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .args([
-                "--root",
-                root.path().to_str().expect("root"),
-                "--data-dir",
-                state.path().to_str().expect("state"),
-                "--collection",
-                "project-a",
-                "setup",
-                "--client",
-                client,
-            ])
+        let output = common::command(root.path(), state.path(), "project-a")
+            .args(["setup", "--client", client])
             .output()?;
         assert!(
-            output.status.success(),
-            "{client}: {}",
-            String::from_utf8_lossy(&output.stderr)
+            !output.status.success(),
+            "raw service invented an installed launcher for {client}"
         );
-        let text = String::from_utf8(output.stdout)?;
-        if client == "codex" {
-            assert!(text.starts_with("[mcp_servers.airk]"));
-            assert!(text.contains("project-a"));
-            continue;
-        }
-        let config: Value = serde_json::from_str(&text)?;
-        let server = match client {
-            "vscode" => &config["servers"]["airk"],
-            "opencode" | "kilo" => &config["mcp"]["airk"],
-            "opencode-v2" => &config["mcp"]["servers"]["airk"],
-            _ => &config["mcpServers"]["airk"],
-        };
-        let args = server
-            .get("args")
-            .unwrap_or(&server["command"])
-            .as_array()
-            .expect("separate arguments");
-        assert!(args.contains(&json!("project-a")));
-        assert_eq!(args.last(), Some(&json!("mcp")));
-        if client == "vscode" || client == "cursor" {
-            assert_eq!(server["type"], "stdio");
-        }
+        assert!(String::from_utf8_lossy(&output.stderr).contains("installed stable launcher"));
     }
+
     Ok(())
 }
 
@@ -564,6 +656,7 @@ fn client_setup_formats_preserve_collection_scope_and_command_arguments() -> any
 fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
+    let service = common::Service::start(root.path(), state.path(), "project-a");
     fs::write(
         root.path().join("auth.py"),
         "import os\ndef authenticate():\n    return True\n",
@@ -581,48 +674,10 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         "# Architecture\n\n## Requirements\n\nREQ-1: The interface must be accessible in at most 200 ms by 13 October 2026.\n",
     )?;
     // This fixture exercises broad document facts retained by Rich Structure.
-    let configured = Command::new(env!("CARGO_BIN_EXE_airk"))
-        .arg("--root")
-        .arg(root.path())
-        .arg("--data-dir")
-        .arg(state.path())
-        .args([
-            "--collection",
-            "project-a",
-            "collections",
-            "extraction",
-            "detail",
-            "balanced",
-        ])
-        .output()?;
-    anyhow::ensure!(
-        configured.status.success(),
-        "{}",
-        String::from_utf8_lossy(&configured.stderr)
-    );
-    let setup = Command::new(env!("CARGO_BIN_EXE_airk"))
-        .args([
-            "--root",
-            root.path().to_str().expect("root"),
-            "--data-dir",
-            state.path().to_str().expect("state"),
-            "--collection",
-            "project-a",
-            "setup",
-        ])
-        .output()?;
-    assert!(
-        setup.status.success(),
-        "{}",
-        String::from_utf8_lossy(&setup.stderr)
-    );
-    let config: Value = serde_json::from_slice(&setup.stdout)?;
-    assert!(
-        config["mcpServers"]["airk"]["args"]
-            .as_array()
-            .expect("args")
-            .contains(&json!("project-a"))
-    );
+    service.configure(airk_cli::service_configuration::Draft::Detail {
+        level: airk_core::extraction::IndexDetail::Balanced,
+    });
+    common::call(root.path(), state.path(), "project-a", &["index"])?;
     let mut session = Session::start(root.path(), state.path())?;
     session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"airk-test","version":"1"}}}))?;
     assert_eq!(session.receive(1)?["result"]["serverInfo"]["name"], "airk");
@@ -638,7 +693,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     let mut advertised = tools.clone();
     advertised.sort_by_key(|tool| tool["name"].as_str().unwrap().to_owned());
     assert_eq!(catalog["tools"], json!(advertised));
-    assert_eq!(tools.len(), 15);
+    assert_eq!(tools.len(), 16);
     assert!(
         tools
             .iter()
@@ -676,7 +731,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         (
             15,
             "airk_code_facts",
-            json!({"name":"authenticate","kind":"definition"}),
+            json!({"name":"authenticate","kind":"definition","compact":false}),
         ),
         (
             16,
@@ -689,7 +744,16 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             json!({"selectors":[{"kind":"path","path":"auth.py"}]}),
         ),
     ] {
-        let result = session.call(i, name, args.clone())?;
+        let result = if name == "airk_status" {
+            let project = airk_kernel::service_projects::registration(
+                root.path(),
+                state.path(),
+                "project-a",
+            )?;
+            session.published_status(i, &project.binding.to_string())?
+        } else {
+            session.read_retry(i, name, args.clone())?
+        };
         assert!(result.get("error").is_none(), "{name}: {result}");
         assert_ne!(result["result"]["isError"], true, "{name}: {result}");
         let payload: Value = serde_json::from_str(
@@ -697,39 +761,22 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
                 .as_str()
                 .expect("JSON payload"),
         )?;
-        let direct = Command::new(env!("CARGO_BIN_EXE_airk"))
-            .arg("--root")
-            .arg(root.path())
-            .arg("--data-dir")
-            .arg(state.path())
-            .args([
-                "--collection",
+        let mut direct: Value = if name == "airk_status" {
+            common::published_status(root.path(), state.path(), "project-a")?
+        } else {
+            let envelope = common::call(
+                root.path(),
+                state.path(),
                 "project-a",
-                "tools",
-                "call",
-                name,
-                "--args",
-                &args.to_string(),
-            ])
-            .env("AIRK_USAGE_MODE", "disabled")
-            .output()?;
-        assert!(
-            direct.status.success(),
-            "{name}: {}",
-            String::from_utf8_lossy(&direct.stderr)
-        );
-        let direct: Value = serde_json::from_slice(&direct.stdout)?;
-        let mut direct: Value =
-            serde_json::from_str(direct["content"][0]["text"].as_str().unwrap())?;
+                &["tools", "call", name, "--args", &args.to_string()],
+            )?;
+            serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap())?
+        };
         if name != "airk_status" {
             // Status includes changing quota/usage observations.
             let mut expected = payload.clone();
-            expected.as_object_mut().unwrap().remove("request_id");
-            if direct.get("freshness").is_some() {
-                // Each call observes scheduler freshness at its own wall-clock instant.
-                assert!(direct["freshness"]["observed_unix_ms"].is_number());
-                direct["freshness"]["observed_unix_ms"] = Value::Null;
-                expected["freshness"]["observed_unix_ms"] = Value::Null;
+            for value in [&mut direct, &mut expected] {
+                common::read_retry::evidence_for_comparison(value)?;
             }
             assert_eq!(direct, expected, "CLI/MCP result mismatch for {name}");
         }
@@ -744,25 +791,22 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             );
         }
         if name == "airk_symbols" {
-            assert_eq!(payload["facts"][0]["name"], "authenticate");
+            assert_eq!(payload["items"][0]["name"], "authenticate");
         }
         if name == "airk_document_facts" {
-            assert_eq!(payload["facts"][0]["name"], "id=logo");
+            assert_eq!(payload["items"][0]["name"], "id=logo");
         }
         if name == "airk_code_facts" {
-            assert_eq!(payload["facts"][0]["code"]["basis"], "syntax");
+            assert_eq!(payload["items"][0]["code"]["basis"], "syntax");
             assert!(
-                payload["facts"][0]["code"]["signature"]
+                payload["items"][0]["code"]["signature"]
                     .as_str()
                     .expect("signature")
                     .contains("authenticate")
             );
         }
         if name == "airk_relationships" {
-            assert_eq!(
-                payload["relationships"][0]["resolution"],
-                "syntax_candidate"
-            );
+            assert_eq!(payload["items"][0]["resolution"], "syntax_candidate");
         }
     }
     let budget = session.call(
@@ -783,10 +827,10 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         json!({"name":"authenticate","unsupported":true}),
     )?;
     assert!(unknown.get("error").is_some() || unknown["result"]["isError"] == true);
-    let requirements = session.call(
+    let requirements = session.read_retry(
         30,
         "airk_document_facts",
-        json!({"kind":"requirement","path_prefix":"requirements"}),
+        json!({"kind":"requirement","path_prefix":"requirements","compact":false}),
     )?;
     assert_ne!(requirements["result"]["isError"], true);
     let payload: Value = serde_json::from_str(
@@ -794,17 +838,17 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             .as_str()
             .expect("JSON"),
     )?;
-    assert_eq!(payload["facts"].as_array().expect("facts").len(), 1);
-    assert_eq!(payload["facts"][0]["document"]["requirement_id"], "REQ-1");
+    assert_eq!(payload["items"].as_array().expect("facts").len(), 1);
+    assert_eq!(payload["items"][0]["document"]["requirement_id"], "REQ-1");
     assert_eq!(
-        payload["facts"][0]["document"]["quantities"][0]["comparator"],
+        payload["items"][0]["document"]["quantities"][0]["comparator"],
         "lte"
     );
     assert_eq!(
-        payload["facts"][0]["document"]["dates"][0]["normalized"],
+        payload["items"][0]["document"]["dates"][0]["normalized"],
         "2026-10-13"
     );
-    assert_eq!(payload["facts"][0]["citation"]["start_line"], 5);
+    assert_eq!(payload["items"][0]["citation"]["start_line"], 5);
     Ok(())
 }
 

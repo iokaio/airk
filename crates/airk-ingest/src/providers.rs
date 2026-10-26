@@ -437,6 +437,7 @@ fn parse_ctags(workspace: &Workspace, bytes: &[u8]) -> Result<ProviderAnalysis> 
             code.signature = Some(crate::tables::bounded(signature, 1024));
         }
         output.facts.push(FactHit {
+            candidate: false,
             continuity_key: None,
             name: name.into(),
             kind: "definition".into(),

@@ -46,12 +46,12 @@ export async function createCodexConfig(spec: LaunchSpec): Promise<string> {
 
 const escape = (value: string): string => value.replace(/[&<>"']/g,
     character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!);
-export type ConnectionAction = 'copy' | 'createCodex' | 'openCodex' | 'verify' | 'copyPrompt' | 'vscode' | 'enableCopilot' | 'installJson' | 'openJson';
+export type ConnectionAction = 'copy' | 'createCodex' | 'openCodex' | 'verify' | 'copyPrompt' | 'vscode' | 'enableCopilot' | 'installJson' | 'openJson' | 'reviewLegacy';
 export function connectionAction(value: unknown, client: Client): ConnectionAction | undefined {
     if (!value || typeof value !== 'object') { return; }
     const action = (value as { action?: unknown }).action;
     const allowed = ['copy', 'verify', 'copyPrompt', ...(client === 'codex' ? ['createCodex', 'openCodex'] : []),
-        ...(client === 'vscode' ? ['vscode', 'enableCopilot'] : []), ...(isJsonClient(client) ? ['installJson', 'openJson'] : [])];
+        ...(client === 'vscode' ? ['vscode', 'enableCopilot'] : []), ...(isJsonClient(client) ? ['installJson', 'openJson', 'reviewLegacy'] : [])];
     return typeof action === 'string' && allowed.includes(action) ? action as ConnectionAction : undefined;
 }
 
@@ -77,11 +77,12 @@ export function renderConnectionGuide(client: Client, spec: LaunchSpec, instruct
     ${codex ? `<p>Project file: <code>${escape(codexConfigPath(spec))}</code></p><p>Create this file if it is missing, or open it and merge the entry below if it already exists. Existing files are never overwritten. Review any same-named server in your user configuration too.</p>
     ${remote ? '' : button('createCodex', 'Create Codex project configuration')}${button('openCodex', 'Open existing Codex project configuration')}` : ''}
     ${isJsonClient(client) ? `<p>Project file: <code>${escape(jsonConfigPath(client, spec))}</code></p><p>Install adds only this AIRK server. Existing servers, comments and approval policies are preserved; conflicting entries require review. Check user-level settings for duplicate AIRK entries too.</p>${remote ? '' : button('installJson', `Install for ${escape(labels[client])}`)}${button('openJson', 'Open project configuration')}` : ''}
+    ${spec.service ? `<p>Review old AIRK entries before enabling 1.4. Replace only the selected server after reviewing its command and arguments; preserve other servers and approval settings. Check project and user configuration for duplicate entries. Old jobs, indexes and processes are separate from this configuration review.</p>${isJsonClient(client) && !remote ? button('reviewLegacy', 'Review legacy AIRK entry') : '<p>Use the agent’s configuration editor to review and merge the displayed connection. Existing TOML and other agent formats require manual review.</p>'}` : ''}
     <details${client === 'vscode' ? '' : ' open'}><summary>${client === 'vscode' ? 'Manual configuration fallback (avoid duplicate registration)' : 'Configuration to review'}</summary><pre>${escape(configFor(client, spec))}</pre>${button('copy', 'Copy configuration')}</details>
-    <h2>2. Reload and enable the server</h2><p>If this collection has not been indexed, run the AIRK helper check below before restarting your agent.</p><p>${codex ? 'In Codex, open the gear menu → MCP servers, then restart the extension. For Codex CLI, start a new session and check /mcp. Project configuration requires a trusted project.' : 'Use the selected agent’s MCP controls to reload and enable AIRK. Complete that client’s normal trust and tool-approval prompts.'}</p>
-    <p>Keep the executable, root, storage and collection arguments together. Refresh this configuration after a helper upgrade or storage change.</p>
-    <h2>3. Check AIRK and the agent separately</h2>${button('verify', 'Check AIRK helper')}
-    <p>The helper check updates this collection’s index and tests its MCP handshake. It cannot confirm that ${escape(labels[client])} loaded the configuration.</p>
+    <h2>2. Reload and enable the server</h2><p>${spec.service ? 'If this collection has not been indexed, start native indexing in the Service Console and inspect its readiness before querying your sources.' : 'If this collection has not been indexed, run the AIRK helper check below before restarting your agent.'}</p><p>${codex ? 'In Codex, open the gear menu → MCP servers, then restart the extension. For Codex CLI, start a new session and check /mcp. Project configuration requires a trusted project.' : 'Use the selected agent’s MCP controls to reload and enable AIRK. Complete that client’s normal trust and tool-approval prompts.'}</p>
+    <p>${spec.service ? 'Keep the stable launcher and exact project binding together. Review configuration again after changing the registered source or storage binding.' : 'Keep the executable, root, storage and collection arguments together. Refresh this configuration after a helper upgrade or storage change.'}</p>
+    <h2>3. Check AIRK and the agent separately</h2>${button('verify', spec.service ? 'Check AIRK MCP connection' : 'Check AIRK helper')}
+    <p>${spec.service ? 'The connection check reads readiness and tests the MCP handshake without starting indexing. Start indexing in the Service Console when needed.' : 'The helper check updates this collection’s index and tests its MCP handshake.'} It cannot confirm that ${escape(labels[client])} loaded the configuration.</p>
     <p>Send this prompt in ${escape(labels[client])} to check its actual tools:</p><pre>${escape(verificationPrompt(spec))}</pre>${button('copyPrompt', 'Copy verification prompt')}
     <p>If tools are missing, check that agent’s active configuration, server list and logs. A running AIRK server in VS Code does not configure another agent.</p>
     <script nonce="${nonce}">const vscode=acquireVsCodeApi();document.addEventListener('click',event=>{const button=event.target.closest('button');if(!button)return;document.querySelectorAll('button').forEach(item=>item.disabled=true);vscode.postMessage({action:button.dataset.action});});</script></body></html>`;

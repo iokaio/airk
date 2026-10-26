@@ -327,6 +327,16 @@ pub(in crate::current) fn verified(
     path: &Path,
     manifest: &LexicalManifest,
 ) -> Result<Arc<Snapshot>> {
+    if path.parent().is_some_and(super::super::wal::enabled) {
+        // Main-file witnesses do not observe WAL commits. Authenticate physical
+        // shadow rows through this request's pinned SQLite snapshot instead.
+        let snapshot = Arc::new(Snapshot::capture(connection)?);
+        ensure!(
+            snapshot.manifest(manifest.updates)? == *manifest,
+            "current FTS5 physical index digest mismatch"
+        );
+        return Ok(snapshot);
+    }
     let commit = manifest.digest()?;
     if let Ok(mut cache) = cache().lock()
         && let Some(snapshot) = cache.get(path, commit)

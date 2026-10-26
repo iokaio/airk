@@ -248,7 +248,7 @@ fn retained_lexical_artifact(
         Some(text.as_bytes()),
         Some(&reservation),
     )?;
-    Ok((artifact, CapturedInput { artifact: compact }))
+    Ok((artifact, CapturedInput::new(compact)))
 }
 
 fn unlinked_tempdir() -> Result<tempfile::TempDir> {

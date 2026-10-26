@@ -2,9 +2,15 @@
 //! Local persistent candidate engines and bounded evidence responses.
 pub mod bounded;
 pub mod embedding_batch;
+pub mod embedding_worker;
 pub mod model;
 pub mod model_catalog;
+#[cfg(feature = "local-inference")]
 mod onnx;
+#[cfg(not(feature = "local-inference"))]
+#[path = "remote_onnx.rs"]
+mod onnx;
+pub mod remote_model;
 pub mod vector;
 pub mod vector_units;
 use airk_core::{Citation, Hit, SearchQuery, SearchResponse, Snapshot};

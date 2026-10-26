@@ -23,6 +23,10 @@ use std::{
 mod grants_tests;
 #[path = "postings_tests.rs"]
 mod postings_tests;
+#[path = "recent_tests.rs"]
+mod recent_tests;
+#[path = "service_publication_tests.rs"]
+mod service_publication_tests;
 
 const CAPACITY: u64 = 8 * 1024 * 1024;
 
@@ -45,10 +49,17 @@ impl Fixture {
         Ok(fixture)
     }
     fn empty() -> Result<Self> {
+        Self::empty_namespace("collections-1.2")
+    }
+    fn empty_namespace(namespace: &str) -> Result<Self> {
         let directory = tempfile::tempdir()?;
         fs::create_dir(directory.path().join("source"))?;
-        let quota = Quota::open(directory.path().join("data"))?;
-        let store = FileStore::new(quota.root().join("collections-1.2/project-current"));
+        let quota = if namespace == "collections-1.4" {
+            Quota::open_service(directory.path().join("data"))?
+        } else {
+            Quota::open(directory.path().join("data"))?
+        };
+        let store = FileStore::new(quota.root().join(namespace).join("project-current"));
         let scope = CurrentScope {
             root: directory
                 .path()
@@ -336,7 +347,7 @@ fn retained_input_with_facts(
         Some(text.as_bytes()),
         Some(&reservation),
     )?;
-    Ok(CapturedInput { artifact })
+    Ok(CapturedInput::new(artifact))
 }
 
 fn prepared_occurrence(
@@ -631,6 +642,89 @@ fn changed_artifact_attaches_and_replaces_exact_vector_occurrence() -> Result<()
     expected.sort_by_key(|pointer| pointer.occurrence_id);
     assert_eq!(read.vector_occurrence_pointers(key)?, Some(expected));
     assert_eq!(read.counts()?.live_nodes, 1);
+    let base = read.head().clone();
+    drop(read);
+    // A vector-only replacement must prove that the old physical node is
+    // tombstoned in the same sealed delta. Other paths keep their citations.
+    for old_state in 0..3 {
+        let reservation = fixture
+            .quota
+            .reserve(&fixture.scope.collection, 4 * 1024 * 1024)?;
+        let overlay = graph::GraphOverlay::new(
+            &reservation,
+            fixture.store.current_read(&fixture.scope)?,
+            graph::GraphOverlayLimits {
+                maximum_bytes: 1024 * 1024,
+                ..Default::default()
+            },
+        )?;
+        overlay.append(
+            2,
+            GraphRecord {
+                embedding_key: Some(key),
+                live: true,
+                bytes: vec![8; 16],
+            },
+        )?;
+        if old_state == 1 {
+            overlay.put(1, overlay.read(1)?)?;
+        } else if old_state == 2 {
+            overlay.set_live(1, false)?;
+        }
+        let sealed = overlay.seal()?;
+        let mut target = base.clone();
+        target.sequence += 1;
+        target.graph_head = sealed.descriptor().target.clone();
+        let writer = fixture.store.lock()?;
+        let mut current =
+            fixture
+                .store
+                .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+        let replacement = prepared_occurrence(&fixture, &second, key, 2)?;
+        let prepared = current.prepare_artifacts_with_resources(
+            &base.token()?,
+            target,
+            &sealed,
+            ArtifactVectorChanges {
+                configuration: None,
+                artifacts: &[],
+                vector_inputs: Some(std::slice::from_ref(&second)),
+                occurrences: std::slice::from_ref(&replacement),
+            },
+            None,
+            br#"{"engine":"test","sequence":4}"#,
+            &[],
+            &[resources::ResourceChange {
+                key: "semantic-policy".into(),
+                reference: None,
+            }],
+        );
+        if old_state < 2 {
+            let message = format!("{:#}", prepared.unwrap_err());
+            assert!(
+                message.contains(if old_state == 0 {
+                    "no sealed afterimage"
+                } else {
+                    "graph ID differs"
+                }),
+                "{message}"
+            );
+            assert_eq!(current.phase()?, TransactionPhase::Ready);
+        } else {
+            let pending = prepared?;
+            current.mark_applying(&pending)?;
+            current.commit(&pending, pending.target.lexical_commit)?;
+        }
+    }
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let binding = read.vector_binding(key)?.unwrap();
+    assert_eq!(binding.graph_id, 2);
+    assert_eq!(binding.occurrence_ids.len(), 2);
+    assert_eq!(read.counts()?.live_nodes, 1);
+    assert_eq!(
+        read.artifact(&second.artifact.path)?.unwrap().content_hash,
+        second.artifact.content_hash
+    );
     Ok(())
 }
 
@@ -818,7 +912,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         &fixture.scope,
         &fixture.store,
         None,
-        Some(&input.artifact),
+        Some(&input),
     )?;
     changes.extend(postings.finish(&mut plan, &fixture.scope)?);
     changes.sort_by_key(map::MapChange::key);
@@ -937,7 +1031,7 @@ fn prepared_map_and_graph_replay_commit_one_authenticated_head() -> Result<()> {
         br#"{"engine":"test","version":2}"#,
     )?;
     // Includes file metadata and source-size measurement retirement.
-    assert_eq!(deletion.map_count, 8);
+    assert_eq!(deletion.map_count, 10);
     current.mark_applying(&deletion)?;
     drop(current);
     drop(writer);
@@ -1049,13 +1143,7 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
     }
     let mut postings = postings::PostingChanges::default();
     for input in [&first, &second] {
-        postings.update(
-            &mut plan,
-            &fixture.scope,
-            &fixture.store,
-            None,
-            Some(&input.artifact),
-        )?;
+        postings.update(&mut plan, &fixture.scope, &fixture.store, None, Some(input))?;
     }
     changes.extend(postings.finish(&mut plan, &fixture.scope)?);
     changes.sort_by_key(map::MapChange::key);
@@ -1107,7 +1195,7 @@ fn changed_path_retires_only_its_share_of_a_live_vector() -> Result<()> {
         None,
         br#"{"engine":"test","version":2}"#,
     )?;
-    assert_eq!(pending.map_count, 8);
+    assert_eq!(pending.map_count, 10);
     current.mark_applying(&pending)?;
     current.commit(&pending, pending.target.lexical_commit)?;
     drop(current);
@@ -1370,8 +1458,8 @@ fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()>
         None,
         &next,
     )?;
-    // Includes metadata retirement and the source-size measurement.
-    assert_eq!(pending.map_count, 5);
+    // Includes metadata retirement, source measurement, posting format and retained change metadata.
+    assert_eq!(pending.map_count, 8);
     assert_eq!(pending.inputs_count, 1);
     assert_eq!(pending.lexical_manifest_bytes, next.len() as u64);
     drop(current);
@@ -1379,6 +1467,12 @@ fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()>
     let before = fixture.store.current_read(&fixture.scope)?;
     assert!(before.artifact(&input.artifact.path)?.is_none());
     assert_eq!(before.lexical_manifest()?, initial);
+    assert!(
+        before
+            .recent_changes(recent::unix_seconds())?
+            .parents
+            .is_empty()
+    );
     drop(before);
     let writer = fixture.store.lock()?;
     let mut current =
@@ -1392,6 +1486,14 @@ fn changed_artifact_and_lexical_manifest_share_one_replayed_head() -> Result<()>
     let after = fixture.store.current_read(&fixture.scope)?;
     assert_eq!(after.head(), &pending.target);
     assert_eq!(after.lexical_manifest()?, next);
+    assert_eq!(
+        after.recent_changes(recent::unix_seconds())?.parents,
+        vec![airk_core::identity::RevisionToken {
+            incarnation: fixture.head.scope.incarnation,
+            generation: fixture.head.sequence,
+            revision: fixture.head.token()?.digest,
+        }]
+    );
     assert_eq!(
         after.artifact(&input.artifact.path)?.unwrap().content_hash,
         input.artifact.content_hash
@@ -1517,6 +1619,138 @@ fn changed_pending_map_bytes_block_applying_and_commit_without_advancing_head() 
 }
 
 #[test]
+fn work_writer_open_admission_retries_only_before_transactions() -> Result<()> {
+    use std::time::Duration;
+    let fixture = Fixture::new()?;
+    let token = fixture.store.current_read(&fixture.scope)?.token()?;
+    let capacity = database::check_owner(fixture.store.directory(), &fixture.scope)?;
+    let path = fixture.store.directory().join("current.sqlite3");
+    let _writer = fixture.store.lock()?;
+    let blocker = rusqlite::Connection::open(&path)?;
+    blocker.execute_batch("BEGIN EXCLUSIVE;")?;
+    let error = database::open_writer(&path, capacity, false)
+        .err()
+        .context("writer unexpectedly admitted")?;
+    assert!(error.is::<CurrentOpenContention>(), "{error:#}");
+    let release = std::thread::spawn(move || -> Result<()> {
+        std::thread::sleep(Duration::from_millis(100));
+        blocker.execute_batch("ROLLBACK;")?;
+        Ok(())
+    });
+    let connection = with_work_admission(
+        Duration::from_secs(2),
+        || Ok(()),
+        |_| {},
+        || database::open_writer(&path, capacity, false),
+    );
+    release.join().unwrap()?;
+    drop(connection?);
+    fixture
+        .store
+        .current_read(&fixture.scope)?
+        .require_token(&token)?;
+    Ok(())
+}
+
+#[test]
+fn work_read_admission_waits_for_real_lock_without_changing_direct_queries() -> Result<()> {
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::{Duration, Instant},
+    };
+    static CHECKS: AtomicUsize = AtomicUsize::new(0);
+    static WAITS: AtomicUsize = AtomicUsize::new(0);
+    fn checkpoint() -> Result<()> {
+        CHECKS.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn waiting(blocked: bool) {
+        WAITS.fetch_or(if blocked { 1 } else { 2 }, Ordering::SeqCst);
+    }
+    let fixture = Fixture::new()?;
+    let token = fixture.store.current_read(&fixture.scope)?.token()?;
+    let blocker = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
+    blocker.execute_batch("BEGIN EXCLUSIVE;")?;
+    with_work_admission(Duration::from_millis(40), checkpoint, waiting, || {
+        let store = fixture.store.clone();
+        let scope = fixture.scope.clone();
+        std::thread::spawn(move || -> Result<()> {
+            let error = store
+                .current_read(&scope)
+                .err()
+                .context("query unexpectedly waited")?;
+            ensure!(
+                error.is::<CurrentReadContention>(),
+                "direct query lost its retry marker"
+            );
+            Ok(())
+        })
+        .join()
+        .unwrap()?;
+        assert_eq!(
+            CHECKS.load(Ordering::SeqCst),
+            0,
+            "work policy leaked into another query thread"
+        );
+        let started = Instant::now();
+        let error = fixture
+            .store
+            .current_read(&fixture.scope)
+            .err()
+            .context("lock did not bound work admission")?;
+        assert!(error.is::<CurrentReadContention>());
+        assert!(started.elapsed() >= Duration::from_millis(40));
+        Ok(())
+    })?;
+    let checks = CHECKS.load(Ordering::SeqCst);
+    assert!(fixture.store.current_read(&fixture.scope).is_err());
+    assert_eq!(
+        CHECKS.load(Ordering::SeqCst),
+        checks,
+        "work policy survived its scope"
+    );
+    let release = std::thread::spawn(move || -> Result<()> {
+        std::thread::sleep(Duration::from_millis(100));
+        blocker.execute_batch("ROLLBACK;")?;
+        Ok(())
+    });
+    let read = with_work_admission(Duration::from_secs(2), checkpoint, waiting, || {
+        fixture.store.current_read(&fixture.scope)
+    });
+    release.join().unwrap()?;
+    let read = read?;
+    read.require_token(&token)?;
+    assert_eq!(
+        WAITS.load(Ordering::SeqCst),
+        3,
+        "wait observation did not clear"
+    );
+    Ok(())
+}
+
+#[test]
+fn temporary_read_lock_is_typed_and_retry_preserves_the_exact_revision() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let token = fixture.store.current_read(&fixture.scope)?.token()?;
+    let blocker = rusqlite::Connection::open(fixture.store.directory().join("current.sqlite3"))?;
+    blocker.execute_batch("BEGIN EXCLUSIVE;")?;
+    let error = match fixture.store.current_read(&fixture.scope) {
+        Ok(_) => anyhow::bail!("exclusive SQLite fixture did not reject the read"),
+        Err(error) => error,
+    };
+    assert!(
+        error.downcast_ref::<CurrentReadContention>().is_some(),
+        "{error:#}"
+    );
+    blocker.execute_batch("ROLLBACK;")?;
+    drop(blocker);
+    let retried = fixture.store.current_read(&fixture.scope)?;
+    retried.require_token(&token)?;
+    assert_eq!(retried.token()?, token);
+    Ok(())
+}
+
+#[test]
 fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -> Result<()> {
     let fixture = Fixture::new()?;
     let source = std::path::Path::new(&fixture.scope.root).join("evidence.txt");
@@ -1552,7 +1786,7 @@ fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -
         serde_json::to_value(Some(&original.artifact))?
     );
     assert!(read.artifact("missing.txt")?.is_none());
-    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 3);
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 6);
     drop(read);
     fs::write(&source, "Later live edit")?;
     assert_eq!(
@@ -1594,7 +1828,8 @@ fn catalog_only_artifact_updates_are_atomic_authenticated_and_revision_bound() -
     drop(writer);
     let read = fixture.store.current_read(&fixture.scope)?;
     assert!(read.artifact("evidence.txt")?.is_none());
-    assert!(read.map_entries(map::MapVisitLimits::default())?.is_empty());
+    assert!(read.terminal_call_postings_complete()?);
+    assert_eq!(read.map_entries(map::MapVisitLimits::default())?.len(), 5);
     Ok(())
 }
 
@@ -1815,6 +2050,10 @@ fn child(fixture: &Fixture, mode: &str) -> Result<ChildGuard> {
             .arg("--nocapture")
             .env("AIRK_CURRENT_CHILD_DATA", fixture.quota.root())
             .env(
+                "AIRK_CURRENT_CHILD_NAMESPACE",
+                fixture.store.collection_namespace()?,
+            )
+            .env(
                 "AIRK_CURRENT_CHILD_SCOPE",
                 serde_json::to_string(&fixture.scope)?,
             )
@@ -1848,9 +2087,15 @@ fn current_child_process() -> Result<()> {
     let Some(root) = std::env::var_os("AIRK_CURRENT_CHILD_DATA") else {
         return Ok(());
     };
-    let quota = Quota::open(root)?;
     let scope: CurrentScope = serde_json::from_str(&std::env::var("AIRK_CURRENT_CHILD_SCOPE")?)?;
-    let store = FileStore::new(quota.root().join("collections-1.2").join(&scope.collection));
+    let namespace =
+        std::env::var("AIRK_CURRENT_CHILD_NAMESPACE").unwrap_or_else(|_| "collections-1.2".into());
+    let store = FileStore::new(
+        std::path::PathBuf::from(root)
+            .join(namespace)
+            .join(&scope.collection),
+    );
+    let quota = Quota::for_store(&store)?;
     let ready = std::env::var_os("AIRK_CURRENT_CHILD_READY").context("ready path missing")?;
     let mode = std::env::var("AIRK_CURRENT_CHILD_MODE")?;
     if mode == "read" {

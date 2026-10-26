@@ -18,7 +18,7 @@ impl Kernel {
         validate_budget(limit, max_bytes)?;
         ensure!(prefix.len() <= 4096, "prefix exceeds 4096 bytes");
         ensure!(
-            !options.compact,
+            !options.compact && !options.minimal,
             "compact representation is supported by outline only"
         );
         let read = self.current_reader()?;

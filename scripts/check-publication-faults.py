@@ -7,6 +7,7 @@ fills a normal host filesystem.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -15,121 +16,130 @@ import subprocess
 import tempfile
 import time
 
+spec = importlib.util.spec_from_file_location("airk_fault_fixture", Path(__file__).with_name("check-service-clients.py"))
+clients = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(clients)
+
 
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()
 
 
 def run_campaign(binary, base, attempts, full_disk):
     source, data = base / "source", base / "state"
     source.mkdir()
     data.mkdir()
-    environment = {**os.environ, "AIRK_USAGE_MODE": "disabled"}
     source_file = source / "requirement.md"
     source_file.write_text("REQOLDMARKER: Original requirement shall remain readable.\n", encoding="utf-8")
+    with clients.Fixture(binary.parent, base) as fixture:
+        assert fixture.binary == binary
+        fixture.register("faults", source, data)
+        fixture.rpc({"configure_watch": {"project": fixture.projects["faults"]["binding"], "enabled": False}})
+        fixture.configure("faults", {"operation": "vectors", "enabled": False})
+        fixture.configure("faults", {"operation": "usage", "mode": "disabled"})
+        fixture.job("faults", "index")
 
-    def command(*args):
-        return [str(binary), "--root", str(source), "--data-dir", str(data), *args]
+        def tool(name, **arguments):
+            if name == "airk_status":
+                return fixture.published_status("faults")
+            return fixture.tool("faults", name, {"response_mode": "full", **arguments})
 
-    def call(*args, success=True):
-        result = subprocess.run(command(*args), env=environment, capture_output=True, timeout=180)
-        if success:
-            if result.returncode:
-                raise RuntimeError(result.stderr.decode("utf-8", errors="replace"))
-            return json.loads(result.stdout)
-        if result.returncode == 0:
-            raise AssertionError("Expected bounded publication failure")
-        return result.stderr.decode("utf-8", errors="replace")[-4096:]
-
-    call("index")
-    cases = []
-    # Several timings cover startup, ingestion, component staging and publication.
-    # Classify the actually observed phase; never pretend timing proves a phase.
-    for ordinal in range(attempts):
-        old_generation = call("status")["generation"]
-        old_hash = call("info", "requirement.md")["content_hash"]
-        old_line = source_file.read_text(encoding="utf-8").splitlines()[0]
-        marker = f"REQFAULT{ordinal:04}"
-        source_file.write_text(f"{marker}: New requirement shall be atomic.\n" +
-                               ("A fictional requirement used only for failure qualification.\n" * 3000), encoding="utf-8")
-        expected_hash = digest(source_file)
-        before = {path.relative_to(data).as_posix() for path in data.rglob("*") if path.is_file()}
-        with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
-            child = subprocess.Popen(command("index"), env=environment, stdout=stdout, stderr=stderr)
+        cases = []
+        for ordinal in range(attempts):
+            previous = tool("airk_read_file", path="requirement.md", start_line=1, end_line=1)
+            old = previous["publication"]
+            old_hash = previous["hits"][0]["citation"]["content_hash"]
+            old_line = previous["hits"][0]["text"].rstrip("\r\n")
+            marker = f"REQFAULT{ordinal:04}"
+            source_file.write_text(f"{marker}: New requirement shall be atomic.\n" +
+                                   ("A fictional requirement used only for failure qualification.\n" * 3000), encoding="utf-8")
+            expected_hash = digest(source_file)
+            before = {path.relative_to(data).as_posix() for path in data.rglob("*") if path.is_file()}
+            # Enqueue the real durable job before terminating its actual service
+            # owner. Killing a CLI that merely waits for acceptance tests no writer.
+            accepted = json.loads(fixture.run(*fixture.arguments("faults"), "index").stdout)
             delay = [0.005, 0.025, 0.1, 0.3, 0.8, 1.5][ordinal % 6]
             started = time.monotonic()
             time.sleep(delay)
             seen = {path.relative_to(data).as_posix() for path in data.rglob("*") if path.is_file()}
-            killed = child.poll() is None
-            if killed:
-                child.kill()
-            child.wait(timeout=30)
-        status = call("status")
-        info = call("info", "requirement.md")
-        assert (status["generation"], info["content_hash"]) in (
-            (old_generation, old_hash), (old_generation + 1, expected_hash)), (status, info)
-        read = call("read", "requirement.md", "--start-line", "1", "--end-line", "1")
-        assert read["generation"] == status["generation"], (read, status)
-        assert len(read["hits"]) == 1, read
-        hit = read["hits"][0]
-        assert hit["citation"]["content_hash"] == info["content_hash"], (hit, info)
-        assert hit["citation"]["path"] == "requirement.md", hit
-        expected_line = old_line if status["generation"] == old_generation else f"{marker}: New requirement shall be atomic."
-        assert hit["text"].rstrip("\r\n") == expected_line, hit
-        assert digest(source_file) == expected_hash, "Publication changed the original source"
-        call("index")
-        assert call("info", "requirement.md")["content_hash"] == expected_hash
-        assert call("search", "--mode", "lexical", marker)["hits"], "Recovery lost current evidence"
-        cases.append({"kind": "process_kill", "delay_ms": delay * 1000,
-                      "killed_before_exit": killed, "elapsed_ms": round((time.monotonic()-started)*1000),
-                      "new_managed_files_observed": len(seen-before),
-                      "retained_old_generation": status["generation"] == old_generation,
-                      "atomic_revision_and_recovery": True})
-        current = call("status")["publication"]["token"]
-        assert not call("collections", "maintain")["pending"]
-        assert call("status")["publication"]["token"] == current
+            owned = fixture.child
+            assert owned is not None and owned.poll() is None, "Owned service exited before fault injection"
+            owned.kill()
+            owned.wait(timeout=30)
+            fixture.start()
+            # Native restart drains predecessors and recovers captured work.
+            # No numerical worker PID discovered from status authorizes a kill.
+            read = tool("airk_read_file", path="requirement.md", start_line=1, end_line=1)
+            assert len(read["hits"]) == 1, read
+            hit = read["hits"][0]
+            observed_hash = hit["citation"]["content_hash"]
+            assert observed_hash in (old_hash, expected_hash), read
+            if observed_hash == old_hash:
+                assert read["publication"] == old, read
+            else:
+                assert read["publication"]["token"] != old["token"], read
+            assert hit["citation"]["path"] == "requirement.md", hit
+            expected_line = old_line if observed_hash == old_hash else f"{marker}: New requirement shall be atomic."
+            assert hit["text"].rstrip("\r\n") == expected_line, hit
+            assert digest(source_file) == expected_hash, "Publication changed the original source"
+            recovered = fixture.wait(accepted)
+            assert recovered["state"] == "succeeded"
+            fixture.job("faults", "index")
+            assert tool("airk_file_info", path="requirement.md")["content_hash"] == expected_hash
+            assert tool("airk_search", query=marker, mode="lexical")["hits"], "Recovery lost current evidence"
+            current = tool("airk_status")["publication"]
+            fixture.wait(fixture.enqueue("faults", "maintain"))
+            assert tool("airk_status")["publication"] == current
+            cases.append({"kind": "owned_service_process_kill", "job": accepted["job"]["id"],
+                          "delay_ms": delay * 1000, "elapsed_ms": round((time.monotonic() - started) * 1000),
+                          "new_managed_files_observed": len(seen - before),
+                          "retained_old_generation": read["publication"] == old,
+                          "atomic_revision_and_recovery": True})
 
-    if full_disk:
-        # Only this script's exclusive temporary tmpfs allocation is filled.
-        # Mounted filesystems below it are forbidden; symlinks are not followed.
-        mount = Path(full_disk).resolve(strict=True)
-        if platform.system() != "Linux" or not mount.is_mount() or not base.is_relative_to(mount):
-            raise ValueError("ENOSPC requires --isolated-tmpfs pointing at the campaign's own Linux tmpfs mount")
-        mount_entries = Path("/proc/mounts").read_text().splitlines()
-        entry = next((line.split() for line in mount_entries if line.split()[1] == str(mount)), None)
-        if not entry or entry[2] != "tmpfs":
-            raise ValueError("Refusing to fill anything except the explicitly selected tmpfs mount")
-        old_generation = call("status")["generation"]
-        old_hash = call("info", "requirement.md")["content_hash"]
-        source_file.write_text("REQDISKFULL: Replacement after isolated disk pressure.\n", encoding="utf-8")
-        filler = base / "owned-filler.bin"
-        written = 0
-        try:
-            with filler.open("xb", buffering=0) as file:
-                while True:
-                    try:
-                        written += file.write(b"\0" * 1_048_576)
-                        file.flush()
-                    except OSError as error:
-                        if error.errno != 28:
-                            raise
-                        break
-            failure = call("index", success=False)
-        finally:
-            filler.unlink(missing_ok=True)
-        assert call("status")["generation"] == old_generation
-        assert call("info", "requirement.md")["content_hash"] == old_hash
-        call("index")
-        assert call("search", "--mode", "lexical", "REQDISKFULL")["hits"]
-        cases.append({"kind":"isolated_tmpfs_full_admission", "filler_bytes":written,
-                      "scope":"full-volume rejection and recovery; not mid-publication ENOSPC",
-                      "error":failure, "atomic_revision_and_recovery":True})
-    return {"schema":"airk-publication-faults/1", "platform":platform.platform(),
-            "binary_sha256":digest(binary), "cases":cases,
-            "limitations":["Process kills do not emulate a physical power loss or device-cache loss",
-                           "Observed timing does not guarantee every internal crash point was exercised",
-                           "The full-volume case exhausts tmpfs before admission; it does not force a mid-publication write failure",
-                           "tmpfs ENOSPC is an OS allocation failure, not a physical media/controller fault"]}
+        if full_disk:
+            # Fill only this campaign's dedicated, initially empty tmpfs mount.
+            mount = Path(full_disk).resolve(strict=True)
+            if platform.system() != "Linux" or not mount.is_mount() or not base.is_relative_to(mount):
+                raise ValueError("ENOSPC requires the campaign's own Linux tmpfs mount")
+            entries = Path("/proc/mounts").read_text().splitlines()
+            entry = next((line.split() for line in entries if line.split()[1] == str(mount)), None)
+            if not entry or entry[2] != "tmpfs":
+                raise ValueError("Refusing to fill anything except the explicitly selected tmpfs mount")
+            old = tool("airk_status")["publication"]
+            old_hash = tool("airk_file_info", path="requirement.md")["content_hash"]
+            source_file.write_text("REQDISKFULL: Replacement after isolated disk pressure.\n", encoding="utf-8")
+            filler = base / "owned-filler.bin"
+            written = 0
+            try:
+                with filler.open("xb", buffering=0) as file:
+                    while True:
+                        try:
+                            written += file.write(b"\0" * 1_048_576)
+                            file.flush()
+                        except OSError as error:
+                            if error.errno != 28:
+                                raise
+                            break
+                refusal = fixture.run(*fixture.arguments("faults"), "index", check=False)
+                assert refusal.returncode != 0, "Full-volume durable admission unexpectedly succeeded"
+                assert not refusal.stdout.strip() or "job" not in json.loads(refusal.stdout), "Accepted work must be inspected after pressure clears"
+            finally:
+                filler.unlink(missing_ok=True)
+            assert tool("airk_status")["publication"] == old
+            assert tool("airk_file_info", path="requirement.md")["content_hash"] == old_hash
+            fixture.job("faults", "index")
+            assert tool("airk_search", query="REQDISKFULL", mode="lexical")["hits"]
+            cases.append({"kind": "isolated_tmpfs_full_admission", "filler_bytes": written,
+                          "scope": "full-volume durable admission rejection and recovery; not mid-publication ENOSPC",
+                          "atomic_revision_and_recovery": True})
+    return {"schema": "airk-publication-faults/2", "platform": platform.platform(),
+            "binary_sha256": digest(binary), "cases": cases,
+            "limitations": ["Process kills do not emulate physical power loss or device-cache loss",
+                            "Timing does not prove every internal crash point was exercised",
+                            "Service death exercises native predecessor draining and durable captured-work recovery",
+                            "The full-volume case exhausts tmpfs before admission, not during a publication write",
+                            "tmpfs ENOSPC is an OS allocation failure, not a media/controller fault"]}
 
 
 def main():
