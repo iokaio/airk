@@ -45,5 +45,10 @@ jobs:
           tool: cargo-nextest@0.9.148
       - name: Natural exit and descendant ownership regressions
         run: cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }}
+      - name: Repeat the exit versus signal transition
+        run: |
+          for attempt in {1..20}; do
+            cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }} -E 'test(timeout_retains_unreaped_leader_for_later_drain) | test(naturally_exited_children_drain_without_signaling_an_empty_group)'
+          done
       - name: Previously hanging manager, legacy, PDF and guardian cases
         run: cargo nextest run --profile ci -p airk-cli --lib --test legacy_native --test pdf_worker --test unix_guardian -E 'test(manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated) | test(legacy_review_never_executes_the_selected_old_binary_or_creates_project_state) | test(distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations) | test(guardian_keeps_direct_pipes_and_drains_after_worker_death)' --locked --target ${{ matrix.target }}

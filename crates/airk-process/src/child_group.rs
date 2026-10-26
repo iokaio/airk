@@ -62,6 +62,15 @@ fn diagnostic(stage: &str) {
         eprintln!("airk-process: {stage}");
     }
 }
+fn diagnostic_error(stage: &str, error: &io::Error) {
+    if cfg!(debug_assertions) && std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").is_some() {
+        eprintln!(
+            "airk-process: {stage}: kind={:?}, errno={:?}: {error}",
+            error.kind(),
+            error.raw_os_error()
+        );
+    }
+}
 pub fn install_provider_spawner(spawner: Arc<dyn ProviderSpawner>) -> io::Result<()> {
     PROVIDER_SPAWNER
         .set(spawner)
@@ -205,29 +214,48 @@ impl GroupChild {
         let deadline = Instant::now()
             .checked_add(timeout)
             .ok_or_else(|| io::Error::other("group drain deadline overflow"))?;
-        if let Some(status) = self.reap_if_drained(deadline)? {
-            return Ok(status);
+        // Completion is a native observation, not a successful signal. On
+        // macOS, a group containing only zombies can reject SIGKILL with EPERM.
+        // Exit teardown can also temporarily prevent a complete observation.
+        let mut observation_error = match self.reap_if_drained(deadline) {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => None,
+            Err(error) => {
+                diagnostic_error("drain: initial-group-observation", &error);
+                Some(error)
+            }
+        };
+        // kill independently verifies that the leader is still our unreaped
+        // child before signaling. Attempt it once, then retain ownership while
+        // looking for completion within this call's original deadline.
+        let signal_error = self.kill().err();
+        if let Some(error) = &signal_error {
+            diagnostic_error("drain: kill", error);
         }
-        if let Err(signal_error) = self.kill() {
-            // The leader or its last member may exit after the initial check
-            // but before the group signal. Only a fresh terminal-leader and
-            // empty-group proof permits treating that race as drained.
+        let mut reported_observation = false;
+        loop {
+            if Instant::now() >= deadline {
+                return Err(signal_error.or(observation_error).unwrap_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "owned process group has not drained",
+                    )
+                }));
+            }
             match self.reap_if_drained(deadline) {
                 Ok(Some(status)) => return Ok(status),
-                Ok(None) | Err(_) => return Err(signal_error),
+                Ok(None) => {}
+                Err(error) => {
+                    if !reported_observation {
+                        diagnostic_error("drain: post-kill-group-observation", &error);
+                        reported_observation = true;
+                    }
+                    observation_error = Some(error);
+                }
             }
-        }
-        loop {
-            if let Some(status) = self.reap_if_drained(deadline)? {
-                return Ok(status);
-            }
-            if Instant::now() >= deadline {
-                return Err(io::Error::new(
-                    io::ErrorKind::TimedOut,
-                    "owned process group has not drained",
-                ));
-            }
-            std::thread::sleep(Duration::from_millis(5));
+            std::thread::sleep(
+                Duration::from_millis(5).min(deadline.saturating_duration_since(Instant::now())),
+            );
         }
     }
     fn reap_if_drained(&mut self, deadline: Instant) -> io::Result<Option<ExitStatus>> {
