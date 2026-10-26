@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { parseWebviewMessage, WEBVIEW_MESSAGES } from '../explorerContracts';
+import { MANAGE_ACTIONS, MANAGE_COMMANDS, parseWebviewMessage, WEBVIEW_MESSAGES } from '../explorerContracts';
 import { EXPLORER_ERRORS, explorerError } from '../explorerErrors';
 import { availability, FEATURES } from '../explorerFeatures';
 import { formatRoute, parseRoute, ROUTE_KEYS, routeKey, WORKSPACES } from '../explorerRoutes';
@@ -61,6 +61,22 @@ test('webview messages require the exact declared fields', () => {
     assert.equal(parseWebviewMessage({ v: 1, type: 'code.relationships', requestId: 'c', symbol: 's1', direction: 'incoming', hops: 4, limit: 5 }), undefined);
     assert.ok(parseWebviewMessage({ v: 1, type: 'code.outline', requestId: 'o' }));
     for (const fields of Object.values(WEBVIEW_MESSAGES)) {
-        for (const name of Object.keys(fields)) { assert.ok(!/path$|command|args|body/i.test(name) || name === 'pathPrefix', `message field ${name} could carry a path or command`); }
+        for (const [name, spec] of Object.entries(fields as Record<string, { kind: string }>)) {
+            // A path- or command-like field is acceptable only as a fixed allowlist (enum) or the relative path scope.
+            assert.ok(!/path$|command|args|body/i.test(name) || name === 'pathPrefix' || spec.kind === 'enum', `message field ${name} could carry a path or command`);
+        }
     }
+});
+
+test('Management actions are exactly the console allowlist, and commands are fixed AIRK commands', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const view = require('../serviceConsoleView') as typeof import('../serviceConsoleView');
+    const consoleActions = new Set([...view.CONSOLE_SIMPLE_ACTIONS, ...view.CONSOLE_PROJECT_ACTIONS, 'select', 'repair', 'resumeLegacyStartup', 'retryJob', 'cancelJob', 'retryIntent', 'forgetIntent', 'forceIntent']);
+    assert.deepEqual(new Set(MANAGE_ACTIONS), consoleActions);
+    assert.deepEqual(WEBVIEW_MESSAGES['manage.action'].operation.values, view.CONSOLE_OPERATIONS);
+    for (const command of MANAGE_COMMANDS) { assert.match(command, /^airk\.[a-zA-Z]+$/); }
+    assert.equal(parseWebviewMessage({ v: 1, type: 'manage.command', requestId: 'c', command: 'workbench.action.reloadWindow' }), undefined);
+    assert.equal(parseWebviewMessage({ v: 1, type: 'manage.action', requestId: 'a', action: 'index', project: 'x' }), undefined);
+    assert.ok(parseWebviewMessage({ v: 1, type: 'manage.action', requestId: 'a', action: 'retryJob', id: 'ab'.repeat(32) }));
+    assert.equal(parseWebviewMessage({ v: 1, type: 'manage.action', requestId: 'a', action: 'retryJob', id: 'zz'.repeat(32) }), undefined);
 });

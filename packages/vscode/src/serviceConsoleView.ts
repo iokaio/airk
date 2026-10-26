@@ -18,22 +18,22 @@ export interface ServiceConsoleState {
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
-const simple=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
-const projects=['previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
-const operations=['auto','verify','recover','reconcile','vectors','rebuild'];
+export const CONSOLE_SIMPLE_ACTIONS=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
+export const CONSOLE_PROJECT_ACTIONS=['previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
+export const CONSOLE_OPERATIONS=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
 export function consoleAction(value:unknown,current:ServiceConsoleState):ConsoleAction|undefined {
     try {
         const message=record(value);
         if(message.type!=='service'||message.revision!==current.revision||typeof message.action!=='string')return;
         const keys=new Set(['type','revision','action']);const action=message.action;
-        if(simple.includes(action)){
+        if(CONSOLE_SIMPLE_ACTIONS.includes(action)){
             if(['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup'].includes(action)&&!current.legacyAvailable)return;
             if(action==='removeLegacyStartup'&&(!current.legacyReview?.value.approval||current.legacyReview.phase==='complete'))return;
             if(action==='copyLegacyStartup'&&!current.legacyReview)return;
             if(action==='previewReport'){keys.add('includePaths');if(typeof message.includePaths!=='boolean')return;}
             if(action==='approvePlan'){keys.add('allowFallback');if(typeof message.allowFallback!=='boolean')return;}
-        }else if(projects.includes(action)||action==='select'){
+        }else if(CONSOLE_PROJECT_ACTIONS.includes(action)||action==='select'){
             keys.add('project');const project=identifier(message.project,32);
             if(!current.page?.projects.some(row=>record(record(row.project).registration).binding===project))return;
             if(['previewCleanup','deleteDerived'].includes(action)&&!current.inactiveProjects)return;
@@ -41,7 +41,7 @@ export function consoleAction(value:unknown,current:ServiceConsoleState):Console
             if(action==='watch'||action==='select'){keys.add('selected');if(typeof message.selected!=='boolean')return;}
         }else if(action==='repair'){
             if(current.inactiveProjects)return;
-            keys.add('scope');keys.add('operation');if(!['one','selected','all'].includes(String(message.scope))||!operations.includes(String(message.operation)))return;
+            keys.add('scope');keys.add('operation');if(!['one','selected','all'].includes(String(message.scope))||!CONSOLE_OPERATIONS.includes(String(message.operation)))return;
             if(message.scope==='one'){keys.add('project');const project=identifier(message.project,32);
                 if(!current.page?.projects.some(row=>record(record(row.project).registration).binding===project))return;}
         }else if(action==='resumeLegacyStartup'){
@@ -73,7 +73,7 @@ function button(action:string,label:string,extra='',disabled=false):string{retur
 function observation(name:string,value:ConsoleObservation):string {
     return `<p><strong>${e(name)}</strong>: ${e(value.state)}${value.code?` · ${e(value.code)}`:''} · checked ${e(new Date(value.checkedAt).toISOString())}</p>`;
 }
-function waitLabel(reason:unknown):string {
+export function waitLabel(reason:unknown):string {
     const labels:Record<string,string>={worker_starting:'Worker is starting',worker_role_change:'Worker role is changing',
         resident_capacity:'Waiting for a resident worker slot',memory_budget:'Waiting for the memory budget',
         memory_pressure:'Waiting for observed memory pressure to ease',extraction_capacity:'Waiting for extraction capacity',

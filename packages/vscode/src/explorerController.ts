@@ -10,6 +10,7 @@ import { ExplorerPanel } from './explorerPanel';
 import { formatRoute, parseRoute } from './explorerRoutes';
 import { continueFacts, FactHandles, runFacts, scoped } from './explorerFacts';
 import { changesSince, checkCitations, inspect } from './explorerInspect';
+import { managementView } from './explorerManagement';
 import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary } from './explorerStatus';
 import { displayPath } from './explorerSource';
@@ -53,6 +54,7 @@ export class ExplorerController implements vscode.Disposable {
     private revision = 0;
     private route = '#overview';
     private retained?: { dispose(): void };
+    private managementOpen = false;
     private disposed = false;
 
     constructor(private readonly host: ExplorerHost) {
@@ -102,6 +104,7 @@ export class ExplorerController implements vscode.Disposable {
             ...(this.notice ? { notice: this.notice } : {}),
             ...(this.control.message() ? { controlMessage: this.control.message()!.slice(0, 600) } : {}),
             ...(this.control.morePages() ? { moreProjects: true } : {}),
+            ...(this.managementOpen && this.host.trusted() ? { management: managementView(this.control.state) } : {}),
         };
     }
 
@@ -225,13 +228,22 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'status.refresh': await Promise.all([this.loadStatus(), this.control.refresh()]); return;
             case 'manage.refresh': await this.control.refresh(); return;
-            case 'manage.index': {
-                const typed = message as WebviewMessageOf<'manage.index'>;
+            case 'manage.observe': {
+                this.managementOpen = (message as WebviewMessageOf<'manage.observe'>).open;
+                this.publish(); return;
+            }
+            case 'manage.action': {
+                const { action, v: _v, type: _type, requestId: _id, ...rest } = message as WebviewMessageOf<'manage.action'>;
                 if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
-                if (!this.control.projects().some(entry => entry.project === typed.project)) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
-                // The shared console journals the request before sending it; its outcome code is published as controlMessage.
-                await this.control.index(typed.project);
+                const fields = Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined));
+                // The shared console validates the action, its fields and page membership again before acting.
+                await this.control.run(action, fields);
                 return { message: this.control.message() ?? null };
+            }
+            case 'manage.command': {
+                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                await vscode.commands.executeCommand((message as WebviewMessageOf<'manage.command'>).command);
+                return;
             }
             case 'search.run': {
                 const typed = message as WebviewMessageOf<'search.run'>;

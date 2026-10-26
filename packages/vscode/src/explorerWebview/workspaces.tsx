@@ -6,7 +6,7 @@ import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
 import { ChangesScreen, CheckerScreen, InspectorScreen } from './evidence';
 import { HelpScreen } from './help';
-import { ProjectsScreen } from './manage';
+import { ActivityScreen, AgentsScreen, IndexingScreen, LogsScreen, ProjectsScreen, RepairScreen, ServiceScreen, StorageScreen, UsageScreen } from './manage';
 import { SearchScreen } from './search';
 
 export interface ScreenProps {
@@ -25,6 +25,14 @@ export interface ScreenProps {
 export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'search/query': SearchScreen,
     'manage/projects': ProjectsScreen,
+    'manage/activity': ActivityScreen,
+    'manage/repair': RepairScreen,
+    'manage/indexing': IndexingScreen,
+    'manage/storage': StorageScreen,
+    'manage/service': ServiceScreen,
+    'manage/agents': AgentsScreen,
+    'manage/usage': UsageScreen,
+    'manage/logs': LogsScreen,
     'code/symbols': SymbolsScreen,
     'code/references': ReferencesScreen,
     'code/outline': OutlineScreen,
