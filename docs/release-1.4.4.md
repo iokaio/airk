@@ -6,6 +6,10 @@ The release brings the 1.4 native service architecture to the public CLI, extens
 
 Follow-up changes improve installation progress and completion guidance, guarded migration of existing Codex/Claude Code/Copilot connections, stable-launcher preflight and owned runtime cleanup. Balanced resource admission scales with machine memory, protects query headroom, bounds shared source pacing and expands bounded native watcher traversal. Manual overrides and storage quotas remain authoritative.
 
+Runtime staging creates Windows directories with an explicit current-user owner and protected owner-only ACL, including nested payload directories. Creation remains exclusive and existing directory ownership is still validated. This corrects elevated-runner failures caused by inheriting an Administrators owner before enforcing the current-user ownership contract; installer fixtures now use the same private-directory contract.
+
+The staging follow-up passes all 75 installer/runtime unit tests, including exclusive owner-verified directory creation, and workspace all-target/all-feature Clippy for the Windows target. Elevated hosted execution remains a separate check in the final CI run.
+
 Storage recovery now derives WAL/shared-memory allowances from admitted database capacity and reserves them before writer opening or recovery. SQLite growth includes logical pages still in WAL. Retained reads and captured pending-replay inputs are preserved; this correction does not delete sources or indexes or force reindexing. The `service-1.4` namespace and existing registrations remain compatible.
 
 The [1.4.3 storage-recovery record](release-1.4.3.md), [1.4.2 resource-policy record](release-1.4.2.md), and [1.4.1 installer record](release-1.4.1.md) retain their exact historical test receipts. Version 1.4.4 adds the final synchronized release increment; those earlier binaries are not relabeled or promoted as 1.4.4. Exact final-source checks and hosted platform/package results must pass before promotion. See [release workflow](release-workflow.md) and [versioning](versioning.md).

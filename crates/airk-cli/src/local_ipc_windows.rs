@@ -131,25 +131,35 @@ fn descriptor(sddl: &str) -> Result<Allocation> {
     Ok(Allocation(pointer))
 }
 
+fn create_directory(root: &Path, user: &str, allow_existing: bool) -> Result<()> {
+    let security = descriptor(&format!("O:{user}D:P(A;OICI;FA;;;{user})"))?;
+    let attributes = SECURITY_ATTRIBUTES {
+        nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: security.0,
+        bInheritHandle: 0,
+    };
+    let wide: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
+    // SAFETY: descriptor, attributes and path remain live until directory creation returns.
+    if unsafe { CreateDirectoryW(wide.as_ptr(), &attributes) } == 0 {
+        let error = io::Error::last_os_error();
+        if !allow_existing || error.raw_os_error() != Some(ERROR_ALREADY_EXISTS as i32) {
+            return Err(error.into());
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn create_root(root: &Path) -> Result<()> {
+    create_directory(root, &current_user()?, false)?;
+    prepare_root(root)
+}
+
 pub fn prepare_root(root: &Path) -> Result<()> {
     let user = current_user()?;
     if !root.try_exists()? {
         let parent = root.parent().context("native runtime parent missing")?;
         std::fs::create_dir_all(parent)?;
-        let security = descriptor(&format!("O:{user}D:P(A;OICI;FA;;;{user})"))?;
-        let attributes = SECURITY_ATTRIBUTES {
-            nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
-            lpSecurityDescriptor: security.0,
-            bInheritHandle: 0,
-        };
-        let wide: Vec<u16> = root.as_os_str().encode_wide().chain(Some(0)).collect();
-        // SAFETY: descriptor, attributes and path remain live until directory creation returns.
-        if unsafe { CreateDirectoryW(wide.as_ptr(), &attributes) } == 0 {
-            let error = io::Error::last_os_error();
-            if error.raw_os_error() != Some(ERROR_ALREADY_EXISTS as i32) {
-                return Err(error.into());
-            }
-        }
+        create_directory(root, &user, true)?;
     }
     for ancestor in root.ancestors().filter(|p| !p.as_os_str().is_empty()) {
         use std::os::windows::fs::MetadataExt;

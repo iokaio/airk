@@ -1,6 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+#[test]
+fn private_stage_directory_creation_is_exclusive_and_owner_verified() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let directory = owner.path().join("stage");
+    create_private_directory(&directory)?;
+    local_ipc::prepare_root(&directory)?;
+    fs::write(directory.join("keep"), b"preserve")?;
+    assert!(create_private_directory(&directory).is_err());
+    assert_eq!(fs::read(directory.join("keep"))?, b"preserve");
+    Ok(())
+}
+
 fn fixture(root: &Path) -> Result<(PathBuf, PathBuf, String, StageIntent, InstallManifest)> {
     let install = root.join("install");
     local_ipc::prepare_root(&install)?;

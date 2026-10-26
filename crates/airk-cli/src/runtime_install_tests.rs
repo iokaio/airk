@@ -2,7 +2,7 @@
 use super::*;
 
 pub(super) fn fixture(root: &Path) -> Result<String> {
-    fs::create_dir_all(root.join("notices"))?;
+    local_ipc::prepare_root(&root.join("notices"))?;
     fs::create_dir_all(
         root.join(main_name())
             .parent()

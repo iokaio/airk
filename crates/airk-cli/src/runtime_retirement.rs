@@ -20,7 +20,7 @@ mod previous_tests {
     fn fixture() -> Result<(tempfile::TempDir, PathBuf, String, String)> {
         let (owner, root, old) = super::super::tests::unselected_fixture()?;
         let active = "a".repeat(64);
-        fs::create_dir(root.join("runtimes").join(&active))?;
+        local_ipc::prepare_root(&root.join("runtimes").join(&active))?;
         fs::write(
             root.join("runtimes").join(&active).join("keep"),
             b"selected",
