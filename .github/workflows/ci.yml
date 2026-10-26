@@ -10,6 +10,10 @@ on:
         description: Disable native and container cache restores for a cold qualification build
         type: boolean
         default: false
+      qualification:
+        description: Also run long workload, performance and fault campaigns
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       channel:
@@ -19,6 +23,9 @@ on:
         type: string
         default: ''
       fresh_build:
+        type: boolean
+        default: false
+      qualification:
         type: boolean
         default: false
 permissions:
@@ -176,22 +183,17 @@ jobs:
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
       - name: Verify native child ownership before workspace qualification
-        env:
-          AIRK_PROCESS_DIAGNOSTICS: '1'
         run: cargo nextest run --profile ci -p airk-process --locked --target ${{ matrix.target }}
-      - name: Verify bounded manager and worker cleanup before workspace qualification
-        env:
-          AIRK_PROCESS_DIAGNOSTICS: '1'
-        run: cargo nextest run --profile ci -p airk-cli --lib --test legacy_native --test pdf_worker --test unix_guardian -E 'test(manager_command_deadline_covers_blocked_stdin_and_output_is_not_silently_truncated) | test(legacy_review_never_executes_the_selected_old_binary_or_creates_project_state) | test(distributed_cli_indexes_pdf_in_its_worker_and_preserves_source_locations) | test(guardian_keeps_direct_pipes_and_drains_after_worker_death)' --locked --target ${{ matrix.target }}
       - name: Clippy for this native platform
         run: python scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
       - name: Compile workspace tests
         run: python scripts/ci-metrics.py run --name test-compile -- cargo nextest run --profile ci --workspace --all-features --locked --target ${{ matrix.target }} --no-run
       - name: Run isolated workspace tests
-        run: python scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --all-features --locked --target ${{ matrix.target }}
+        run: python scripts/ci-metrics.py run --name test-execution -- cargo nextest run --profile ci --workspace --all-features --locked --target ${{ matrix.target }} ${{ inputs.qualification && '--ignore-default-filter' || '' }}
       - name: Run documentation tests
         run: python scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --target ${{ matrix.target }}
       - name: Kernel real-model cache and incremental-work regressions
+        if: ${{ inputs.qualification }}
         env:
           AIRK_TEST_MODEL_DIR: ${{ github.workspace }}/target/local-vector-model
         run: cargo test -p airk-kernel --features local-inference --test vector_performance --locked --target ${{ matrix.target }} -- --ignored --test-threads=1
@@ -200,18 +202,24 @@ jobs:
       - name: Native direct clients, retained reads and shared offline inference
         run: python scripts/check-service-clients.py --runtime-dir artifacts/runtime/${{ matrix.target }} --files 16 --model --report artifacts/benchmarks/${{ matrix.target }}-clients.json
       - name: Real embedded model indexing and vector retrieval
+        if: ${{ inputs.qualification }}
         run: python scripts/check-transformer-model.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
       - name: Bounded code indexing correctness and measurement smoke
+        if: ${{ inputs.qualification }}
         run: python scripts/benchmark-code.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --files 64 --output artifacts/benchmarks/${{ matrix.target }}.json
       - name: Persistent retrieval ranking and scoped recall receipts
+        if: ${{ inputs.qualification }}
         run: python scripts/check-retrieval-quality.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --output artifacts/benchmarks/${{ matrix.target }}-retrieval.json
       - name: DOCX and XLSX table indexing through the public CLI
         run: python scripts/check-document-tables.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
       - name: Source aliases and storage quota lifecycle through the public CLI
+        if: ${{ inputs.qualification }}
         run: python scripts/check-storage-lifecycle.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
       - name: Validate usage imports and calibration
+        if: ${{ inputs.qualification }}
         run: python scripts/check-usage-inputs.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
       - name: Abrupt process termination preserves a coherent published revision
+        if: ${{ inputs.qualification }}
         run: python scripts/check-publication-faults.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --attempts 3 --output artifacts/benchmarks/${{ matrix.target }}-faults.json
       - name: Extension contracts and real native MCP adapter
         env:
@@ -233,6 +241,7 @@ jobs:
           retention-days: 7
           compression-level: 0
       - name: Retain code measurement report
+        if: ${{ inputs.qualification }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: airk-code-measurements-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
