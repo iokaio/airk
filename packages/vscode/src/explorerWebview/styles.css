@@ -140,3 +140,16 @@ select, input, textarea {
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+.search-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem; margin-bottom: var(--airk-gap); }
+.search-form label { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.9em; color: var(--airk-muted); }
+.search-form label.grow { flex: 1 1 18rem; }
+.search-form label.check { flex-direction: row; align-items: center; gap: 0.3rem; }
+.search-form input[type='number'] { width: 5rem; }
+.result-meta { margin: 0 0 0.4rem; }
+.hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.hit-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+.hit-head .spacer { flex: 1; }
+.path { overflow-wrap: anywhere; }
+.excerpt { margin: 0.4rem 0 0; padding: 0.5rem; max-height: 18rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  background: var(--vscode-textCodeBlock-background, transparent); border-radius: 2px; font-family: var(--vscode-editor-font-family); }
