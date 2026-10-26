@@ -142,7 +142,7 @@ fn default_terse_stdio_supports_full_and_requested_status_without_changing_revis
     let instructions = initialized["result"]["instructions"].as_str().unwrap();
     assert!(instructions.len() <= 512 && instructions.contains("response_mode=full"));
     session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
-    let mut values = Vec::new();
+    let mut values: Vec<Value> = Vec::new();
     for (id, args) in [
         (2, json!({"query":"response_fixture","mode":"lexical"})),
         (3, json!({"query":"response_fixture","mode":"lexical"})),
@@ -157,9 +157,44 @@ fn default_terse_stdio_supports_full_and_requested_status_without_changing_revis
     ] {
         let response = session.call(id, "airk_search", args)?;
         anyhow::ensure!(response["result"]["isError"] != true, "{response}");
-        values.push(serde_json::from_str::<Value>(
+        let mut value = serde_json::from_str::<Value>(
             response["result"]["content"][0]["text"].as_str().unwrap(),
-        )?);
+        )?;
+        if id == 3 {
+            // Freshness observations can settle after the index job completes
+            // without changing its publication. Only unchanged status is omitted.
+            let mut prior = values[0]["freshness"].clone();
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            let mut next_id = 6;
+            while let Some(freshness) = value.get("freshness") {
+                let mut before = prior.clone();
+                let mut after = freshness.clone();
+                before.as_object_mut().unwrap().remove("observed_unix_ms");
+                after.as_object_mut().unwrap().remove("observed_unix_ms");
+                assert_ne!(before, after, "unchanged freshness was repeated");
+                assert_eq!(
+                    value["publication"]["token"],
+                    values[0]["publication"]["token"]
+                );
+                assert_eq!(value["hits"], values[0]["hits"]);
+                prior = freshness.clone();
+                anyhow::ensure!(
+                    std::time::Instant::now() < deadline,
+                    "freshness observations never settled: {value}"
+                );
+                let response = session.call(
+                    next_id,
+                    "airk_search",
+                    json!({"query":"response_fixture","mode":"lexical"}),
+                )?;
+                anyhow::ensure!(response["result"]["isError"] != true, "{response}");
+                value = serde_json::from_str(
+                    response["result"]["content"][0]["text"].as_str().unwrap(),
+                )?;
+                next_id += 1;
+            }
+        }
+        values.push(value);
     }
     assert!(values[0].get("generation").is_none());
     assert!(values[0].get("freshness").is_some());
