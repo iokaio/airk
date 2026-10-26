@@ -50,6 +50,16 @@ Only signing and Pages deployment jobs receive OIDC permission, and only the rel
 
 GitHub documents [release creation and draft uploads](https://cli.github.com/manual/gh_release_create). Review the installed editor, supported host matrix and dependency notices for this candidate alongside the [1.2 qualification record](indexingenhancements.md#final-12-qualification). A successful workflow establishes its recorded checks, not completion of every manual review.
 
+## Pinned 1.4.4 release-tool repair
+
+The `repair_1_4_4` input on **GitHub release** is an explicit one-release exception. It accepts only stable version 1.4.4, source commit `3c64111b445821cf8db36e2545042c1ee1cb6fcc` and successful main CI `40369075574`, attempt 1. The native runtime source identity is pinned to `2c12276e161cf04ee52765086159cbc21e595c7386c705507392ec30db901000` (664 files). This repairs the Mac release verifier after the original full native/container/contract CI succeeded; it does not qualify another build or version.
+
+The [repair adapter](../scripts/release-1.4.4-repair.py) verifies that the reviewed tooling commit descends from that source, has a clean checkout, and changes only its exact release-tool/test/document allowlist. It rejects runtime, extension, dependency, compiler, signing-script, packaging-script and unrelated changes. It reauthenticates all eight original artifacts and their immutable IDs/digests. Signing/VSIX packaging run from a separate clean original-source checkout under ignored `artifacts/repair-source`; corrected release verification runs from the tooling checkout. `GITHUB_SHA` retains the real tooling revision. Native/VSIX receipts and the `v1.4.4` tag retain the tested source revision, while `release.json` records both identities and the repair evidence. Publication rechecks that evidence; retries retain the same source, tooling run and original producer.
+
+After the corrective PR and quick/four-host contract gates pass, dispatch the existing workflow on protected **main**, with `channel=stable`, `repair_1_4_4=true` and the authorized `publish` choice. Leave `candidate_run_id` empty or supply only the pinned run. This runs signing, notarization and packaging without native compilation. For a failure, inspect it and rerun the failed jobs of that same release run. Do not relabel artifacts, override environment identity or select another source. The existing Marketplace rehearsal/promotion for the original commit remains separate.
+
+The ordinary workflow defaults to `repair_1_4_4=false` and still requires exact-main CI. Version 1.4.5 or any non-allowlisted change disables the repair's contracts-only CI shortcut and is refused by repair publication. Remove the one-release adapter and CI exception after 1.4.4.
+
 ## Downloads website
 
 The [Downloads page workflow](../.github/workflows/downloads.yml) publishes AIRK's own GitHub Pages site at **https://airk.ioka.io/**. It uses [the page template](../site/index.html), local CSS/SVG assets and [the static builder](../scripts/build-downloads.py). No visitor-side API calls, third-party scripts, external fonts or website runtime are needed.

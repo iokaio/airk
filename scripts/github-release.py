@@ -96,26 +96,35 @@ def verify_native(directory, target, commit, version, signed):
             or receipt.get("signed_distribution") is not signed
             or archive.name != f"airk-{version}-{target}.zip"):
         raise ValueError("Native candidate provenance or signing state differs")
-    executable = "airk.exe" if "windows" in target else "airk"
-    helper = "airk-embed.exe" if "windows" in target else "airk-embed"
+    os_name = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
+    builder = native.runtime_builder()
+    executable, helper = builder.runtime_names(os_name) if paired else (
+        "airk.exe" if "windows" in target else "airk", None)
     required = {executable, helper, "airk-runtime.json", "airk-build.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"} if paired else {executable, "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
+    bundle_files = builder.macos_bundle_files(version) if paired and os_name == "macos" else {}
+    required.update(bundle_files)
+    bundle_signatures = {"AIRK.app/Contents/_CodeSignature/CodeResources", "AIRK.app/Contents/CodeResources"} if bundle_files else set()
+    if signed:
+        required.update(bundle_signatures)
     payload = receipt["payload"]
     if not required.issubset(payload):
         raise ValueError("Native legal files or executable missing")
     for name in payload:
         extension.package.safe_name(name)
-        if name not in required and not name.startswith("notices/"):
+        if name not in required | bundle_signatures and not name.startswith("notices/"):
             raise ValueError("Unexpected native payload path")
     with zipfile.ZipFile(archive) as zipped:
         if len(zipped.infolist()) > 15_000 or sum(p.file_size for p in zipped.infolist()) > 4_294_967_296:
             raise ValueError("Native archive exceeds verification budget")
         if any(stat.S_ISLNK(p.external_attr >> 16) or p.is_dir() for p in zipped.infolist()):
             raise ValueError("Native archive links/directories rejected")
+        for name, expected in bundle_files.items():
+            if zipped.read(name) != expected:
+                raise ValueError("Mac service bundle resources differ")
         if paired:
             install = json.loads(zipped.read("airk-install.json"))
             pair = json.loads(zipped.read("airk-runtime.json"))
             build = json.loads(zipped.read("airk-build.json"))
-            os_name = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
             architecture = "aarch64" if target.startswith("aarch64-") else "x86_64"
             if any(metadata.get("schema") != 1 or metadata.get("version") != version or metadata.get("os") != os_name or metadata.get("arch") != architecture for metadata in (install, pair)):
                 raise ValueError("Native pair installer platform/version differs")
@@ -136,6 +145,8 @@ def verify_native(directory, target, commit, version, signed):
                     or set(signing.get("components", {})) != {executable, helper}):
                 raise ValueError("Pair signing receipt does not bind this build")
             components = signing["components"]
+            if bundle_files and not signer.stapled_app_ticket(components):
+                raise ValueError("Mac service pair lacks matching stapled app notarization")
         else:
             components = {executable: signing}
         for component, signing in components.items():
@@ -166,25 +177,27 @@ def verify_native(directory, target, commit, version, signed):
     return receipt, archive
 
 
-def stage_signing(directory, target, commit, version):
+def stage_signing(directory, target, commit, version, output_root=None):
     """Restore only the tested executable, never arbitrary artifact paths."""
     if target not in SIGNED_TARGETS:
         raise ValueError("Unsupported signing target")
     receipt, archive = verify_native(directory, target, commit, version, False)
     paired = receipt["schema"] == "airk-native-candidate/2"
     executable = "airk.exe" if "windows" in target else "airk"
-    output = ROOT / "artifacts" / "runtime" / target if paired else ROOT / "target" / target / "release"
+    executables = native.runtime_builder().runtime_names("windows" if "windows" in target else "macos") if paired else (executable,)
+    root = ROOT if output_root is None else output_root
+    output = root / "artifacts" / "runtime" / target if paired else root / "target" / target / "release"
     output.mkdir(parents=True, exist_ok=False)
     with zipfile.ZipFile(archive) as zipped:
         for name in receipt["payload"] if paired else (executable,):
             destination = output / name
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(zipped.read(name))
-    for name in (executable, "airk-embed.exe" if "windows" in target else "airk-embed") if paired else (executable,):
+    for name in executables:
         (output / name).chmod(0o755)
 
 
-def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None):
+def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None, repair=None):
     if tag != identity(version) or channel not in ("preview", "stable"):
         raise ValueError("Invalid release identity/channel")
     suffix = f"{commit}-{run_id}-{attempt}" if producer is None else f"{commit}-{run_id}"
@@ -231,6 +244,8 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
               "assets": {name: digest(output / name) for _, name in selected}}
     if producer is not None:
         record["producer"] = producer
+    if repair is not None:
+        record["release_tooling_repair"] = repair
     (output / "release.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     build_run = producer["run_id"] if producer else run_id
     build_attempt = producer["attempt"] if producer else attempt
@@ -244,12 +259,15 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
              f"Signing and assembly: https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}\n\n"
              "Downloads include native ZIPs and matching platform VSIX files. Windows uses Ioka LLC "
              "Azure Artifact Signing. Both macOS helpers use Developer ID signing and accepted Apple "
-             "notarization; the standalone CLI has no stapled offline ticket. Linux is unsigned.\n\n"
+             + ("notarization and a stapled app ticket. Linux is unsigned.\n\n" if tuple(map(int, version.split(".")[:2])) >= (1, 4)
+                else "notarization; the standalone CLI has no stapled offline ticket. Linux is unsigned.\n\n") +
              "Use the ZIP matching your OS/architecture, or install the matching VSIX from VS Code's "
              "Install from VSIX command. SHA256SUMS covers packages and build records. "
              "The release tag matches the installed app and extension version.\n\n"
              "Installed-editor and oldest-OS qualification remain separate. Review the release checklist "
              "and dependency notices. This release does not publish to Visual Studio Marketplace.\n")
+    if repair is not None:
+        notes += f"\nRelease-tooling repair commit: {repair['tooling_commit']}. Native binaries retain the source commit and tested producer recorded above.\n"
     (output / "release-notes.md").write_text(notes, encoding="utf-8")
     checksums = "".join(f"{digest(path)}  {path.name}\n" for path in sorted(output.iterdir()))
     (output / "SHA256SUMS").write_text(checksums, encoding="utf-8")
@@ -316,8 +334,12 @@ def verify_bundle(directory, commit, version, tag, run_id, attempt):
     return record
 
 
-def publish(directory, resume=False):
+def publish(directory, resume=False, source_commit=None):
     commit, version, tag = context()
+    # Only the hard-pinned repair adapter supplies this after validating both
+    # identities. Normal CLI publication still requires the exact current main.
+    if source_commit is not None:
+        commit = source_commit
     attempt = os.environ["GITHUB_RUN_ATTEMPT"]
     if resume:
         attempt = extension.read_receipt(directory / "release.json")["attempt"]

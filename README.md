@@ -1,5 +1,7 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+The 1.4.4 GitHub release verifier now follows the same macOS app-bundle layout as native packaging and signing. A narrowly pinned release-tool repair reuses the already-tested 1.4.4 binaries; its original source and CI identity remain unchanged. See the [release record](docs/release-1.4.4.md).
+
 1.4.4 corrects Unix cleanup after a child exits naturally. Cleanup confirms that the owned child has exited and its process group has drained before releasing it; transient native errors remain bounded by the existing deadline.
 
 1.4.4 also creates staged Windows runtime directories with explicit current-user ownership and owner-only access, including nested payload directories, so elevated installations satisfy the same strict ownership checks. Installed macOS runtime validation, self-test and retirement read the complete app payload from its outer root. Cold service starts coordinate registration-metadata setup before source watching.

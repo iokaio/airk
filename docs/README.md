@@ -1,5 +1,7 @@
 # AIRK documentation
 
+The [1.4.4 release-tool repair](release-workflow.md#pinned-144-release-tool-repair) corrects macOS bundle verification and reuses the original artifacts verified by the successful routine CI run without rebuilding or relabeling native binaries. The original source commit and reviewed tooling commit are recorded separately.
+
 The current 1.4.4 follow-up corrects Unix cleanup ordering for naturally exited children while retaining exact child and descendant-exit proof. Routine CI keeps correctness/build/package checks, uses lightweight default features for focused Windows/macOS regressions, and bounds independent native fixture concurrency. Long workload and performance campaigns are available through explicit [CI qualification](ci-and-builds.md).
 
 1.4.4 also creates staged Windows runtime directories with explicit current-user ownership and owner-only access, including nested payload directories, so elevated installations satisfy the same strict ownership checks. Installed macOS runtime validation, self-test and retirement read the complete app payload from its outer root. Cold service starts coordinate registration-metadata setup before source watching.

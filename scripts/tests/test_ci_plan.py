@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("ci_plan", Path(__file__).parents[1] / "ci-plan.py")
 plan = importlib.util.module_from_spec(spec)
@@ -9,6 +10,20 @@ spec.loader.exec_module(plan)
 
 
 class PlanTests(unittest.TestCase):
+    def test_only_verified_pinned_repair_can_skip_rebuilding_on_main(self):
+        with patch.object(plan, "repair_scope", return_value={}) as verified:
+            for event in ("pull_request", "push"):
+                self.assertEqual(plan.pinned_repair_plan(event),
+                                 dict(native=False, container=False, extension=False, contracts=True))
+            self.assertEqual(verified.call_count, 2)
+            for event in ("workflow_dispatch", "workflow_call"):
+                self.assertIsNone(plan.pinned_repair_plan(event))
+            self.assertEqual(verified.call_count, 2)
+        for failure in (ValueError("changed inputs"), FileNotFoundError("removed repair"),
+                        plan.subprocess.CalledProcessError(1, ["git", "merge-base"])):
+            with self.subTest(failure=failure), patch.object(plan, "repair_scope", side_effect=failure):
+                self.assertIsNone(plan.pinned_repair_plan("push"))
+
     def test_docs_and_extension_content(self):
         self.assertFalse(any(plan.classify(["docs/a.md", "README.md"], "pull_request").values()))
         self.assertEqual(plan.classify(["packages/vscode/README.md"], "pull_request"),
