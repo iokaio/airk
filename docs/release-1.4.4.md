@@ -10,6 +10,8 @@ Runtime staging creates Windows directories with an explicit current-user owner 
 
 The staging follow-up passes all 75 installer/runtime unit tests, including exclusive owner-verified directory creation, and workspace all-target/all-feature Clippy for the Windows target. Elevated hosted execution remains a separate check in the final CI run.
 
+Installer fixtures also create nested app-bundle directories through the private-directory adapter, matching staging and retirement permissions rather than relying on the host's default directory mode.
+
 Storage recovery now derives WAL/shared-memory allowances from admitted database capacity and reserves them before writer opening or recovery. SQLite growth includes logical pages still in WAL. Retained reads and captured pending-replay inputs are preserved; this correction does not delete sources or indexes or force reindexing. The `service-1.4` namespace and existing registrations remain compatible.
 
 The [1.4.3 storage-recovery record](release-1.4.3.md), [1.4.2 resource-policy record](release-1.4.2.md), and [1.4.1 installer record](release-1.4.1.md) retain their exact historical test receipts. Version 1.4.4 adds the final synchronized release increment; those earlier binaries are not relabeled or promoted as 1.4.4. Exact final-source checks and hosted platform/package results must pass before promotion. See [release workflow](release-workflow.md) and [versioning](versioning.md).
