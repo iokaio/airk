@@ -234,6 +234,9 @@ jobs:
       - name: Clear Azure login
         if: always() && runner.os == 'Windows' && steps.azure.outcome == 'success'
         run: az logout
+      - name: Use TCP for Apple ticket requests on Mac runners
+        if: runner.os == 'macOS'
+        uses: ./.github/actions/macos-ticket-network
       - name: Sign and notarize Mac helper in an isolated keychain
         if: runner.os == 'macOS'
         env:

@@ -18,10 +18,12 @@ VERSION = "1.4.4"
 RUNTIME = {"sha256": "2c12276e161cf04ee52765086159cbc21e595c7386c705507392ec30db901000", "files": 664}
 ALLOWED = frozenset({
     ".github/workflows/github-release.yml", "scripts/github-release.py",
+    ".github/actions/macos-ticket-network/action.yml", ".github/workflows/macos-signing.yml",
+    "scripts/tests/test_ci_macos_signing.py",
     "scripts/release-1.4.4-repair.py", "scripts/tests/test_github_release.py",
     "scripts/tests/test_release_1_4_4_repair.py", "scripts/ci-plan.py", "scripts/tests/test_ci_plan.py",
     "README.md", "CONTRIBUTING.md", "docs/README.md", "docs/ci-and-builds.md",
-    "docs/release-workflow.md", "docs/release-1.4.4.md",
+    "docs/release-workflow.md", "docs/release-1.4.4.md", "docs/native-signing.md",
 })
 
 

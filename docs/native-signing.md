@@ -37,6 +37,8 @@ The local AIRK keychain is `~/Library/Keychains/airk-signing.keychain-db`; its n
 
 ## Manual GitHub-hosted signing
 
+Both hosted Mac signing workflows use the same [ticket-network action](../.github/actions/macos-ticket-network/action.yml) before signing on Apple Silicon and Intel. It applies the runner provider's temporary [UDP/443 workaround](https://github.com/actions/runner-images/issues/14924) so Apple ticket requests use HTTPS over TCP. The job-level rule also covers later ticket validation during signed native packaging. All Developer ID, timestamp, accepted-notarization, staple and package checks remain required. This hosted-runner workaround does not change a developer's local firewall or the signed payload.
+
 The [numbered GitHub release workflow](release-workflow.md#numbered-github-releases) also uses this Apple environment, signing the exact native candidates from its successful CI run. It requires accepted notarization for both architectures before any release is published.
 
 [Signed macOS candidates](../.github/workflows/macos-signing.yml) is a separate, manual workflow for `main`. It builds/tests both Apple Silicon and Intel on their native hosted runners, then signs, notarizes and packages native ZIPs and stable VSIX files. Artifacts are retained for seven days. It does not publish a release or Marketplace extension. Ordinary PR CI and Extension release continue to create unsigned candidates.

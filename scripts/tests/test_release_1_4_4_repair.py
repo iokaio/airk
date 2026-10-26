@@ -39,6 +39,8 @@ class RepairContracts(unittest.TestCase):
         self.assertEqual(commands, {"preflight", "download", "stage-signing", "assemble", "bundle", "publish"})
 
     def test_complete_allowlist_and_exact_runtime_inputs_are_required(self):
+        self.assertTrue({".github/actions/macos-ticket-network/action.yml", ".github/workflows/macos-signing.yml",
+                         "scripts/tests/test_ci_macos_signing.py", "docs/native-signing.md"} <= repair.ALLOWED)
         repair.validate_scope(["scripts/github-release.py", "docs/release-1.4.4.md"], "1.4.4", repair.RUNTIME)
         for path in ("Cargo.toml", "Cargo.lock", "crates/airk-cli/src/main.rs", "packages/vscode/README.md",
                      "packages/vscode/src/native.ts", "scripts/sign-native.py", "scripts/package-native.py",

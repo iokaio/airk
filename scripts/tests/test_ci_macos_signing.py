@@ -12,9 +12,53 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location("ci_macos_signing", Path(__file__).parents[1] / "ci-macos-sign.py")
 signing = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(signing)
+builder_spec = importlib.util.spec_from_file_location("signing_runtime_builder", signing.ROOT / "scripts/build-service-runtime.py")
+builder = importlib.util.module_from_spec(builder_spec)
+builder_spec.loader.exec_module(builder)
 
 
 class HostedSigningContracts(unittest.TestCase):
+    def test_shared_ticket_transport_covers_every_hosted_mac_signing_caller(self):
+        action_path = ".github/actions/macos-ticket-network/action.yml"
+        action = (signing.ROOT / action_path).read_text(encoding="utf-8")
+        self.assertIn("using: composite", action)
+        self.assertIn("shell: bash", action)
+        self.assertEqual([line.strip() for line in action.split("run: |\n", 1)[1].splitlines()
+                          if line.strip() and not line.lstrip().startswith("#")], [
+            'echo "block return out quick proto udp from any to any port 443" | sudo pfctl -f -',
+            "sudo pfctl -E",
+        ])
+        callers = []
+        for path in (signing.ROOT / ".github/workflows").glob("*.yml"):
+            workflow = path.read_text(encoding="utf-8")
+            steps = workflow.split("\n      - ")
+            for index, step in enumerate(steps):
+                if "ci-macos-sign.py" not in step or "--cleanup" in step:
+                    continue
+                callers.append(path.name)
+                self.assertIn("x86_64-apple-darwin", workflow)
+                self.assertIn("aarch64-apple-darwin", workflow)
+                self.assertGreater(index, 0)
+                transport = steps[index - 1]
+                self.assertIn("uses: ./.github/actions/macos-ticket-network", transport)
+                guard = [line.strip() for line in transport.splitlines() if line.lstrip().startswith("if:")]
+                self.assertEqual(guard, ["if: runner.os == 'macOS'"] if path.name == "github-release.yml" else [])
+                self.assertIn("run: python scripts/ci-macos-sign.py --target ${{ matrix.target }} --pair", step)
+                self.assertNotIn("continue-on-error", step)
+                self.assertNotIn("||", step)
+        self.assertCountEqual(callers, ["github-release.yml", "macos-signing.yml"])
+
+    def test_standalone_signing_smoke_uses_the_built_mac_bundle_executable(self):
+        workflow = (signing.ROOT / ".github/workflows/macos-signing.yml").read_text(encoding="utf-8")
+        executable = builder.runtime_names("macos")[0]
+        paths = [line.strip() for line in workflow.splitlines() if "AIRK_TEST_BINARY:" in line]
+        self.assertEqual(paths, ["AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/" + executable])
+        build = workflow.index("python scripts/build-service-runtime.py --profile release")
+        smoke = workflow.index(paths[0])
+        transport = workflow.index("uses: ./.github/actions/macos-ticket-network")
+        self.assertLess(build, smoke)
+        self.assertLess(smoke, transport)
+
     def test_signer_can_resolve_chain_and_restores_search_list_on_success_or_failure(self):
         values = {"MACOS_CERTIFICATE_P12": base64.b64encode(b"fictional p12").decode(),
                   "MACOS_CERTIFICATE_PASSWORD": "fixture", "APPLE_ID": "fixture@example.invalid",
