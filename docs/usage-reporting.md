@@ -68,7 +68,11 @@ Small SQLite transactions in `usage.sqlite3` are separate from index transaction
 | Feedback | Useful, partly useful, not useful for retained request IDs | Explicit and optional |
 | Accounting | Duplicate IDs, retained daily coverage, ledger bytes, process-local drops | Historical losses across crashes/workers are unknown |
 
-Client labels default to CLI or unknown MCP. `AIRK_CLIENT` can declare a known family: `vscode`, `claude`, `codex`, `gemini`, `cursor`, `cline`, `roo`, `junie`, `copilot-cli`, `opencode`, `kilo`, `amazon-q`, `windsurf`. Labels normalize to fixed categories, authorize nothing and never retain arbitrary supplied strings. Content kinds come from successfully compared sources; mixed sources stay mixed and unavailable comparisons stay unknown.
+Client labels default to CLI or unknown MCP. Known families are `vscode`, `claude`, `codex`, `gemini`, `cursor`, `cline`, `roo`, `junie`, `copilot-cli`, `opencode`, `kilo`, `amazon-q`, `windsurf` and `airk-explorer`. Labels normalize to fixed categories, authorize nothing and never retain arbitrary supplied strings.
+
+In 1.4 service mode the project worker records usage, and the family comes from the MCP `initialize` `clientInfo.name` that the stdio frontend forwards. `AIRK_CLIENT` and `AIRK_USAGE_MODE` set on an MCP frontend process do not reach the worker and have no effect there. They apply only where the kernel runs in the same process (local CLI commands), or to every client when set in the service's own environment. To stop recording for a project, configure its usage mode instead.
+
+The reserved `airk-explorer` label identifies the AIRK Explorer's own evidence session in the VS Code extension. Searches a person runs in the Explorer are therefore reported as the `explorer` client and not mixed into coding-agent usage. A 1.4.x runtime cannot read a usage ledger that already contains the `explorer` key, so rolling a project back to 1.4.x after Explorer use leaves its usage reports unreadable until usage is cleared. Content kinds come from successfully compared sources; mixed sources stay mixed and unavailable comparisons stay unknown.
 
 Latency boundaries are 1 ms, 5 ms, 20 ms, 100 ms, 500 ms, 2 s and 16 s, followed by overflow. Exact percentiles are not reported. Cache outcomes remain unknown unless measured; adapters do not infer cache hits from latency.
 

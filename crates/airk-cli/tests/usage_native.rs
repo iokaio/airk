@@ -156,6 +156,99 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
     Ok(())
 }
 
+#[test]
+fn explorer_mcp_client_info_is_recorded_as_its_own_family() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(
+        root.path().join("explorer.rs"),
+        "pub fn explorer_fixture() -> bool { true }\n",
+    )?;
+    let service = common::Service::start(root.path(), data.path(), "usage");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    service.configure(airk_cli::service_configuration::Draft::Usage {
+        mode: RecordingMode::AggregatesOnly,
+    });
+    service.job(JobKind::Index);
+    let collection = airk_store::service::collection::Collection::existing(
+        data.path(),
+        &service.project.root,
+        "usage",
+    )?;
+    let store = collection.selected_store()?;
+    let writer = hold_writer(&store)?;
+    // The frontend's own environment opts out of usage, as the extension once tried;
+    // attribution and recording are decided by the worker from clientInfo alone.
+    let mut child = common::command(root.path(), data.path(), "usage")
+        .env("AIRK_CLIENT", "vscode")
+        .arg("mcp")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    let mut input = child.stdin.take().expect("stdin");
+    let (sender, output) = std::sync::mpsc::channel::<String>();
+    let stdout = child.stdout.take().expect("stdout");
+    std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(stdout)
+            .lines()
+            .map_while(Result::ok)
+        {
+            if sender.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let mut exchange = |message: Value, id: Option<u64>| -> Result<Option<Value>> {
+        use std::io::Write;
+        writeln!(input, "{message}")?;
+        input.flush()?;
+        let Some(id) = id else { return Ok(None) };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            let remaining = deadline
+                .checked_duration_since(std::time::Instant::now())
+                .ok_or_else(|| anyhow::anyhow!("stdio reply deadline exhausted"))?;
+            let value: Value = serde_json::from_str(&output.recv_timeout(remaining)?)?;
+            if value["id"] == id {
+                return Ok(Some(value));
+            }
+        }
+    };
+    exchange(
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"airk-explorer","version":"1"}}}),
+        Some(1),
+    )?;
+    exchange(
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        None,
+    )?;
+    let reply = exchange(
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"airk_search","arguments":{"query":"explorer_fixture","mode":"lexical"}}}),
+        Some(2),
+    )?
+    .unwrap();
+    ensure!(reply["result"]["isError"] != true, "{reply}");
+    drop(input);
+    let _ = child.kill();
+    let _ = child.wait();
+    drop(writer);
+    let report = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(airk_cli::usage_client::report(
+            &service.control,
+            service.project.binding,
+            30,
+        ))?;
+    let clients = &report["report"]["clients"];
+    assert_eq!(clients["explorer"], 1, "{clients}");
+    assert!(clients.get("vscode").is_none(), "{clients}");
+    assert!(clients.get("unknown").is_none(), "{clients}");
+    Ok(())
+}
+
 fn single_search(root: &std::path::Path, data: &std::path::Path) -> Result<()> {
     let output = common::command(root, data, "usage")
         .args([

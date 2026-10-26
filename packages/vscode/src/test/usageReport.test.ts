@@ -43,6 +43,13 @@ test('usage explains unavailable comparisons and separates evidence from polling
     assert.ok(!html.includes('<strong>0%</strong>'));
 });
 
+test('client table names the AIRK Explorer separately and escapes unknown client keys', () => {
+    const html = renderUsage({ report: { calls: 5, clients: { explorer: 3, vscode: 1, '<b>': 1 } } });
+    assert.match(html, /<td>AIRK Explorer<\/td><td>3<\/td>/);
+    assert.match(html, /<td>VS Code<\/td><td>1<\/td>/);
+    assert.match(html, /&lt;b&gt;/);
+});
+
 test('usage actions reject arbitrary commands, paths, invalid windows and surplus keys', () => {
     assert.deepEqual(usageAction({ type: 'usage', action: 'days', days: 7 }), { type: 'usage', action: 'days', days: 7 });
     for (const input of [{ type: 'usage', action: 'days', days: 365 }, { type: 'usage', action: 'clear', path: 'x' }, { type: 'usage', action: 'runCommand' }, null]) {
