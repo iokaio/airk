@@ -3,7 +3,11 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
     "strict": true,
@@ -11,7 +15,12 @@
     "isolatedModules": true,
     "skipLibCheck": false,
     "noEmit": true,
-    "types": []
+    "types": [],
+    "paths": {
+      "airk-explorer-help": [
+        "./src/explorerWebview/helpCatalog.d.ts"
+      ]
+    }
   },
   "include": [
     "src/explorerWebview/**/*.ts",
