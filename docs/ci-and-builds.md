@@ -1,5 +1,7 @@
 # GitHub CI, native artifacts and spending controls
 
+The current local candidate is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+
 Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
 
 The [CI workflow](../.github/workflows/ci.yml) uses standard GitHub-hosted runners. No self-hosted machine, Docker account, Azure account, Apple account, custom repository secret or repository variable is needed for the current builds. GitHub supplies the job token and artifact-upload authorization automatically. Repository Actions must be enabled and permitted to use the SHA-pinned actions, including rust-cache, install-action and the Docker cache-mount adapter.
@@ -35,7 +37,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.4.0 candidate notes](release-1.4.0.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact sixteen-tool MCP catalog, including airk_help; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.4.4 candidate notes](release-1.4.4.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact sixteen-tool MCP catalog, including airk_help; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 

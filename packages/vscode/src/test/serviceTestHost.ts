@@ -16,7 +16,7 @@ import * as cliInstall from '../cliInstall';
 export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean}={}){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-service-'));
     const values=new Map<string,unknown>(),settings=new Map<string,unknown>(),commands=new Map<string,(...args:unknown[])=>Promise<unknown>>();
-    const writes:any[]=[],calls:string[]=[],warnings:string[]=[],clipboard:string[]=[],panels:any[]=[],events:any[]=[];
+    const writes:any[]=[],calls:string[]=[],warnings:string[]=[],clipboard:string[]=[],panels:any[]=[],events:any[]=[],notices:{message:string;actions:string[]}[]=[],progressRuns:{title:string;messages:string[]}[]=[];
     const storage={keys:()=>[...values.keys()],get:<T>(key:string,fallback?:T)=>(values.has(key)?values.get(key):fallback) as T|undefined,update:async(key:string,value:unknown)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}};
     const install=path.join(root,'installation'),control=path.join(install,'control'),data=path.join(root,'data');await fs.mkdir(data);
     const binding={installDir:install,controlDir:control,executable:path.join(install,'main'),launcher:path.join(install,'airk-launcher'),
@@ -35,7 +35,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         for(const folder of folders)await workspace.register(binding,folder.uri.fsPath,data,folder.name.replaceAll(' ','-'),async()=>true);
     }
     const state={down:false,stopped:false,ackLost:false,confirm:true,discovered:0,ensured:0,picks:0,
-        pick:undefined as undefined|((items:any[])=>any),selectedFolders:undefined as undefined|any[]};
+        pick:undefined as undefined|((items:any[])=>any),selectedFolders:undefined as undefined|any[],noticeAction:undefined as string|undefined};
     const disposable={dispose(){}},event=()=>disposable;
     let foldersChanged:()=>Promise<void>;
     const stub:any={workspace:{isTrusted:options.trusted??true,workspaceFolders:folders,textDocuments:[],
@@ -44,10 +44,14 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
             update:async(key:string,value:unknown)=>{settings.set(key,value);}}),
         onDidChangeWorkspaceFolders:(callback:()=>Promise<void>)=>{foldersChanged=callback;return disposable;},onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event,
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watcher is forbidden');}},
-    window:{activeTextEditor:{document:{uri:folders[0]?.uri}},createOutputChannel:()=>({appendLine:(text:string)=>calls.push(text),show(){},dispose(){}}),
+    window:{activeTextEditor:{document:{uri:folders[0]?.uri}},createOutputChannel:()=>({appendLine:(text:string)=>calls.push(text),show(){calls.push('output-shown');},dispose(){}}),
+        withProgress:async(options:any,task:any)=>{const run={title:options.title,messages:[] as string[]};progressRuns.push(run);return task({report:(value:any)=>run.messages.push(value.message)});},
         createStatusBarItem:()=>({show(){},dispose(){}}),createTreeView:()=>disposable,registerWebviewViewProvider:()=>disposable,
-        onDidChangeActiveTextEditor:event,showErrorMessage:async(message:string)=>calls.push(message),showInformationMessage:async()=>undefined,
-        showWarningMessage:async(message:string,_options:unknown,...actions:string[])=>{warnings.push(message);return state.confirm?actions[0]:undefined;},
+        onDidChangeActiveTextEditor:event,showErrorMessage:async(message:string)=>calls.push(message),
+        showInformationMessage:async(message:string,...actions:string[])=>{notices.push({message,actions});return state.noticeAction;},
+        showWarningMessage:async(message:string,options:unknown,...actions:string[])=>{warnings.push(message);
+            if(typeof options==='string'){notices.push({message,actions:[options,...actions]});return state.noticeAction;}
+            return state.confirm?actions[0]:undefined;},
         showQuickPick:async(items:any[])=>{state.picks++;return state.pick?state.pick(items):items[0];},
         showOpenDialog:async()=>state.selectedFolders,
         createTerminal:()=>({show(){},dispose(){}}),
@@ -59,9 +63,11 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     commands:{registerCommand:(name:string,action:(...args:unknown[])=>Promise<unknown>)=>{commands.set(name,action);return disposable;},
         executeCommand:async(name:string)=>calls.push(name),getCommands:async()=>['workbench.mcp.listServer']},
     lm:{registerMcpServerDefinitionProvider:(_name:string,provider:unknown)=>{events.push(provider);return disposable;}},
-    env:{clipboard:{writeText:async(text:string)=>{clipboard.push(text);}}},StatusBarAlignment:{Left:1},ConfigurationTarget:{Global:1},ViewColumn:{Active:1,Beside:2},
+    env:{clipboard:{writeText:async(text:string)=>{clipboard.push(text);}}},StatusBarAlignment:{Left:1},ConfigurationTarget:{Global:1},ViewColumn:{Active:1,Beside:2},ProgressLocation:{Notification:15},
     EventEmitter:class{listeners:any[]=[];event=(listener:any)=>{this.listeners.push(listener);return disposable;};fire(){for(const listener of this.listeners)listener();}dispose(){}},
     TreeItem:class{constructor(public label:string){}},Uri:{file:(fsPath:string)=>({scheme:'file',fsPath})},
+    Range:class{constructor(..._args:any[]){}},
+    WorkspaceEdit:class{uri:any;after='';replace(uri:any,_range:any,after:string){this.uri=uri;this.after=after;}},
     McpStdioServerDefinition:class{cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
     const transport={dispose(){},async request(method:unknown):Promise<any>{
         const name=typeof method==='string'?method:Object.keys(record(method))[0];
@@ -113,7 +119,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     try{extension=require('../extension');const context:any={extensionPath:root,extension:{packageJSON:{version:options.upgrade?'1.4.1':'1.4.0'}},globalState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
-        return {root,folders,binding,registrations,values,settings,commands,writes,calls,warnings,clipboard,panels,state,stub,api,providers:events,
+        return {root,folders,binding,registrations,values,settings,commands,writes,calls,warnings,clipboard,panels,state,stub,api,providers:events,notices,progressRuns,
             async refreshFolders(){await foldersChanged!();},
             async close(){extension.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});}};
     }catch(error){extension?.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});throw error;}

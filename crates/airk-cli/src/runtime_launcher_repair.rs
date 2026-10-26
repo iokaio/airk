@@ -109,6 +109,43 @@ pub(super) fn require_settled(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// On Windows a loaded launcher cannot be replaced. Acquire write access before
+/// publishing activation intent or draining owners, and retain it through the
+/// handoff so a new executable mapping cannot race that proof. No bytes change.
+pub(super) fn replacement_guard(root: &Path, main: &Path) -> Result<Option<File>> {
+    #[cfg(windows)]
+    {
+        let destination = launcher_path(root);
+        if !exists(&destination)? {
+            return Ok(None);
+        }
+        safe_file(&destination)?;
+        let actual = runtime_pair::digest_file(&destination)?;
+        ensure!(
+            receipt(root)?.as_deref() == Some(&actual),
+            "unknown or modified launcher preserved"
+        );
+        if actual == runtime_pair::digest_file(main)? {
+            return Ok(None);
+        }
+        // A verified OS manager may itself hold the launcher. Its existing
+        // stop/maintenance path must release that image before replacement;
+        // treating it as an external MCP client would block every login update.
+        if crate::service_manager::ServiceManager::for_runtime(root)?.owns_restart()? {
+            return Ok(None);
+        }
+        let guard = OpenOptions::new().write(true).open(destination).context(
+            "airk_client_restart_required: launcher is in use or cannot be replaced; disconnect AIRK MCP clients and tools terminals, then retry the update; verify permissions if it remains blocked",
+        )?;
+        Ok(Some(guard))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (root, main);
+        Ok(None)
+    }
+}
+
 pub(super) fn pending(root: &Path) -> Result<Option<String>> {
     if !exists(&root.join(INTENT))? {
         return Ok(None);

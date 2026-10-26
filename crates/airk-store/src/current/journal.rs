@@ -1714,7 +1714,7 @@ impl CurrentWriter<'_> {
             .checked_add(graph.record_bytes)
             .and_then(|n| n.checked_add(graph.node_count.checked_mul(96)?))
             .context("current growth estimate overflow")?;
-        let used = fs::metadata(self.store.directory().join("current.sqlite3"))?.len();
+        let used = database::logical_bytes(self.connection()?)?;
         let needed = used
             .checked_add(
                 pending
@@ -1827,8 +1827,7 @@ impl CurrentWriter<'_> {
             .iter()
             .map(|c| c.value().map_or(0, |v| v.len()) as u64 + 128)
             .sum();
-        let needed = fs::metadata(self.store.directory().join("current.sqlite3"))?
-            .len()
+        let needed = database::logical_bytes(self.connection()?)?
             .checked_add(
                 additional
                     .checked_mul(8)

@@ -215,6 +215,9 @@ export function consoleContent(state:ServiceConsoleState):string {
             ['Logical CPUs',resources.logical_cpus],['Extraction threads admitted',resources.extraction_threads_reserved],['Extraction thread limit',resources.extraction_threads_limit],
             ['Inference thread limit',resources.inference_threads_limit],['Configured background I/O override (bytes/s)',configuration.background_io_bytes_per_second??'Preset default'],['Available host memory (bytes)',resources.available_memory_bytes],
             ['Observed RSS (bytes)',resources.observed_rss_bytes],['Memory allowance (bytes)',resources.memory_limit_bytes],['Memory pressure',resources.pressure],
+            ['Protected query headroom (bytes)',resources.query_headroom_bytes],
+            ['Shared source pacing ceiling (bytes/s)',resources.background_io_limit_bytes_per_second],
+            ['Reserved source pacing (bytes/s)',resources.background_io_reserved_bytes_per_second],
             ['Telemetry complete',resources.telemetry_complete],['Pending native drains',resources.pending_provider_drains],
             ['Inference process available',model?.available],['Inference worker',model?.worker],['Loaded-model events',model?.loads],['Compatible reuse events',model?.reuses],['Inference sessions',model?.sessions]])}
         ${button('startEmbedding','Start inference helper','',unavailable||!state.connected)}
@@ -260,7 +263,7 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
         runtimeInstaller:{pendingCopies:Array.isArray(obj(state.bootstrap.value?.diagnosis).pending_stages)?(obj(state.bootstrap.value?.diagnosis).pending_stages as unknown[]).length:null,
             stagingFailed:typeof obj(state.bootstrap.value?.diagnosis).staging_error==='string',activationFailed:typeof obj(state.bootstrap.value?.diagnosis).activation_error==='string'},
         lifecycle:fields(obj(state.bootstrap.value?.lifecycle),['explicitly_stopped','recorded_instance']),
-        resources:fields(resources,['resident_workers','resident_limit','running_jobs','waiting_projects','logical_cpus','extraction_threads_limit','extraction_threads_reserved','inference_threads_limit','memory_limit_bytes','memory_reserved_bytes','observed_rss_bytes','available_memory_bytes','telemetry_complete','pressure','pending_provider_drains','provider_drain_error']),
+        resources:fields(resources,['resident_workers','resident_limit','running_jobs','waiting_projects','logical_cpus','extraction_threads_limit','extraction_threads_reserved','inference_threads_limit','memory_limit_bytes','memory_reserved_bytes','query_headroom_bytes','background_io_limit_bytes_per_second','background_io_reserved_bytes_per_second','observed_rss_bytes','available_memory_bytes','telemetry_complete','pressure','pending_provider_drains','provider_drain_error']),
         resourceConfiguration:fields(obj(resources.configuration),['preset','extraction_threads','inference_threads','memory_bytes','background_io_bytes_per_second']),
         inference:fields(model,['available','worker','loads','reuses','sessions','observation_age_ms']),
         projects:(state.page?.projects??[]).map(row=>{const project=obj(row.project),registration=obj(project.registration),inspection=obj(row.inspection),snapshot=obj(inspection.snapshot),progress=obj(row.progress),work=obj(progress.progress),job=obj(progress.job);return {

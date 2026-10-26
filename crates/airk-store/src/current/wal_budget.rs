@@ -264,13 +264,16 @@ pub(super) fn register(wal: u64, shm: u64) -> Result<String> {
         .lock()
         .map_err(|_| anyhow::anyhow!("WAL VFS registration unavailable"))?;
     ensure!(
-        (4096..=64 << 20).contains(&wal) && shm <= 1 << 20,
+        (4096..=1 << 46).contains(&wal) && shm <= 1 << 39,
         "invalid WAL file budgets"
     );
     if let Some(name) = registrations.get(&(wal, shm)) {
         return Ok(name.clone());
     }
-    ensure!(registrations.len() < 8, "WAL VFS budget variants exhausted");
+    ensure!(
+        registrations.len() < 64,
+        "WAL VFS budget variants exhausted"
+    );
     let number = registrations.len();
     // Initialize SQLite before finding its process-lifetime default VFS.
     drop(Connection::open_in_memory()?);

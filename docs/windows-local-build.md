@@ -1,6 +1,10 @@
 # Build and review the Windows app and VS Code extension
 
-October 25 manual-test follow-up: cleanup, help and live-status changes remain 1.4.0. Their Windows checks do not replace installed-editor acceptance or native macOS/Linux qualification. The source now advertises sixteen MCP tools, including airk_help.
+The current release candidate is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+
+Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
+
+Historical October 25 manual-test checkpoint: cleanup, help and live-status changes used 1.4.0. The later 1.4.1 installer candidate is also historical; follow [versioning](versioning.md) and [current release notes](release-1.4.4.md). Those earlier Windows checks do not replace installed-editor acceptance or native macOS/Linux qualification. The source now advertises sixteen MCP tools, including airk_help.
 
 October 25 onboarding follow-up: the new automatic trusted-workspace setup is covered by extension regressions and package closure checks. Earlier installed-editor receipts and the manual-dialog harness below describe the previous VSIX, not qualification of this follow-up.
 
@@ -52,7 +56,7 @@ Compilation, real-model/DiskANN verification, helper version validation and nati
 
 ## Connect this checkout for local agent testing
 
-For 1.4, trusted activation installs the runtime/terminal command and registers new workspace folders automatically. Existing 1.4 index-storage and watching selections are preserved. Open a new terminal to use the updated `airk` command, then use **Connect Coding Agent** to review stable-launcher arguments. **AIRK: Index Now** remains available for explicit indexing. Use the guide's manual merge for Codex TOML, preserving unrelated settings. The service owns model setup and indexing. A storage preference does not replace an existing reviewed project binding.
+For 1.4, trusted activation installs the runtime/terminal command and registers new workspace folders automatically. Existing 1.4 index-storage and watching selections are preserved. Open a new terminal to use the updated `airk` command, then use **Connect Coding Agent** to review stable-launcher arguments. **AIRK: Index Now** remains available for explicit indexing. Existing recognized local agent entries are refreshed on installation. Use the guide for first connections or unsupported custom configurations. The service owns model setup and indexing. A storage preference does not replace an existing reviewed project binding.
 
 ### Historical 1.3 personal setup workflow
 
@@ -98,7 +102,7 @@ The test installs the verified VSIX into isolated profiles, using the installed 
 
 This is isolated installed-VSIX acceptance. Marketplace, remote-host, upgrade/rollback and clean-machine qualification remain separate. It does not exercise any paid coding model. VS Code startup may show a temporary test window even though the process is launched with its console hidden.
 
-`-RunEditorTests -OpenReview` runs acceptance first, then opens a separate private profile for review. Automated registrations explicitly select manual native indexing.
+`-RunEditorTests -OpenReview` runs acceptance first, then opens a separate private profile for review. The review-dialog scenarios explicitly set `airk.cli.autoInstall: false` and select manual native indexing. Automatic onboarding and agent-entry migration are covered separately by `check-agent-install.cjs`; the review fixture must not assume that default trusted activation leaves projects unregistered.
 
 ## Installed extension and two-window qualification
 
@@ -138,3 +142,7 @@ On October 18, 2026, the final 1.1.3 candidate passed all five scenarios across 
 - Index budget reached: manage unused collections or raise the machine-scoped soft budget, then Resume. Manual indexing intentionally overrides the soft limit.
 
 Hosted equivalents and credentials are described in [CI and builds](ci-and-builds.md).
+
+## Targeted local agent installer check
+
+Run `node scripts/check-agent-install.cjs <Code.exe> <new-vsix> <previous-vsix>` to test a running upgrade, or omit the previous VSIX to install the VSIX into an isolated editor profile with existing Codex, Claude Code and Copilot workspace entries. The check verifies automatic connection migration, preserved settings, repeat repair and a real MCP status handshake. It shuts down its private service and retains results under ignored `artifacts/editor-qualification/`. It does not change the normal editor profile or qualify replacement of already connected external agent processes.

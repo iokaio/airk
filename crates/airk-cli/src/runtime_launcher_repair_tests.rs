@@ -42,6 +42,29 @@ fn old_launcher(root: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+#[cfg(windows)]
+#[test]
+fn launcher_in_use_is_rejected_before_any_repair_intent() -> Result<()> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let (_owner, root, identity) = fixture()?;
+    let old = old_launcher(&root)?;
+    let main = verify_runtime(&root, &identity)?.0;
+    let held = OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(launcher_path(&root))?;
+    let error = replacement_guard(&root, &main).unwrap_err();
+    assert!(error.to_string().contains("airk_client_restart_required"));
+    assert!(!root.join(INTENT).exists());
+    assert!(!root.join("activation.json").exists());
+    assert_eq!(fs::read(launcher_path(&root))?, old);
+    drop(held);
+    let guard = replacement_guard(&root, &main)?;
+    assert!(guard.is_some());
+    drop(guard);
+    Ok(())
+}
+
 #[test]
 fn missing_launcher_and_owned_partial_repair_from_approved_payload() -> Result<()> {
     let (_owner, root, identity) = fixture()?;

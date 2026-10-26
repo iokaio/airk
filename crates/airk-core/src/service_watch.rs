@@ -3,6 +3,15 @@
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
+/// Includes finite native buffers for up to 32,768 directory registrations.
+pub const WATCHER_MEMORY_BYTES: u64 = 768 << 20;
+pub const MAX_WATCH_DIRECTORIES: u16 = 32_768;
+pub const MAX_PROJECT_WATCH_DIRECTORIES: u16 = 8_192;
+
+pub fn watcher_memory_bytes(machine_memory: Option<u64>) -> u64 {
+    (machine_memory.unwrap_or(8 << 30) / 64).clamp(128 << 20, WATCHER_MEMORY_BYTES)
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WatchBackend {
@@ -18,6 +27,13 @@ pub enum WatchFailure {
     BackendUnavailable,
     RootUnavailable,
     RootLimit,
+    ProjectDirectoryLimit,
+    GlobalDirectoryLimit,
+    ProjectPathBytesLimit,
+    GlobalPathBytesLimit,
+    ScanEntryLimit,
+    DepthLimit,
+    PathLengthLimit,
     EventOverflow,
     MetadataUnavailable,
 }

@@ -22,9 +22,17 @@ use std::{
 
 const MAX_PROJECTS: usize = 1024;
 const MAX_BINDING_BYTES: usize = 8 * 1024 * 1024;
-const MAX_DIRECTORIES: usize = 512;
-const MAX_PATH_BYTES: usize = 2 * 1024 * 1024;
-const MAX_SCAN_ENTRIES: usize = 16_384;
+const MAX_DIRECTORIES: usize = airk_core::service_watch::MAX_WATCH_DIRECTORIES as usize;
+const MAX_PROJECT_DIRECTORIES: usize =
+    airk_core::service_watch::MAX_PROJECT_WATCH_DIRECTORIES as usize;
+const MAX_PATH_BYTES: usize = 64 * 1024 * 1024;
+const MAX_PROJECT_PATH_BYTES: usize = 16 * 1024 * 1024;
+const MAX_SCAN_ENTRIES: usize = 262_144;
+const MAX_DEPTH: usize = 64;
+
+pub fn memory_allowance() -> u64 {
+    airk_core::service_watch::watcher_memory_bytes(crate::limits::machine::memory_bytes())
+}
 
 pub struct Binding {
     pub registration: ProjectRegistration,
@@ -88,8 +96,16 @@ struct Plan {
     walk: Option<Walk>,
     wanted: BTreeSet<PathBuf>,
     path_bytes: usize,
-    entries: usize,
+    usage: BTreeMap<ProjectBinding, ProjectUsage>,
     failures: BTreeMap<ProjectBinding, Vec<Option<WatchFailure>>>,
+    publishing: bool,
+    published_after: Option<PathBuf>,
+}
+#[derive(Default)]
+struct ProjectUsage {
+    directories: usize,
+    path_bytes: usize,
+    entries: usize,
 }
 
 pub struct SourceWatcher {
@@ -337,8 +353,10 @@ impl SourceWatcher {
                     walk: None,
                     wanted: BTreeSet::new(),
                     path_bytes: 0,
-                    entries: 0,
+                    usage: BTreeMap::new(),
                     failures,
+                    publishing: false,
+                    published_after: None,
                 });
             } else {
                 for (project, entry) in &self.entries {
@@ -356,28 +374,62 @@ impl SourceWatcher {
             }
         }
         if let Some(plan) = self.plan.as_mut()
-            && plan.step()?
+            && (plan.publishing || plan.step()?)
         {
             let plan = self.plan.take().unwrap();
-            self.publish_plan(plan)?;
+            self.plan = self.publish_plan(plan)?;
         }
         Ok(())
     }
-    fn publish_plan(&mut self, mut plan: Plan) -> Result<()> {
+    fn publish_plan(&mut self, mut plan: Plan) -> Result<Option<Plan>> {
+        plan.publishing = true;
+        if self.force_rebind {
+            plan.published_after = None;
+        }
         if let Some(watcher) = self.watcher.as_mut() {
-            for path in self
+            let removals = self
                 .watched
                 .iter()
                 .filter(|path| self.force_rebind || !plan.wanted.contains(*path))
-            {
+                .take(64)
+                .cloned()
+                .collect::<Vec<_>>();
+            for path in &removals {
                 let _ = watcher.unwatch(path);
+                self.watched.remove(path);
             }
-            let mut actual = BTreeSet::new();
-            for path in &plan.wanted {
-                if !self.force_rebind && self.watched.contains(path)
-                    || watcher.watch(path, RecursiveMode::NonRecursive).is_ok()
-                {
-                    actual.insert(path.clone());
+            if !removals.is_empty() {
+                return Ok(Some(plan));
+            }
+            self.force_rebind = false;
+            use std::ops::Bound::{Excluded, Unbounded};
+            let paths = plan
+                .wanted
+                .range::<PathBuf, _>((
+                    plan.published_after.as_ref().map_or(Unbounded, Excluded),
+                    Unbounded,
+                ))
+                .take(64)
+                .cloned()
+                .collect::<Vec<_>>();
+            let now = Instant::now();
+            for path in &paths {
+                if self.watched.contains(path) {
+                    continue;
+                }
+                if watcher.watch(path, RecursiveMode::NonRecursive).is_ok() {
+                    self.watched.insert(path.clone());
+                    let normalized = comparison_path(path);
+                    let projects = normalized
+                        .ancestors()
+                        .take(128)
+                        .filter_map(|ancestor| self.root_index.get(ancestor))
+                        .flatten()
+                        .copied()
+                        .collect::<BTreeSet<_>>();
+                    for project in projects {
+                        Self::dirty(self.entries.get_mut(&project).unwrap(), now);
+                    }
                 } else {
                     for (project, entry) in &self.entries {
                         for (index, root) in entry.binding.roots().enumerate() {
@@ -389,25 +441,10 @@ impl SourceWatcher {
                     }
                 }
             }
-            let added = actual
-                .difference(&self.watched)
-                .cloned()
-                .collect::<Vec<_>>();
-            let now = Instant::now();
-            for path in added {
-                let normalized = comparison_path(&path);
-                let projects = normalized
-                    .ancestors()
-                    .take(128)
-                    .filter_map(|ancestor| self.root_index.get(ancestor))
-                    .flatten()
-                    .copied()
-                    .collect::<BTreeSet<_>>();
-                for project in projects {
-                    Self::dirty(self.entries.get_mut(&project).unwrap(), now);
-                }
+            plan.published_after = paths.last().cloned().or(plan.published_after);
+            if paths.len() == 64 {
+                return Ok(Some(plan));
             }
-            self.watched = actual;
         }
         self.force_rebind = false;
         for (project, entry) in &self.entries {
@@ -436,7 +473,7 @@ impl SourceWatcher {
                 },
             );
         }
-        Ok(())
+        Ok(None)
     }
     pub fn observations(&mut self, limit: usize) -> Vec<Observation> {
         let ids = self
@@ -539,8 +576,9 @@ impl Plan {
                     cursor: None,
                 });
             }
-            if self.entries >= MAX_SCAN_ENTRIES {
-                self.fail(WatchFailure::RootLimit);
+            let project = self.walk.as_ref().unwrap().task.project;
+            if self.usage.entry(project).or_default().entries >= MAX_SCAN_ENTRIES {
+                self.fail(WatchFailure::ScanEntryLimit);
                 continue;
             }
             let walk = self.walk.as_mut().unwrap();
@@ -551,7 +589,7 @@ impl Plan {
                     }
                     Some(Err(_)) => self.fail(WatchFailure::RootUnavailable),
                     Some(Ok(entry)) => {
-                        self.entries += 1;
+                        self.usage.entry(project).or_default().entries += 1;
                         let path = entry.path();
                         if !relevant(&path, &walk.task.root, &walk.task.data) {
                             continue;
@@ -559,12 +597,28 @@ impl Plan {
                         match entry.file_type() {
                             Ok(kind) if kind.is_dir() && !kind.is_symlink() => {
                                 let bytes = path.as_os_str().len();
-                                if *depth >= 32
-                                    || walk.pending.len() >= MAX_DIRECTORIES
-                                    || bytes > 4096
-                                    || self.path_bytes + walk.queued_bytes + bytes > MAX_PATH_BYTES
+                                let usage = self.usage.entry(project).or_default();
+                                let failure = if *depth >= MAX_DEPTH {
+                                    Some(WatchFailure::DepthLimit)
+                                } else if bytes > 4096 {
+                                    Some(WatchFailure::PathLengthLimit)
+                                } else if usage.directories + walk.pending.len()
+                                    >= MAX_PROJECT_DIRECTORIES
                                 {
-                                    self.fail(WatchFailure::RootLimit);
+                                    Some(WatchFailure::ProjectDirectoryLimit)
+                                } else if usage.path_bytes + walk.queued_bytes + bytes
+                                    > MAX_PROJECT_PATH_BYTES
+                                {
+                                    Some(WatchFailure::ProjectPathBytesLimit)
+                                } else if self.path_bytes + walk.queued_bytes + bytes
+                                    > MAX_PATH_BYTES
+                                {
+                                    Some(WatchFailure::GlobalPathBytesLimit)
+                                } else {
+                                    None
+                                };
+                                if let Some(failure) = failure {
+                                    self.fail(failure);
                                 } else {
                                     walk.pending.push((path, *depth + 1));
                                     walk.queued_bytes += bytes;
@@ -577,11 +631,21 @@ impl Plan {
                 }
             } else if let Some((path, depth)) = walk.pending.pop() {
                 walk.queued_bytes = walk.queued_bytes.saturating_sub(path.as_os_str().len());
-                if !self.wanted.contains(&path)
-                    && (self.wanted.len() >= MAX_DIRECTORIES
-                        || self.path_bytes + path.as_os_str().len() > MAX_PATH_BYTES)
-                {
-                    self.fail(WatchFailure::RootLimit);
+                let bytes = path.as_os_str().len();
+                let usage = self.usage.entry(project).or_default();
+                let failure = if usage.directories >= MAX_PROJECT_DIRECTORIES {
+                    Some(WatchFailure::ProjectDirectoryLimit)
+                } else if usage.path_bytes + bytes > MAX_PROJECT_PATH_BYTES {
+                    Some(WatchFailure::ProjectPathBytesLimit)
+                } else if !self.wanted.contains(&path) && self.wanted.len() >= MAX_DIRECTORIES {
+                    Some(WatchFailure::GlobalDirectoryLimit)
+                } else if !self.wanted.contains(&path) && self.path_bytes + bytes > MAX_PATH_BYTES {
+                    Some(WatchFailure::GlobalPathBytesLimit)
+                } else {
+                    None
+                };
+                if let Some(failure) = failure {
+                    self.fail(failure);
                     continue;
                 }
                 let safe = (|| -> Result<()> {
@@ -610,6 +674,9 @@ impl Plan {
                 }
                 match fs::read_dir(&path) {
                     Ok(reader) => {
+                        let usage = self.usage.entry(project).or_default();
+                        usage.directories += 1;
+                        usage.path_bytes += bytes;
                         if self.wanted.insert(path.clone()) {
                             self.path_bytes += path.as_os_str().len();
                         }

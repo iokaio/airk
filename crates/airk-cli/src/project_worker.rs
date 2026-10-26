@@ -667,8 +667,10 @@ pub async fn run() -> Result<()> {
                                 return JobOutcome::Failed {
                                     code: code.to_string(),
                                 };
-                            } else if airk_store::capacity::is_storage_pressure(&error) {
-                                "storage_pressure"
+                            } else if let Some(code) =
+                                airk_store::capacity::storage_pressure_code(&error)
+                            {
+                                code
                             } else if job.kind == JobKind::Vectors
                                 && Kernel::service_enrichment_contention(&error)
                             {

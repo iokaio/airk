@@ -57,7 +57,9 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
         for(const [name,symbol] of [['workspace-a','WindowAlphaEvidence'],['workspace-b','WindowBetaEvidence']]){const workspace=path.join(folder,name);await fs.mkdir(workspace);await fs.writeFile(path.join(workspace,'fixture.ts'),`export function ${symbol}() { return 42; }\n`);}
         const roles=['same','different'].includes(scenario)?['a','b']:['a'],children=[],uis={},ports={};
         for(const role of roles){const profile=path.join(folder,`profile-${role}`);await fs.mkdir(path.join(profile,'User'),{recursive:true});
-            await fs.writeFile(path.join(profile,'User/settings.json'),JSON.stringify({'airk.service.installDir':path.join(folder,'native-service'),'airk.storage.path':storage,
+            // These scenarios exercise explicit root-review dialogs. Automatic
+            // onboarding has its own installed-artifact installer acceptance.
+            await fs.writeFile(path.join(profile,'User/settings.json'),JSON.stringify({'airk.service.installDir':path.join(folder,'native-service'),'airk.storage.path':storage,'airk.cli.autoInstall':false,
                 'workbench.startupEditor':'none','window.restoreWindows':'none','security.workspace.trust.startupPrompt':'never','extensions.autoUpdate':false,'extensions.autoCheckUpdates':false,
                 'telemetry.telemetryLevel':'off','update.mode':'none','files.simpleDialog.enable':true,'window.dialogStyle':'custom'}));
             let workspace=path.join(folder,scenario==='different'&&role==='b'?'workspace-b':'workspace-a');

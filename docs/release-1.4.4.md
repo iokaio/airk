@@ -1,0 +1,17 @@
+# AIRK 1.4.4
+
+October 25, 2026. Release candidate for the native service and VS Code extension. Native workspace, local crate lock entries, extension manifest and npm lock entries are synchronized at **1.4.4**. Publication uses the protected PR, successful CI on the exact merged main commit, and the GitHub release and Marketplace workflows. This record does not itself establish publication or cross-platform qualification.
+
+The release brings the 1.4 native service architecture to the public CLI, extension, container and packaging paths. A per-user service owns registration, durable work and resource policy; evidence retrieval remains direct between clients and isolated project workers. The lightweight `airk` executable and offline `airk-embed` helper share the package version. MCP defaults to Terse responses and retains explicit Full diagnostics, original citations and exact indexed revisions.
+
+Follow-up changes improve installation progress and completion guidance, guarded migration of existing Codex/Claude Code/Copilot connections, stable-launcher preflight and owned runtime cleanup. Balanced resource admission scales with machine memory, protects query headroom, bounds shared source pacing and expands bounded native watcher traversal. Manual overrides and storage quotas remain authoritative.
+
+Storage recovery now derives WAL/shared-memory allowances from admitted database capacity and reserves them before writer opening or recovery. SQLite growth includes logical pages still in WAL. Retained reads and captured pending-replay inputs are preserved; this correction does not delete sources or indexes or force reindexing. The `service-1.4` namespace and existing registrations remain compatible.
+
+The [1.4.3 storage-recovery record](release-1.4.3.md), [1.4.2 resource-policy record](release-1.4.2.md), and [1.4.1 installer record](release-1.4.1.md) retain their exact historical test receipts. Version 1.4.4 adds the final synchronized release increment; those earlier binaries are not relabeled or promoted as 1.4.4. Exact final-source checks and hosted platform/package results must pass before promotion. See [release workflow](release-workflow.md) and [versioning](versioning.md).
+
+Pre-push 1.4.4 checks pass version agreement, Rust formatting, all-target/all-feature workspace Clippy, repository/whitespace checks, extension compilation/tests (233 passes, six skips), and Python contracts (142 tests, four skips). Notices were generated for 411 third-party packages with the three existing separate-text review items. The full local all-feature workspace suite is running; hosted native, container, signing and publication results remain pending. These observations do not promote earlier local runtime packages.
+
+Install the matching platform VSIX or native package. Disconnect existing MCP clients when upgrade preflight requests it, retry installation, and reconnect clients afterward. Existing source/index locations, settings and registrations are retained. A process still running an older runtime cannot execute the recovery correction.
+
+Signing, native macOS installed-editor/login behavior, broader hardware/security-policy matrices and actual recovery of affected user projects retain the limits in the [qualification record](service-cutover-qualification.md). Generated workload and process-termination tests do not establish physical power-loss durability or universal performance. License notice generation retains three upstream separate-license-text review items recorded in prior qualification.

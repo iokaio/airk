@@ -36,6 +36,10 @@ With Docker available, use `docker build --target test -t airk:local-test .` for
 - Do not copy source from Munarium, VCP or `temp/`. Future reuse requires a separate reviewed decision and attribution. Do not include private corpora, state snapshots, credentials or local reference files in submissions.
 - Keep `AGENTS.md` and `CLAUDE.md` byte-identical when editing contributor guidance.
 
+## Candidate and release versions
+
+Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch is synchronized at **1.4.4** across the Rust workspace/local lock entries, extension manifest and npm lock entries. Verify with `python scripts/release-version.py check --expected 1.4.4`. Do not repeat this bump for the same change or relabel tested binaries after qualification. Installer-only local testing does not waive full main CI before publishing.
+
 ## Submitting
 
 Explain the concrete behavior change, relevant tests and limitations in the PR. Original contributions use Apache-2.0. Sign your commits using the [Developer Certificate of Origin](https://developercertificate.org/):

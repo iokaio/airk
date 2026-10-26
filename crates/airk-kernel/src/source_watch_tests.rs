@@ -84,12 +84,86 @@ fn directory_budget_degrades_one_scope_without_adding_unbounded_native_registrat
             .map(|index| PathBuf::from(format!("admitted-{index}")))
             .collect(),
         path_bytes: MAX_PATH_BYTES,
-        entries: 0,
+        usage: BTreeMap::new(),
         failures: BTreeMap::from([(project, vec![None])]),
+        publishing: false,
+        published_after: None,
     };
     while !plan.step()? {}
     assert_eq!(plan.wanted.len(), MAX_DIRECTORIES);
-    assert_eq!(plan.failures[&project], vec![Some(WatchFailure::RootLimit)]);
+    assert_eq!(
+        plan.failures[&project],
+        vec![Some(WatchFailure::GlobalDirectoryLimit)]
+    );
+    Ok(())
+}
+
+#[test]
+fn four_project_plans_exceed_old_directory_limit_and_keep_scope_budgets_independent() -> Result<()>
+{
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let data = base.join("data");
+    fs::create_dir(&data)?;
+    let mut plan = Plan {
+        tasks: VecDeque::new(),
+        walk: None,
+        wanted: BTreeSet::new(),
+        path_bytes: 0,
+        usage: BTreeMap::new(),
+        failures: BTreeMap::new(),
+        publishing: false,
+        published_after: None,
+    };
+    for n in 0..4 {
+        let root = base.join(format!("project-{n}"));
+        fs::create_dir(&root)?;
+        for directory in 0..600 {
+            fs::create_dir(root.join(format!("dir-{directory}")))?;
+        }
+        // Existing policy exclusions remain pruned before descending.
+        fs::create_dir_all(root.join("node_modules/ignored/nested"))?;
+        let project = binding(&root, &data, &format!("project-{n}"))?
+            .registration
+            .binding;
+        plan.tasks.push_back(RootTask {
+            project,
+            index: 0,
+            root,
+            data: data.clone(),
+        });
+        plan.failures.insert(project, vec![None]);
+    }
+    let mut turns = 0;
+    while !plan.step()? {
+        turns += 1;
+    }
+    assert!(
+        turns > 1,
+        "large traversal must yield between bounded turns"
+    );
+    assert_eq!(plan.wanted.len(), 4 * 601);
+    assert!(plan.failures.values().all(|failures| failures == &[None]));
+    let project = *plan.usage.keys().next().unwrap();
+    let healthy = *plan.usage.keys().last().unwrap();
+    // Exhaust one project's traversal budget; the next project still proceeds.
+    plan.usage.get_mut(&project).unwrap().entries = MAX_SCAN_ENTRIES;
+    for id in [project, healthy] {
+        let root = base.join(format!("extra-{id}"));
+        fs::create_dir(&root)?;
+        plan.tasks.push_back(RootTask {
+            project: id,
+            index: 0,
+            root,
+            data: data.clone(),
+        });
+    }
+    while !plan.step()? {}
+    assert_eq!(
+        plan.failures[&project],
+        vec![Some(WatchFailure::ScanEntryLimit)]
+    );
+    assert_eq!(plan.failures[&healthy], vec![None]);
     Ok(())
 }
 

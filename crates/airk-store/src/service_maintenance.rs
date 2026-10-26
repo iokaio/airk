@@ -363,7 +363,16 @@ pub(super) fn job_completed(
                         ItemPhase::Skipped
                     }
                     JobOutcome::Failed { code }
-                        if code == "storage_pressure" && header.phase != PlanPhase::Canceling =>
+                        if matches!(
+                            code.as_str(),
+                            "storage_pressure"
+                                | "storage_quota_root"
+                                | "storage_quota_collection"
+                                | "storage_quota_reservation"
+                                | "physical_storage_headroom"
+                                | "filesystem_storage_full"
+                                | "sqlite_storage_full"
+                        ) && header.phase != PlanPhase::Canceling =>
                     {
                         let attempts: i64 = connection.query_row(
                             "SELECT attempts FROM service_plan_items WHERE plan=?1 AND project=?2",

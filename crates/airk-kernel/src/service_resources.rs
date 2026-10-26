@@ -17,8 +17,8 @@ use std::{
 const RESIDENT_BYTES: u64 = 512 << 20;
 const MODEL_BYTES: u64 = 512 << 20;
 // Main service baseline plus the bounded, independently killable source watcher.
-const SERVICE_BYTES: u64 = (32 + 128) << 20;
 const WORK_BYTES: u64 = 768 << 20;
+const IO_BYTES_PER_SECOND: u64 = 256 << 20;
 const EXTRA_EXTRACTOR_BYTES: u64 = (2 * airk_ingest::ExtractionExecution::MAX_RESULT_BYTES
     + airk_ingest::ExtractionExecution::MAX_PARALLEL_SOURCE_BYTES
     + (64 << 20)) as u64;
@@ -33,6 +33,7 @@ pub struct Resources {
     cpus: usize,
     memory: Option<u64>,
     limit: u64,
+    service_bytes: u64,
     source_threads: u16,
     inference_threads: u16,
     resident_limit: usize,
@@ -44,6 +45,7 @@ pub struct Resources {
     rss: Option<u64>,
     available: Option<u64>,
     complete: bool,
+    low_available_memory: bool,
     blocked: bool,
     pending_provider_drains: usize,
     provider_drain_error: bool,
@@ -63,19 +65,14 @@ impl Resources {
     ) -> Result<Self> {
         configuration.validate()?;
         let cpus = cpus.clamp(1, 256);
-        let numerator = match configuration.preset {
-            ResourcePreset::Responsive => 1,
-            ResourcePreset::Balanced => 2,
-            ResourcePreset::Throughput => 3,
-        };
-        let ceiling = if configuration.preset == ResourcePreset::Throughput {
-            8 << 30
-        } else {
-            4 << 30
+        let (divisor, ceiling) = match configuration.preset {
+            ResourcePreset::Responsive => (8, 8 << 30),
+            ResourcePreset::Balanced => (4, 32 << 30),
+            ResourcePreset::Throughput => (2, 64 << 30),
         };
         let limit = configuration
             .memory_bytes
-            .unwrap_or((memory.unwrap_or(2 << 30) / 4 * numerator).clamp(2 << 30, ceiling))
+            .unwrap_or((memory.unwrap_or(2 << 30) / divisor).clamp(2 << 30, ceiling))
             .min(memory.filter(|bytes| *bytes > 0).unwrap_or(u64::MAX));
         let inference_threads = configuration
             .inference_threads
@@ -90,7 +87,8 @@ impl Resources {
             .extraction_threads
             .unwrap_or(source_default.min(16) as u16)
             .min(cpus as u16);
-        let resident_limit = ((limit.saturating_sub(MODEL_BYTES + SERVICE_BYTES + WORK_BYTES))
+        let service_bytes = (32 << 20) + airk_core::service_watch::watcher_memory_bytes(memory);
+        let resident_limit = ((limit.saturating_sub(MODEL_BYTES + service_bytes + WORK_BYTES))
             / RESIDENT_BYTES)
             .clamp(1, 32) as usize;
         Ok(Self {
@@ -98,6 +96,7 @@ impl Resources {
             cpus,
             memory,
             limit,
+            service_bytes,
             source_threads,
             inference_threads,
             resident_limit,
@@ -109,6 +108,7 @@ impl Resources {
             rss: None,
             available: None,
             complete: false,
+            low_available_memory: false,
             blocked: false,
             pending_provider_drains: 0,
             provider_drain_error: false,
@@ -126,7 +126,7 @@ impl Resources {
     }
     fn reserved(&self) -> u64 {
         MODEL_BYTES
-            + SERVICE_BYTES
+            + self.service_bytes
             + self.residents.len() as u64 * RESIDENT_BYTES
             + self
                 .running
@@ -137,9 +137,7 @@ impl Resources {
     fn pressure(&self) -> bool {
         self.reserved() > self.limit
             || self.rss.is_some_and(|rss| rss >= self.limit)
-            || self
-                .available
-                .is_some_and(|available| available < 128 << 20)
+            || self.low_available_memory
     }
     fn headroom(&self, additional: u64) -> bool {
         !self.blocked
@@ -150,6 +148,21 @@ impl Resources {
                 .saturating_add(additional)
                 <= self.limit
     }
+    // Background extraction must leave room for four query workers where the
+    // configured budget can support them plus one minimum background grant.
+    fn query_headroom(&self) -> u64 {
+        let target = self.resident_limit.min(4);
+        target.saturating_sub(self.residents.len()) as u64 * RESIDENT_BYTES
+    }
+    fn work_headroom(&self, additional: u64) -> bool {
+        self.headroom(additional.saturating_add(self.query_headroom()))
+    }
+    fn io_reserved(&self) -> u64 {
+        self.running
+            .values()
+            .map(|grant| grant.background_io_bytes_per_second)
+            .sum()
+    }
     pub fn block_admission(&mut self, blocked: bool) {
         self.blocked = blocked;
     }
@@ -157,6 +170,15 @@ impl Resources {
         self.rss = rss;
         self.available = available;
         self.complete = complete;
+        let low = (self.memory.unwrap_or(4 << 30) / 32).clamp(128 << 20, 2 << 30);
+        self.low_available_memory = available.is_some_and(|bytes| {
+            bytes
+                < if self.low_available_memory {
+                    low * 2
+                } else {
+                    low
+                }
+        });
     }
     pub fn may_start_resident(&self) -> bool {
         self.residents.len() < self.resident_limit && self.headroom(RESIDENT_BYTES)
@@ -200,8 +222,11 @@ impl Resources {
         {
             return Some(WaitReason::ExtractionCapacity);
         }
-        if !self.headroom(WORK_BYTES) {
+        if !self.work_headroom(WORK_BYTES) {
             return Some(WaitReason::MemoryBudget);
+        }
+        if IO_BYTES_PER_SECOND.saturating_sub(self.io_reserved()) < 1 << 20 {
+            return Some(WaitReason::BackgroundIoCapacity);
         }
         Some(WaitReason::Scheduler)
     }
@@ -268,7 +293,9 @@ impl Resources {
             .values()
             .map(|grant| grant.extraction_threads)
             .sum::<u16>();
-        if used >= self.source_threads || !self.headroom(WORK_BYTES) {
+        let io_available = IO_BYTES_PER_SECOND.saturating_sub(self.io_reserved());
+        if used >= self.source_threads || !self.work_headroom(WORK_BYTES) || io_available < 1 << 20
+        {
             return Ok(None);
         }
         let candidate = self
@@ -309,7 +336,7 @@ impl Resources {
             / (self.waiting.len().min(u16::MAX as usize) as u16 + 1))
             .clamp(1, 4);
         while threads > 1
-            && !self.headroom(WORK_BYTES + u64::from(threads - 1) * EXTRA_EXTRACTOR_BYTES)
+            && !self.work_headroom(WORK_BYTES + u64::from(threads - 1) * EXTRA_EXTRACTOR_BYTES)
         {
             threads -= 1;
         }
@@ -325,9 +352,10 @@ impl Resources {
                 .background_io_bytes_per_second
                 .unwrap_or(match self.configuration.preset {
                     ResourcePreset::Responsive => 8 << 20,
-                    ResourcePreset::Balanced => 32 << 20,
+                    ResourcePreset::Balanced => 64 << 20,
                     ResourcePreset::Throughput => 128 << 20,
-                }),
+                })
+                .min(io_available),
             ttl_ms: 300_000,
         };
         grant.validate()?;
@@ -362,6 +390,9 @@ impl Resources {
                 .sum(),
             memory_limit_bytes: self.limit,
             memory_reserved_bytes: self.reserved(),
+            query_headroom_bytes: self.query_headroom(),
+            background_io_limit_bytes_per_second: IO_BYTES_PER_SECOND,
+            background_io_reserved_bytes_per_second: self.io_reserved(),
             observed_rss_bytes: self.rss,
             available_memory_bytes: self.available,
             telemetry_complete: self.complete,
@@ -399,6 +430,80 @@ mod tests {
             8,
             Some(16 << 30),
         )
+    }
+    #[test]
+    fn balanced_scales_to_four_concurrent_projects_and_preserves_query_headroom() -> Result<()> {
+        let mut policy = Resources::new(ResourceConfiguration::default(), 64, Some(128 << 30))?;
+        assert_eq!(policy.snapshot().memory_limit_bytes, 32 << 30);
+        let now = Instant::now();
+        // Start work before opening subsequent projects, as real windows do.
+        for n in 2..6 {
+            let worker = identity(n);
+            policy.resident_started(worker)?;
+            policy.pending(worker.project, worker.project, JobKind::Index, now)?;
+            let grant = policy.next(now)?.unwrap();
+            assert_eq!(grant.extraction_threads, 4);
+            assert_eq!(grant.background_io_bytes_per_second, 64 << 20);
+        }
+        let snapshot = policy.snapshot();
+        assert_eq!(snapshot.running_jobs, 4);
+        assert_eq!(snapshot.extraction_threads_reserved, 16);
+        assert_eq!(snapshot.background_io_reserved_bytes_per_second, 256 << 20);
+        assert!(snapshot.memory_reserved_bytes < 16 << 30);
+        // With a smaller override, reduce extraction parallelism before using
+        // capacity reserved for the remaining query workers.
+        let mut small = Resources::new(
+            ResourceConfiguration {
+                memory_bytes: Some(4 << 30),
+                ..Default::default()
+            },
+            64,
+            Some(128 << 30),
+        )?;
+        let worker = identity(2);
+        small.resident_started(worker)?;
+        small.pending(worker.project, worker.project, JobKind::Index, now)?;
+        small.next(now)?.unwrap();
+        for n in 3..=small.resident_limit.min(4) as u8 + 1 {
+            small.resident_started(identity(n))?;
+        }
+        Ok(())
+    }
+    #[test]
+    fn available_memory_hysteresis_and_aggregate_pacing_retain_running_grants() -> Result<()> {
+        let mut policy = Resources::new(
+            ResourceConfiguration {
+                extraction_threads: Some(64),
+                // A valid byte-level override can leave less than one MiB/s.
+                // Do not issue an invalid tiny grant to the second project.
+                background_io_bytes_per_second: Some((256 << 20) - 1),
+                ..Default::default()
+            },
+            64,
+            Some(128 << 30),
+        )?;
+        let now = Instant::now();
+        for n in 2..4 {
+            let worker = identity(n);
+            policy.resident_started(worker)?;
+            policy.pending(worker.project, worker.project, JobKind::Index, now)?;
+        }
+        let grant = policy.next(now)?.unwrap();
+        assert!(policy.next(now)?.is_none());
+        assert_eq!(
+            policy.work_wait_reason(identity(3).project),
+            Some(WaitReason::BackgroundIoCapacity)
+        );
+        policy.observe(None, Some(1 << 30), true);
+        assert!(policy.snapshot().pressure);
+        policy.observe(None, Some(3 << 30), true);
+        assert!(policy.snapshot().pressure);
+        assert_eq!(policy.running(identity(2).project).unwrap().id, grant.id);
+        policy.observe(None, Some(5 << 30), true);
+        assert!(!policy.snapshot().pressure);
+        policy.finished(identity(2), grant.id)?;
+        assert_eq!(policy.next(now)?.unwrap().identity, identity(3));
+        Ok(())
     }
     #[test]
     fn wait_reasons_follow_actual_admission_without_returning_running_capacity() -> Result<()> {

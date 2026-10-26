@@ -13,7 +13,7 @@ import time
 import uuid
 
 TOOLS = {"airk_" + name for name in (
-    "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "imports",
+    "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
     "list_files", "outline", "read_file", "references", "relationships", "search", "status", "symbols")}
 
 

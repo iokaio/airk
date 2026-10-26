@@ -252,6 +252,10 @@ pub(crate) fn require_version(connection: &Connection) -> Result<()> {
 }
 
 pub(crate) fn open_reader(path: &Path) -> Result<Connection> {
+    open_reader_budget(path, false)
+}
+
+pub(crate) fn open_reader_budget(path: &Path, legacy_budget: bool) -> Result<Connection> {
     plain_database(path)?;
     let journal = path.with_file_name("current.sqlite3-journal");
     ensure!(
@@ -261,7 +265,13 @@ pub(crate) fn open_reader(path: &Path) -> Result<Connection> {
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let service = super::wal::enabled(path.parent().context("database parent missing")?);
     let mut connection = if service {
-        Connection::open_with_flags_and_vfs(path, flags, super::wal::vfs()?.as_str())?
+        let capacity = read_owner(path.parent().context("database parent missing")?)?.capacity;
+        let vfs = if legacy_budget {
+            super::wal::legacy_vfs()?
+        } else {
+            super::wal::vfs(capacity)?
+        };
+        Connection::open_with_flags_and_vfs(path, flags, vfs.as_str())?
     } else {
         Connection::open_with_flags(path, flags)?
     };
@@ -313,7 +323,7 @@ fn open_writer_mode_once(
     }
     let service = super::wal::enabled(path.parent().context("database parent missing")?);
     let mut connection = if service {
-        Connection::open_with_flags_and_vfs(path, flags, super::wal::vfs()?.as_str())?
+        Connection::open_with_flags_and_vfs(path, flags, super::wal::vfs(capacity)?.as_str())?
     } else {
         open_writer_connection(path, flags)?
     };
@@ -551,6 +561,15 @@ pub(crate) fn allowance(connection: &mut Connection, capacity: u64) -> Result<u6
     growth
         .checked_add(journal)
         .context("current write capacity overflow")
+}
+
+/// Main-file length excludes committed pages still in WAL. Admission must use
+/// SQLite's logical image, including those pages, rather than checkpoint timing.
+pub(crate) fn logical_bytes(connection: &Connection) -> Result<u64> {
+    let pages: i64 = connection.pragma_query_value(None, "page_count", |row| row.get(0))?;
+    u64::try_from(pages)?
+        .checked_mul(PAGE_BYTES)
+        .context("current database size overflow")
 }
 
 /// Bound crash recovery before SQLite is allowed to read a hot journal. The

@@ -285,6 +285,12 @@ async fn rollback(root: &Path, intent: &Intent) -> Result<()> {
 /// process death; a committed public selection is never silently undone.
 pub(super) async fn resume(root: &Path) -> Result<()> {
     let mut intent = pending(root)?.context("no pending activation")?;
+    let _launcher_guard = if matches!(intent.phase, Phase::Drain | Phase::Launcher) {
+        let (main, _) = verify_runtime(root, &intent.candidate)?;
+        launcher_repair::replacement_guard(root, &main)?
+    } else {
+        None
+    };
     result(root)?;
     ensure!(
         layout::control(root)? == intent.control,
@@ -377,6 +383,8 @@ pub(super) fn reviewed_request(root: &Path, candidate: &str, expected: &str) -> 
 
 pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
     managed::require_unmanaged(root)?;
+    let (candidate_main, _) = verify_runtime(root, candidate)?;
+    let _launcher_guard = launcher_repair::replacement_guard(root, &candidate_main)?;
     ensure!(
         !exists(&root.join("uninstall.json"))?,
         "resume pending uninstall before activation"

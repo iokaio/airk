@@ -80,6 +80,12 @@ pub enum Reply {
     },
 }
 
+pub fn valid_pulse(directories: u16, projects: u16, pending_events: u16) -> bool {
+    directories <= airk_core::service_watch::MAX_WATCH_DIRECTORIES
+        && projects <= 1024
+        && pending_events <= 1024
+}
+
 pub fn binding_digest(
     registration: &ProjectRegistration,
     epoch: u64,
@@ -95,4 +101,26 @@ pub fn binding_digest(
         b"airk-source-watch-binding/1",
         &[&bytes],
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watcher_pulses_accept_expanded_capacity_and_reject_out_of_bound_counts() {
+        assert!(valid_pulse(4 * 601, 4, 4));
+        assert!(valid_pulse(
+            airk_core::service_watch::MAX_WATCH_DIRECTORIES,
+            1024,
+            1024
+        ));
+        assert!(!valid_pulse(
+            airk_core::service_watch::MAX_WATCH_DIRECTORIES + 1,
+            4,
+            4
+        ));
+        assert!(!valid_pulse(0, 1025, 0));
+        assert!(!valid_pulse(0, 4, 1025));
+    }
 }

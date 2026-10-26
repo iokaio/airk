@@ -134,10 +134,11 @@ impl WatchChild {
                                 projects,
                                 pending_events,
                             } => {
-                                if watched_directories > 512
-                                    || projects > 1024
-                                    || pending_events > 1024
-                                {
+                                if !protocol::valid_pulse(
+                                    watched_directories,
+                                    projects,
+                                    pending_events,
+                                ) {
                                     break;
                                 }
                                 let Ok(mut observed) = observed.lock() else {
@@ -377,7 +378,9 @@ impl SourceSupervisor {
                                         > Duration::from_secs(15)
                             })
                             || airk_kernel::service_resource_observations::rss(child.process.id())
-                                .is_some_and(|bytes| bytes > 128 * 1024 * 1024)
+                                .is_some_and(|bytes| {
+                                    bytes > airk_kernel::source_watch::memory_allowance()
+                                })
                     }) {
                         log.record(
                             airk_core::service_logs::LogKind::SourceWorkerFailed,

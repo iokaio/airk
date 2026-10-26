@@ -4,6 +4,41 @@ import { test } from 'node:test';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { serviceTestHost } from './serviceTestHost';
+import * as cliInstall from '../cliInstall';
+
+test('Install or Repair CLI migrates all three existing local agent connections through guarded editor saves',async context=>{
+    const f=await serviceTestHost(context);
+    try{
+        context.mock.method(cliInstall,'installLauncherCli',async()=>['Old CLI is locked; disconnect clients and retry cleanup.']);
+        const project=[...f.registrations.values()][0],name=`airk-${project.collection}`;
+        const command=path.join(f.root,'editor-storage','cli','bin',process.platform==='win32'?'airk.exe':'airk');
+        const args=['--root',project.root,'--data-dir',path.join(f.root,'old-data'),'--collection',project.collection,'mcp'];
+        const files=[path.join(project.root,'.codex','config.toml'),path.join(project.root,'.mcp.json'),path.join(project.root,'.vscode','mcp.json')];
+        for(const file of files)await fs.mkdir(path.dirname(file),{recursive:true});
+        await fs.writeFile(files[0],`[mcp_servers.${name}]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\n`);
+        await fs.writeFile(files[1],JSON.stringify({mcpServers:{[name]:{command,args,disabled:true}}}));
+        await fs.writeFile(files[2],JSON.stringify({servers:{[name]:{command,args,type:'stdio'}}}));
+        const documents=new Map<string,any>();
+        f.stub.workspace.openTextDocument=async(uri:any)=>{
+            const document={uri,isDirty:false,version:1,text:await fs.readFile(uri.fsPath,'utf8'),getText(){return this.text;},positionAt:(offset:number)=>offset,
+                async save(){await fs.writeFile(uri.fsPath,this.text);this.isDirty=false;return true;}};
+            documents.set(uri.fsPath,document);return document;
+        };
+        f.stub.workspace.applyEdit=async(edit:any)=>{const document=documents.get(edit.uri.fsPath);document.text=edit.after;document.version++;return true;};
+        await f.commands.get('airk.installCli')!();
+        for(const file of files){const text=await fs.readFile(file,'utf8');assert.ok(text.includes(project.binding),f.calls.join('\n'));assert.ok(text.includes('runtime'));}
+        assert.equal(JSON.parse(await fs.readFile(files[1],'utf8')).mcpServers[name].disabled,true);
+        assert.equal(f.calls.filter(value=>value.startsWith('Updated ')).length,3);
+        assert.ok(f.warnings.some(value=>value.includes('Old CLI is locked')));
+        // Unsaved content must block an installer rewrite.
+        const before=`[mcp_servers.${name}]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\n`;
+        await fs.writeFile(files[0],before);
+        f.stub.workspace.textDocuments=[{uri:{fsPath:files[0]},isDirty:true}];
+        await f.commands.get('airk.installCli')!();
+        assert.equal(await fs.readFile(files[0],'utf8'),before);
+        assert.ok(f.calls.some(value=>value.includes('unsaved edits')));
+    }finally{await f.close();}
+});
 
 // 1.4 has no window scheduler or direct-helper fallback. Native continuation,
 // contention and worker failures are qualified by the native service workloads.

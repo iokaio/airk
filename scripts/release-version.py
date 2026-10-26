@@ -243,13 +243,23 @@ def prepare_pr(decision, commit):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("plan", "prepare-pr", "pending"))
-    parser.add_argument("--destination", required=True, choices=("marketplace", "github"))
+    parser.add_argument("command", choices=("check", "plan", "prepare-pr", "pending"))
+    parser.add_argument("--destination", choices=("marketplace", "github"))
+    parser.add_argument("--expected", help="Offline check of the exact requested source version")
     parser.add_argument("--channel", choices=("stable", "preview"), default="stable")
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--inventory", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    if args.command == "check":
+        version = source_version()
+        expected = args.expected or os.environ.get("AIRK_EXPECTED_VERSION")
+        if expected and expected != version:
+            raise ValueError("Requested version differs from the checked-in version")
+        print(f"Native, extension and lockfiles agree: {version}")
+        return
+    if not args.destination:
+        parser.error("--destination is required for release operations")
     workflow = "extension-release.yml" if args.destination == "marketplace" else "github-release.yml"
     if (os.environ.get("GITHUB_REPOSITORY") != REPOSITORY or os.environ.get("GITHUB_REF") != "refs/heads/main"
             or os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"

@@ -300,22 +300,30 @@ impl FileStore {
         database::reject_legacy_collection(self.directory())?;
         self.ensure_index_ready()?;
         let capacity = database::check_owner(self.directory(), scope)?;
+        let mut legacy_budget = false;
         if super::wal::enabled(self.directory()) {
-            crate::quota::Quota::for_store(self)?.verify_current_allowance(
+            let allowance = crate::quota::Quota::for_store(self)?.verify_current_allowance(
                 &crate::quota::CurrentGrantScope {
                     collection: scope.collection.clone(),
                     incarnation: scope.incarnation,
                     transaction: super::wal::id(scope),
                 },
-                super::wal::total(capacity)?,
+                super::wal::legacy_total(capacity)?,
             )?;
+            legacy_budget = allowance < super::wal::total(capacity)?;
+            if legacy_budget {
+                // Retained reads must remain available before the first upgraded
+                // writer can reserve more capacity, including during recovery.
+                super::wal::validate_legacy_files(self.directory(), capacity)?;
+            }
         }
         ensure!(
             std::fs::metadata(self.directory().join("current.sqlite3"))?.len() <= capacity,
             "current database exceeds captured capacity"
         );
         let connection =
-            database::open_reader(&self.directory().join("current.sqlite3")).map_err(read_error)?;
+            database::open_reader_budget(&self.directory().join("current.sqlite3"), legacy_budget)
+                .map_err(read_error)?;
         if let Some(deadline) = deadline {
             connection
                 .progress_handler(1000, Some(move || std::time::Instant::now() >= deadline))?;

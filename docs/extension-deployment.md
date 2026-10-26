@@ -1,5 +1,7 @@
 # Extension deployment: adapting VCP's approach
 
+The current local candidate is **1.4.4**; see [its release record](release-1.4.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+
 AIRK's native-helper VS Code extension and native/VSIX candidate packaging are implemented. This page records the original packaging design and remains useful for its construction contract; use [extension behavior](vscode-extension.md) and the [release workflow](release-workflow.md) for current operation and publication. Full installed lifecycle qualification remains separate work. [Windows local build/review](windows-local-build.md) provides the PowerShell entry point.
 
 Reviewed inspiration: VCP's `docs/development/editor-packaging.md`, `docs/development/p8-distribution.md`, `docs/development/marketplace-publication.md`, and its `beta-candidate.yml` / `publish-beta.yml` workflows at revision `2d252594cbf082f9011e2f9db3cd75d0d867f19b`. These inform the delivery design; AIRK does not copy VCP's scripts, extension code or dependencies.
@@ -12,16 +14,16 @@ VCP's Windows deployment uses a separately installed engine, machine-scoped path
 
 ## Implemented VSIX construction
 
-The original construction record used **1.1.1**; the checked-in native/helper/extension version for built-in diagnosis and recovery is **1.2.4**. The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**, its identity is `iokaio.airk`, and its description has no beta label. VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
+The original construction record used **1.1.1** and later **1.2.4**. The current synchronized native main/helper/extension version is **1.4.4**; see the [versioning process](versioning.md). The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**, its identity is `iokaio.airk`, and its description has no beta label. VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
 
-| Platform | 1.2.4 VSIX filename |
+| Platform | 1.4.4 expected VSIX filename |
 |---|---|
-| Windows x64 | airk-1.2.4-win32-x64.vsix |
-| Linux x64 | airk-1.2.4-linux-x64.vsix |
-| macOS Apple Silicon | airk-1.2.4-darwin-arm64.vsix |
-| macOS Intel | airk-1.2.4-darwin-x64.vsix |
+| Windows x64 | airk-1.4.4-win32-x64.vsix |
+| Linux x64 | airk-1.4.4-linux-x64.vsix |
+| macOS Apple Silicon | airk-1.4.4-darwin-arm64.vsix |
+| macOS Intel | airk-1.4.4-darwin-x64.vsix |
 
-The 1.2.4 patch uses the stable channel. Future previews must use a separate, deliberately selected version. A regular release must use a distinct version; the same Marketplace version cannot be both release and pre-release. Platform packages share the version and extension identity, with their target and bundled native helper distinguished in the artifact. No Marketplace listing or publication is created by the local build.
+Earlier local candidate receipts cover Windows x64; 1.4.4 requires the complete four-platform main CI candidate set before publication. The 1.4.4 candidate uses the stable channel and remains unpublished. Future previews must use a separate, deliberately selected version. A regular release must use a distinct version; the same Marketplace version cannot be both release and pre-release. Platform packages share the version and extension identity, with their target and bundled native helper distinguished in the artifact. No Marketplace listing or publication is created by the local build.
 
 The extension has its own package, checked-in npm lock and pinned Node/TypeScript/VSCE versions. CI restores with `npm ci --ignore-scripts` and compiles on the same native runner as its helper. [The extension packager](../scripts/package-extension.py) builds a fresh allowlisted stage containing compiled runtime modules, manifest, required media/docs, the verified helper and legal notices. Exclude tests, development dependencies, source maps, indexes, fixtures, reference files and arbitrary checkout contents.
 
@@ -31,7 +33,7 @@ User-selected storage and any executable override must be machine-scoped and tru
 
 ## Qualification and publication
 
-Install the exact VSIX in a clean editor profile outside the checkout. Verify native startup, actual MCP links, reload/restart, version mismatch, unavailable helper, upgrade/rollback, storage selection and collection isolation. Retain failures and unexecuted checks explicitly. Passing kernel tests does not establish installed-extension behavior.
+Install the exact VSIX in an isolated editor profile, and also test a distinct-version upgrade over the preceding installed version while its editor and MCP clients are running. Clean installation alone does not cover Windows same-version replacement failures. Verify native startup, actual MCP links, reload/restart, version mismatch, unavailable helper, upgrade/rollback, storage selection and collection isolation. Retain failures and unexecuted checks explicitly. Passing kernel tests does not establish installed-extension behavior.
 
 The [manual release workflow](release-workflow.md) authenticates a successful main CI candidate, repackages the tested native helpers into the chosen VSIX channel, and revalidates those exact files before optional publication using VSCE's Microsoft Entra authentication after GitHub OIDC login. Publication is disabled by default. Promotion requires an explicit dispatch on protected main; publishing also requires Entra federation and Marketplace publisher Contributor membership. A separate identity-verification mode reports the Marketplace profile ID without building or publishing. Neither candidate construction nor ordinary PR builds receive publishing credentials.
 

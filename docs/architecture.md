@@ -1,5 +1,7 @@
 # Architecture
 
+Extension installation updates recognized existing workspace agent connection fields after native registration supplies the stable-launcher binding. Codex TOML, Claude Code JSON and Copilot JSON edits use guarded editor saves, preserve policies and never execute old commands or edit user-wide configuration.
+
 The MCP frontend serves bundled `airk_help` without a worker/evidence query. Native CLI supplies a lazy public-command catalog generated from its parser; MCP supplies topic guidance and its own schemas. Scoped status work observations use existing instance-fenced metadata RPCs; store supplies a bounded read-only FIFO queue observation. Progress/watcher/worker samples remain distinct from kernel publication readiness. No management action or agent reasoning is added to MCP.
 
 The native CLI captures path-free process/build observations for `airk_status.runtime`. Core owns the serialized metadata contracts; MCP adds the native host's bundle before rendering/accounting without taking a dependency on CLI or opening service state itself. The worker observes exact-instance broker health independently of index readiness and labels frontend metadata as client-reported. Kernel status remains collection evidence.
@@ -8,7 +10,7 @@ Extension CLI installation removes obsolete terminal executable copies at its ow
 
 Trusted extension activation now installs the approved runtime and terminal forwarding command and sets up new workspace folders automatically. Existing 1.4 project/storage/watching selections remain native and are preserved on compatible runtime updates. Runtime activation and any schema migrations stay in the native adapter; the dashboard renders metadata and does not open indexes.
 
-Current 1.4.0 cutover: the public CLI and extension are service clients. Only native worker roles open project Kernels/stores; the broker remains metadata-only and retrieval/inference use direct scoped transports. Source and lockfile versions are synchronized. Container/package cutover and available Windows/Linux qualification are complete for the local manual-test candidate. Native Mac and the broader installed-platform/security matrix remain unqualified; see [the qualification record](service-cutover-qualification.md).
+Current 1.4.4 service lifecycle: the public CLI and extension are service clients. Only native worker roles open project Kernels/stores; the broker remains metadata-only and retrieval/inference use direct scoped transports. Source and lockfile versions are synchronized. Container/package cutover and Windows/Linux qualification receipts refer to the historical 1.4.0 candidate. The 1.4.1 installer/version evidence remains historical. Version 1.4.2 changes machine-scaled resource admission, protects query headroom, caps shared source pacing and expands bounded watcher traversal; validation is recorded in [its release notes](release-1.4.2.md). Native Mac and the broader installed-platform/security matrix remain unqualified; see [the qualification record](service-cutover-qualification.md).
 
 
 AIRK is an independent local indexing/retrieval kernel. Source workspaces are authoritative; all index state is derived. It does not reason, generate answers, manage agents, route model calls or require an external database.
@@ -38,6 +40,10 @@ flowchart LR
 The service brokers connections and schedules metadata-bound work. Evidence and model inputs travel directly between clients, project workers and the shared helper; those payloads do not pass through the broker.
 
 Explicit legacy retirement is an administrative exception to ordinary service-only project access: CLI owns old OS-startup review/removal, while store owns offline deletion of recognized 1.3 derived files under old worker/writer/reader exclusion. This adapter reads ownership/file metadata, never opens the old database or constructs a Kernel, preserves sources/settings/usage, and cannot become a normal query/index fallback. See [the legacy transition contract](service-legacy-transition.md).
+
+Core owns the shared watcher directory bounds; kernel planning and native CLI heartbeat validation consume the same constants. Native CLI retains process supervision, kernel owns admission and traversal, and the extension renders their observations.
+
+Version 1.4.3 derives bounded WAL/shared-memory capacity from the admitted database image and reserves the matching lifetime quota before writer opening or recovery. Store owns that policy and compatibility reads; growth estimation uses logical SQLite pages. See [storage reliability](storage-reliability.md) and the [release record](release-1.4.3.md).
 
 ## Dependency boundaries
 

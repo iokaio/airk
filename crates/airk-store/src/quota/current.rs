@@ -103,7 +103,7 @@ impl Quota {
         &self,
         scope: &CurrentGrantScope,
         minimum: u64,
-    ) -> Result<()> {
+    ) -> Result<u64> {
         let _lock = self.lock()?;
         let record = read_record(
             &self
@@ -115,7 +115,7 @@ impl Quota {
             record.scope == *scope && record.bytes >= minimum,
             "missing or insufficient service WAL recovery allowance"
         );
-        Ok(())
+        Ok(record.bytes)
     }
     /// Call under lifecycle -> collection writer -> exclusive current gate. The
     /// ledger lock is released before callers start any SQLite transaction.

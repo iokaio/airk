@@ -36,6 +36,34 @@ pub fn is_storage_pressure(error: &anyhow::Error) -> bool {
     })
 }
 
+/// Stable path-free job diagnostics. Preserve the typed cause rather than
+/// conflating a reservation ceiling with physical disk exhaustion.
+pub fn storage_pressure_code(error: &anyhow::Error) -> Option<&'static str> {
+    for cause in error.chain() {
+        if let Some(quota) = cause.downcast_ref::<crate::quota::QuotaPressure>() {
+            return Some(match quota.scope {
+                crate::quota::PressureScope::Root => "storage_quota_root",
+                crate::quota::PressureScope::Collection => "storage_quota_collection",
+                crate::quota::PressureScope::Reservation => "storage_quota_reservation",
+            });
+        }
+        if cause.is::<StoragePressure>() {
+            return Some("physical_storage_headroom");
+        }
+        if cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::StorageFull)
+        {
+            return Some("filesystem_storage_full");
+        }
+        if matches!(cause.downcast_ref::<rusqlite::Error>(), Some(rusqlite::Error::SqliteFailure(error, _)) if error.code == rusqlite::ErrorCode::DiskFull)
+        {
+            return Some("sqlite_storage_full");
+        }
+    }
+    None
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct Capacity {
     pub observed_path: PathBuf,
@@ -227,6 +255,41 @@ mod tests {
         assert!(capacity.require_growth(10).is_ok());
         assert!(capacity.require_growth(11).is_err());
         assert!(capacity.require_growth(u64::MAX).is_err());
+        assert_eq!(
+            storage_pressure_code(
+                &capacity
+                    .require_growth(11)
+                    .unwrap_err()
+                    .context("outer operation")
+            ),
+            Some("physical_storage_headroom")
+        );
+        for (scope, code) in [
+            (crate::quota::PressureScope::Root, "storage_quota_root"),
+            (
+                crate::quota::PressureScope::Collection,
+                "storage_quota_collection",
+            ),
+            (
+                crate::quota::PressureScope::Reservation,
+                "storage_quota_reservation",
+            ),
+        ] {
+            let error = anyhow::Error::new(crate::quota::QuotaPressure {
+                scope,
+                required_bytes: 100,
+                available_bytes: 50,
+                protected_bytes: None,
+            })
+            .context("outer operation");
+            assert_eq!(storage_pressure_code(&error), Some(code));
+        }
+        assert_eq!(
+            storage_pressure_code(
+                &std::io::Error::from(std::io::ErrorKind::PermissionDenied).into()
+            ),
+            None
+        );
         assert!(is_storage_pressure(
             &capacity.require_growth(11).unwrap_err()
         ));

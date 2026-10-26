@@ -13,6 +13,140 @@ fn service_fixture() -> Result<Fixture> {
 }
 
 #[test]
+fn service_large_publication_recovers_above_old_wal_limit_with_pinned_snapshot() -> Result<()> {
+    let fixture = service_fixture()?;
+    let old = fixture.store.current_read(&fixture.scope)?;
+    let (_reservation, sealed) = fixture.sealed()?;
+    let mut target = fixture.target(&sealed);
+    // More than the former WAL budget in captured values alone. Distinct
+    // buckets keep this a publication test rather than a bucket-limit test.
+    let mut prefixes = std::collections::BTreeSet::new();
+    let mut changes = Vec::new();
+    for number in 0u64.. {
+        let change = map::MapChange::new(
+            &fixture.scope,
+            map::MapDomain::Metadata,
+            &number.to_be_bytes(),
+            Some(vec![23; 96 << 10]),
+        )?;
+        let bytes = change.key();
+        if prefixes.insert([bytes.as_bytes()[0], bytes.as_bytes()[1]]) {
+            changes.push(change);
+        }
+        if changes.len() == 768 {
+            break;
+        }
+    }
+    changes.sort_by_key(map::MapChange::key);
+    let reader = database::open_reader(&fixture.store.directory().join("current.sqlite3"))?;
+    let mut plan = map::MapPlan::new(&reader, &fixture.scope, fixture.head.artifact_root)?;
+    for change in &changes {
+        plan.put(change.key(), change.value())?;
+    }
+    target.artifact_root = plan.root()?;
+    drop(plan);
+    drop(reader);
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    current.grow_capacity(512 << 20)?;
+    let pending =
+        current.prepare_mapped(&fixture.head.token()?, target, &sealed, &[], None, &changes)?;
+    current.mark_applying(&pending)?;
+    drop(current);
+    drop(writer);
+    // Reopen an interrupted Applying publication while an old request remains
+    // pinned. Recovery must use the enlarged, durable sidecar allowance.
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, 512 << 20)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    let path = fixture.store.directory().join("current.sqlite3");
+    assert!(fs::metadata(path.with_file_name("current.sqlite3-wal"))?.len() > 64 << 20);
+    assert_eq!(old.token()?, fixture.head.token()?);
+    let latest = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(latest.token()?, pending.target.token()?);
+    let reader = database::open_reader(&path)?;
+    for change in &changes {
+        assert_eq!(
+            map::get(
+                &reader,
+                &fixture.scope,
+                pending.target.artifact_root,
+                change.key()
+            )?,
+            change.value().map(Vec::from)
+        );
+    }
+    assert!(database::logical_bytes(&database::open_reader(&path)?)? > fs::metadata(&path)?.len());
+    wal::validate_files(fixture.store.directory(), 512 << 20)?;
+    Ok(())
+}
+
+#[test]
+fn service_legacy_allowance_remains_readable_then_upgrades_before_recovery() -> Result<()> {
+    let fixture = service_fixture()?;
+    let capacity = 128 << 20;
+    let writer = fixture.store.lock()?;
+    fixture
+        .store
+        .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?
+        .grow_capacity(capacity)?;
+    drop(writer);
+    let (_reservation, sealed) = fixture.sealed()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, capacity)?;
+    let pending = current.prepare(
+        &fixture.head.token()?,
+        fixture.target(&sealed),
+        &sealed,
+        &[],
+        None,
+    )?;
+    current.mark_applying(&pending)?;
+    drop(current);
+    let binding = crate::quota::CurrentGrantScope {
+        collection: fixture.scope.collection.clone(),
+        incarnation: fixture.scope.incarnation,
+        transaction: wal::id(&fixture.scope),
+    };
+    // Simulate the durable grant left by the installed fixed-budget runtime.
+    let mut grant = fixture.quota.current_grant(&writer, &binding)?.unwrap();
+    grant.resize(&writer, wal::legacy_total(capacity)?)?;
+    drop(writer);
+    assert_eq!(
+        fixture.store.current_read(&fixture.scope)?.token()?,
+        fixture.head.token()?
+    );
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, capacity)?;
+    assert!(
+        fixture
+            .quota
+            .current_grant(&writer, &binding)?
+            .unwrap()
+            .capacity()
+            >= wal::total(capacity)?
+    );
+    current.commit(&pending, pending.target.lexical_commit)?;
+    assert_eq!(
+        fixture.store.current_read(&fixture.scope)?.token()?,
+        pending.target.token()?
+    );
+    Ok(())
+}
+
+#[test]
 #[cfg(any(unix, windows))]
 fn service_publication_retains_admitted_sidecar_identities_across_last_close_and_reopen()
 -> Result<()> {
@@ -171,7 +305,7 @@ fn service_publication_retains_recovery_capacity_and_rejects_missing_or_oversize
         .truncate(false)
         .write(true)
         .open(&sidecar)?;
-    file.set_len(wal::WAL_BYTES + 1)?;
+    file.set_len(wal::limits(CAPACITY)?.0 + 1)?;
     drop(file);
     assert!(fixture.store.current_read(&fixture.scope).is_err());
     let writer = fixture.store.lock()?;
