@@ -185,9 +185,14 @@ pub fn plan(descriptor: &Path) -> Result<Launch> {
     })
 }
 
-/// The exact process: runtime + server + its state directory, inherited stdio and working directory, no Node options.
+/// The exact process: runtime + server + its state directory, inherited stdio and working directory, no inherited Node options.
 pub fn command(launch: &Launch) -> Command {
     let mut command = Command::new(&launch.runtime);
+    // Node 24.15's JavaScript realpath rejects canonical \\?\ drive paths
+    // (nodejs/node#62446). The entry point is already canonical and hash-checked:
+    // skip that redundant main-module lookup without changing the verified path.
+    #[cfg(windows)]
+    command.arg("--preserve-symlinks-main");
     command
         .arg(&launch.server)
         .arg("--assistance-dir")
@@ -289,11 +294,15 @@ mod tests {
         );
         assert_eq!(
             command.get_args().collect::<Vec<_>>(),
-            [
-                launch.server.as_os_str(),
-                "--assistance-dir".as_ref(),
-                launch.assistance_dir.as_os_str()
-            ]
+            cfg!(windows)
+                .then_some(std::ffi::OsStr::new("--preserve-symlinks-main"))
+                .into_iter()
+                .chain([
+                    launch.server.as_os_str(),
+                    "--assistance-dir".as_ref(),
+                    launch.assistance_dir.as_os_str()
+                ])
+                .collect::<Vec<_>>()
         );
         Ok(())
     }

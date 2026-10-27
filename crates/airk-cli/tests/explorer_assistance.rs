@@ -28,11 +28,12 @@ fn hex(bytes: &[u8]) -> String {
 struct Fixture {
     directory: tempfile::TempDir,
     descriptor: PathBuf,
+    server: PathBuf,
 }
 
 fn fixture(runtime: &Path, server_source: &str) -> Result<Fixture> {
     let directory = tempfile::tempdir()?;
-    let root = directory.path().join("extension");
+    let root = directory.path().join("extension with spaces — fixture");
     fs::create_dir_all(root.join("out"))?;
     fs::write(
         root.join("package.json"),
@@ -62,6 +63,7 @@ fn fixture(runtime: &Path, server_source: &str) -> Result<Fixture> {
     Ok(Fixture {
         directory,
         descriptor,
+        server,
     })
 }
 
@@ -158,13 +160,7 @@ fn a_rejected_descriptor_never_starts_the_runtime() -> Result<()> {
     };
     let fixture = fixture(&runtime, &format!("touch {}", marker.display()))?;
     // Tamper with the server after the descriptor recorded its digest.
-    let server = fixture
-        .directory
-        .path()
-        .join("extension")
-        .join("out")
-        .join("explorerAssistance.js");
-    fs::write(&server, "changed")?;
+    fs::write(&fixture.server, "changed")?;
     let home = fixture.directory.path().join("home");
     fs::create_dir_all(&home)?;
     let output = command(&fixture, &home).stdin(Stdio::null()).output()?;
