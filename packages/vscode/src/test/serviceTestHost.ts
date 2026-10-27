@@ -119,10 +119,10 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     let extension:any;
-    try{extension=require('../extension');const context:any={extensionPath:root,extension:{packageJSON:{version:options.upgrade?'1.4.1':'1.4.0'}},globalState:storage,
+    try{extension=require('../extension');const context:any={extensionPath:root,extensionUri:{scheme:'file',fsPath:path.resolve(__dirname,'../..')},extension:{packageJSON:{version:options.upgrade?'1.4.1':'1.4.0'}},globalState:storage,workspaceState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
-        return {root,folders,binding,registrations,values,settings,commands,writes,calls,warnings,clipboard,panels,state,stub,api,providers:events,assistance,notices,progressRuns,
+        return {root,folders,binding,registrations,values,settings,commands,writes,calls,warnings,clipboard,panels,state,stub,api,context,providers:events,assistance,notices,progressRuns,
             async refreshFolders(){await foldersChanged!();},
             async close(){extension.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});}};
     }catch(error){extension?.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});throw error;}

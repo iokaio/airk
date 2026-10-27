@@ -88,29 +88,37 @@ export function ProjectsScreen(props: ScreenProps) {
                 </div>
                 <Paging view={view} actions={actions} />
                 {!view.projects.length && <p class="callout">No project is visible on this page.</p>}
-                <div class="table-wrap"><table class="grid">
-                    <thead><tr><th scope="col"><span class="sr-only">Select for repair</span></th><th scope="col">Project</th><th scope="col">Source root</th>
-                        <th scope="col">Watching</th><th scope="col">Paused</th><th scope="col">Publication (cached)</th><th scope="col">Files (cached)</th>
-                        <th scope="col">Semantic (cached)</th><th scope="col">Inspected</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-                    <tbody>{view.projects.map(entry => {
+                <ul class="project-list" aria-label="Registered projects">
+                    {view.projects.map(entry => {
                         const project = entry.summary;
                         return (
-                            <tr key={project.project} class={project.project === props.state.selectedProject ? 'selected' : ''}>
-                                <td><input type="checkbox" aria-label={`Select ${project.collection} for repair`} checked={entry.selected} disabled={view.inactive || !view.enabled.projectActions}
-                                    onChange={event => { void actions.act('select', { project: project.project, selected: (event.target as HTMLInputElement).checked }); }} /></td>
-                                <th scope="row" title={project.collection}>{project.name}{project.current && <span class="tag">open here</span>}</th>
-                                <td><code class="path">{project.root || 'not observed'}</code></td>
-                                <td>{observed(project.watching)}</td><td>{observed(project.paused)}</td>
-                                <td title={project.publication}>{shortToken(project.publication)}</td><td>{observed(project.indexedFiles)}</td>
-                                <td>{project.semantic ?? 'not observed'}</td><td>{ago(project.observedAt)}</td>
-                                <td class="actions">{!view.inactive && <>
+                            <li key={project.project} class={`project-card${project.project === props.state.selectedProject ? ' selected' : ''}`}>
+                                <div class="project-heading">
+                                    <input type="checkbox" aria-label={`Select ${project.collection} for repair`} checked={entry.selected} disabled={view.inactive || !view.enabled.projectActions || actions.busy !== undefined}
+                                        onChange={event => { void actions.act('select', { project: project.project, selected: (event.target as HTMLInputElement).checked }); }} />
+                                    <h2 title={project.collection}>{project.name}</h2>
+                                    {project.current && <span class="tag">open here</span>}
+                                    {project.project === props.state.selectedProject && <span class="tag ok">selected</span>}
+                                </div>
+                                <code class="project-path" title={project.root}>{project.root || 'Source root not observed'}</code>
+                                <dl class="project-metrics">
+                                    <div><dt>Watching</dt><dd>{observed(project.watching)}</dd></div>
+                                    <div><dt>Paused</dt><dd>{observed(project.paused)}</dd></div>
+                                    <div><dt>Files <span class="muted">(cached)</span></dt><dd>{observed(project.indexedFiles)}</dd></div>
+                                    <div><dt>Semantic <span class="muted">(cached)</span></dt><dd>{project.semantic ?? 'not observed'}</dd></div>
+                                </dl>
+                                <div class="project-footer"><details><summary>Index details</summary><Facts rows={[
+                                    ['Collection', project.collection], ['Publication (cached)', <code>{project.publication ?? 'not observed'}</code>],
+                                    ['Inspected', ago(project.observedAt)],
+                                ]} /></details>
+                                <div class="actions">{!view.inactive && <>
                                     {project.project !== props.state.selectedProject && <button type="button" class="ghost" disabled={!project.current} title="Evidence selection requires this project to be open in the workspace" onClick={() => { void request('project.select', { project: project.project }).catch(() => undefined); }}>Select</button>}
                                     <Act actions={actions} action="index" fields={{ project: project.project }} enabled={view.enabled.projectActions}>Index now</Act>
-                                </>}</td>
-                            </tr>
+                                </>}</div></div>
+                            </li>
                         );
-                    })}</tbody>
-                </table></div>
+                    })}
+                </ul>
                 <p class="muted">{view.selectedCount} selected across pages for repair. Cached values update after inspect or configuration jobs.</p>
             </>}
         </Frame>

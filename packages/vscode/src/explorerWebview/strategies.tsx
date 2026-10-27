@@ -10,6 +10,7 @@ import { canAddStudio, taskFromStudio } from './planner';
 import { acceptStudioRun, currentSelection, studioDraft, StudioDraft, studioHasWork, usePlanner, useStudio } from './strategyStore';
 import type { ScreenProps } from './workspaces';
 import { dialogFocus, ShareSnapshot } from './components';
+import { FileBrowser, type LibraryFile } from './fileBrowser';
 
 const message = (failure: unknown) => failure instanceof Error ? failure.message : String(failure);
 const STUDIO = { workspace: 'strategies', tab: 'studio' } as const;
@@ -124,15 +125,16 @@ export function StudioScreen(props: ScreenProps) {
                     </div>
                     {error && <p class="callout" role="alert">{error}</p>}
                 </article>
+                <FileBrowser kind="strategies" trusted={props.state.trusted} load={importFile} />
             </div>
         );
     }
 
-    async function importFile() {
+    async function importFile(file?: LibraryFile) {
         setError(undefined); setConfirmRebuild(false);
         const revision = studioDraft().revision, owner = currentSelection();
         try {
-            const imported = await request<Strategy | null>('strategy.import', {});
+            const imported = file ? await request<Strategy>('files.load', { kind: 'strategies', ...file }) : await request<Strategy | null>('strategy.import', {});
             if (!imported) { return; }
             if (studioDraft().revision !== revision || currentSelection() !== owner) { setError('Studio or the project changed while the file picker was open; your work was kept.'); return; }
             const pending = { strategy: imported, revision, owner };
@@ -167,6 +169,7 @@ export function StudioScreen(props: ScreenProps) {
 
     return (
         <div class="strategies studio" ref={root}>
+            <details class="library-disclosure"><summary>Browse saved strategies</summary><FileBrowser kind="strategies" trusted={props.state.trusted} load={importFile} /></details>
             {pendingImport && <div class="callout" role="alertdialog" aria-label="Replace Studio with imported file"><p>Replace Studio work with {pendingImport.strategy.title}? The selected file is unchanged.</p>
                 <button onClick={() => applyImported(pendingImport)}>Replace Studio draft</button><button class="ghost" onClick={() => setPendingImport(undefined)}>Keep Studio work</button></div>}
             <header class="studio-head">

@@ -64,8 +64,17 @@ test('webview messages require the exact declared fields', () => {
         for (const [name, spec] of Object.entries(fields as Record<string, { kind: string }>)) {
             // A path- or command-like field is acceptable only as a fixed allowlist (enum) or the relative path scope.
             const helpSelector = type === 'help.engine' && name === 'command' && spec.kind === 'string';
-            assert.ok(!/path$|command|args|body/i.test(name) || name === 'pathPrefix' || spec.kind === 'enum' || helpSelector, `message field ${name} could carry a path or command`);
+            const libraryFile = type === 'files.load' && name === 'path' && spec.kind === 'string' && 'pattern' in spec;
+            assert.ok(!/path$|command|args|body/i.test(name) || name === 'pathPrefix' || spec.kind === 'enum' || helpSelector || libraryFile, `message field ${name} could carry a path or command`);
         }
+    }
+});
+
+test('library loads accept relative paths only; workspace and filesystem admission remain host-owned', () => {
+    const base = { v: 1, type: 'files.load', requestId: 'f', kind: 'plans', workspace: 'file:///workspace' };
+    assert.ok(parseWebviewMessage({ ...base, path: 'release/next.plan.airk.json' }));
+    for (const path of ['../secret.json', '/etc/secret.json', 'C:/secret.json', 'nested/../secret.json', 'a\\b.json', 'a//b.json', 'folder/', './x.json']) {
+        assert.equal(parseWebviewMessage({ ...base, path }), undefined, path);
     }
 });
 

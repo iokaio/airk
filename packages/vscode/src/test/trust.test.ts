@@ -6,6 +6,20 @@ import * as path from 'node:path';
 import { serviceTestHost } from './serviceTestHost';
 import * as cliInstall from '../cliInstall';
 
+test('missing Explorer assets fail explicitly and a later open retries after repair',async context=>{
+    const f=await serviceTestHost(context,{trusted:false});
+    try{
+        const installed=f.context.extensionUri;
+        f.context.extensionUri={scheme:'file',fsPath:path.join(f.root,'missing-explorer')};
+        await assert.rejects(f.commands.get('airk.explorer.open')!(),/ENOENT/);
+        assert.equal(f.panels.length,0);
+        f.context.extensionUri=installed;
+        await f.commands.get('airk.explorer.open')!();
+        assert.equal(f.panels.length,1,'repair permits another load, including without workspace trust');
+        assert.equal(f.writes.length,0,'opening Explorer does not start native indexing');
+    }finally{await f.close();}
+});
+
 test('Install or Repair CLI migrates all three existing local agent connections through guarded editor saves',async context=>{
     const f=await serviceTestHost(context,{assistance:true});
     try{

@@ -24,8 +24,12 @@ The Overview shows the selected project and its published index. The status pill
 3. Use a journey card to go to Search, Code, Review, Strategies or Management.
 4. Choose a Developer, Tester, Architect or Writer lens. It only reorders journeys. **Role workflow help**, **Choose indexing by purpose** and **Document type guidance** explain which evidence and indexing choices suit the task.
 
-Every workspace offers **Help for this screen**. The header's **Help** searches bundled Explorer and engine guidance offline; **About** opens project background, public links and the Ioka Discord community invitation.
+The header's **Help** offers current-screen or general guidance through a native VS Code quick pick, and searches bundled Explorer and engine guidance offline; **About** opens project background, public links and the Ioka Discord community invitation.
 
 ## Limits
 
 Ready means a publication exists. It does not prove that the saved files still match the index; use Evidence › Inspector for one file.
+
+## Appearance and navigation
+
+Themed in the upper-right switches AIRK design colors on or off; off follows VS Code colors with the same panels and responsive layout. The choice persists per workspace, and high-contrast themes retain editor colors. Management stays beside the other workspace links while the content pane scrolls. The A› activity icon opens Explorer directly, retaining the old sidebar only if Explorer cannot load. Help offers current-screen guidance or general help through a native quick pick.

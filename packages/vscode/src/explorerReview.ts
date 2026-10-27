@@ -6,9 +6,9 @@ import * as vscode from 'vscode';
 import type { LiveCheck } from './explorerContracts';
 import { absentFromIndex, EvidenceClient, samePublication } from './explorerEvidence';
 import { FactHandles, factList } from './explorerFacts';
-import { caseFold, inside, liveCheck } from './explorerSource';
+import { caseFold, displayPath, inside, liveCheck } from './explorerSource';
 
-export const REVIEW_LIMITS = { files: 50, declarations: 20, references: 20 } as const;
+export const REVIEW_LIMITS = { files: 50, sourceFiles: 20, declarations: 20, references: 20, testScopes: 2, inventoryPages: 2 } as const;
 /** Paths treated as tests when no setting overrides it: test/tests/__tests__/spec folders and *.test.* / *.spec.* / *_test.* files. */
 export const DEFAULT_TEST_PATTERN = '(^|/)(tests?|__tests__|specs?)/|[._-](test|spec)\\.[A-Za-z0-9]+$|_test\\.[A-Za-z0-9]+$';
 
@@ -17,7 +17,7 @@ export interface ChangedFileView { readonly path: string; readonly change: Chang
 export interface ChangesReview { readonly git: 'available' | 'unavailable' | 'no_repository'; readonly files: readonly ChangedFileView[]; readonly truncated: boolean; readonly publication?: string; readonly notes: readonly string[] }
 export interface ImpactItem { readonly name: string; readonly kind: string; readonly path: string; readonly line?: number; readonly references: number; readonly referenceFiles: readonly string[]; readonly testReferences: number; readonly truncated: boolean }
 export interface ImpactReview { readonly items: readonly ImpactItem[]; readonly files: number; readonly truncated: boolean; readonly publication?: string; readonly notes: readonly string[] }
-export interface TestCandidate { readonly path: string; readonly line: number; readonly mentions: string; readonly text: string }
+export interface TestCandidate { readonly path: string; readonly line?: number; readonly mentions: string; readonly text: string; readonly reason?: 'changed_test_file' | 'identifier_reference' }
 export interface TestsReview { readonly candidates: readonly TestCandidate[]; readonly declarations: number; readonly pattern: string; readonly truncated: boolean; readonly publication?: string; readonly notes: readonly string[] }
 
 // Minimal shape of the built-in Git extension API (vscode.git, getAPI(1)).
@@ -46,15 +46,16 @@ async function gitApi(): Promise<GitApi | undefined> {
 
 /** Collection-relative paths of saved changes under the project root, from every repository that overlaps it. */
 export async function changedPaths(root: string): Promise<{ git: ChangesReview['git']; changes: { path: string; file: string; change: ChangeKind; staged: boolean; workingTree?: boolean; originalPath?: string }[] }> {
+    root = displayPath(root);
     const api = await gitApi();
     if (!api) { return { git: 'unavailable', changes: [] }; }
-    const repositories = api.repositories.filter(repository => inside(repository.rootUri.fsPath, root) || inside(root, repository.rootUri.fsPath));
+    const repositories = api.repositories.filter(repository => inside(displayPath(repository.rootUri.fsPath), displayPath(root)) || inside(displayPath(root), displayPath(repository.rootUri.fsPath)));
     if (!repositories.length) { return { git: 'no_repository', changes: [] }; }
     const seen = new Map<string, { path: string; file: string; change: ChangeKind; staged: boolean; workingTree?: boolean; originalPath?: string }>();
     for (const repository of repositories) {
         for (const [list, staged] of [[repository.state.mergeChanges, false], [repository.state.indexChanges, true], [repository.state.workingTreeChanges, false]] as const) {
             for (const change of list) {
-                const file = change.uri.fsPath;
+                const file = displayPath(change.uri.fsPath);
                 if (!inside(root, file)) { continue; }
                 const relative = path.relative(root, file).split(path.sep).join('/');
                 const key = caseFold(relative);
@@ -100,32 +101,82 @@ interface Declaration { name: string; kind: string; path: string; line?: number 
 /** Reads go through the shared fact parser, which understands both compact and rich reply shapes. */
 export interface ReviewContext { readonly session: EvidenceClient; readonly handles: FactHandles; readonly project: string; readonly root: string }
 
-async function declarations(context: ReviewContext, paths: readonly string[]): Promise<{ items: Declaration[]; truncated: boolean; publication?: string }> {
-    const items: Declaration[] = [];
+const CODE_PATH = /\.(?:[cm]?[jt]sx?|rs|py|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp|rb|php|swift|scala|sc|sh|bash|zsh|ps1|lua|r|R|ex|exs|erl|hrl|hs|fs|fsx|vb|vue|svelte|sql|pl|pm|dart|jl|clj|cljs|groovy)$/;
+function prioritized(paths: readonly string[]): string[] {
+    const tests = testPattern();
+    const rank = (file: string) => CODE_PATH.test(file) ? tests.test(file) ? 1 : 0 : 2;
+    return [...paths].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+async function declarations(context: ReviewContext, paths: readonly string[]): Promise<{ items: Declaration[]; truncated: boolean; publication?: string; examined: number; notes: string[] }> {
+    const groups: Declaration[][] = [];
     let truncated = false, publication: string | undefined;
-    for (const file of paths.slice(0, 10)) {
-        const args = { path_prefix: file, limit: 50, max_bytes: 16384 };
+    const selected = prioritized(paths).slice(0, REVIEW_LIMITS.sourceFiles);
+    for (const file of selected) {
+        const args = { path_prefix: file, limit: 100, max_bytes: 32768 };
         const result = await context.session.call('airk_symbols', args, { timeout: 30000 });
         publication = samePublication(publication, result);
-        const view = factList({ tool: 'airk_symbols', args, limit: 50 }, result.payload, result.publication, context.project, context.handles);
-        for (const item of view.items) {
-            if (!/^[A-Za-z_$][\w$]{0,127}$/.test(item.name) || item.path !== file) { continue; }
-            items.push({ name: item.name, kind: item.kind, path: item.path, ...(item.startLine ? { line: item.startLine } : {}) });
-        }
+        const view = factList({ tool: 'airk_symbols', args, limit: 100 }, result.payload, result.publication, context.project, context.handles);
+        const declarations = view.items.filter(item => /^[A-Za-z_$][\w$]{0,127}$/.test(item.name) && item.path === file);
+        // Prefer written public/function/type signatures, then sample across files rather than
+        // letting local variables in the first file consume the entire declaration budget.
+        const rank = (item: typeof declarations[number]) => /^(?:export|pub|public|protected|async|function|class|interface|type|struct|enum|trait|fn|def)\b/.test(item.signature ?? '') ? 0 : 1;
+        declarations.sort((a, b) => rank(a) - rank(b) || (a.startLine ?? 0) - (b.startLine ?? 0));
+        groups.push([...new Map(declarations.map(item => [`${item.path}:${item.startLine}:${item.name}`, { name: item.name, kind: item.kind, path: item.path, ...(item.startLine ? { line: item.startLine } : {}) }])).values()]);
         if (view.truncated || view.more) { truncated = true; }
     }
-    if (paths.length > 10) { truncated = true; }
-    const unique = [...new Map(items.map(item => [`${item.path}:${item.line}:${item.name}`, item])).values()];
-    return { items: unique.slice(0, REVIEW_LIMITS.declarations), truncated: truncated || unique.length > REVIEW_LIMITS.declarations, ...(publication ? { publication } : {}) };
+    const items: Declaration[] = [];
+    for (let row = 0; items.length < REVIEW_LIMITS.declarations && groups.some(group => group[row]); row++) {
+        for (const group of groups) { if (group[row] && items.length < REVIEW_LIMITS.declarations) { items.push(group[row]); } }
+    }
+    const total = groups.reduce((count, group) => count + group.length, 0);
+    truncated ||= paths.length > selected.length || total > items.length;
+    const notes = [`Examined ${selected.length} of ${paths.length} changed/current-or-old paths, prioritizing source files; sampled ${items.length} of ${total} returned declarations across files.`];
+    if (truncated) { notes.push('Review is bounded: some paths, declarations or symbol pages were omitted. An empty or partial checklist is not proof of no impact.'); }
+    if (!items.length && selected.length) { notes.push('No usable indexed declarations were returned for the inspected paths. Check index freshness, extraction detail and parser support; changed tests are still listed separately.'); }
+    return { items, truncated, publication, examined: selected.length, notes };
 }
 
-async function references(context: ReviewContext, name: string, publication: string | undefined): Promise<{ hits: { path: string; line: number; text: string }[]; truncated: boolean }> {
-    const args = { name, limit: REVIEW_LIMITS.references, max_bytes: 16384 };
+async function references(context: ReviewContext, name: string, publication: string | undefined, prefix?: string): Promise<{ hits: { path: string; line: number; text: string }[]; truncated: boolean }> {
+    const args = { name, ...(prefix ? { path_prefix: prefix } : {}), limit: REVIEW_LIMITS.references, max_bytes: 16384 };
     const result = await context.session.call('airk_references', args, { timeout: 30000 });
     samePublication(publication, result);
     const view = factList({ tool: 'airk_references', args, limit: REVIEW_LIMITS.references }, result.payload, result.publication, context.project, context.handles);
-    const hits = view.items.flatMap(item => item.startLine ? [{ path: item.path, line: item.startLine, text: (item.detail ?? '').slice(0, 300) }] : []);
+    const hits = view.items.flatMap(item => item.startLine && (!prefix || item.path.startsWith(prefix)) ? [{ path: item.path, line: item.startLine, text: (item.detail ?? '').slice(0, 300) }] : []);
     return { hits, truncated: view.truncated || hits.length >= REVIEW_LIMITS.references };
+}
+
+function testScope(file: string): string {
+    const folder = /(^|\/)(?:tests?|__tests__|specs?)\//.exec(file);
+    return folder ? file.slice(0, folder.index + folder[0].length) : file.includes('/') ? file.slice(0, file.lastIndexOf('/') + 1) : '';
+}
+async function testScopes(context: ReviewContext, paths: readonly string[], pattern: RegExp, publication: string | undefined): Promise<{ prefixes: string[]; publication?: string; truncated: boolean; notes: string[] }> {
+    const known = new Set(paths.filter(file => pattern.test(file)).map(testScope));
+    let truncated = false;
+    if (!known.size && paths.length) {
+        const availableModules = [...new Set(prioritized(paths).filter(file => CODE_PATH.test(file)).map(file => {
+            const source = /(^|\/)src\//.exec(file);
+            return source ? file.slice(0, source.index + (source.index ? 1 : 0)) : file.includes('/') ? file.slice(0, file.lastIndexOf('/') + 1) : '';
+        }))];
+        const modules = availableModules.slice(0, REVIEW_LIMITS.testScopes);
+        truncated ||= availableModules.length > modules.length;
+        for (const prefix of modules) {
+            let cursor: string | undefined;
+            for (let page = 0; page < REVIEW_LIMITS.inventoryPages; page++) {
+                const result = await context.session.call('airk_list_files', { prefix, limit: 200, max_bytes: 32768, ...(cursor ? { cursor } : {}) }, { timeout: 30000 });
+                publication = samePublication(publication, result);
+                const indexed = Array.isArray(result.payload.paths) ? result.payload.paths : Array.isArray(result.payload.files) ? result.payload.files.map(raw => (raw as { path?: string }).path) : [];
+                for (const file of indexed) { if (typeof file === 'string' && !file.startsWith('/') && !file.includes('\\') && !file.includes(':') && !file.split('/').includes('..') && pattern.test(file)) { known.add(testScope(file)); } }
+                cursor = typeof result.payload.cursor === 'string' && result.payload.cursor.length <= 8192 ? result.payload.cursor : undefined;
+                if (!cursor) { truncated ||= result.payload.truncated === true; break; }
+                if (page === REVIEW_LIMITS.inventoryPages - 1) { truncated = true; }
+            }
+        }
+    }
+    const all = [...known].sort();
+    const independent = all.filter(prefix => !all.some(other => other !== prefix && prefix.startsWith(other)));
+    const prefixes = independent.slice(0, REVIEW_LIMITS.testScopes);
+    truncated ||= independent.length > prefixes.length;
+    return { prefixes, publication, truncated, notes: [prefixes.length ? `Test references are searched inside ${prefixes.map(prefix => prefix || '(project root)').join(', ')} before applying hit limits.` : 'No test directory was found in the bounded inventory. Changed test files remain visible; this does not establish that tests are absent.', ...(truncated ? ['Test-scope discovery was clipped; other directories may contain relevant tests.'] : [])] };
 }
 
 function testPattern(): RegExp {
@@ -137,31 +188,50 @@ function testPattern(): RegExp {
 const changedSource = (changes: { path: string; change: ChangeKind }[]) => [...new Set(changes.flatMap(change => [change.path, ...('originalPath' in change && typeof change.originalPath === 'string' ? [change.originalPath] : [])]))];
 
 export async function reviewImpact(context: ReviewContext): Promise<ImpactReview> {
-    const { changes } = await changedPaths(context.root);
-    const pattern = testPattern();
-    const found = await declarations(context, changedSource(changes));
+    const { git, changes } = await changedPaths(context.root);
+    const pattern = testPattern(), paths = changedSource(changes);
+    const found = await declarations(context, paths);
+    const scopes = await testScopes(context, paths, pattern, found.publication);
+    const publication = scopes.publication ?? found.publication;
     const items: ImpactItem[] = [];
     for (const declaration of found.items) {
-        const refs = await references(context, declaration.name, found.publication);
-        const files = [...new Set(refs.hits.map(hit => hit.path))];
-        items.push({ ...declaration, references: refs.hits.length, referenceFiles: files.slice(0, 5), testReferences: refs.hits.filter(hit => pattern.test(hit.path)).length, truncated: refs.truncated });
+        const refs = await references(context, declaration.name, publication);
+        const hits = [...refs.hits]; let clipped = refs.truncated;
+        for (const prefix of scopes.prefixes) {
+            const tests = await references(context, declaration.name, publication, prefix);
+            hits.push(...tests.hits.filter(hit => pattern.test(hit.path))); clipped ||= tests.truncated;
+        }
+        const unique = [...new Map(hits.map(hit => [`${hit.path}:${hit.line}`, hit])).values()];
+        const files = [...new Set(unique.map(hit => hit.path))];
+        items.push({ ...declaration, references: unique.length, referenceFiles: files.slice(0, 5), testReferences: unique.filter(hit => pattern.test(hit.path)).length, truncated: clipped || files.length > 5 });
     }
-    return { items, files: changes.length, truncated: found.truncated || items.some(item => item.truncated), ...(found.publication ? { publication: found.publication } : {}),
-        notes: ['A checklist, not a verdict: references are exact-case textual occurrences in the index, not resolved callers. Declarations come from still-indexed changed/old paths; deleted or renamed declarations already removed by indexing cannot be recovered (AIRK has no history).'] };
+    return { items, files: changes.length, truncated: found.truncated || scopes.truncated || items.some(item => item.truncated), ...(publication ? { publication } : {}),
+        notes: ['A checklist, not a verdict: references are exact-case textual occurrences in the index, not resolved callers. Declarations describe changed files, not a line-diff proof that each declaration changed. Old paths already removed from the index cannot be recovered.', ...gitNotes(git, changes.length), ...found.notes, ...scopes.notes] };
+}
+
+function gitNotes(git: ChangesReview['git'], changes: number): string[] {
+    return git === 'unavailable' ? ['The VS Code Git extension is unavailable; no changed-file review could be performed.']
+        : git === 'no_repository' ? ['No Git repository contains the selected project.'] : changes ? [] : ['No uncommitted Git changes were found. This review does not compare earlier commits.'];
 }
 
 export async function reviewTests(context: ReviewContext): Promise<TestsReview> {
-    const { changes } = await changedPaths(context.root);
-    const pattern = testPattern();
-    const found = await declarations(context, changedSource(changes));
-    const candidates: TestCandidate[] = [];
-    let truncated = found.truncated;
+    const { git, changes } = await changedPaths(context.root);
+    const pattern = testPattern(), paths = changedSource(changes);
+    const found = await declarations(context, paths);
+    const scopes = await testScopes(context, paths, pattern, found.publication);
+    const publication = scopes.publication ?? found.publication;
+    const candidates: TestCandidate[] = changes.filter(change => pattern.test(change.path)).map(change => ({ path: change.path, mentions: '', text: '', reason: 'changed_test_file' }));
+    let truncated = found.truncated || scopes.truncated;
     for (const declaration of found.items) {
-        const refs = await references(context, declaration.name, found.publication);
-        truncated ||= refs.truncated;
-        for (const hit of refs.hits.filter(entry => pattern.test(entry.path))) { candidates.push({ path: hit.path, line: hit.line, mentions: declaration.name, text: hit.text }); }
+        const prefixes: (string | undefined)[] = scopes.prefixes.length ? scopes.prefixes : [undefined];
+        for (const prefix of prefixes) {
+            const refs = await references(context, declaration.name, publication, prefix);
+            truncated ||= refs.truncated;
+            for (const hit of refs.hits.filter(entry => pattern.test(entry.path))) { candidates.push({ ...hit, mentions: declaration.name, reason: 'identifier_reference' }); }
+        }
     }
-    truncated ||= candidates.length > 100;
-    return { candidates: candidates.sort((a, b) => a.path.localeCompare(b.path) || a.line - b.line).slice(0, 100), declarations: found.items.length, pattern: pattern.source, truncated, publication: found.publication,
-        notes: ['Declared test candidates: test-path lines that mention a changed declaration. They were not executed, and this is not coverage. Old declarations already removed from the index are unavailable.'] };
+    const unique = [...new Map(candidates.map(candidate => [`${candidate.path}:${candidate.line ?? 0}:${candidate.mentions}`, candidate])).values()];
+    truncated ||= unique.length > 100;
+    return { candidates: unique.sort((a, b) => Number(b.reason === 'changed_test_file') - Number(a.reason === 'changed_test_file') || a.path.localeCompare(b.path) || (a.line ?? 0) - (b.line ?? 0)).slice(0, 100), declarations: found.items.length, pattern: pattern.source, truncated, publication,
+        notes: ['Changed test files and indexed textual-reference candidates. They were not executed, and this is not coverage. Changed-file entries come from Git and do not claim indexed evidence or a fabricated source line.', ...gitNotes(git, changes.length), ...found.notes, ...scopes.notes] };
 }

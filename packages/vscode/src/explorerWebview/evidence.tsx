@@ -11,16 +11,44 @@ import { navigationFilters } from '../explorerDrafts';
 const LIVE_CLASS: Record<string, string> = { matches_index: 'ok', changed_since_index: 'warn', not_saved: 'warn', missing: 'error', unchecked: 'info', outside_workspace: 'info' };
 
 export function InspectorScreen(props: ScreenProps) {
-    const view = useAsync<InspectView>();
-    useEffect(() => { if (props.inspectRef) { void view.run(() => request<InspectView>('evidence.inspect', { ref: props.inspectRef! })); } }, [props.inspectRef]);
-    if (!props.inspectRef) {
-        return <p class="callout">Choose <strong>Inspect</strong> on a search hit, fact or checked citation to see its indexed record and compare it with the saved file.</p>;
-    }
+    const [selectedInsteadOf, setSelectedInsteadOf] = useState<string>();
+    const [refresh, setRefresh] = useState(0);
+    const ref = props.inspectRef !== selectedInsteadOf ? props.inspectRef : undefined;
+    const target = ref ?? props.state.sourceFile;
+    const [view, setView] = useState<{ target?: string; value?: InspectView; busy?: boolean; error?: string }>({});
+    useEffect(() => {
+        let current = true;
+        setView({ target, busy: !!target });
+        if (target) {
+            void request<InspectView>('evidence.inspect', ref ? { ref } : {}).then(
+                value => { if (current) { setView({ target, value }); } },
+                failure => { if (current) { setView({ target, error: failure instanceof Error ? failure.message : String(failure) }); } },
+            );
+        }
+        return () => { current = false; };
+    }, [ref, target, refresh]);
     return (
         <div>
+            <section class="card" aria-label="How to use Inspector">
+                <h2>Inspect a file or a search citation</h2>
+                <p>The source file in the header is used by Code › Outline and this Inspector. Search has its own query and scope; choosing a file above does not run or filter a search.</p>
+                <ol>
+                    <li>For a file: choose it above, then use <strong>Inspect selected file</strong>. Its indexed record loads automatically here when no citation is selected.</li>
+                    <li>For search evidence: open <strong>Search</strong>, run a query, then choose <strong>Inspect</strong> on a result. Facts in Code or Documents and checked citations in Evidence › Checker also offer Inspect.</li>
+                    <li>Read the saved-file comparison below. <strong>Open source</strong> opens the displayed file or cited lines in the editor.</li>
+                </ol>
+                <p class="muted">Inspector shows index metadata and whether saved bytes match it. It does not display the file contents or establish that the code is correct. Unsaved editor changes are not indexed.</p>
+                <button type="button" class="ghost" onClick={() => props.go({ workspace: 'search', tab: 'query' })}>Search for evidence</button>
+            </section>
+            <div class="actions">
+                <button type="button" disabled={view.busy || !props.state.sourceFile} onClick={() => { setSelectedInsteadOf(props.inspectRef); setRefresh(value => value + 1); }}>Inspect selected file</button>
+                <span class="muted">{props.state.sourceFile ? <>Selected file: <code class="path">{props.state.sourceFile}</code></> : 'Choose a source file in the header to enable this action.'}</span>
+            </div>
+            {target && <p class="muted">{ref ? 'Inspecting a citation selected from a result. To return to the header’s file, use Inspect selected file.' : 'Inspecting the source file selected in the header.'}</p>}
+            {!target && <p class="callout">Choose a source file above to inspect its indexed record, or go to Search and choose Inspect on a result.</p>}
             {view.busy && <p class="muted">Reading the indexed record…</p>}
             {view.error && <p class="callout" role="alert">{view.error}</p>}
-            {view.value && (
+            {view.target === target && view.value && (
                 <article class="card">
                     <div class="hit-head">
                         <code class="path">{view.value.path}:{view.value.startLine}{view.value.endLine !== view.value.startLine ? `–${view.value.endLine}` : ''}</code>

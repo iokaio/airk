@@ -86,13 +86,14 @@ export function ReferencesScreen(props: ScreenProps) {
 export function OutlineScreen(props: ScreenProps) {
     const result = useAsync<FactListView>();
     const load = () => result.run(() => request<FactListView>('code.outline', {}));
-    useEffect(() => { void load(); }, []);
+    useEffect(() => { if (props.state.sourceFile) { void load(); } }, [props.state.sourceFile]);
     return (
         <div>
             <div class="section-head">
-                <p class="muted">Outline of the active editor's file in the selected project, from the published index (not the unsaved buffer).</p>
-                <button type="button" class="ghost" disabled={result.busy} onClick={() => { void load(); }}>Refresh for active file</button>
+                <p class="muted">Indexed outline of <code>{props.state.sourceFile ?? 'the source file you choose above'}</code>. The saved index is used, including when Explorer has focus.</p>
+                <button type="button" class="ghost" disabled={result.busy || !props.state.sourceFile} onClick={() => { void load(); }}>Refresh outline</button>
             </div>
+            {!props.state.sourceFile && <p class="callout">Choose a source file above to see its indexed outline. You can keep Explorer open while choosing.</p>}
             {result.error && <p class="callout" role="alert">{result.error}</p>}
             {result.value && <FactList list={result.value} inspect={props.inspect} empty="The index holds no outline facts for this file." actions={item => <SymbolActions item={item} />} />}
         </div>

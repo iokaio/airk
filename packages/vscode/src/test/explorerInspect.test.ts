@@ -15,6 +15,28 @@ import { FactHandles } from '../explorerFacts';
 const project = 'ab'.repeat(32);
 const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
 
+test('selected-file inspection creates a project-bound reference from one indexed record', async () => {
+    const refs = new RefRegistry();
+    const session = { call: async (tool: string, args: unknown) => {
+        assert.equal(tool, 'airk_file_info');
+        assert.deepEqual(args, { path: 'a.ts', response_mode: 'full' });
+        return { publication: 'p', payload: { content_hash: sha('a'), indexed_lines: 1 } };
+    } } as any;
+    const view = await inspect(session, refs, project, undefined, () => false, 'a.ts');
+    assert.equal(view.path, 'a.ts');
+    assert.equal(view.publication, 'p');
+    assert.equal(view.live, 'unchecked');
+    assert.equal(refs.get(view.ref, project).contentHash, sha('a'));
+    assert.throws(() => refs.get(view.ref, 'other-project'), /reference/);
+    await assert.rejects(inspect(session, refs, project, undefined, () => false), /source file/);
+    for (const payload of [{ read: { status: 'unknown', reason: 'path is absent from the current index' } }, { content_hash: 'invalid' }]) {
+        await assert.rejects(inspect({ call: async () => ({ publication: 'p', payload }) } as any, refs, project, undefined, () => false, 'a.ts'));
+    }
+    await assert.rejects(inspect({ call: async () => ({ payload: { content_hash: sha('a') } }) } as any, refs, project, undefined, () => false, 'a.ts'), /hash and publication/);
+    assert.ok(parseWebviewMessage({ v: 1, type: 'evidence.inspect', requestId: 'selected' }));
+    assert.equal(parseWebviewMessage({ v: 1, type: 'evidence.inspect', requestId: 'selected', path: '../foreign.ts' }), undefined);
+});
+
 test('citation parsing accepts the supported forms, skips URLs and flags paths outside the collection', () => {
     const text = 'See src/a.ts:12, `src/b.ts:3-9` and docs/c.md#L4-L6 plus C:\\work\\d.ts:2, /etc/e.txt:1 and ../f.ts:2.'
         + ' Link https://example.com/repo/blob/main/g.ts:7 is not a citation. Repeat src/a.ts:12.';

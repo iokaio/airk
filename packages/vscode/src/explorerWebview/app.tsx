@@ -2,10 +2,11 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ExplorerViewState, ProjectSummary } from '../explorerContracts';
 import { RECIPE_SCHEMA, type SearchRecipe } from '../explorerStrategies';
-import { formatRoute, parseRoute, Route, ROUTE_KEYS, WORKSPACES } from '../explorerRoutes';
+import { formatRoute, parseRoute, Route, routeKey, ROUTE_KEYS, WORKSPACES } from '../explorerRoutes';
+import catalog from 'airk-explorer-help';
 import { headline } from '../explorerStatus';
 import { notify, onHost, ready, request, savedState, saveState } from './api';
-import { Facts, useDialogFocus } from './components';
+import { BrandMark, Facts, useDialogFocus, WorkspaceIcon } from './components';
 import { ago, observed, shortToken } from './format';
 import { Inbox } from './inbox';
 import { Overview } from './overview';
@@ -14,7 +15,7 @@ import { WorkspaceView } from './workspaces';
 import type { NavigationFilters } from '../explorerDrafts';
 import { friendlyError } from '../explorerErrors';
 
-interface Persisted { route?: string; lens?: string }
+interface Persisted { route?: string; lens?: string; themed?: boolean }
 
 export function App() {
     const persisted = savedState<Persisted>() ?? {};
@@ -22,6 +23,8 @@ export function App() {
     const [route, setRoute] = useState<Route>(parseRoute(persisted.route ?? '#overview') ?? { workspace: 'overview' });
     const [palette, setPalette] = useState(false);
     const [pill, setPill] = useState(false);
+    const [themed, setThemed] = useState(persisted.themed !== false);
+    const [choosingSource, setChoosingSource] = useState(false), [sourceError, setSourceError] = useState<string>();
     const [incoming, setIncoming] = useState<{ query: string; serial: number; recipe?: SearchRecipe; run?: boolean }>();
     const [inbox, setInbox] = useState(false);
     const [navigation, setNavigation] = useState<{ route: string; filters: NavigationFilters; serial: number }>();
@@ -57,25 +60,50 @@ export function App() {
     useEffect(() => { saveState({ ...savedState<Persisted>(), route: formatRoute(route) }); }, [route]);
 
     const go = (next: Route) => { setRoute(next); setPalette(false); notify('nav.go', { route: formatRoute(next) }); };
+    const chooseSource = async () => {
+        setChoosingSource(true); setSourceError(undefined);
+        try { await request('source.choose', {}); }
+        catch (failure) { setSourceError(failure instanceof Error ? failure.message : String(failure)); }
+        finally { setChoosingSource(false); }
+    };
+    const openHelp = async () => {
+        const key = routeKey(route);
+        try {
+            const destination = await request<'screen' | 'general' | null>('help.choose', { route: key });
+            if (!destination) { return; }
+            const topic = destination === 'screen' ? catalog.topics.find(entry => entry.route === key) : undefined;
+            go({ workspace: 'help', ...(topic ? { focus: topic.id.replaceAll('.', '-') } : {}) });
+        } catch (failure) { setSourceError(failure instanceof Error ? failure.message : String(failure)); }
+    };
 
     if (!state) { return <main class="airk-explorer loading"><p>Connecting to the AIRK extension host…</p><button type="button" onClick={ready}>Retry connection</button>
         <p class="muted">If it remains unavailable, close and reopen Explorer after the extension host restarts.</p></main>; }
     const project = state.projects.find(entry => entry.project === state.selectedProject);
     const status = headline(state.connection, state.status, state.projects.length);
     return (
-        <div class="airk-explorer">
+        <div class={`airk-explorer${themed ? ' airk-themed' : ''}`}>
             <header class="topbar">
-                <strong class="brand">AIRK Explorer</strong>
+                <strong class="brand"><BrandMark /><span>AIRK <span class="brand-subtitle">Explorer</span></span></strong>
                 <ProjectPicker projects={state.projects} selected={state.selectedProject} />
                 <button type="button" class={`pill ${status.severity}`} aria-expanded={pill} onClick={() => setPill(open => !open)}
                     title="Service, published index, source work and semantic coverage">{status.word}</button>
-                <span class="spacer" />
+                <div class="topbar-actions">
                 <button type="button" class="ghost" onClick={() => setPalette(true)} title="Go to a screen (Ctrl/⌘+K)">Go to… <kbd>Ctrl K</kbd></button>
                 <button type="button" class={state.suggestions?.open ? '' : 'ghost'} aria-expanded={inbox} onClick={() => setInbox(open => !open)}
                     title="Drafts proposed by coding agents">Suggestions <span aria-live="polite">{state.suggestions?.open ?? 0}</span></button>
-                <button type="button" class="ghost" onClick={() => go({ workspace: 'help' })}>Help</button>
+                <button type="button" class="ghost" aria-haspopup="listbox" onClick={() => void openHelp()}>Help <span aria-hidden="true">⌄</span></button>
                 <button type="button" class="ghost" onClick={() => go({ workspace: 'help', focus: 'about-airk' })}>About</button>
+                <button type="button" class={`theme-toggle ghost${themed ? ' active' : ''}`} aria-pressed={themed}
+                    title={themed ? 'AIRK design is on. Switch to the VS Code theme.' : 'Use the AIRK design.'}
+                    onClick={() => { const next = !themed; setThemed(next); saveState({ ...savedState<Persisted>(), themed: next }); }}>
+                    <span class="toggle-track" aria-hidden="true"><span /></span>Themed
+                </button>
+                </div>
             </header>
+            <div class="source-context"><span class="eyebrow">Source file</span><code title={state.sourceFile}>{state.sourceFile ?? 'No file selected'}</code>
+                <button class="link" disabled={choosingSource || !state.trusted || !state.selectedProject} onClick={() => void chooseSource()}>Choose file…</button>
+                <small>Choose a file for Code › Outline and Evidence › Inspector. These views use the saved index.</small></div>
+            {sourceError && <p class="notice" role="alert">{sourceError}</p>}
             {pill && <StatusPopover state={state} project={project} onClose={() => setPill(false)} />}
             {state.notice && <div class="notice" role="alert"><p>{friendlyError(state.notice)}</p><button class="ghost" onClick={() => go({ workspace: 'help', focus: 'recovering-errors' })}>Recovery help</button></div>}
             {inbox && <Inbox view={state.suggestions} close={() => setInbox(false)}
@@ -151,16 +179,16 @@ function Rail(props: { route: Route; state: ExplorerViewState; go(route: Route):
         const workspace = WORKSPACES.find(entry => entry.id === id)!;
         const current = props.route.workspace === workspace.id;
         return (
-            <li key={id}><button type="button" aria-current={current ? 'page' : undefined} class={current ? 'current' : ''}
+            <li key={id}><button type="button" title={workspace.title} aria-label={workspace.title} aria-current={current ? 'page' : undefined} class={current ? 'current' : ''}
                 onClick={() => props.go({ workspace: workspace.id, ...(workspace.tabs[0] ? { tab: workspace.tabs[0].id } : {}) })}>
-                {workspace.title}{preview(id) && <span class="tag">preview</span>}
+                <WorkspaceIcon name={id} /><span class="nav-label">{workspace.title}</span>{preview(id) && <span class="tag">preview</span>}
             </button></li>
         );
     };
     return (
         <nav class="rail" aria-label="Explorer workspaces">
-            <ul>{WORKSPACES.filter(entry => entry.placement === 'main').map(entry => item(entry.id))}</ul>
-            <ul class="pinned">{WORKSPACES.filter(entry => entry.placement === 'pinned').map(entry => item(entry.id))}</ul>
+            <div class="rail-caption" aria-hidden="true">Workspace</div>
+            <ul>{WORKSPACES.filter(entry => entry.placement === 'main' || entry.placement === 'pinned').map(entry => item(entry.id))}</ul>
         </nav>
     );
 }

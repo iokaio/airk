@@ -52,14 +52,14 @@ export function HelpScreen(props: ScreenProps) {
     const [reference, setReference] = useState('airk_search');
     const [lastQuery, setLastQuery] = useState<{ topic?: string; command?: string; tool?: string }>({});
     const [linkError, setLinkError] = useState<string>();
-    const [selected, setSelected] = useState<HelpTopic>(catalog.topics.find(topic => topic.id.replaceAll('.', '-') === props.route.focus) ?? catalog.topics.find(topic => topic.id === 'explorer.overview') ?? catalog.topics[0]);
+    const [selected, setSelected] = useState<HelpTopic>(catalog.topics.find(topic => topic.id.replaceAll('.', '-') === props.route.focus) ?? catalog.topics.find(topic => topic.route === 'help') ?? catalog.topics[0]);
     const [engine, setEngine] = useState<{ value?: EngineHelpView; error?: string; busy: boolean }>({ busy: false });
     const [showEngine, setShowEngine] = useState(false);
     const referenceEpoch = useRef(0);
     const closeReference = () => { referenceEpoch.current++; setShowEngine(false); setEngine({ busy: false }); };
     useEffect(() => () => { referenceEpoch.current++; }, []);
     useEffect(() => {
-        const topic = catalog.topics.find(entry => entry.id.replaceAll('.', '-') === props.route.focus);
+        const topic = props.route.focus ? catalog.topics.find(entry => entry.id.replaceAll('.', '-') === props.route.focus) : catalog.topics.find(entry => entry.route === 'help');
         if (topic) { setSelected(topic); setQuery(''); setArea(''); closeReference(); }
     }, [props.route.focus]);
     const topics = useMemo(() => catalog.topics.filter(topic => !area || topic.area === area).map(topic => ({ topic, score: query.trim() ? helpScore(topic, query) : 1 }))

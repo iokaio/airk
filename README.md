@@ -1,5 +1,7 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+**Development version: 1.5.2.** Explorer now has a responsive visual design, a persistent **Themed** switch between AIRK and VS Code colors, and Management beside the main navigation. The A› activity icon opens Explorer; the old sidebar is a fallback when Explorer cannot load. Saved-plan, strategy and recipe browsers support subfolders, Load buttons and double-click loading. Source-file selection survives editor focus changes; the header offers open editor files and context-sensitive Help. Evidence › Inspector loads the selected file and offers an explicit Inspect selected file action. See the [1.5.2 development record](docs/release-1.5.2.md). The 1.5.0 candidate and validation records below retain their original scope.
+
 Explorer review fixes in this 1.5.0 local candidate guard plan saves, keep evidence and drafts bound to their project/publication, settle failed parallel reads, refuse expired proposals and preserve complete task instructions. Remote plan saving uses an untitled draft and the editor Save command. Platform qualification is recorded separately in the 1.5.0 release notes.
 
 Explorer Assistance now provides 14 tools, including installed-template discovery, dry-run proposal validation, navigation suggestions and explicitly shared snapshots. Project setup configures Retrieval and Assistance together; recognized Retrieval-only configurations gain the missing companion while preserving disabled settings and custom conflicts. Explorer Help searches offline UI and engine guidance for Developer, Tester, Architect and Writer workflows, indexing purpose and document types. About includes Ioka/Munarium origins, community and contribution links. Planner loads saved Markdown as unverified drafts or exact plan JSON; request failures provide recovery guidance without replaying actions.
@@ -22,7 +24,7 @@ Installation now shows a completion notification with MCP Servers, Reload Window
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
 
-The current package version is **1.5.0**, superseding 1.4.4. Validation and remaining qualification limits are recorded in its [release notes](docs/release-1.5.0.md).
+The current development package version is **1.5.2**. The earlier 1.5.0 candidate superseded 1.4.4; its [release notes](docs/release-1.5.0.md) retain their original validation scope.
 
 CLI installation removes previous extension-managed terminal executable copies regardless of version. It also retires the previous native rollback payload after successful activation, preserving the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to retry. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
 
@@ -93,6 +95,6 @@ Storage uses independent collection ownership, admitted publication/replacement 
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). The runtime builder stages a host-native executable pair without creating a VSIX. Formatting, Clippy, workspace tests, repository checks and exact artifact verification remain release gates. Installed-platform evidence is recorded separately from development fixtures.
 
-The [1.3.2](docs/release-1.3.2.md), [1.3.1](docs/release-1.3.1.md), [1.3.0](docs/release-1.3.0.md) and earlier release notes are historical records. Their direct-helper/window-scheduler instructions do not describe 1.4 defaults. Existing public releases are separate from this unpushed development branch.
+The [1.3.2](docs/release-1.3.2.md), [1.3.1](docs/release-1.3.1.md), [1.3.0](docs/release-1.3.0.md) and earlier release notes are historical records. Their direct-helper/window-scheduler instructions do not describe 1.4 defaults. Existing public releases are separate from this source candidate; publication requires successful exact-main CI and the release workflows.
 
 AIRK is [Apache-2.0 licensed](LICENSE). Preserve [NOTICE](NOTICE), [third-party notices](THIRD_PARTY_NOTICES.md), original SPDX headers and dependency license bundles. Commits use the authorized human contributor's DCO sign-off.

@@ -32,3 +32,7 @@ Guarded saving supports local filesystem folders only. Redirected directories, l
 **Export plan JSON…** preserves complete task states and evidence metadata for an exact round trip. AIRK Markdown contains abbreviated evidence summaries, so loading Markdown resets tasks to Draft and omits verified evidence metadata with a visible notice. Review/rebuild that evidence before handing it off. Arbitrary Markdown, ambiguous task headings, conflicting dependencies and oversized instructions are refused instead of guessed or clipped.
 
 After loading, save the plan again before a file-based handoff. Foreign project ownership is retained and prevents saving/handoff in the wrong project. The file you loaded stays unchanged.
+
+## Saved-plan library
+
+The Saved plans browser lists the configured plan folder, normally .airk/plans. Choose a workspace folder, open subfolders, use breadcrumbs or Up one folder, and choose Load or double-click a file. Refresh files rereads the directory; Next files and First page navigate bounded pages. Browsing never creates folders or changes files. Loading uses the same validation and draft-replacement confirmation as the file picker. Linked/redirected paths and files outside this library are refused; use Load plan for another explicitly selected file.

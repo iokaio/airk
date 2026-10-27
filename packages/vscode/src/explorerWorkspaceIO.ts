@@ -3,11 +3,11 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import type { LiveCheck, OpenSourceResult } from './explorerContracts';
-import { caseFold, inside, liveCheck, sourceFile } from './explorerSource';
+import type { LiveCheck, OpenSourceResult, WorkspaceFileKind, WorkspaceFilesView } from './explorerContracts';
+import { caseFold, displayPath, inside, liveCheck, sourceFile } from './explorerSource';
 import { explorerError } from './explorerErrors';
 import { EvidenceFailure } from './explorerEvidence';
-import { PLAN_LIMIT_BYTES, safePrefix, Strategy, STRATEGY_LIMIT_BYTES, validateStrategy } from './explorerStrategies';
+import { PLAN_LIMIT_BYTES, safePrefix, SearchRecipe, Strategy, STRATEGY_LIMIT_BYTES, validateRecipe, validateStrategy } from './explorerStrategies';
 import { ImportedPlan, parsePlanFile } from './explorerPlanFiles';
 
 const MESSAGES: Record<LiveCheck, string> = {
@@ -33,11 +33,11 @@ export async function openSource(location: { root: string; relative: string; con
     const inWorkspace = (vscode.workspace.workspaceFolders ?? []).some(folder => folder.uri.scheme === 'file' && inside(folder.uri.fsPath, file));
     const note = inWorkspace ? '' : ` ${MESSAGES.outside_workspace}`;
     if (location.lineBasis && location.lineBasis !== 'source') {
-        await vscode.commands.executeCommand('vscode.open', uri);
+        await vscode.commands.executeCommand('vscode.open', uri, { viewColumn: vscode.ViewColumn.Beside });
         return { live, opened: true, message: `${MESSAGES[live]} Line numbers refer to extracted text; cite the original document location.${note}` };
     }
     const line = Math.max(0, location.startLine - 1);
-    await vscode.window.showTextDocument(uri, { preview: true, selection: new vscode.Range(line, 0, line, 0) });
+    await vscode.window.showTextDocument(uri, { viewColumn: vscode.ViewColumn.Beside, preview: true, selection: new vscode.Range(line, 0, line, 0) });
     return { live, opened: true, message: MESSAGES[live] + note };
 }
 
@@ -78,7 +78,7 @@ export async function importStrategy(): Promise<Strategy | undefined> {
 async function readImport(source: vscode.Uri, limit: number): Promise<string> {
     let bytes: Uint8Array;
     if (source.scheme === 'file') {
-        const handle = fs.openSync(source.fsPath, 'r');
+        const handle = fs.openSync(source.fsPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0) | (fs.constants.O_NONBLOCK ?? 0));
         try {
             if (!fs.fstatSync(handle).isFile()) { throw new Error('Choose a regular file.'); }
             const buffer = Buffer.alloc(limit + 1); let used = 0, read = 0;
@@ -102,10 +102,117 @@ export async function importPlan(): Promise<ImportedPlan | undefined> {
     catch (error) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', `The plan could not be loaded. ${error instanceof Error ? error.message : String(error)}`)); }
 }
 
+const fileBase = (kind: WorkspaceFileKind) => kind === 'plans' ? plannerDirectory() : `.airk/${kind}`;
+async function checkRemoteLibrary(root: vscode.Uri, kind: WorkspaceFileKind, relative: string, directory: boolean): Promise<void> {
+    const parts = [...relativeFile(fileBase(kind)), ...relativeFile(relative, true)];
+    for (let at = 0; at < parts.length; at++) {
+        const stat = await vscode.workspace.fs.stat(vscode.Uri.joinPath(root, ...parts.slice(0, at + 1)));
+        const expected = at < parts.length - 1 || directory ? vscode.FileType.Directory : vscode.FileType.File;
+        if (stat.type !== expected) { throw new Error('Linked or unsupported library paths are not supported by this provider.'); }
+    }
+}
+function relativeFile(value: string, empty = false): string[] {
+    if ((!value && !empty) || value.length > 1024 || value.includes('\\') || value.includes(':') || value.startsWith('/')
+        || value.split('/').some(part => part === '.' || part === '..' || (!part && value !== '')) || /[\u0000-\u001f\u007f]/.test(value)) { throw new Error('Choose a relative file or folder beneath the library.'); }
+    return value ? value.split('/') : [];
+}
+function libraryTarget(kind: WorkspaceFileKind, workspace: string | undefined, relative: string, preferredRoot?: string): { uri: vscode.Uri; root: vscode.Uri; workspace: string; roots: { id: string; name: string }[] } {
+    if (!vscode.workspace.isTrusted) { throw new Error('Trust this workspace before browsing saved files.'); }
+    const folders = (vscode.workspace.workspaceFolders ?? []).filter(folder => ['file', 'vscode-remote'].includes(folder.uri.scheme));
+    const folder = workspace ? folders.find(entry => entry.uri.toString() === workspace)
+        : folders.find(entry => preferredRoot && caseFold(entry.uri.fsPath) === caseFold(displayPath(preferredRoot))) ?? folders[0];
+    if (!folder) { throw new Error('Choose an open workspace folder.'); }
+    const uri = vscode.Uri.joinPath(folder.uri, ...relativeFile(fileBase(kind)), ...relativeFile(relative, true));
+    if (uri.scheme === 'file') {
+        const base = fs.realpathSync.native(folder.uri.fsPath);
+        let current = folder.uri.fsPath;
+        for (const part of path.relative(current, uri.fsPath).split(path.sep).filter(Boolean)) {
+            current = path.join(current, part);
+            try {
+                if (fs.lstatSync(current).isSymbolicLink() || !inside(base, fs.realpathSync.native(current))) { throw new Error('Linked or redirected library paths are not supported.'); }
+            } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; } }
+        }
+    }
+    const roots = folders.map(entry => ({ id: entry.uri.toString(), name: entry.name }));
+    if (Buffer.byteLength(JSON.stringify(roots)) > 8192) { throw new Error('Workspace folder names exceed the library budget. Open fewer workspace folders to browse saved files.'); }
+    return { uri, root: folder.uri, workspace: folder.uri.toString(), roots };
+}
+
+/** One bounded, nonrecursive page. Never creates the library or follows linked children. */
+export async function listWorkspaceFiles(kind: WorkspaceFileKind, directory: string, workspace?: string, offset = 0, preferredRoot?: string): Promise<WorkspaceFilesView> {
+    const target = libraryTarget(kind, workspace, directory, preferredRoot), entries: WorkspaceFilesView['entries'][number][] = [];
+    let missing = false, more: number | undefined, used = 0, consumed = 0;
+    if (!Number.isInteger(offset) || offset < 0 || offset > 10000) { throw new Error('Refresh the folder to restart library paging.'); }
+    if (offset === 10000) { throw new Error('The library reached its folder-entry budget. Organize files into smaller subfolders.'); }
+    const add = (name: string, folder: boolean) => {
+        // Names are one path component, including on providers that return malformed entries.
+        if (!name || name.includes('/') || name.includes('\\') || name.includes(':') || name === '.' || name === '..' || /[\u0000-\u001f\u007f]/.test(name)) { return; }
+        const relative = directory ? `${directory}/${name}` : name;
+        if (relative.length > 1024 || (!folder && !(kind === 'plans' ? /\.(md|json)$/i : /\.json$/i).test(name))) { return; }
+        const entry = { name, path: relative, directory: folder }, bytes = Buffer.byteLength(JSON.stringify(entry));
+        if (used + bytes > 24576) { return false; }
+        used += bytes; entries.push(entry);
+    };
+    try {
+        if (target.uri.scheme === 'file') {
+            const handle = fs.opendirSync(target.uri.fsPath);
+            try {
+                for (let at = 0; at < offset; at++) { if (!handle.readSync()) { break; } }
+                let item: fs.Dirent | null;
+                while ((item = handle.readSync())) {
+                    if (consumed >= 100 || (!item.isSymbolicLink() && (item.isDirectory() || item.isFile()) && add(item.name, item.isDirectory()) === false)) { more = offset + consumed; break; }
+                    consumed++;
+                }
+            } finally { handle.closeSync(); }
+        } else {
+            // The provider owns enumeration; display/transport remain bounded after its reply.
+            await checkRemoteLibrary(target.root, kind, directory, true);
+            const all = await vscode.workspace.fs.readDirectory(target.uri);
+            for (const [name, type] of all.slice(offset)) {
+                if (consumed >= 100 || (!(type & vscode.FileType.SymbolicLink) && add(name, type === vscode.FileType.Directory) === false)) { more = offset + consumed; break; }
+                consumed++;
+            }
+        }
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as { code?: string }).code === 'FileNotFound') { missing = true; } else { throw error; }
+    }
+    if (more !== undefined && more > 10000) { throw new Error('The library exceeded its folder-entry budget. Organize files into smaller subfolders.'); }
+    entries.sort((left, right) => Number(right.directory) - Number(left.directory) || left.name.localeCompare(right.name));
+    return { kind, workspace: target.workspace, roots: target.roots, base: fileBase(kind), directory, entries, ...(more !== undefined ? { more } : {}), missing };
+}
+
+export async function loadWorkspaceFile(kind: WorkspaceFileKind, workspace: string, relative: string): Promise<ImportedPlan | Strategy | SearchRecipe> {
+    relativeFile(relative);
+    const target = libraryTarget(kind, workspace, relative);
+    if (!(kind === 'plans' ? /\.(md|json)$/i : /\.json$/i).test(relative)) { throw new Error('Choose a supported plan, strategy or recipe file.'); }
+    if (target.uri.scheme === 'file') {
+        const stat = fs.lstatSync(target.uri.fsPath);
+        if (!stat.isFile() || stat.nlink !== 1) { throw new Error('Choose a regular, unlinked file.'); }
+    } else { await checkRemoteLibrary(target.root, kind, relative, false); }
+    const text = await readImport(target.uri, kind === 'plans' ? PLAN_LIMIT_BYTES * 2 : kind === 'strategies' ? STRATEGY_LIMIT_BYTES * 2 : 8192);
+    libraryTarget(kind, workspace, relative); // Recheck trust/root membership after a provider read.
+    if (kind === 'plans') { return parsePlanFile(text); }
+    const value = JSON.parse(text);
+    if (kind === 'recipes') { const recipe = validateRecipe(value); if (!recipe) { throw new Error('Invalid AIRK search recipe.'); } return recipe; }
+    const checked = validateStrategy(value);
+    if (!checked.ok) { throw new Error(checked.errors.slice(0, 5).join('; ')); }
+    return checked.strategy;
+}
+
+export async function importRecipe(): Promise<SearchRecipe | undefined> {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const [source] = await vscode.window.showOpenDialog({ title: 'Load AIRK search recipe', canSelectMany: false, filters: { 'AIRK recipe JSON': ['json'] },
+        ...(folder ? { defaultUri: vscode.Uri.joinPath(folder, '.airk', 'recipes') } : {}) }) ?? [];
+    if (!source) { return undefined; }
+    const recipe = validateRecipe(JSON.parse(await readImport(source, 8192)));
+    if (!recipe) { throw new Error('Invalid AIRK search recipe.'); }
+    return recipe;
+}
+
 /** Open rendered Markdown as an untitled document: opened, never saved. */
 export async function openPlanDraft(markdown: string): Promise<{ opened: true }> {
     const document = await vscode.workspace.openTextDocument({ content: markdown, language: 'markdown' });
-    await vscode.window.showTextDocument(document, { preview: false });
+    await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
     return { opened: true };
 }
 
@@ -123,7 +230,7 @@ export function plannerDirectory(): string {
  * replaced only after confirmation, and the written bytes are read back and compared.
  */
 export async function savePlanInWorkspace(markdown: string, fileName: string, authorized: () => boolean = () => vscode.workspace.isTrusted !== false,
-    options: { title: string; filters: Record<string, string[]> } = { title: 'Save AIRK plan', filters: { Markdown: ['md'] } }): Promise<PlanSaveResult> {
+    options: { title: string; filters: Record<string, string[]>; directory?: string } = { title: 'Save AIRK plan', filters: { Markdown: ['md'] } }): Promise<PlanSaveResult> {
     const folders = (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file' || folder.uri.scheme === 'vscode-remote');
     if (!folders.length) { return { saved: false, reason: 'Open a workspace folder to save plans in it.' }; }
     const folder = folders.length === 1 ? folders[0] : (await vscode.window.showQuickPick(folders.map(entry => ({ label: entry.name, description: entry.uri.fsPath, folder: entry })),
@@ -132,8 +239,8 @@ export async function savePlanInWorkspace(markdown: string, fileName: string, au
     if (folder.uri.scheme !== 'file') { return { saved: false, reason: 'Guarded plan saving requires a local filesystem. Use Open as draft and the editor Save command for remote folders.' }; }
     const originalRoot = fs.realpathSync.native(folder.uri.fsPath);
     const rootIdentity = fs.statSync(originalRoot, { bigint: true });
-    const defaultUri = vscode.Uri.joinPath(folder.uri, ...plannerDirectory().split('/'), fileName);
-    const target = await vscode.window.showSaveDialog({ ...options, defaultUri });
+    const defaultUri = vscode.Uri.joinPath(folder.uri, ...(options.directory ?? plannerDirectory()).split('/'), fileName);
+    const target = await vscode.window.showSaveDialog({ title: options.title, filters: options.filters, defaultUri });
     if (!target) { return { saved: false, reason: 'Save was canceled; nothing was written.' }; }
     if (!authorized()) { return { saved: false, reason: 'Workspace authorization changed; nothing was written.' }; }
     if (target.scheme !== folder.uri.scheme || target.authority !== folder.uri.authority) { return { saved: false, reason: 'Plans can only be saved inside the chosen workspace folder.' }; }
@@ -194,6 +301,6 @@ export async function savePlanInWorkspace(markdown: string, fileName: string, au
     const hash = createHash('sha256').update(bytes).digest('hex');
     const readBack = createHash('sha256').update(await vscode.workspace.fs.readFile(target)).digest('hex');
     if (readBack !== hash) { return { saved: false, reason: 'The saved file does not match the plan that was written; check the file before handing it off.' }; }
-    await vscode.window.showTextDocument(target, { preview: false });
+    await vscode.window.showTextDocument(target, { viewColumn: vscode.ViewColumn.Beside, preview: false });
     return { saved: true, path: shown, hash };
 }

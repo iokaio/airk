@@ -8,7 +8,9 @@ related_airk_help: freshness, limits
 ---
 # Inspect a citation
 
-Evidence › Inspector shows one cited file's indexed record and compares the saved bytes with the indexed content hash.
+Evidence › Inspector shows the selected source file's indexed record and compares the saved bytes with the indexed content hash. Choose a file in the header to load it automatically when no citation is selected. **Inspect selected file** loads or refreshes that file, including after inspecting a citation.
+
+To inspect a specific citation, go to Search and choose **Inspect** on a result, or use **Inspect** on a fact or checked citation. Selecting a source file does not replace an explicitly selected citation; use **Inspect selected file** to switch back. Files absent from the published index report an error.
 
 ## Results
 

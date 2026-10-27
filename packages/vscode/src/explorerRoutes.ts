@@ -8,14 +8,14 @@ export interface TabDefinition { readonly id: string; readonly title: string }
 export interface WorkspaceDefinition {
     readonly id: WorkspaceId;
     readonly title: string;
-    /** Rail placement: Management is pinned at the bottom; Help opens as a drawer. */
+    /** Route grouping. The rail places Management beside the main workspaces, not at the viewport bottom. */
     readonly placement: 'main' | 'pinned' | 'drawer';
     readonly tabs: readonly TabDefinition[];
 }
 
 export const WORKSPACES: readonly WorkspaceDefinition[] = [
     { id: 'overview', title: 'Overview', placement: 'main', tabs: [] },
-    { id: 'search', title: 'Search', placement: 'main', tabs: [{ id: 'query', title: 'Query' }, { id: 'recipes', title: 'Recipes' }] },
+    { id: 'search', title: 'Search', placement: 'main', tabs: [{ id: 'query', title: 'Query' }, { id: 'recipes', title: 'Saved Searches' }] },
     { id: 'code', title: 'Code', placement: 'main', tabs: [{ id: 'symbols', title: 'Symbols' }, { id: 'references', title: 'References' }, { id: 'outline', title: 'Outline' }] },
     { id: 'docs', title: 'Documents', placement: 'main', tabs: [{ id: 'facts', title: 'Facts' }] },
     { id: 'evidence', title: 'Evidence', placement: 'main', tabs: [{ id: 'inspector', title: 'Inspector' }, { id: 'checker', title: 'Checker' }, { id: 'changes', title: 'Changes' }] },

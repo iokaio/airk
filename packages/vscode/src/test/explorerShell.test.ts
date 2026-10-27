@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import Module from 'node:module';
+import * as path from 'node:path';
 import { test } from 'node:test';
 import type { ExplorerViewState } from '../explorerContracts';
 import { FEATURES } from '../explorerFeatures';
@@ -10,11 +11,15 @@ import { HandoffStore } from '../explorerHandoffs';
 const disposable = { dispose() {} };
 const panels: any[] = [];
 const vscodeStub = {
-    Uri: { joinPath: (base: any, ...parts: string[]) => ({ path: [base.path, ...parts].join('/'), toString() { return `vscode-resource:${this.path}`; } }) },
+    workspace: { textDocuments: [] as any[] },
+    Uri: { file: (fsPath: string) => ({ scheme: 'file', fsPath }), joinPath: (base: any, ...parts: string[]) => ({ path: [base.path, ...parts].join('/'), toString() { return `vscode-resource:${this.path}`; } }) },
     ViewColumn: { Active: 1 },
     EventEmitter: class { event = () => disposable; fire() {} dispose() {} },
     window: {
+        tabGroups: { all: [] as any[] },
         showWarningMessage: async (): Promise<string | undefined> => undefined,
+        showOpenDialog: async (): Promise<any[] | undefined> => undefined,
+        showQuickPick: async (_items: any[]): Promise<any> => undefined,
         createWebviewPanel: (_type: string, _title: string, _column: unknown, options: any) => {
             let receive: (value: unknown) => void = () => undefined;
             let closed: () => void = () => undefined;
@@ -36,7 +41,7 @@ const load = (Module as any)._load;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { ExplorerController } = require('../explorerController') as typeof import('../explorerController');
 const { explorerHtml } = require('../explorerPanel') as typeof import('../explorerPanel');
-const { renderSidebar, sidebarContent, sidebarMessage } = require('../explorerSidebar') as typeof import('../explorerSidebar');
+const { ExplorerSidebar, renderSidebar, sidebarContent, sidebarMessage } = require('../explorerSidebar') as typeof import('../explorerSidebar');
 const { SuggestionStore } = require('../explorerSuggestions') as typeof import('../explorerSuggestions');
 
 const project = 'ab'.repeat(32);
@@ -88,6 +93,116 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
     return { explorer: new TestController(host as any), statusBar, runs, suggestions };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+
+test('Inspector without a citation uses only the host-selected file in the selected project', async () => {
+    const { RefRegistry } = require('../explorerSearch') as typeof import('../explorerSearch');
+    const instance = Object.create(ExplorerController.prototype) as any;
+    const calls: unknown[] = [];
+    Object.assign(instance, { selected: project, sourceFiles: new Map([[project, 'chosen.ts']]), refs: new RefRegistry(),
+        requireProject: () => project, session: () => ({ call: async (tool: string, args: unknown) => {
+            calls.push([tool, args]); return { publication: 'p', payload: { content_hash: 'ab'.repeat(32) } };
+        } }) });
+    const view = await instance.dispatch({ type: 'evidence.inspect' });
+    assert.equal(view.path, 'chosen.ts');
+    assert.deepEqual(calls, [['airk_file_info', { path: 'chosen.ts', response_mode: 'full' }]]);
+    instance.selected = 'other-project';
+    await assert.rejects(instance.dispatch({ type: 'evidence.inspect' }), /source file/);
+    assert.equal(calls.length, 1);
+});
+
+test('source context survives Explorer focus and stays isolated by project', async t => {
+    const rootA = path.resolve('source-a'), rootB = path.resolve('source-b');
+    const instance = Object.create(ExplorerController.prototype) as any;
+    Object.assign(instance, { selected: 'A', selectionEpoch: 1, sourceFiles: new Map(), publish() {}, host: { trusted: () => true,
+        specs: () => [{ root: rootA, service: { project: 'A' } }, { root: rootB, service: { project: 'B' } }] } });
+    const editor = (file: string) => ({ document: { uri: { scheme: 'file', fsPath: file } } });
+    assert.equal(instance.rememberSource(editor(path.join(rootA, 'src', 'one.ts'))), true);
+    instance.rememberSource(undefined);
+    assert.equal(instance.activeRelativePath(), 'src/one.ts', 'webview focus does not erase the target');
+    instance.selected = 'B'; assert.equal(instance.activeRelativePath(), undefined);
+    instance.rememberSource(editor(path.join(rootB, 'two.ts'))); assert.equal(instance.activeRelativePath(), 'two.ts');
+    instance.selected = 'A'; assert.equal(instance.activeRelativePath(), 'src/one.ts');
+    t.mock.method(vscodeStub.window, 'showQuickPick', async (items: any[]) => items.at(-1));
+    t.mock.method(vscodeStub.window, 'showOpenDialog', async () => [{ scheme: 'file', fsPath: path.join(rootB, 'foreign.ts') }]);
+    await assert.rejects(instance.dispatch({ type: 'source.choose' }), /Choose a file inside/);
+    t.mock.method(vscodeStub.window, 'showOpenDialog', async () => [{ scheme: 'file', fsPath: path.join(rootA, 'chosen.ts') }]);
+    await instance.dispatch({ type: 'source.choose' }); assert.equal(instance.activeRelativePath(), 'chosen.ts');
+    t.mock.method(vscodeStub.window, 'showOpenDialog', async () => { instance.selectionEpoch++; return [{ scheme: 'file', fsPath: path.join(rootA, 'stale.ts') }]; });
+    await assert.rejects(instance.dispatch({ type: 'source.choose' }), /binding changed/);
+    assert.equal(instance.activeRelativePath(), 'chosen.ts');
+    vscodeStub.window.tabGroups.all = [{ tabs: [{ input: { uri: { scheme: 'file', fsPath: path.join(rootB, 'open-tab.ts') } } }] }];
+    t.after(() => { vscodeStub.window.tabGroups.all = []; });
+    instance.select = (selected: string) => { instance.selected = selected; };
+    t.mock.method(vscodeStub.window, 'showQuickPick', async (items: any[]) => { assert.match(items[0].detail, /switches the selected project/); return items[0]; });
+    await instance.dispatch({ type: 'source.choose' });
+    assert.equal(instance.selected, 'B'); assert.equal(instance.activeRelativePath(), 'open-tab.ts');
+});
+
+test('Help offers native context and general choices without retrieving evidence', async t => {
+    const instance = Object.create(ExplorerController.prototype) as any;
+    t.mock.method(vscodeStub.window, 'showQuickPick', async (items: any[]) => { assert.equal(items[0].label, 'Help for Code › Outline'); return items[0]; });
+    assert.equal(await instance.dispatch({ type: 'help.choose', route: 'code/outline' }), 'screen');
+    t.mock.method(vscodeStub.window, 'showQuickPick', async (items: any[]) => items[1]);
+    assert.equal(await instance.dispatch({ type: 'help.choose', route: 'code/outline' }), 'general');
+    t.mock.method(vscodeStub.window, 'showQuickPick', async () => undefined);
+    assert.equal(await instance.dispatch({ type: 'help.choose', route: 'code/outline' }), null);
+});
+
+function sidebarView() {
+    let visibility = () => {}, disposed = () => {}, receive = (_value: unknown) => {};
+    const view = { visible: true, webview: { options: {}, html: '', posted: [] as any[],
+        postMessage: async (value: any) => { view.webview.posted.push(value); return true; },
+        onDidReceiveMessage: (listener: typeof receive) => { receive = listener; return disposable; } },
+        onDidChangeVisibility: (listener: () => void) => { visibility = listener; return disposable; },
+        onDidDispose: (listener: () => void) => { disposed = listener; return disposable; } };
+    return { view, visible: (value: boolean) => { view.visible = value; visibility(); },
+        send: (value: unknown) => receive(value), dispose: () => disposed() };
+}
+
+test('activity entry opens Explorer once per reveal, even without a service or trusted snapshot', async () => {
+    const fixture = sidebarView(); let opens = 0, hides = 0, released = 0;
+    let finish!: () => void;
+    const sidebar = new ExplorerSidebar({ commandUris: [], folders: () => 1,
+        attach: async () => ({ dispose: () => { released++; } }),
+        open: () => { opens++; return new Promise<void>(resolve => { finish = resolve; }); },
+        hide: async () => { hides++; fixture.visible(false); }, search: () => {} });
+    sidebar.resolveWebviewView(fixture.view as any);
+    fixture.visible(true); await flush();
+    assert.equal(opens, 1, 'visibility during resolution cannot open a second panel');
+    assert.match(fixture.view.webview.html, /Opening AIRK Explorer/);
+    assert.doesNotMatch(fixture.view.webview.html, /Get started with AIRK/);
+    finish(); await flush(); assert.equal(hides, 1);
+    fixture.visible(true); assert.equal(opens, 2, 'a subsequent activity click reveals Explorer again');
+    fixture.visible(false); finish(); await flush();
+    assert.equal(hides, 1, 'a delayed launch cannot close the sidebar the user switched to');
+    fixture.dispose(); sidebar.dispose(); assert.equal(released, 1);
+});
+
+test('activity entry shows the old panel only on an opening failure and can retry', async () => {
+    const fixture = sidebarView(); let fail = true, hides = 0;
+    const sidebar = new ExplorerSidebar({ commandUris: [], folders: () => 1,
+        attach: async () => { throw new Error('snapshot unavailable'); },
+        open: async () => { if (fail) { throw new Error('<missing bundle>'); } },
+        hide: async () => { hides++; }, search: () => {} });
+    sidebar.resolveWebviewView(fixture.view as any); await flush();
+    const html = fixture.view.webview.posted.at(-1).html;
+    assert.match(html, /Get started with AIRK/); assert.match(html, /&lt;missing bundle&gt;/);
+    assert.match(html, /Retry AIRK Explorer/); assert.equal(hides, 0);
+    fail = false; fixture.send({ type: 'sidebar', action: 'open' }); await flush();
+    assert.equal(hides, 1); assert.doesNotMatch(fixture.view.webview.posted.at(-1).html, /Get started with AIRK/);
+    fixture.dispose(); sidebar.dispose();
+});
+
+test('a recreated activity view waits for the old launch and then opens its own Explorer', async () => {
+    const first = sidebarView(), second = sidebarView(); let finish!: () => void, opens = 0, hides = 0;
+    const sidebar = new ExplorerSidebar({ commandUris: [], folders: () => 1, attach: async () => disposable,
+        open: () => { opens++; return opens === 1 ? new Promise<void>(resolve => { finish = resolve; }) : Promise.resolve(); },
+        hide: async () => { hides++; }, search() {} });
+    sidebar.resolveWebviewView(first.view as any); first.dispose(); sidebar.resolveWebviewView(second.view as any);
+    finish(); await flush();
+    assert.equal(opens, 2); assert.equal(hides, 1);
+    second.dispose(); sidebar.dispose();
+});
 
 test('status selection generations load the new project after a pending old request settles', async () => {
     const instance = Object.create(ExplorerController.prototype) as any;
@@ -228,6 +343,10 @@ test('search recipes are validated, kept per workspace, replaced by name and cap
     };
     const recipe = (name: string, extra: Record<string, unknown> = {}) => ({ schema: 'airk.explorer.search-recipe/1', name, query: 'renew', mode: 'lexical', limit: 20, maxBytes: 16384, fullChunks: false, ...extra });
     assert.deepEqual((await reply('l1', { type: 'recipes.list' })).data, [], 'a damaged stored recipe is dropped, never run');
+    assert.equal((await reply('import1', { type: 'recipes.save', recipe: recipe('imported'), expected: 'null' })).ok, true);
+    const conflict = await reply('import2', { type: 'recipes.save', recipe: recipe('imported', { query: 'replacement' }), expected: 'null' });
+    assert.equal(conflict.error.code, 'PROPOSAL_CONFLICT', 'a file import cannot overwrite a recipe added after review');
+    await reply('import-delete', { type: 'recipes.delete', name: 'imported' });
     assert.deepEqual((await reply('s1', { type: 'recipes.save', recipe: recipe('b') })).data.map((entry: any) => entry.name), ['b']);
     assert.deepEqual((await reply('s2', { type: 'recipes.save', recipe: recipe('a', { pathPrefix: 'src/' }) })).data.map((entry: any) => entry.name), ['a', 'b']);
     assert.equal((await reply('s3', { type: 'recipes.save', recipe: recipe('a', { query: 'changed' }) })).data.find((entry: any) => entry.name === 'a').query, 'changed');
