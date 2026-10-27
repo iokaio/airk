@@ -1,6 +1,6 @@
 # Native VS Code extension
 
-## AIRK Explorer (in development for 1.5.0)
+## AIRK Explorer (1.5.0)
 
 **AIRK: Open Explorer** opens the AIRK Explorer in an editor tab. The AIRK activity bar's **Status & Search** view shows the selected project's live status, a quick search box and the Open Explorer button; until a project is registered it shows the setup guidance. The status bar item shows one word for the worst current condition and opens the Explorer.
 

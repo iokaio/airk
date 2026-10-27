@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
+import { automaticUpgrade, NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
 import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClient';
 import { nativePayloadDirectory } from './nativeServiceFixture';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
@@ -409,4 +409,11 @@ test('native lifecycle sends a bounded saved intent over stdin and refuses a cro
         await host.lifecycle(binding,intent);assert.deepEqual(JSON.parse(inputs[0]),{...intent.lifecycle,force:false});
         crossed=true;await assert.rejects(host.lifecycle(binding,intent),/crossed_lifecycle_receipt/);
     }finally{await f.cleanup();}
+});
+
+test('activation upgrades automatically only within 1.4 or 1.5 patches and from 1.4 to 1.5', () => {
+    for (const [from, to] of [['1.4.0', '1.4.4'], ['1.4.4', '1.4.4'], ['1.4.4', '1.5.0'], ['1.4.1', '1.5.3'], ['1.5.0', '1.5.2']]) { assert.ok(automaticUpgrade(from, to), `${from} → ${to}`); }
+    for (const [from, to] of [['1.5.0', '1.4.4'], ['1.4.4', '1.4.3'], ['1.3.2', '1.5.0'], ['1.3.2', '1.4.0'], ['1.5.1', '1.5.0'], ['1.4.4', '1.6.0'], ['2.0.0', '2.0.1'], ['1.4', '1.5.0'], ['1.4.x', '1.5.0']]) {
+        assert.equal(automaticUpgrade(from, to), false, `${from} → ${to}`);
+    }
 });

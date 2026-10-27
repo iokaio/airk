@@ -1,6 +1,10 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-1.4.4 corrects Unix cleanup after a child exits naturally. Cleanup confirms that the owned child has exited and its process group has drained before releasing it; transient native errors remain bounded by the existing deadline.
+**1.5.0 adds the AIRK Explorer**, an editor workbench that replaces the Service Console: search and inspect indexed evidence, review Git changes against the index, build evidence strategies and agent plans, and manage the service from nine Management tabs. A separate, extension-owned **Explorer Assistance** MCP server answers how-to questions about the Explorer and delivers inert drafts to a Suggestions Inbox; it never calls AIRK Retrieval, runs commands or writes files. External agents reach it through the stable launcher, so no system Node is needed. See the [1.5.0 release record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.0.md) and the [extension guide](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md).
+
+Open it with **AIRK: Open Explorer** or the AIRK activity bar. Explorer Assistance is offered to VS Code agents as a second MCP provider and to Claude Code, Codex and Gemini CLI through **Connect a Coding Agent**, which now configures two separately checked connections.
+
+Previous release, 1.4.4: corrects Unix cleanup after a child exits naturally. Cleanup confirms that the owned child has exited and its process group has drained before releasing it; transient native errors remain bounded by the existing deadline.
 
 1.4.4 also creates staged Windows runtime directories with explicit current-user ownership and owner-only access, including nested payload directories, so elevated installations satisfy the same strict ownership checks. Installed macOS runtime validation, self-test and retirement read the complete app payload from its outer root. Cold service starts coordinate registration-metadata setup before source watching.
 

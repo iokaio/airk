@@ -5,6 +5,18 @@ import * as path from 'node:path';
 import { runText } from './native';
 import { NativeControlTransport, ServiceClient, ServiceError, record, RecordValue, identifier, count, ProjectConfigurationRequest, validateConfigurationRequest } from './serviceClient';
 import type { LifecycleIntent } from './serviceIntents';
+
+/**
+ * Whether activation may upgrade the installed runtime to the bundled one without asking:
+ * patch upgrades within 1.4 or 1.5, and 1.4.x → 1.5.x (same service namespace). Downgrades
+ * and other version lines need an explicit, reviewed transition.
+ */
+export function automaticUpgrade(installed: string, bundled: string): boolean {
+    const from = installed.split('.').map(Number), to = bundled.split('.').map(Number);
+    if (from.length !== 3 || to.length !== 3 || [...from, ...to].some(part => !Number.isSafeInteger(part) || part < 0) || from[0] !== 1 || to[0] !== 1) { return false; }
+    if (from[1] === to[1]) { return (from[1] === 4 || from[1] === 5) && from[2] <= to[2]; }
+    return from[1] === 4 && to[1] === 5;
+}
 export type RuntimeChannel = 'stable' | 'preview';
 export interface RuntimeOptions {
     channel: RuntimeChannel; installDir?: string;

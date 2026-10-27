@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
 import { assistanceEntry, collectionId, launchArgs, LaunchSpec, McpVerification, retrievalEntry, ServerEntry } from './model';
 import { probeAssistance, probeMcp, runText } from './native';
-import { RuntimeBinding, RuntimeHost } from './serviceBootstrap';
+import { automaticUpgrade, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError } from './serviceClient';
 import { IntentJournal } from './serviceIntents';
@@ -333,9 +333,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const installed=await this.runtime().discover();this.trusted();
             if(installed.inspection&&!serviceRuntimeOptions().managed){
                 const current=this.runtime().binding(installed.inspection,installed.installDir),target=this.context.extension.packageJSON.version as string;
-                const from=current.version.split('.').map(Number),to=target.split('.').map(Number);
-                if(from[0]===1&&from[1]===4&&to[0]===1&&to[1]===4&&from[2]<=to[2]
-                    &&(current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
+                if(automaticUpgrade(current.version,target)&&(current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
                     this.reportInstall(`Upgrading ${current.version} → ${target}…`);
                     // Finish a prior installation's deferred cleanup before staging another replacement.
                     if(!installed.diagnosis?.pending_activation)await this.runtime().retirePrevious(current);
