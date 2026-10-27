@@ -276,9 +276,17 @@ export interface HelpTopic {
     readonly aliases: readonly string[];
     /** airk_help topic ids for engine-level detail (served by AIRK Retrieval, not proxied). */
     readonly relatedAirkHelp: readonly string[];
+    /** Repository-relative topic file, reported as the help source identity. */
+    readonly source: string;
     readonly body: string;
 }
 export interface HelpCatalog { readonly catalogVersion: 1; readonly extensionVersion: string; readonly topics: readonly HelpTopic[] }
+
+/** The extension-owned Explorer Assistance MCP server. It never calls AIRK Retrieval or the service. */
+export const ASSISTANCE_SERVER_NAME = 'airk-explorer';
+/** Assistance tools shipped in this version, in tools/list order. Draft tools arrive with the Suggestions Inbox. */
+export const ASSISTANCE_TOOLS = ['airk_explorer_help_search', 'airk_explorer_help_get', 'airk_explorer_ui_status'] as const;
+export const ASSISTANCE_HELP_URI = 'airk-explorer-help://';
 /** airk_help reply as shown in the Explorer. */
 export interface EngineHelpView { readonly topic: string; readonly title: string; readonly content: string; readonly version?: string; readonly topics: readonly { id: string; title: string }[]; readonly truncated: boolean }
 

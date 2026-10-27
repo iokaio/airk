@@ -102,6 +102,8 @@ class VsixContracts(unittest.TestCase):
             compiled.mkdir()
             (compiled / "explorerWebview.js").write_bytes((banner + "(()=>{document.body;})();\n").encode("utf-8"))
             (compiled / "explorerWebview.css").write_bytes(b"body{margin:0}\n")
+            assistance = "/*! AIRK Explorer Assistance MCP server 1.0.0. No third-party code. */\n"
+            (compiled / "explorerAssistance.js").write_bytes((assistance + 'require("node:crypto");\n').encode("utf-8"))
             stage = Path(directory) / "stage"
             package.stage_bundles(compiled, stage, "10.0.0")
             self.assertEqual({p.name for p in stage.iterdir()}, set(package.BUNDLES))
@@ -120,6 +122,20 @@ class VsixContracts(unittest.TestCase):
                     package.stage_bundles(compiled, target, "10.0.0")
                 self.assertFalse(target.exists(), "Validate every bundle before staging any")
             (compiled / "explorerWebview.js").write_bytes(banner.encode("utf-8"))
+            for body, message in {
+                'require("fs");': "Node built-ins only",
+                'require("vscode");': "VS Code API",
+                "require(name);": "Node built-ins only",
+                'import("node:fs").then(()=>require("child"));': "Node built-ins only",
+                "class RuntimeHost {}": "host implementation",
+            }.items():
+                (compiled / "explorerAssistance.js").write_bytes((assistance + body).encode("utf-8"))
+                with self.assertRaisesRegex(ValueError, message):
+                    package.stage_bundles(compiled, Path(directory) / "assistance", "10.0.0")
+            (compiled / "explorerAssistance.js").write_bytes(b"require('node:fs');")
+            with self.assertRaisesRegex(ValueError, "identifying banner"):
+                package.stage_bundles(compiled, Path(directory) / "assistance", "10.0.0")
+            (compiled / "explorerAssistance.js").write_bytes(assistance.encode("utf-8"))
             with self.assertRaisesRegex(ValueError, "pinned Preact notice"):
                 package.stage_bundles(compiled, Path(directory) / "wrong-version", "10.0.1")
             (compiled / "explorerWebview.css").unlink()
