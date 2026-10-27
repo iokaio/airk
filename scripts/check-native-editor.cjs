@@ -29,7 +29,7 @@ async function checkExplorer(ui){
     if(!hits.paths.some(value=>value.startsWith('fixture.ts')))throw new Error('Explorer search did not cite the fixture: '+JSON.stringify(hits));
     await ui.until(async()=>(await inExplorer("(()=>{const b=[...document.querySelectorAll('.rail button')].find(n=>n.textContent.startsWith('Management'));if(!b)return false;b.click();return true;})()"))?.value,'Explorer Management rail');
     const rows=await ui.until(async()=>(await inExplorer("(()=>{const r=[...document.querySelectorAll('table.grid tbody tr')].map(x=>x.innerText);return r.length?r:false;})()"))?.value,'Explorer Management projects');
-    if(!rows.some(row=>row.includes('workspace-a')))throw new Error('Explorer Management did not list the project: '+JSON.stringify(rows));
+    if(!rows.some(row=>row.includes('workspace-a')||row.includes('workspace-b')))throw new Error('Explorer Management did not list the project: '+JSON.stringify(rows));
     return {hits,rows};
 }
 async function cleanupServices(){
@@ -72,8 +72,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
             await fs.writeFile(path.join(profile,'User/settings.json'),JSON.stringify({'airk.service.installDir':path.join(folder,'native-service'),'airk.storage.path':storage,'airk.cli.autoInstall':false,
                 'workbench.startupEditor':'none','window.restoreWindows':'none','security.workspace.trust.startupPrompt':'never','extensions.autoUpdate':false,'extensions.autoCheckUpdates':false,
                 'telemetry.telemetryLevel':'off','update.mode':'none','files.simpleDialog.enable':true,'window.dialogStyle':'custom',
-                // Legacy console acceptance continues while the view is kept for one release.
-                'airk.explorer.showServiceConsole':true}));
+}));
             let workspace=path.join(folder,scenario==='different'&&role==='b'?'workspace-b':'workspace-a');
             if(['multi','usage'].includes(scenario)){workspace=path.join(folder,'two-roots.code-workspace');await fs.writeFile(workspace,JSON.stringify({folders:[{path:'workspace-a'},{path:'workspace-b'}]}));}
             ports[role]=await unusedPort();
@@ -101,7 +100,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                         else{if(scenario!=='multi'||!/^[a-f0-9]{64}$/.test(request.project))throw new Error('Invalid private repair selection');await uis[role].approveRepair(request.project);}
                         handled.set(role,request.sequence);await fs.writeFile(path.join(folder,`${role}-ui-done-${request.sequence}.json`),'{}');}
                 }
-                if(scenario==='same'&&await exists(path.join(folder,'a-explorer-ready.json'))&&!explorerTask){uis.a??=await editorUi(ports.a);
+                if(scenario==='multi'&&await exists(path.join(folder,'a-explorer-ready.json'))&&!explorerTask){uis.a??=await editorUi(ports.a);
                     explorerTask=checkExplorer(uis.a).then(value=>fs.writeFile(path.join(folder,'explorer-checked.json'),JSON.stringify(value,null,2))).catch(error=>{failure=error;});}
                 if(scenario==='usage'&&await exists(path.join(folder,'a-usage-ready.json'))&&!usageTask){usageTask=require('./check-usage-editor.cjs').checkUsage(ports.a,folder).then(value=>{uiChecks.a=value;}).catch(error=>{failure=error;});}
                 if((await Promise.all(roles.map(role=>exists(path.join(folder,`${role}-capture.json`))))).every(Boolean))break;
@@ -110,9 +109,9 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
             }
             if(usageTask)await usageTask;if(explorerTask)await explorerTask;if(failure)throw failure;
             for(const role of roles){uis[role]??=await editorUi(ports[role]);const ui=uis[role];
-                const body=await ui.until(async()=>(await ui.service('document.body.innerText'))?.value,'native service console');
+                const body=await ui.until(async()=>(await ui.service('document.body.innerText'))?.value,'AIRK Explorer Management');
                 await fs.writeFile(path.join(folder,`${role}-service.txt`),body);
-                if(scenario==='untrusted'){if(!(await ui.service("[...document.querySelectorAll('button[data-action]')].filter(b=>['connect','registerWorkspace','start'].includes(b.dataset.action)).every(b=>b.disabled)"))?.value)throw new Error('Untrusted native controls were enabled');}
+                if(scenario==='untrusted'){if(!(await ui.service("document.body.innerText.includes('Trust this workspace')&&![...document.querySelectorAll('button')].some(b=>!b.disabled&&['Review workspace registration','Connect / reconnect','Start service','Index now'].includes(b.textContent.trim()))"))?.value)throw new Error('Untrusted native controls were enabled');}
                 else {await ui.responseMode('full');await ui.responseMode('terse');}
                 const page=await ui.workbench('document.title');const image=await page.client.call('Page.captureScreenshot',{format:'png'});
                 await fs.writeFile(path.join(folder,`${role}-workbench.png`),Buffer.from(image.data,'base64'));

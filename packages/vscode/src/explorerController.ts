@@ -114,9 +114,9 @@ export class ExplorerController implements vscode.Disposable {
         const state = this.snapshot();
         this.panel.post({ v: MESSAGE_VERSION, type: 'state', state });
         for (const listener of this.snapshotListeners) { listener(state); }
-        const { word } = headline(state.connection, state.status, this.host.specs().length);
+        const { word } = headline(state.connection, state.status, state.projects.length);
         const project = state.projects.find(entry => entry.project === state.selectedProject);
-        this.host.setStatusBar(`AIRK: ${word}`, project ? `AIRK Explorer · ${project.collection} · ${word}` : `AIRK Explorer · ${word}`);
+        this.host.setStatusBar(`AIRK: ${word}`, project ? `AIRK Explorer · ${project.name} · ${word}` : `AIRK Explorer · ${word}`);
     }
 
     private visibility(visible: boolean): void {
@@ -135,7 +135,7 @@ export class ExplorerController implements vscode.Disposable {
         if (project === this.selected) { return; }
         this.selected = project;
         this.evidence?.dispose(); this.evidence = undefined;
-        this.status = undefined; this.statusFor = undefined;
+        this.status = undefined; this.statusFor = undefined; this.notice = undefined;
         this.refs.clear(); this.facts.clear();
     }
 
@@ -190,7 +190,8 @@ export class ExplorerController implements vscode.Disposable {
                 const result = await this.session().call('airk_status', {}, { timeout: 90000, supersede: 'status' });
                 if (project === this.selected) { this.status = statusSummary(result.payload); this.statusFor = project; this.notice = undefined; }
             } catch (error) {
-                if (project === this.selected) { this.notice = failure(error); }
+                // A transient missing registration is not a user-facing failure; the next refresh retries.
+                if (project === this.selected && failure(error).code !== 'NO_PROJECT') { this.notice = failure(error); }
             } finally { this.statusLoading = undefined; this.publish(); }
         })();
         return this.statusLoading;

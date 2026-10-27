@@ -99,19 +99,22 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     private async refreshOnce():Promise<void>{
         const previous=JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)]));
-        this.specs=[];this.roots=[];this.binding=undefined;
+        // Observe into locals and publish once: readers never see an empty registration
+        // list in the middle of a refresh, only the previous or the new result.
+        const clear=()=>{this.specs=[];this.roots=[];this.binding=undefined;};
         try{
             this.trusted();const observation=await this.runtime().discover();this.trusted();
-            if(!observation.inspection||observation.inspection.payload_verified===false||observation.inspection.metadata_only===true){this.status.text='AIRK: setup';return;}
+            if(!observation.inspection||observation.inspection.payload_verified===false||observation.inspection.metadata_only===true){clear();this.status.text='AIRK: setup';return;}
             const binding=this.runtime().binding(observation.inspection,observation.installDir);
             if(binding.version!==this.context.extension.packageJSON.version)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
-            this.binding=binding;
+            const roots:{opened:string;canonical:string}[]=[];
             for(const folder of this.folders()){
-                try{this.roots.push({opened:folder.uri.fsPath,canonical:await fs.realpath(folder.uri.fsPath)});}catch{/* Saved missing-source bindings remain readable. */}
+                try{roots.push({opened:folder.uri.fsPath,canonical:await fs.realpath(folder.uri.fsPath)});}catch{/* Saved missing-source bindings remain readable. */}
             }
-            this.specs=await this.workspace.definitions(binding,this.folders().map(folder=>folder.uri.fsPath));this.trusted();
+            const specs=await this.workspace.definitions(binding,this.folders().map(folder=>folder.uri.fsPath));this.trusted();
+            this.binding=binding;this.roots=roots;this.specs=specs;
             this.status.text=`AIRK: ${this.specs.length} registered`;
-        }catch(error){this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
+        }catch(error){clear();this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
         finally{this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}
     }
     async registerWorkspace():Promise<void>{

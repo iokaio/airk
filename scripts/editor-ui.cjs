@@ -17,7 +17,10 @@ async function connect(target){
 async function editorUi(port){
     const clients=new Map();
     async function document(predicate,expression,type='iframe'){
-        const targets=await(await fetch(`http://127.0.0.1:${port}/json/list`,{signal:AbortSignal.timeout(10000)})).json();
+        let targets;
+        // The DevTools listing can refuse or reset a connection transiently; callers retry through until().
+        try{targets=await(await fetch(`http://127.0.0.1:${port}/json/list`,{signal:AbortSignal.timeout(10000)})).json();}
+        catch(error){if(/ECONNREFUSED|ECONNRESET|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT/.test(String(error?.cause?.code??'')))return;throw error;}
         for(const target of targets.filter(value=>value.type===type&&(type==='page'?value.url.includes('workbench'):value.url.includes('extensionId=iokaio.airk')))){
             let client=clients.get(target.id);if(!client){client=await connect(target);clients.set(target.id,client);}
             for(const context of client.contexts){try{if(await client.evaluate(context,predicate))return {value:await client.evaluate(context,expression),client,context,target};}
@@ -25,7 +28,9 @@ async function editorUi(port){
         }
     }
     const workbench=expression=>document('!!document.querySelector(".monaco-workbench")',expression,'page');
-    const service=expression=>document('!!document.querySelector("[data-action=responseMode]")',expression);
+    // AIRK Explorer › Management drives the same native controller the Service Console used.
+    const service=expression=>document("!!document.querySelector('.airk-explorer')",expression);
+    const clickButton=label=>`(()=>{const b=[...document.querySelectorAll('button')].find(n=>n.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)return false;b.click();return true;})()`;
     async function quickPick(label,title){
         const row=await until(async()=>{
             const result=await workbench(`(()=>{const widget=document.querySelector('.quick-input-widget');if(!widget||!widget.getBoundingClientRect().height||!widget.innerText.includes(${JSON.stringify(title)}))return;
@@ -49,26 +54,26 @@ async function editorUi(port){
         },`scoped confirmation ${label}`);
     }
     async function register(request){
-        await until(async()=>(await service("(()=>{const b=document.querySelector('[data-action=registerWorkspace]');if(!b||b.disabled)return false;b.click();return true;})()"))?.value,'workspace registration button');
+        await until(async()=>(await service(clickButton('Review workspace registration')))?.value,'workspace registration button');
         await quickPick(request.root,'Register a trusted source root with AIRK');
         await confirm('Review registration',['AIRK 1.4 uses a new service','fresh index namespace']);
         await quickPick('Manual indexing','AIRK indexing ownership');
         await confirm('Register',['Register this exact native project',request.source,request.storage,'Index data:','Automatic source watching is disabled']);
     }
     async function responseMode(mode){
-        await until(async()=>(await service("(()=>{const b=document.querySelector('[data-action=responseMode]');if(b.disabled)return false;b.click();return true;})()"))?.value,'response mode button');
+        await until(async()=>(await service(clickButton('Choose terse / full responses')))?.value,'response mode button');
         await quickPick(mode==='full'?'Full':'Terse (default)','');
         await until(async()=>(await service(`document.body.innerText.includes(${JSON.stringify('MCP response mode: '+mode)})`))?.value,`response mode ${mode}`);
     }
     async function approveRepair(project){
-        await until(async()=>(await service(`(()=>{const button=document.querySelector('[data-action=approvePlan]');if(!button||button.disabled)return false;
+        await until(async()=>(await service(`(()=>{const button=[...document.querySelectorAll('button')].find(n=>n.textContent.trim()==='Approve this exact preview');if(!button||button.disabled)return false;
             const rows=[...document.querySelectorAll('tr')].filter(row=>row.cells[0]?.textContent===${JSON.stringify(project)});
             if(rows.length!==1||!rows[0].innerText.includes('rebuild'))return false;button.click();return true;})()`))?.value,'exact one-project rebuild preview');
         await confirm('Continue',['Execute this exact native repair preview']);
-        await until(async()=>(await service(`(()=>{const button=document.querySelector('[data-action=approvePlan]');if(!button)return false;
+        await until(async()=>(await service(`(()=>{
             const phase=[...document.querySelectorAll('dt')].find(node=>node.textContent==='Phase'&&node.parentElement.querySelector('dt')?.textContent==='Plan');
             return phase?.nextElementSibling?.textContent==='finished';})()`))?.value,'native repair completion');
-        await until(async()=>(await service("(()=>{const button=document.querySelector('[data-action=refreshPlan]');if(!button||button.disabled)return false;button.click();return true;})()"))?.value,'refresh cached native repair receipts');
+        await until(async()=>(await service(clickButton('Refresh cached plan rows')))?.value,'refresh cached native repair receipts');
         const result=await until(async()=>(await service(`(()=>{
             const rows=[...document.querySelectorAll('tr')].filter(row=>row.cells[0]?.textContent===${JSON.stringify(project)});
             return rows.length===1&&['succeeded','failed','stale','skipped','canceled'].includes(rows[0].cells[1].textContent)?{phase:rows[0].cells[1].textContent,receipt:rows[0].innerText}:false;})()`))?.value,'native repair final receipt');

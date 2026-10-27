@@ -139,9 +139,9 @@ test('the sidebar accepts only open and bounded search, escapes values and falls
     }
     assert.match(sidebarContent(undefined, 1), /Get started with AIRK/);
     const state: ExplorerViewState = { revision: 1, extensionVersion: 'x', trusted: true, connection: 'ready', features: FEATURES, selectedProject: project,
-        projects: [{ project, collection: '<b>c</b>', name: 'n', root: '/r', current: true }] };
+        projects: [{ project, collection: 'c', name: '<b>n</b>', root: '/r', current: true }] };
     const html = sidebarContent(state, 1);
-    assert.match(html, /&lt;b&gt;c&lt;\/b&gt;/);
+    assert.match(html, /&lt;b&gt;n&lt;\/b&gt;/);
     assert.match(html, /Search indexed evidence/);
     assert.match(html, /not observed/);
     const page = renderSidebar(state, 1, 'abc');

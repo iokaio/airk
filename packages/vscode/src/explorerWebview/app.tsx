@@ -83,7 +83,7 @@ function ProjectPicker(props: { projects: readonly ProjectSummary[]; selected?: 
                 const project = (event.target as HTMLSelectElement).value;
                 if (/^[0-9a-f]{64}$/.test(project)) { void request('project.select', { project }).catch(() => undefined); }
             }}>
-                {props.projects.map(entry => <option key={entry.project} value={entry.project}>{entry.collection} · {entry.name}{entry.current ? ' (open)' : ''}</option>)}
+                {props.projects.map(entry => <option key={entry.project} value={entry.project} title={entry.collection}>{entry.name}{entry.current ? ' (open)' : ''}</option>)}
             </select>
         </label>
     );

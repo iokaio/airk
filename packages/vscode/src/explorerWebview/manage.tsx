@@ -42,9 +42,9 @@ function Act(props: { actions: ReturnType<typeof useActions>; action: Action; fi
     return <button type="button" class={props.ghost ? 'ghost' : ''} disabled={disabled} onClick={() => { void props.actions.act(props.action, props.fields); }}>{props.children}</button>;
 }
 
-function Frame(props: { view?: ManagementView; actions: ReturnType<typeof useActions>; intro: string; children: ComponentChildren }) {
+function Frame(props: { view?: ManagementView; trusted: boolean; actions: ReturnType<typeof useActions>; intro: string; children: ComponentChildren }) {
+    if (!props.trusted || props.view?.trusted === false) { return <p class="callout">Trust this workspace before AIRK connects or accepts management requests.</p>; }
     if (!props.view) { return <p class="muted">Reading the AIRK service state…</p>; }
-    if (!props.view.trusted) { return <p class="callout">Trust this workspace before AIRK connects or accepts management requests.</p>; }
     return (
         <div class="manage">
             <p class="muted">{props.intro} {props.view.authority} · {props.view.connected ? 'connected' : 'disconnected'}{props.view.busy ? ' · working' : ''}</p>
@@ -60,7 +60,7 @@ function Rows(props: { rows: readonly FactRow[] }) { return <Facts rows={props.r
 function ProjectPicker(props: { view: ManagementView; value?: string; onChange(project: string): void }) {
     return (
         <select value={props.value ?? ''} aria-label="Project" onChange={event => props.onChange((event.target as HTMLSelectElement).value)}>
-            {props.view.projects.map(entry => <option key={entry.summary.project} value={entry.summary.project}>{entry.summary.collection} · {entry.summary.name}</option>)}
+            {props.view.projects.map(entry => <option key={entry.summary.project} value={entry.summary.project} title={entry.summary.collection}>{entry.summary.name}</option>)}
         </select>
     );
 }
@@ -80,7 +80,7 @@ function Paging(props: { view: ManagementView; actions: ReturnType<typeof useAct
 export function ProjectsScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
-        <Frame view={view} actions={actions} intro="Registered projects from the service's cached project page.">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Registered projects from the service's cached project page.">
             {view && <>
                 <div class="actions">
                     <Act actions={actions} action="registerWorkspace" enabled={view.enabled.registerWorkspace}>Review workspace registration</Act>
@@ -98,7 +98,7 @@ export function ProjectsScreen(props: ScreenProps) {
                             <tr key={project.project} class={project.project === props.state.selectedProject ? 'selected' : ''}>
                                 <td><input type="checkbox" aria-label={`Select ${project.collection} for repair`} checked={entry.selected} disabled={view.inactive || !view.enabled.projectActions}
                                     onChange={event => { void actions.act('select', { project: project.project, selected: (event.target as HTMLInputElement).checked }); }} /></td>
-                                <th scope="row">{project.collection}{project.current && <span class="tag">open here</span>}</th>
+                                <th scope="row" title={project.collection}>{project.name}{project.current && <span class="tag">open here</span>}</th>
                                 <td><code class="path">{project.root || 'not observed'}</code></td>
                                 <td>{observed(project.watching)}</td><td>{observed(project.paused)}</td>
                                 <td title={project.publication}>{shortToken(project.publication)}</td><td>{observed(project.indexedFiles)}</td>
@@ -120,12 +120,12 @@ export function ProjectsScreen(props: ScreenProps) {
 export function ActivityScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
-        <Frame view={view} actions={actions} intro="Current and queued native work. Ages are real advancement observations; there is no ETA.">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Current and queued native work. Ages are real advancement observations; there is no ETA.">
             {view && <>
                 <Paging view={view} actions={actions} />
                 {view.projects.map(entry => (
                     <article class="card" key={entry.summary.project}>
-                        <h2>{entry.summary.collection}</h2>
+                        <h2 title={entry.summary.collection}>{entry.summary.name}</h2>
                         <Rows rows={entry.activity} />
                         <div class="actions">
                             {entry.jobId && (entry.jobState === 'failed' || entry.jobState === 'canceled') && <Act actions={actions} action="retryJob" fields={{ id: entry.jobId }}>Retry job</Act>}
@@ -155,7 +155,7 @@ export function RepairScreen(props: ScreenProps) {
     const [fallback, setFallback] = useState(false);
     const plan = view?.plan;
     return (
-        <Frame view={view} actions={actions} intro="Repair plans inspect state before choosing actions. Nothing runs until you approve the exact preview.">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Repair plans inspect state before choosing actions. Nothing runs until you approve the exact preview.">
             {view && <>
                 <div class="inline-form">
                     <label>Operation <select value={operation} onChange={event => setOperation((event.target as HTMLSelectElement).value as typeof operation)}>
@@ -203,7 +203,7 @@ export function RepairScreen(props: ScreenProps) {
 function ProjectCards(props: { view: ManagementView; actions: ReturnType<typeof useActions>; children(entry: ManagedProject): ComponentChildren; showRows?: boolean }) {
     return <>{props.view.projects.map(entry => (
         <article class="card" key={entry.summary.project}>
-            <h2>{entry.summary.collection} <span class="muted">{entry.summary.root}</span></h2>
+            <h2 title={entry.summary.collection}>{entry.summary.name} <span class="muted">{entry.summary.root}</span></h2>
             {props.showRows && <Rows rows={entry.rows} />}
             {entry.uncertainConfiguration && <p class="callout">The configuration effect is uncertain. Inspect the current settings before requesting another change.</p>}
             <div class="actions">{props.children(entry)}</div>
@@ -214,7 +214,7 @@ function ProjectCards(props: { view: ManagementView; actions: ReturnType<typeof 
 export function IndexingScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
-        <Frame view={view} actions={actions} intro="Per-project indexing controls. Project settings open the native settings picker (vectors, detail, models, extraction policy, scan limits and more).">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Per-project indexing controls. Project settings open the native settings picker (vectors, detail, models, extraction policy, scan limits and more).">
             {view && <>
                 <div class="actions"><button type="button" class="ghost" onClick={() => { void actions.command('airk.indexMode'); }}>Choose default automatic watching…</button></div>
                 <Paging view={view} actions={actions} />
@@ -239,7 +239,7 @@ export function IndexingScreen(props: ScreenProps) {
 export function StorageScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
-        <Frame view={view} actions={actions} intro="Storage location, project registration and reviewed cleanup. Sources and saved settings are always preserved.">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Storage location, project registration and reviewed cleanup. Sources and saved settings are always preserved.">
             {view && <>
                 <div class="actions">
                     <button type="button" onClick={() => { void actions.command('airk.chooseStorage'); }}>Choose index storage folder…</button>
@@ -275,7 +275,7 @@ export function ServiceScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     const on = (name: string) => view?.enabled[name] === true;
     return (
-        <Frame view={view} actions={actions} intro="The per-user native service on">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="The per-user native service on">
             {view && <>
                 <div class="actions">
                     <Act actions={actions} action="connect" enabled={on('connect')}>Connect / reconnect</Act>
@@ -313,7 +313,7 @@ export function ServiceScreen(props: ScreenProps) {
 export function AgentsScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
-        <Frame view={view} actions={actions} intro="Connect coding agents to AIRK Retrieval (cited evidence) on">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Connect coding agents to AIRK Retrieval (cited evidence) on">
             {view && <>
                 <div class="cards two">
                     <article class="card"><h2>AIRK Retrieval</h2>
@@ -340,7 +340,7 @@ export function AgentsScreen(props: ScreenProps) {
 export function UsageScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
-        <Frame view={view} actions={actions} intro="Local usage records on">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Local usage records on">
             {view && <article class="card">
                 <h2>Usage & Savings</h2>
                 <p>The usage report covers the selected project for 7 or 30 days: recorded calls by client (including the AIRK Explorer's own searches), operations and estimated context comparisons. Recording mode, feedback, import, clearing and calibration are in the report and in Indexing › Project settings.</p>
@@ -355,7 +355,7 @@ export function LogsScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     const [paths, setPaths] = useState(false);
     return (
-        <Frame view={view} actions={actions} intro="Bounded native logs and a metadata-only diagnostic report from">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Bounded native logs and a metadata-only diagnostic report from">
             {view && <>
                 <div class="actions">
                     <Act actions={actions} action="logs" ghost>Open service logs</Act>
