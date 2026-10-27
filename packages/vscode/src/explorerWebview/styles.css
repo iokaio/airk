@@ -185,3 +185,12 @@ button.link.current { background: var(--vscode-list-activeSelectionBackground); 
 .manage .card { margin-bottom: var(--airk-gap); }
 .manage h2 .muted { font-weight: normal; font-size: 0.85em; }
 ol.log { margin: 0; padding-left: 1.2rem; max-height: 16rem; overflow: auto; }
+
+/* Strategies */
+.tag.ok { border-color: var(--airk-ok); }
+.steps { margin: 0.25rem 0 0.5rem; padding-left: 1.4rem; }
+.steps li { margin: 0.15rem 0; }
+.steps.editable li { margin: 0.5rem 0; padding-bottom: 0.4rem; border-bottom: 1px solid var(--airk-border); }
+.studio-head h2 { margin-bottom: 0.2rem; }
+textarea.prompt { min-height: 16rem; }
+.strategies .card { margin-bottom: var(--airk-gap); }

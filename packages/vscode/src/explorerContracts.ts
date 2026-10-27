@@ -365,7 +365,9 @@ type FieldSpec =
     | { readonly kind: 'string'; readonly max: number; readonly min?: number; readonly pattern?: RegExp; readonly optional?: boolean }
     | { readonly kind: 'int'; readonly min: number; readonly max: number; readonly optional?: boolean }
     | { readonly kind: 'bool'; readonly optional?: boolean }
-    | { readonly kind: 'enum'; readonly values: readonly string[]; readonly optional?: boolean };
+    | { readonly kind: 'enum'; readonly values: readonly string[]; readonly optional?: boolean }
+    /** A plain JSON object of bounded size; the host validates its schema again before use. */
+    | { readonly kind: 'json'; readonly max: number; readonly optional?: boolean };
 
 const PROJECT = { kind: 'string', min: 64, max: 64, pattern: /^[0-9a-f]{64}$/ } as const;
 const REF = { kind: 'string', min: 1, max: 64, pattern: /^[A-Za-z0-9_-]+$/ } as const;
@@ -412,11 +414,15 @@ export const WEBVIEW_MESSAGES = {
     },
     'manage.command': { command: { kind: 'enum', values: MANAGE_COMMANDS } },
     'manage.observe': { open: { kind: 'bool' } },
+    'strategy.run': { strategy: { kind: 'json', max: 32768 }, params: { kind: 'json', max: 8192 }, scope: { kind: 'json', max: 2048 } },
+    'strategy.export': { strategy: { kind: 'json', max: 32768 } },
+    'strategy.import': {},
+    'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
 } as const satisfies Record<string, Record<string, FieldSpec>>;
 
 export type WebviewMessageType = keyof typeof WEBVIEW_MESSAGES;
 type FieldValue<S> = S extends { kind: 'string' } ? string : S extends { kind: 'int' } ? number : S extends { kind: 'bool' } ? boolean
-    : S extends { kind: 'enum'; values: readonly (infer V)[] } ? V : never;
+    : S extends { kind: 'enum'; values: readonly (infer V)[] } ? V : S extends { kind: 'json' } ? Record<string, unknown> : never;
 type Fields<T> = { -readonly [K in keyof T as T[K] extends { optional: true } ? never : K]: FieldValue<T[K]> }
     & { -readonly [K in keyof T as T[K] extends { optional: true } ? K : never]?: FieldValue<T[K]> };
 export type WebviewMessage = { [T in WebviewMessageType]: { v: 1; type: T; requestId: string } & Fields<(typeof WEBVIEW_MESSAGES)[T]> }[WebviewMessageType];
@@ -431,6 +437,10 @@ function valid(spec: FieldSpec, value: unknown): boolean {
         case 'int': return typeof value === 'number' && Number.isSafeInteger(value) && value >= spec.min && value <= spec.max;
         case 'bool': return typeof value === 'boolean';
         case 'enum': return typeof value === 'string' && spec.values.includes(value);
+        case 'json': {
+            if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) { return false; }
+            try { return JSON.stringify(value).length <= spec.max; } catch { return false; }
+        }
     }
 }
 

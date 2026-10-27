@@ -14,7 +14,9 @@ import { managementView } from './explorerManagement';
 import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary } from './explorerStatus';
 import { displayPath } from './explorerSource';
-import { openSource } from './explorerWorkspaceIO';
+import { exportStrategy, importStrategy, liveAt, openSource } from './explorerWorkspaceIO';
+import { validateStrategy } from './explorerStrategies';
+import { runStrategy } from './explorerStrategyRunner';
 import { LaunchSpec } from './model';
 
 /** The narrow surface of the service extension that the Explorer may use. */
@@ -334,6 +336,20 @@ export class ExplorerController implements vscode.Disposable {
                 const typed = message as WebviewMessageOf<'list.more'>;
                 return continueFacts(this.session(), this.facts, this.requireProject(), typed.more);
             }
+            case 'strategy.run': {
+                const typed = message as WebviewMessageOf<'strategy.run'>, project = this.requireProject();
+                const checked = validateStrategy(typed.strategy);
+                if (!checked.ok) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', checked.errors.slice(0, 5).join('; '))); }
+                return runStrategy({ strategy: checked.strategy, params: textRecord(typed.params, 8), scope: textRecord(typed.scope, 1) },
+                    { session: this.session(), facts: this.facts, project, extensionVersion: this.host.version, live: liveAt });
+            }
+            case 'strategy.export': {
+                const checked = validateStrategy((message as WebviewMessageOf<'strategy.export'>).strategy);
+                if (!checked.ok) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', checked.errors.slice(0, 5).join('; '))); }
+                return exportStrategy(checked.strategy);
+            }
+            case 'strategy.import': return (await importStrategy()) ?? null;
+            case 'clipboard.write': await vscode.env.clipboard.writeText((message as WebviewMessageOf<'clipboard.write'>).text); return;
             default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${(message as WebviewMessage).type} is not available in this build.`));
         }
     }
@@ -358,6 +374,15 @@ function engineHelp(payload: Record<string, unknown>): EngineHelpView {
     return { topic: typeof payload.topic === 'string' ? payload.topic : 'overview', title: typeof payload.title === 'string' ? payload.title.slice(0, 200) : 'AIRK help',
         content: typeof payload.content === 'string' ? payload.content.slice(0, 32768) : '', ...(typeof payload.version === 'string' ? { version: payload.version } : {}),
         topics, truncated: payload.truncated === true || payload.next_line != null };
+}
+
+/** A flat record of short strings (strategy parameters or scope); anything else is refused. */
+function textRecord(value: Record<string, unknown>, limit: number): Record<string, string> {
+    const entries = Object.entries(value);
+    if (entries.length > limit || entries.some(([key, item]) => !/^[A-Za-z][A-Za-z0-9]{0,31}$/.test(key) || typeof item !== 'string' || item.length > 1024)) {
+        throw new EvidenceFailure(explorerError('INVALID_SCHEMA', 'Parameters must be short text values.'));
+    }
+    return Object.fromEntries(entries) as Record<string, string>;
 }
 
 /** True when an open editor holds unsaved edits for this file. */
