@@ -10,6 +10,7 @@ import { HelpScreen } from './help';
 import { ActivityScreen, AgentsScreen, IndexingScreen, LogsScreen, ProjectsScreen, RepairScreen, ServiceScreen, StorageScreen, UsageScreen } from './manage';
 import { RecipesScreen, SearchScreen } from './search';
 import { PlannerScreen } from './planner';
+import { ReviewChangesScreen, ReviewImpactScreen, ReviewTestsScreen } from './review';
 import { LibraryScreen, StudioScreen } from './strategies';
 
 export interface ScreenProps {
@@ -46,6 +47,9 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'evidence/inspector': InspectorScreen,
     'evidence/checker': CheckerScreen,
     'evidence/changes': ChangesScreen,
+    'review/changes': ReviewChangesScreen,
+    'review/impact': ReviewImpactScreen,
+    'review/tests': ReviewTestsScreen,
     'strategies/library': LibraryScreen,
     'strategies/studio': StudioScreen,
     'strategies/planner': PlannerScreen,

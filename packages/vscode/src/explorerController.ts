@@ -18,6 +18,7 @@ import { exportStrategy, importStrategy, liveAt, openPlanDraft, openSource, save
 import { renderPlan, SearchRecipe, validatePlan, validateRecipe, validateStrategy } from './explorerStrategies';
 import { runStrategy } from './explorerStrategyRunner';
 import { SuggestionStore, suggestionsView } from './explorerSuggestions';
+import { ReviewContext, reviewChanges, reviewImpact, reviewTests } from './explorerReview';
 import { LaunchSpec } from './model';
 
 /** The narrow surface of the service extension that the Explorer may use. */
@@ -386,6 +387,9 @@ export class ExplorerController implements vscode.Disposable {
                 const typed = message as WebviewMessageOf<'suggestions.revisions'>;
                 this.draftRevisions = { studio: typed.studio, planner: typed.planner }; return;
             }
+            case 'review.changes': return reviewChanges(this.reviewContext());
+            case 'review.impact': return reviewImpact(this.reviewContext());
+            case 'review.tests': return reviewTests(this.reviewContext());
             case 'recipes.list': return this.recipes();
             case 'recipes.save': {
                 const recipe = validateRecipe((message as WebviewMessageOf<'recipes.save'>).recipe);
@@ -409,6 +413,12 @@ export class ExplorerController implements vscode.Disposable {
             }
             default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${(message as WebviewMessage).type} is not available in this build.`));
         }
+    }
+
+    private reviewContext(): ReviewContext {
+        const project = this.requireProject();
+        const spec = this.host.specs().find(entry => entry.service?.project === project)!;
+        return { session: this.session(), handles: this.facts, project, root: displayPath(spec.root) };
     }
 
     /** Stored recipes, revalidated on every read so a damaged entry is dropped rather than run. */
