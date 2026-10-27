@@ -9,6 +9,8 @@ import { RefRegistry } from '../explorerSearch';
 import { liveCheck, sourceFile } from '../explorerSource';
 import { probeMcp } from '../native';
 import { record } from '../serviceClient';
+import { CORE_PACK } from '../explorerStrategies';
+import { runStrategy } from '../explorerStrategyRunner';
 import { NativeServiceFixture } from './nativeServiceFixture';
 
 test('the Explorer evidence session reads one pinned publication through the verified launcher', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
@@ -81,6 +83,41 @@ test('Explorer code and document views read real symbol ids, candidate edges and
         assert.ok(page.more, 'list_files returns a continuation cursor');
         const next = await continueFacts(client, handles, project, page.more!);
         assert.equal(next.publication, page.publication);
+    } finally {
+        client?.dispose();
+        await fixture.dispose();
+    }
+});
+
+test('a runnable strategy produces a verified snapshot from real AIRK replies and turns partial after an edit', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
+    const fixture = await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    let client: EvidenceClient | undefined;
+    try {
+        const spec = await fixture.register('explorer-strategy');
+        await fs.writeFile(path.join(spec.root, 'session.ts'), 'export function refreshSession(token: string) { return token.length > 0; }\nexport const renew = () => refreshSession("t");\n');
+        await fixture.configure(spec, { operation: 'vectors', enabled: false });
+        await fixture.job(spec);
+        client = new EvidenceClient(spec, 'native-test', { timeout: 60000 });
+        const facts = new FactHandles(new RefRegistry());
+        const live = async (root: string, relative: string, hash: string) => liveCheck(await sourceFile(root, relative), hash, false);
+        const strategy = CORE_PACK.find(entry => entry.strategy.id === 'airk.core/bug')!.strategy;
+        const request = { strategy, params: { query: 'refreshSession', symbol: 'refreshSession' }, scope: {} };
+        const result = await runStrategy(request, { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', live });
+        assert.equal(result.manifest.outcome, 'verified_snapshot', result.manifest.reasons.join('; '));
+        assert.ok(result.records.length > 0 && result.records.every(record => record.path === 'session.ts'));
+        assert.equal(result.manifest.publication, String(record((await client.call('airk_status', {}, { timeout: 60000 })).payload.publication).token));
+
+        for (const id of ['api', 'explain']) {
+            const other = CORE_PACK.find(entry => entry.strategy.id === `airk.core/${id}`)!.strategy;
+            const run = await runStrategy({ strategy: other, params: Object.fromEntries(other.params.map(param => [param.name, 'refreshSession'])), scope: {} },
+                { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', live });
+            assert.deepEqual(run.manifest.steps.filter(step => step.outcome !== 'ok').map(step => `${step.id}: ${step.message}`), [], `${id} steps succeed on real replies`);
+            assert.ok(run.records.length > 0, `${id} collects evidence: ${JSON.stringify(run.manifest.steps)} ${run.manifest.reasons.join("; ")}`);
+        }
+        await fs.appendFile(path.join(spec.root, 'session.ts'), '// edited after indexing\n');
+        const edited = await runStrategy(request, { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', live });
+        assert.equal(edited.manifest.outcome, 'partial');
+        assert.ok(edited.manifest.reasons.some(reason => /session\.ts is changed since index/.test(reason)), edited.manifest.reasons.join('; '));
     } finally {
         client?.dispose();
         await fixture.dispose();

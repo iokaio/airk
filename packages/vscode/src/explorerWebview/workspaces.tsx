@@ -8,6 +8,7 @@ import { ChangesScreen, CheckerScreen, InspectorScreen } from './evidence';
 import { HelpScreen } from './help';
 import { ActivityScreen, AgentsScreen, IndexingScreen, LogsScreen, ProjectsScreen, RepairScreen, ServiceScreen, StorageScreen, UsageScreen } from './manage';
 import { SearchScreen } from './search';
+import { LibraryScreen, StudioScreen } from './strategies';
 
 export interface ScreenProps {
     route: Route;
@@ -40,6 +41,8 @@ export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'evidence/inspector': InspectorScreen,
     'evidence/checker': CheckerScreen,
     'evidence/changes': ChangesScreen,
+    'strategies/library': LibraryScreen,
+    'strategies/studio': StudioScreen,
     'help': HelpScreen,
 };
 
