@@ -90,9 +90,90 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
             }, dispose() {} };
         }
     }
-    return { explorer: new TestController(host as any), statusBar, runs, suggestions };
+    return { explorer: new TestController(host as any), statusBar, runs, suggestions, host };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+
+test('embedded usage pins its project session and rejects invalid actions and obsolete bindings', async () => {
+    const { explorer, host } = controller(); let opens = 0, disposals = 0;
+    const guards: (() => boolean)[] = [], actions: unknown[] = [];
+    (host as any).usage = async (_spec: unknown, valid: () => boolean) => {
+        opens++; guards.push(valid);
+        return { view: () => ({ html: '<p>Scoped report</p>' }), action: async (message: unknown) => { assert.ok(valid()); actions.push(message); return { html: '<p>Updated</p>' }; }, dispose: () => { disposals++; } };
+    };
+    try {
+        assert.deepEqual(await (explorer as any).dispatch({ type: 'usage.read' }), { html: '<p>Scoped report</p>' });
+        await (explorer as any).dispatch({ type: 'usage.read' }); assert.equal(opens, 1);
+        await assert.rejects((explorer as any).dispatch({ type: 'usage.action', action: 'days', days: 8 }));
+        assert.equal(actions.length, 0);
+        await (explorer as any).dispatch({ type: 'usage.action', action: 'days', days: 7 });
+        assert.deepEqual(actions, [{ type: 'usage', action: 'days', days: 7 }]);
+        (explorer as any).select(undefined); assert.equal(guards[0](), false);
+        (explorer as any).select(project); await (explorer as any).dispatch({ type: 'usage.read' });
+        assert.equal(opens, 2); await flush(); assert.equal(disposals, 1);
+    } finally { explorer.dispose(); }
+});
+
+test('search results, drafts and page survive closing Explorer without workspace writes', async () => {
+    const stored = new Map<string, unknown>(), { explorer } = controller(true, stored);
+    try {
+        explorer.open('#search/query'); const first = panels.at(-1);
+        first.send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+        const result = await (explorer as any).dispatch({ v: 1, type: 'search.run', requestId: 'run', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false });
+        const epoch = explorer.snapshot().selectionEpoch!;
+        await (explorer as any).dispatch({ v: 1, type: 'search.form', requestId: 'draft', project, selectionEpoch: epoch,
+            query: 'unsent edit', mode: 'hybrid', pathPrefix: 'src/', limit: 100, maxBytes: 16384, fullChunks: true });
+        first.dispose(); explorer.open(); const reopened = panels.at(-1);
+        reopened.send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+        const restored = reopened.posted.find((entry: any) => entry.type === 'search.session').session;
+        assert.equal(restored.form.query, 'unsent edit'); assert.deepEqual(restored.result, result);
+        assert.equal((explorer as any).refs.get(restored.result.hits[0].ref, project).path, 'a.ts');
+        assert.equal(stored.size, 0, 'session snippets and query drafts are not written to workspace Memento');
+        await assert.rejects((explorer as any).dispatch({ v: 1, type: 'search.page', requestId: 'page', project, selectionEpoch: epoch - 1, page: 1 }), /newer request/);
+        (explorer as any).select(undefined);
+        reopened.dispose(); explorer.open(); const changed = panels.at(-1);
+        changed.send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+        assert.ok(!changed.posted.some((entry: any) => entry.type === 'search.session'), 'a new project/binding does not restore old evidence');
+    } finally { explorer.dispose(); }
+});
+
+test('a search finishing after panel recreation restores results without replaying its old request ID', async () => {
+    const { explorer } = controller();
+    let finish!: (result: unknown) => void;
+    try {
+        explorer.open('#search/query'); const first = panels.at(-1);
+        first.send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+        (explorer as any).session = () => ({ call: (tool: string) => tool === 'airk_search' ? new Promise(resolve => { finish = resolve; })
+            : Promise.resolve({ payload: { index_state: 'available', publication: { token: 'airk-r1:t' } } }) });
+        first.send({ v: 1, type: 'search.run', requestId: 'w1', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false });
+        first.dispose(); explorer.open(); const reopened = panels.at(-1);
+        reopened.send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+        assert.equal(reopened.posted.find((entry: any) => entry.type === 'search.session').session.busy, true);
+        finish({ publication: 'airk-r1:t', payload: { hits: [{ citation: { path: 'late.ts', start_line: 1, end_line: 1, content_hash: 'cd'.repeat(32) }, text: 'late result' }] } });
+        await flush();
+        const restored = reopened.posted.filter((entry: any) => entry.type === 'search.session').at(-1).session;
+        assert.equal(restored.busy, false); assert.equal(restored.result.hits[0].text, 'late result');
+        assert.ok(!reopened.posted.some((entry: any) => entry.type === 'result' && entry.requestId === 'w1'));
+    } finally { explorer.dispose(); }
+});
+
+test('the host restores the selected search page and resets it for a replacement query', async () => {
+    const { explorer } = controller();
+    try {
+        explorer.open('#search/query'); panels.at(-1).send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+        (explorer as any).session = () => ({ call: async (tool: string) => tool === 'airk_search'
+            ? { publication: 'airk-r1:t', payload: { hits: Array.from({ length: 45 }, (_, at) => ({ citation: { path: `file-${at}.ts`, start_line: 1, end_line: 1, content_hash: 'cd'.repeat(32) }, text: `hit ${at}` })) } }
+            : { payload: { index_state: 'available', publication: { token: 'airk-r1:t' } } } });
+        const run = { v: 1, type: 'search.run', requestId: 'run', query: 'x', mode: 'lexical', limit: 100, maxBytes: 65536, fullChunks: false };
+        await (explorer as any).dispatch(run);
+        await (explorer as any).dispatch({ v: 1, type: 'search.page', requestId: 'page', project, selectionEpoch: explorer.snapshot().selectionEpoch, page: 4 });
+        panels.at(-1).dispose(); explorer.open(); const reopened = panels.at(-1);
+        reopened.send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
+        assert.equal(reopened.posted.find((entry: any) => entry.type === 'search.session').session.page, 2, 'page is clamped to the final retrieved page');
+        await (explorer as any).dispatch(run);
+        assert.equal(reopened.posted.filter((entry: any) => entry.type === 'search.session').at(-1).session.page, 0);
+    } finally { explorer.dispose(); }
+});
 
 test('Inspector without a citation uses only the host-selected file in the selected project', async () => {
     const { RefRegistry } = require('../explorerSearch') as typeof import('../explorerSearch');

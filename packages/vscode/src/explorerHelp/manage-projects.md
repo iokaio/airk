@@ -21,3 +21,9 @@ Management › Projects lists the projects registered with the AIRK service. Val
 ## Limits
 
 Accepting a job means the work is queued; it does not mean indexing is finished. The request is saved before it is sent, so an uncertain outcome can be checked again without creating a second job.
+
+## Index and storage observations
+
+Project cards show the registered index storage root, cached index state, file count, semantic coverage, accounted index size and latest job. **Inspect index & storage** queues a native inspection without rebuilding the index; **Refresh** reads the cached service page. Missing measurements remain not observed, including when inspection has never completed. Expand Index and source details or Work and worker details for the complete bounded observations.
+
+The executable-version table below the cards distinguishes the extension, selected CLI and inference-helper payloads, running service, and the selected project's MCP frontend and index worker. A verified payload version is not proof of the running helper version. Missing process observations remain not observed.

@@ -2,12 +2,12 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
     CATEGORIES, CatalogEntry, compilePrompt, CORE_PACK, estimateTokens, operator, OPERATORS, OperatorId, PromptProfile, RunResult, Strategy, StrategyStep,
-    PLAN_SCHEMA, unavailableReason, validateStrategy,
+    PLAN_SCHEMA, STUDIO_SCHEMA, StudioDocument, unavailableReason, validateStrategy,
 } from '../explorerStrategies';
 import { request } from './api';
 import { shortToken } from './format';
 import { canAddStudio, taskFromStudio } from './planner';
-import { acceptStudioRun, currentSelection, studioDraft, StudioDraft, studioHasWork, usePlanner, useStudio } from './strategyStore';
+import { acceptStudioRun, currentSelection, studioDraft, studioDocument, StudioDraft, studioHasWork, usePlanner, useStudio } from './strategyStore';
 import type { ScreenProps } from './workspaces';
 import { dialogFocus, ShareSnapshot } from './components';
 import { FileBrowser, type LibraryFile } from './fileBrowser';
@@ -103,7 +103,8 @@ export function StudioScreen(props: ScreenProps) {
     const [error, setError] = useState<string>();
     const [notice, setNotice] = useState<string>();
     const [confirmRebuild, setConfirmRebuild] = useState(false);
-    const [pendingImport, setPendingImport] = useState<{ strategy: Strategy; revision: number | undefined; owner: string | undefined }>();
+    const [pendingImport, setPendingImport] = useState<{ strategy: Strategy; document?: StudioDocument; revision: number | undefined; owner: string | undefined }>();
+    const [saving, setSaving] = useState(false);
     const root = useRef<HTMLDivElement>(null);
     useEffect(() => dialogFocus(root.current?.querySelector<HTMLElement>('[role="alertdialog"]') ?? null,
         () => { setPendingImport(undefined); setConfirmRebuild(false); }), [pendingImport, confirmRebuild]);
@@ -134,17 +135,21 @@ export function StudioScreen(props: ScreenProps) {
         setError(undefined); setConfirmRebuild(false);
         const revision = studioDraft().revision, owner = currentSelection();
         try {
-            const imported = file ? await request<Strategy>('files.load', { kind: 'strategies', ...file }) : await request<Strategy | null>('strategy.import', {});
+            const imported = file ? await request<Strategy | StudioDocument>('files.load', { kind: 'strategies', ...file }) : await request<Strategy | StudioDocument | null>('strategy.import', {});
             if (!imported) { return; }
             if (studioDraft().revision !== revision || currentSelection() !== owner) { setError('Studio or the project changed while the file picker was open; your work was kept.'); return; }
-            const pending = { strategy: imported, revision, owner };
+            const pending = imported.schema === STUDIO_SCHEMA ? { strategy: imported.strategy, document: imported, revision, owner } : { strategy: imported, revision, owner };
             if (studioHasWork(studioDraft())) { setPendingImport(pending); } else { applyImported(pending); }
         } catch (failure) { setError(message(failure)); }
     }
-    function applyImported(pending: { strategy: Strategy; revision: number | undefined; owner: string | undefined }) {
+    function applyImported(pending: { strategy: Strategy; document?: StudioDocument; revision: number | undefined; owner: string | undefined }) {
         setPendingImport(undefined);
         if (studioDraft().revision !== pending.revision || currentSelection() !== pending.owner) { setError('Studio changed during review; your work was kept. Import again.'); return; }
-        setDraft(prior => draftFor(pending.strategy, prior)); setNotice(`Imported ${pending.strategy.title}.`);
+        const document = pending.document;
+        setDraft(prior => document ? { strategy: document.strategy, params: document.params, objective: document.objective,
+            pathPrefix: document.pathPrefix, profile: document.profile, prompt: document.editedPrompt, promptEdited: document.editedPrompt !== undefined,
+            promptStale: document.editedPrompt !== undefined, saveName: document.strategy.id.split('/').pop() } : draftFor(pending.strategy, prior));
+        setNotice(`Loaded ${pending.strategy.title}. Collect evidence again before relying on indexed citations.`);
     }
     const edit = (steps: StrategyStep[]) => setDraft(prior => ({ ...prior, strategy: fork(prior.strategy!, steps), origin: undefined, run: undefined }));
     const move = (index: number, by: number) => { const steps = [...strategy.steps]; const [step] = steps.splice(index, 1); steps.splice(index + by, 0, step); edit(steps); };
@@ -166,6 +171,23 @@ export function StudioScreen(props: ScreenProps) {
     const rebuild = () => { setConfirmRebuild(false); setDraft(prior => ({ ...prior, prompt: compile(prior.run, prior.profile), promptEdited: false, promptStale: false })); };
     const prompt = draft.prompt ?? compile(draft.run, draft.profile);
     const manifest = draft.run?.manifest;
+    const saveName = draft.saveName ?? strategy.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64);
+    const savedCurrent = draft.saved?.name === saveName && draft.saved.content === JSON.stringify(studioDocument(draft));
+    const save = async () => {
+        const owner = currentSelection(), revision = draft.revision;
+        const document = studioDocument(draft);
+        setSaving(true); setError(undefined); setNotice(undefined);
+        try {
+            const result = await request<{ saved: boolean; path?: string; hash?: string; reason?: string }>('studio.save', {
+                document: document as unknown as Record<string, unknown>, name: saveName, revision: revision ?? 0,
+                ...(draft.saved?.name === saveName ? { expectedHash: draft.saved.hash } : {}) });
+            if (!result.saved) { setError(result.reason ?? 'The draft was not saved.'); return; }
+            if (currentSelection() !== owner || studioDraft().revision !== revision) { setNotice(`Saved ${result.path}; the newer draft has unsaved changes.`); return; }
+            const strategy = { ...document.strategy, id: `user/${saveName}` };
+            setDraft(prior => ({ ...prior, strategy, saveName, saved: { name: saveName, path: result.path!, hash: result.hash!, content: JSON.stringify({ ...document, strategy }) } }));
+            setNotice(`Saved ${result.path}.`);
+        } catch (failure) { setError(message(failure)); } finally { setSaving(false); }
+    };
 
     return (
         <div class="strategies studio" ref={root}>
@@ -176,13 +198,18 @@ export function StudioScreen(props: ScreenProps) {
                 <h2>{strategy.title} {draft.origin && <span class={blocked ? 'tag' : 'tag ok'}>{blocked ? 'Preview' : 'Runnable'}</span>}{strategy.id.startsWith('user/') && <span class="tag">fork</span>}</h2>
                 <p class="muted"><code>{strategy.id}@{strategy.version}</code> · {strategy.summary}</p>
                 <div class="actions">
+                    <label>Save name <input aria-label="Studio save name" value={saveName} maxLength={64} onInput={event => setDraft(prior => ({ ...prior, saveName: (event.target as HTMLInputElement).value }))} /></label>
+                    <button disabled={saving || !checked?.ok || !props.state.trusted || !props.state.selectedProject} onClick={() => void save()}>{saving ? 'Saving…' : 'Save'}</button>
                     <button class="ghost" onClick={() => void importFile()}>Import…</button>
                     <button class="ghost" disabled={!checked?.ok} onClick={async () => {
                         try { const saved = await request<{ saved: boolean; name?: string }>('strategy.export', { strategy: strategy as unknown as Record<string, unknown> }); if (saved.saved) { setNotice(`Exported ${saved.name}.`); } }
                         catch (failure) { setError(message(failure)); }
                     }}>Export…</button>
                 </div>
+                <p class="muted" role="status">{savedCurrent ? `Saved: ${draft.saved!.path}` : 'Unsaved changes'} · Saves to this project’s <code>.airk/strategies/</code>. Change the name to save a copy. Export saves only the strategy definition.</p>
             </header>
+            {error && <p class="callout" role="alert">{error}</p>}
+            {notice && <p class="muted" role="status">{notice}</p>}
             {blocked && <p class="muted">Preview: {blocked} You can still edit the steps and compile a prompt without evidence.</p>}
             <section class="card">
                 <h3>Objective and scope</h3>
@@ -244,8 +271,6 @@ export function StudioScreen(props: ScreenProps) {
                     <button disabled={busy || !runnable} onClick={() => void run()}>{busy ? 'Running…' : 'Run'}</button>
                     {!runnable && !busy && <span class="muted">{blocked ? 'Preview templates do not run.' : checked?.ok ? 'Connect to the AIRK service to run.' : 'Fix the steps to run.'}</span>}
                 </div>
-                {error && <p class="callout" role="alert">{error}</p>}
-                {notice && <p class="muted" role="status">{notice}</p>}
             </section>
             {manifest && draft.run && (
                 <section class="card">

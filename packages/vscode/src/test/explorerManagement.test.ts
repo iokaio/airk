@@ -72,3 +72,31 @@ test('management exposes bounded traversal diagnostics and clears the current li
     assert.ok(recovered.some(([, value]) => value === 'None in the latest completed traversal'));
     assert.ok(!recovered.some(([label]) => label.startsWith('Directory ')));
 });
+
+test('storage observations preserve missing measurements, zero, quota reservations and per-project scope', () => {
+    const current = state(), snapshot = (current.page!.projects[0].inspection as any).snapshot;
+    assert.equal(managementView(current).projects[0].storage.usedBytes, undefined);
+    snapshot.storage = { collection_used_bytes: 1048576, collection_reserved_bytes: 512, collection_limit_bytes: 2097152,
+        root_available_bytes: 4096, physical_available_growth_bytes: 8192, replacement_estimate_bytes: 68000000 };
+    const entry = managementView(current).projects[0];
+    assert.equal(entry.storage.root, '/data'); assert.equal(entry.storage.observedAt, 8);
+    assert.equal(entry.storage.usedBytes, 1048576); assert.equal(entry.storage.availableBytes, 1048064);
+    assert.ok(entry.storage.rows.some(([label, value]) => label === 'Physical growth allowance (bytes)' && value === '8,192'));
+    snapshot.storage.collection_used_bytes = 0; assert.equal(managementView(current).projects[0].storage.usedBytes, 0);
+    snapshot.storage.collection_reserved_bytes = 3000000; assert.equal(managementView(current).projects[0].storage.availableBytes, 0);
+    snapshot.storage.collection_used_bytes = Number.MAX_SAFE_INTEGER + 1;
+    assert.equal(managementView(current).projects[0].storage.usedBytes, undefined);
+    assert.equal(managementView(current).projects[0].storage.availableBytes, undefined);
+    current.inactiveProjects = true;
+    assert.equal(managementView(current).projects[0].storage.observedAt, 8, 'unregistered storage retains its real observation time');
+});
+
+test('executable versions distinguish approved payloads from running health observations', () => {
+    const current = state();
+    current.bootstrap.value = { selectedVersion: '1.5.5', payloadVerified: true };
+    const versions = managementView(current).runtimeVersions;
+    assert.ok(versions.some(([name, value]) => name.includes('airk-embed') && value.includes('1.5.5') && value.includes('running helper version not observed')));
+    assert.ok(versions.some(([name, value]) => name.startsWith('Service') && value.startsWith('1.5.0')));
+    current.bootstrap.value.payloadVerified = false;
+    assert.ok(managementView(current).runtimeVersions.some(([name, value]) => name.includes('airk-embed') && value === 'Not observed'));
+});

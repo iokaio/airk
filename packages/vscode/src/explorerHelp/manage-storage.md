@@ -19,3 +19,11 @@ Management › Storage chooses the index storage folder for new registrations, l
 ## Limits
 
 Sources and saved settings are always preserved. Unknown files and links are refused. A deleted index must be rebuilt.
+
+## Storage measurements
+
+Each project shows its registered storage root and collection, accounted index size, reserved bytes, collection quota and quota remaining. The inspection age is shown. **Inspect index & storage** queues a fresh native snapshot; Refresh only reloads cached observations. Sizes are native quota accounting, not a recursive disk scan or the size of original source files.
+
+Expand **Capacity and index details** for exact byte counts, storage-root quota remaining, physical growth allowance, replacement estimate and vector counts. Shared-root capacity must not be added across projects. Physical growth allowance respects the native free-space reserve. Replacement estimates include existing accounted size and a fresh SQLite/WAL allowance; they do not reserve space or predict future source growth.
+
+Registered and unregistered lists support the existing bounded project pages. Missing measurements stay not observed. Retained measurements for unregistered projects may predate removal; cleanup still needs its exact preview and confirmation. **Legacy 1.3 startup review** is collapsed by default and expands only when needed.

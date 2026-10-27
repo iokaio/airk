@@ -1,6 +1,6 @@
 # Extension deployment: adapting VCP's approach
 
-The current package version is **1.5.4**; see [its release record](release-1.5.4.md). The VSIX now also ships the AIRK Explorer bundles (`out/explorerWebview.js`/`.css`, Preact MIT notice in its banner) and the Explorer Assistance server (`out/explorerAssistance.js`, Node built-ins only); packaging refuses either bundle if it loads local modules, the VS Code API or a host implementation. Prior 1.4.x build and qualification records below retain their original scope.
+The current package version is **1.5.5**; see [its release record](release-1.5.5.md). The VSIX now also ships the AIRK Explorer bundles (`out/explorerWebview.js`/`.css`, Preact MIT notice in its banner) and the Explorer Assistance server (`out/explorerAssistance.js`, Node built-ins only); packaging refuses either bundle if it loads local modules, the VS Code API or a host implementation. Prior 1.4.x build and qualification records below retain their original scope.
 
 AIRK's native-helper VS Code extension and native/VSIX candidate packaging are implemented. This page records the original packaging design and remains useful for its construction contract; use [extension behavior](vscode-extension.md) and the [release workflow](release-workflow.md) for current operation and publication. Full installed lifecycle qualification remains separate work. [Windows local build/review](windows-local-build.md) provides the PowerShell entry point.
 
@@ -14,7 +14,7 @@ VCP's Windows deployment uses a separately installed engine, machine-scoped path
 
 ## Implemented VSIX construction
 
-The original construction record used **1.1.1** and later **1.2.4**. The current synchronized native main/helper/extension version is **1.5.4**; see the [versioning process](versioning.md). The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**, its identity is `iokaio.airk`, and its description has no beta label. VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
+The original construction record used **1.1.1** and later **1.2.4**. The current synchronized native main/helper/extension version is **1.5.5**; see the [versioning process](versioning.md). The visible extension name is **AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents**, its identity is `iokaio.airk`, and its description has no beta label. VSCE sets the actual pre-release flag in the VSIX; a version below 1.0 by itself does not establish that channel. Keep a purely numeric version, because VS Code does not support a `-beta` suffix in its extension version field. [Official pre-release rules](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#pre-release-extensions) describe the flag and separate release/pre-release versions.
 
 | Platform | Historical 1.5.0 VSIX filename |
 |---|---|

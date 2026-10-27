@@ -4,8 +4,9 @@ import { useEffect, useState } from 'preact/hooks';
 import { FactRow, MANAGE_ACTIONS, MANAGE_COMMANDS, ManagedProject, ManagementView } from '../explorerContracts';
 import { request } from './api';
 import { Facts } from './components';
-import { ago, observed, shortToken } from './format';
+import { ago, byteSize, observed, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
+import { UsageReport } from './usage';
 
 type Action = typeof MANAGE_ACTIONS[number];
 type Command = typeof MANAGE_COMMANDS[number];
@@ -56,6 +57,18 @@ function Frame(props: { view?: ManagementView; trusted: boolean; actions: Return
 }
 
 function Rows(props: { rows: readonly FactRow[] }) { return <Facts rows={props.rows.map(([name, value]) => [name, value])} />; }
+
+function RuntimeVersions(props: { state: ScreenProps['state']; view: ManagementView }) {
+    return <section class="card runtime-versions" aria-label="AIRK executable versions">
+        <h2>AIRK executable versions</h2>
+        <Rows rows={[
+            ['VS Code extension', props.state.extensionVersion], ...props.view.runtimeVersions,
+            ...(props.state.status?.runtimeVersions ?? [['MCP frontend (airk)', 'not observed'], ['Index worker (airk)', 'not observed']] as FactRow[]),
+        ]} />
+        <p class="muted">CLI and helper versions describe the selected installation. Process observations describe the service and the selected project’s MCP connection and worker; they may differ during an upgrade. {props.state.status ? `Project runtime observed ${ago(props.state.status.observedAt)}.` : 'Connect to the selected project to observe its processes.'} {!props.view.connected && 'Disconnected: observations may be stale.'}</p>
+        {props.state.status?.versionsMatch === false && <p class="callout" role="alert">The observed runtime versions do not match. Review Service before relying on the new version’s behavior.</p>}
+    </section>;
+}
 
 function WatchDiagnostics(props: { entry: ManagedProject }) {
     return <details><summary>Unreadable directories</summary>
@@ -108,18 +121,25 @@ export function ProjectsScreen(props: ScreenProps) {
                                     {project.project === props.state.selectedProject && <span class="tag ok">selected</span>}
                                 </div>
                                 <code class="project-path" title={project.root}>{project.root || 'Source root not observed'}</code>
+                                <p class="muted storage-location">Index storage root <code class="path">{entry.storage.root ?? 'not observed'}</code></p>
                                 <dl class="project-metrics">
+                                    <div><dt>Index (cached)</dt><dd>{project.indexState ?? 'not observed'}</dd></div>
                                     <div><dt>Watching</dt><dd>{observed(project.watching)}</dd></div>
                                     <div><dt>Paused</dt><dd>{observed(project.paused)}</dd></div>
                                     <div><dt>Files <span class="muted">(cached)</span></dt><dd>{observed(project.indexedFiles)}</dd></div>
                                     <div><dt>Semantic <span class="muted">(cached)</span></dt><dd>{project.semantic ?? 'not observed'}</dd></div>
+                                    <div><dt>Accounted index size</dt><dd>{byteSize(entry.storage.usedBytes)}</dd></div>
                                 </dl>
+                                <p class="muted">Inspected {ago(project.observedAt)}. {project.jobState ? `Latest job: ${project.jobKind ?? 'unknown'} · ${project.jobState}.` : 'No job observed.'} Inspect to update index counts and storage measurements.</p>
                                 <WatchDiagnostics entry={entry} />
-                                <div class="project-footer"><details><summary>Index details</summary><Facts rows={[
+                                <details><summary>Index and source details</summary><Facts rows={[
                                     ['Collection', project.collection], ['Publication (cached)', <code>{project.publication ?? 'not observed'}</code>],
-                                    ['Inspected', ago(project.observedAt)],
+                                    ['Inspected', ago(project.observedAt)], ...entry.rows.map(([name, value]): [string, ComponentChildren] => [name, value]),
                                 ]} /></details>
+                                <details><summary>Work and worker details</summary><Rows rows={entry.activity} /></details>
+                                <div class="project-footer">
                                 <div class="actions">{!view.inactive && <>
+                                    <Act actions={actions} action="inspect" fields={{ project: project.project }} enabled={view.enabled.projectActions}>Inspect index &amp; storage</Act>
                                     {project.project !== props.state.selectedProject && <button type="button" class="ghost" disabled={!project.current} title="Evidence selection requires this project to be open in the workspace" onClick={() => { void request('project.select', { project: project.project }).catch(() => undefined); }}>Select</button>}
                                     <Act actions={actions} action="index" fields={{ project: project.project }} enabled={view.enabled.projectActions}>Index now</Act>
                                     <Act actions={actions} action="unregisterProject" fields={{ project: project.project }} enabled={view.enabled.projectActions} ghost>Remove project…</Act>
@@ -131,7 +151,8 @@ export function ProjectsScreen(props: ScreenProps) {
                         );
                     })}
                 </ul>
-                <p class="muted">{view.selectedCount} selected across pages for repair. Cached values update after inspect or configuration jobs.</p>
+                <p class="muted">{view.selectedCount} selected across pages for repair. Refresh reads cached observations; Inspect queues a native observation without rebuilding the index. Counts describe the inspected publication, not unsaved source files.</p>
+                <RuntimeVersions state={props.state} view={view} />
             </>}
         </Frame>
     );
@@ -236,6 +257,7 @@ export function IndexingScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Per-project indexing controls. Project settings open the native settings picker (vectors, detail, models, extraction policy, scan limits and more).">
+            {view && <RuntimeVersions state={props.state} view={view} />}
             <div class="callout"><p>Choose evidence detail, vectors and extraction settings for your purpose and source formats before changing this project.</p>
                 <button class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'indexing-choices' })}>Indexing choices explained</button>
                 <button class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'document-types' })}>Document types and OCR</button></div>
@@ -268,19 +290,40 @@ export function StorageScreen(props: ScreenProps) {
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Storage location, project registration and reviewed cleanup. Sources and saved settings are always preserved.">
             {view && <>
                 <div class="actions">
+                    <Act actions={actions} action="refresh" enabled={view.enabled.refresh} ghost>Refresh</Act>
                     <button type="button" onClick={() => { void actions.command('airk.chooseStorage'); }}>Choose index storage folder…</button>
-                    <Act actions={actions} action="inactiveProjects" enabled={view.enabled.projectActions} ghost>Show unregistered projects</Act>
-                    <Act actions={actions} action="registeredProjects" enabled={view.enabled.projectActions} ghost>Show registered projects</Act>
                 </div>
+                <p class="muted">Storage below belongs to the listed projects. Choosing a folder affects new registrations; it does not move existing indexes. Sizes are cached native quota accounting, not a scan of the source folder or a promise of free disk space.</p>
+                <Paging view={view} actions={actions} />
+                {!view.projects.length && <p class="callout">No projects are visible on this page. Choose Registered projects or refresh the service state.</p>}
+                {view.projects.map(entry => <article class="card storage-card" key={entry.summary.project}>
+                    <h2>{entry.summary.name} {view.inactive && <span class="tag">unregistered · retained index</span>}</h2>
+                    <p class="storage-location">Index storage root <code class="path">{entry.storage.root ?? 'not observed'}</code></p>
+                    <p class="muted">Collection <code class="path">{entry.summary.collection}</code> · Source <code class="path">{entry.summary.root || 'not observed'}</code></p>
+                    <dl class="project-metrics">
+                        <div><dt>Accounted index size</dt><dd>{byteSize(entry.storage.usedBytes)}</dd></div>
+                        <div><dt>Reserved</dt><dd>{byteSize(entry.storage.reservedBytes)}</dd></div>
+                        <div><dt>Collection quota</dt><dd>{byteSize(entry.storage.limitBytes)}</dd></div>
+                        <div><dt>Quota remaining</dt><dd>{byteSize(entry.storage.availableBytes)}</dd></div>
+                    </dl>
+                    <p class="muted">Inspected {ago(entry.storage.observedAt)}{!view.connected ? ' · disconnected; cached values only' : ''}. {entry.storage.usedBytes === undefined ? view.inactive ? 'No retained storage measurement is available. Review a cleanup preview for the retained index.' : 'No storage measurement is available. Inspect the project to collect one.' : 'Index accounting excludes original source files. Reserved space is committed to admitted work.'}</p>
+                    <details><summary>Capacity and index details</summary><Rows rows={entry.storage.rows} />
+                        <p class="muted">Root quota remaining can be shared by several projects. Physical growth allowance respects the native free-space reserve. The replacement estimate includes the existing accounted size and a fresh SQLite/WAL allowance; future source growth is unknown. These are observations, not reservations.</p>
+                    </details>
+                    {!view.inactive && <div class="actions">
+                        <Act actions={actions} action="inspect" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions}>Inspect index &amp; storage</Act>
+                        <Act actions={actions} action="configureProject" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions} ghost>Project settings…</Act>
+                    </div>}
+                    {view.inactive && <div class="actions">
+                        <Act actions={actions} action="previewCleanup" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions}>Preview / resume index cleanup</Act>
+                        <Act actions={actions} action="deleteDerived" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions && entry.canDeleteDerived}>Delete reviewed index state</Act>
+                        {entry.configurationResult && <Act actions={actions} action="copyConfiguration" fields={{ project: entry.summary.project }} ghost>Copy cleanup preview</Act>}
+                    </div>}
+                </article>)}
                 <p class="muted">Remove a project from Management › Projects, even if its source folder is gone. Then preview and delete its retained index here. Quotas and extra roots are in Indexing › Project settings….</p>
-                {view.inactive && <ProjectCards view={view} actions={actions}>{entry => <>
-                    <Act actions={actions} action="previewCleanup" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions}>Preview / resume index cleanup</Act>
-                    <Act actions={actions} action="deleteDerived" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions && entry.canDeleteDerived}>Delete reviewed index state</Act>
-                    {entry.configurationResult && <Act actions={actions} action="copyConfiguration" fields={{ project: entry.summary.project }} ghost>Copy cleanup preview</Act>}
-                </>}</ProjectCards>}
                 {view.inactive && <p class="muted">Unregistered projects keep sources and saved settings. Deletion needs a separate exact preview and confirmation.</p>}
-                {view.legacy && <article class="card">
-                    <h2>Legacy 1.3 startup review</h2>
+                {view.legacy && <details class="card legacy-startup">
+                    <summary>Legacy 1.3 startup review</summary>
                     <p class="muted">Review the old executable path, project and startup ownership separately from the 1.4 service. Review reads metadata only and never runs the old command.</p>
                     <Rows rows={view.legacy.rows} />
                     <div class="actions">
@@ -291,7 +334,7 @@ export function StorageScreen(props: ScreenProps) {
                     </div>
                     <ul>{view.legacy.receipts.map(receipt => <li key={receipt.id}>{receipt.service} · {receipt.phase}
                         <Act actions={actions} action="resumeLegacyStartup" fields={{ id: receipt.id }} ghost>{receipt.phase === 'complete' ? 'Show completed receipt' : 'Review / resume saved removal'}</Act></li>)}</ul>
-                </article>}
+                </details>}
             </>}
         </Frame>
     );
@@ -351,7 +394,10 @@ export function AgentsScreen(props: ScreenProps) {
                         </div>
                         <p class="muted">Helper verification proves the launcher starts and lists tools. Whether an agent loaded it is checked in that agent.</p></article>
                     <article class="card"><h2>Responses and terminal</h2>
-                        <p>MCP response mode: <strong>{view.responseMode}</strong>. Full adds provenance, readiness and coverage; agents can request it per call.</p>
+                        <p>MCP response mode: <strong>{view.responseMode}</strong>.</p>
+                        <p><strong>Terse (default)</strong> suits routine code searches and navigation. It keeps focused evidence and citations while reducing repeated metadata, leaving more of the agent’s context budget for the task.</p>
+                        <p><strong>Full</strong> adds detailed provenance, readiness and coverage information. Choose it to investigate missing or surprising results, freshness problems or parser limitations, or to audit where evidence came from. Responses are larger; Full does not make the index more complete.</p>
+                        <p class="muted">Agents can request Full for an individual call with <code>response_mode: full</code>. Changing this default requires reconnecting the agent’s MCP session.</p>
                         <div class="actions">
                             <Act actions={actions} action="responseMode" enabled={view.enabled.responseMode} ghost>Choose terse / full responses</Act>
                             <button type="button" class="ghost" onClick={() => { void actions.command('airk.installCli'); }}>Install or repair CLI</button>
@@ -367,12 +413,7 @@ export function UsageScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Local usage records on">
-            {view && <article class="card">
-                <h2>Usage & Savings</h2>
-                <p>The usage report covers the selected project for 7 or 30 days: recorded calls by client (including the AIRK Explorer's own searches), operations and estimated context comparisons. Recording mode, feedback, import, clearing and calibration are in the report and in Indexing › Project settings.</p>
-                <p class="muted">Estimates describe counterfactual context, not provider tokens or billing.</p>
-                <button type="button" onClick={() => { void actions.command('airk.usage'); }}>Open the Usage & Savings report</button>
-            </article>}
+            <UsageReport available={props.state.trusted && !!props.state.selectedProject} />
         </Frame>
     );
 }
@@ -385,8 +426,16 @@ export function LogsScreen(props: ScreenProps) {
             {view && <>
                 <div class="actions">
                     <Act actions={actions} action="logs" ghost>Open service logs</Act>
-                    <button type="button" class="ghost" onClick={() => { void actions.command('airk.logs'); }}>Show extension output</button>
+                    <button type="button" class="ghost" onClick={() => { void actions.command('airk.showExtensionOutput'); }}>Show extension output</button>
+                    <Act actions={actions} action="refresh" enabled={view.enabled.refresh} ghost>Refresh recent events</Act>
                 </div>
+                <article class="card">
+                    <h2>Recent service events</h2>
+                    <p class="muted">{view.processLogStatus}{!view.connected ? ' · disconnected; retained observations only' : ''}</p>
+                    {view.processEvents.length ? <ol class="log" tabIndex={0} aria-label="Recent service events">{view.processEvents.map((event, index) => <li key={index}><code class="path">{event}</code></li>)}</ol>
+                        : <p class="muted">No service events are present in this observation. This does not prove the service has never logged an event.</p>}
+                    <p class="muted">Up to 32 recent process events are shown. Open service logs writes the bounded native log page to the AIRK Service output channel; Show extension output opens AIRK’s separate extension output channel.</p>
+                </article>
                 <article class="card">
                     <h2>Diagnostic preview</h2>
                     <p class="muted">Reports contain metadata only and are never uploaded. Paths and user names are redacted unless you include them. Copy keeps this exact captured preview.</p>

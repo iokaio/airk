@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents",
   "description": "Local indexed evidence for coding agents, with a native service, direct MCP retrieval and a shared offline model. No cloud service or API key.",
-  "version": "1.5.4",
+  "version": "1.5.5",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -428,6 +428,11 @@
         "command": "airk.serviceDiagnostics",
         "category": "AIRK",
         "title": "Preview Service Diagnostics"
+      },
+      {
+        "command": "airk.showExtensionOutput",
+        "title": "Show Extension Output",
+        "category": "AIRK"
       }
     ],
     "configuration": [

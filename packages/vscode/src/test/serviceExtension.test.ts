@@ -19,7 +19,7 @@ test('service activation advertises reviewed bindings without indexing and prese
         root:await fs.realpath(source),data_root:path.join(root,'data'),collection:'fixture'};
     await new ServiceWorkspace(storage,{reviewProject:async()=>registration,registerProject:async()=>registration},()=>true)
         .register(binding,source,registration.data_root,registration.collection,async()=>true);
-    let discoveries=0,ensures=0,stopped=false,provider:any;
+    let discoveries=0,ensures=0,stopped=false,provider:any;const outputShows:Array<[string,boolean]>=[];
     context.mock.method(RuntimeHost.prototype,'discover',async()=>{discoveries++;return {bundle:{},installDir:root,installed:true,location:{},inspection:{
         selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:'1.4.0',verification_basis:'trusted_distribution'},
         executable:binding.executable,launcher:binding.launcher,control_dir:binding.controlDir}};});
@@ -29,7 +29,7 @@ test('service activation advertises reviewed bindings without indexing and prese
         getConfiguration:()=>({get:(key:string,fallback?:unknown)=>key==='explorer.assistance.enabled'?false:fallback,inspect:(key:string)=>({globalValue:key==='mcp.responseMode'?'full':key==='cli.autoInstall'?false:undefined})}),
         onDidChangeWorkspaceFolders:event,onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event,
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watching is forbidden');}},
-    window:{createOutputChannel:()=>({appendLine(){},show(){},dispose(){}}),createStatusBarItem:()=>({show(){},dispose(){}}),
+    window:{createOutputChannel:(name:string)=>({appendLine(){},show(preserve:boolean){outputShows.push([name,preserve]);},dispose(){}}),createStatusBarItem:()=>({show(){},dispose(){}}),
         registerWebviewViewProvider:()=>disposable,createTreeView:()=>disposable,onDidChangeActiveTextEditor:event,
         showErrorMessage:async()=>undefined,showWarningMessage:async()=>undefined,
         createTerminal:(options:any)=>{terminals.push(options);return {show(){},dispose(){}};}},
@@ -49,6 +49,7 @@ test('service activation advertises reviewed bindings without indexing and prese
         stopped=true;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),/service_explicitly_stopped/);assert.equal(ensures,1);
         stopped=false;await commands.get('airk.openTools')!();assert.equal(terminals.length,1);
         assert.deepEqual(terminals[0].shellArgs.slice(-2),['tools','shell']);assert.equal(terminals[0].shellPath,binding.launcher);
+        await commands.get('airk.showExtensionOutput')!();assert.deepEqual(outputShows.at(-1),['AIRK',false]);
         const usageDrafts:unknown[]=[];
         context.mock.method(require('../serviceConsole').ServiceConsole.prototype,'configureProject',async(project:string,draft:unknown,valid:()=>boolean)=>{
             assert.equal(project,registration.binding);assert.equal(valid(),true);usageDrafts.push(draft);

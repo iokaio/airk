@@ -66,6 +66,7 @@ export interface StatusSummary {
     readonly vectorsEnabled?: boolean;
     readonly localModelReady?: boolean;
     readonly versionsMatch?: boolean | null;
+    readonly runtimeVersions?: readonly FactRow[];
     readonly workPhase?: string;
     readonly workPaused?: boolean;
     readonly observedAt: number;
@@ -136,6 +137,17 @@ export interface SearchResultView {
     readonly semantic?: SemanticState;
     readonly hits: readonly HitView[];
     readonly warnings: readonly string[];
+}
+/** Window-session state only; never written to workspace storage. */
+export interface SearchForm { query: string; mode: SearchMode; pathPrefix: string; limit: number; maxBytes: number; fullChunks: boolean }
+export interface SearchSessionView {
+    readonly project: string;
+    readonly selectionEpoch: number;
+    readonly form: SearchForm;
+    readonly page: number;
+    readonly result?: SearchResultView;
+    readonly busy: boolean;
+    readonly error?: string;
 }
 export interface PassageView {
     readonly ref: string;
@@ -253,6 +265,15 @@ export interface WorkspaceFilesView {
 /** A labeled observation; values are already formatted text. Unknown stays "Not observed". */
 export type FactRow = readonly [string, string];
 export interface ManagedProject {
+    readonly storage: {
+        readonly root?: string;
+        readonly observedAt?: number;
+        readonly usedBytes?: number;
+        readonly reservedBytes?: number;
+        readonly limitBytes?: number;
+        readonly availableBytes?: number;
+        readonly rows: readonly FactRow[];
+    };
     readonly watchDiagnostics?: readonly FactRow[];
     readonly summary: ProjectSummary;
     readonly rows: readonly FactRow[];
@@ -285,6 +306,7 @@ export interface ManagementView {
     readonly message?: string;
     readonly service: readonly FactRow[];
     readonly runtime: readonly FactRow[];
+    readonly runtimeVersions: readonly FactRow[];
     readonly resources: readonly FactRow[];
     readonly inference: readonly FactRow[];
     /** Which lifecycle and runtime actions the console would currently accept. */
@@ -298,6 +320,7 @@ export interface ManagementView {
     readonly pending: readonly PendingIntentView[];
     readonly events: readonly string[];
     readonly processEvents: readonly string[];
+    readonly processLogStatus: string;
     readonly historyOmitted: boolean;
     /** The bounded snapshot left out some project configuration results. */
     readonly configurationResultsOmitted: boolean;
@@ -317,7 +340,7 @@ export const MANAGE_ACTIONS = [
 ] as const;
 /** Existing AIRK commands that Management may open; each keeps its own dialogs and confirmations. */
 export const MANAGE_COMMANDS = ['airk.setupAgent', 'airk.verifyMcp', 'airk.manageVscodeMcp', 'airk.installCli', 'airk.openTools', 'airk.chooseStorage',
-    'airk.indexMode', 'airk.usage', 'airk.logs'] as const;
+    'airk.indexMode', 'airk.usage', 'airk.logs', 'airk.showExtensionOutput'] as const;
 
 /** One Explorer help topic, compiled from src/explorerHelp at build time and versioned with the VSIX. */
 export interface HelpTopic {
@@ -464,6 +487,14 @@ export const WEBVIEW_MESSAGES = {
     'help.openExternal': { destination: { kind: 'enum', values: Object.keys(ABOUT_LINKS) } },
     'project.select': { project: PROJECT },
     'status.refresh': {},
+    'search.page': { project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER }, page: { kind: 'int', min: 0, max: 4 } },
+    'search.form': {
+        project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER },
+        query: { kind: 'string', min: 0, max: 4096 },
+        mode: { kind: 'enum', values: ['policy', 'lexical', 'vector', 'hybrid'] },
+        pathPrefix: { kind: 'string', max: 1024 },
+        limit: { kind: 'int', min: 1, max: 100 }, maxBytes: { kind: 'int', min: 1024, max: 65536 }, fullChunks: { kind: 'bool' },
+    },
     'search.run': {
         query: { kind: 'string', min: 1, max: 4096 },
         mode: { kind: 'enum', values: ['policy', 'lexical', 'vector', 'hybrid'] },
@@ -506,7 +537,12 @@ export const WEBVIEW_MESSAGES = {
     'manage.observe': { open: { kind: 'bool' } },
     'strategy.run': { strategy: { kind: 'json', max: 32768 }, params: { kind: 'json', max: 8192 }, scope: { kind: 'json', max: 2048 } },
     'strategy.export': { strategy: { kind: 'json', max: 32768 } },
+    'studio.save': { document: { kind: 'json', max: 393216 }, name: { kind: 'string', min: 1, max: 64, pattern: /^[a-z][a-z0-9-]*$/ },
+        revision: { kind: 'int', min: 0, max: 1_000_000_000 }, expectedHash: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
     'strategy.import': {},
+    'usage.read': {},
+    'usage.action': { action: { kind: 'enum', values: ['days', 'refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback'] },
+        days: { kind: 'int', min: 7, max: 30, optional: true } },
     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
     'planner.openDraft': { plan: { kind: 'json', max: 131072 } },
     'planner.import': {},
@@ -522,7 +558,11 @@ export const WEBVIEW_MESSAGES = {
         fileName: { kind: 'string', min: 6, max: 120, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,113}\.json$/ } },
     'planner.saveInWorkspace': { plan: { kind: 'json', max: 131072 }, revision: { kind: 'int', min: 0, max: 1_000_000_000 },
         fileName: { kind: 'string', min: 4, max: 120, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,115}\.md$/ } },
-    'review.changes': {},
+    'review.changes': {
+        offset: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER, optional: true },
+        snapshot: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true },
+        publication: { kind: 'string', min: 1, max: 256, optional: true },
+    },
     'review.impact': {},
     'review.tests': {},
     'recipes.list': {},
@@ -582,6 +622,7 @@ export function parseWebviewMessage(input: unknown): WebviewMessage | undefined 
 // ---- Host → webview messages.
 export type HostMessage =
     | { v: 1; type: 'state'; state: ExplorerViewState }
+    | { v: 1; type: 'search.session'; session: SearchSessionView }
     | { v: 1; type: 'navigate'; route: string }
     /** A query entered outside the panel (sidebar quick search or a command); the webview runs it. */
     | { v: 1; type: 'search'; query: string }

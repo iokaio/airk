@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
-import { ABOUT_LINKS, EngineHelpView, ExplorerViewState, HostMessage, MESSAGE_VERSION, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
+import { ABOUT_LINKS, EngineHelpView, ExplorerViewState, HostMessage, MESSAGE_VERSION, SearchSessionView, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
 import { ControlSource, ExplorerControl } from './explorerControl';
 import { explorerError, ExplorerError } from './explorerErrors';
 import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
@@ -20,11 +20,15 @@ import { runStrategy } from './explorerStrategyRunner';
 import { SuggestionStore, suggestionsView } from './explorerSuggestions';
 import { ReviewContext, reviewChanges, reviewImpact, reviewTests } from './explorerReview';
 import { LaunchSpec } from './model';
+import { saveStudioInWorkspace } from './explorerWorkspaceIO';
+import { validateStudio } from './explorerStrategies';
+import { usageAction } from './usageReport';
 import { HandoffStore } from './explorerHandoffs';
 import type { AssistanceWindowStatus } from './explorerContracts';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
+    usage?(spec: LaunchSpec, valid: () => boolean): Promise<EmbeddedUsage>;
     readonly extensionUri: vscode.Uri;
     readonly version: string;
     trusted(): boolean;
@@ -43,6 +47,11 @@ export interface ExplorerHost {
 }
 
 const RECIPES_KEY = 'airk.explorer.searchRecipes';
+export interface EmbeddedUsage {
+    view(): { html: string };
+    action(message: unknown): Promise<{ html: string }>;
+    dispose(): void;
+}
 const RECIPE_LIMIT = 50;
 
 export interface ExplorerSnapshotListener { (state: ExplorerViewState): void }
@@ -63,6 +72,9 @@ export class ExplorerController implements vscode.Disposable {
     private selected?: string;
     private readonly sourceFiles = new Map<string, string>();
     private selectionEpoch = 0;
+    private searchState?: SearchSessionView;
+    private usageSession?: { epoch: number; value: Promise<EmbeddedUsage> };
+    private searchSequence = 0;
     private status?: StatusSummary;
     private statusFor?: string;
     private statusLoading?: Promise<void>;
@@ -178,6 +190,7 @@ export class ExplorerController implements vscode.Disposable {
         if (project === this.selected) { return; }
         this.selected = project;
         this.selectionEpoch++;
+        this.searchState = undefined;
         this.evidence?.dispose(); this.evidence = undefined;
         this.status = undefined; this.statusFor = undefined; this.notice = undefined;
         this.refs.clear(); this.facts.clear();
@@ -189,6 +202,7 @@ export class ExplorerController implements vscode.Disposable {
         if (this.evidence && (!spec || spec.command !== this.evidence.spec.command || JSON.stringify(spec) !== JSON.stringify(this.evidence.spec))) {
             this.evidence.dispose(); this.evidence = undefined;
             this.selectionEpoch++; this.status = undefined; this.statusFor = undefined;
+            this.searchState = undefined;
             this.refs.clear(); this.facts.clear();
         }
         this.selectDefault();
@@ -250,7 +264,7 @@ export class ExplorerController implements vscode.Disposable {
         if (!project || !this.host.trusted()) { return Promise.resolve(); }
         this.statusLoading = (async () => {
             try {
-                const result = await this.session().call('airk_status', {}, { timeout: 90000, supersede: 'status' });
+                const result = await this.session().call('airk_status', { response_mode: 'full' }, { timeout: 90000, supersede: 'status' });
                 if (epoch === this.selectionEpoch) { this.status = statusSummary(result.payload); this.statusFor = project; this.notice = undefined; }
             } catch (error) {
                 // A transient missing registration is not a user-facing failure; the next refresh retries.
@@ -273,12 +287,13 @@ export class ExplorerController implements vscode.Disposable {
     private async handle(message: WebviewMessage): Promise<void> {
         if (this.disposed) { return; }
         const epoch = this.selectionEpoch;
+        const panelGeneration = this.panel.generation;
         try {
             const data = await this.dispatch(message);
             if (epoch !== this.selectionEpoch && !['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
-            if (message.type !== 'ready') { this.respond(message.requestId, { data: data ?? null }); }
+            if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
-            this.respond(message.requestId, { error: failure(error) });
+            if (panelGeneration === this.panel.generation) { this.respond(message.requestId, { error: failure(error) }); }
         }
     }
 
@@ -327,7 +342,10 @@ export class ExplorerController implements vscode.Disposable {
                 const key = (message as WebviewMessageOf<'help.openExternal'>).destination as keyof typeof ABOUT_LINKS;
                 return { opened: await vscode.env.openExternal(vscode.Uri.parse(ABOUT_LINKS[key].url)) };
             }
-            case 'ready': this.publish(); this.panel.post({ v: MESSAGE_VERSION, type: 'navigate', route: this.route }); return;
+            case 'ready':
+                this.publish(); this.panel.post({ v: MESSAGE_VERSION, type: 'navigate', route: this.route });
+                if (this.searchState) { this.panel.post({ v: MESSAGE_VERSION, type: 'search.session', session: this.searchState }); }
+                return;
             case 'nav.go': {
                 const route = parseRoute(message.route);
                 if (!route) { throw new EvidenceFailure(explorerError('INVALID_MESSAGE')); }
@@ -357,13 +375,40 @@ export class ExplorerController implements vscode.Disposable {
                 await vscode.commands.executeCommand((message as WebviewMessageOf<'manage.command'>).command);
                 return;
             }
+            case 'search.form': {
+                const { project, selectionEpoch, query, mode, pathPrefix, limit, maxBytes, fullChunks } = message;
+                if (project !== this.requireProject() || selectionEpoch !== this.selectionEpoch) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+                this.searchState = { ...this.searchState, project, selectionEpoch, form: { query, mode, pathPrefix, limit, maxBytes, fullChunks }, busy: this.searchState?.busy ?? false, page: this.searchState?.page ?? 0 };
+                return;
+            }
+            case 'search.page': {
+                if (message.project !== this.requireProject() || message.selectionEpoch !== this.selectionEpoch || !this.searchState) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+                const last = Math.max(0, Math.ceil((this.searchState.result?.hits.length ?? 0) / 20) - 1);
+                this.searchState = { ...this.searchState, page: Math.min(message.page, last) };
+                return;
+            }
             case 'search.run': {
                 const typed = message as WebviewMessageOf<'search.run'>;
                 const project = this.requireProject();
-                const result = await this.session().call('airk_search', searchArgs(typed), { supersede: 'search', timeout: 30000 });
-                const status = this.statusFor === project ? this.status : undefined;
-                return searchView(project, typed, result.payload, result.publication, this.refs,
-                    { ...(status?.semantic ? { semantic: status.semantic } : {}), ...(status?.vectorsEnabled !== undefined ? { vectorsEnabled: status.vectorsEnabled } : {}) });
+                const args = searchArgs(typed);
+                const selectionEpoch = this.selectionEpoch, sequence = ++this.searchSequence;
+                const { query, mode, limit, maxBytes, fullChunks } = typed;
+                this.searchState = { project, selectionEpoch, form: { query, mode, limit, maxBytes, fullChunks, pathPrefix: typed.pathPrefix ?? '' }, busy: true, page: 0 };
+                const publish = () => { this.panel.post({ v: MESSAGE_VERSION, type: 'search.session', session: this.searchState! }); };
+                const current = () => !this.disposed && selectionEpoch === this.selectionEpoch && sequence === this.searchSequence;
+                publish();
+                try {
+                    const result = await this.session().call('airk_search', args, { supersede: 'search', timeout: 30000 });
+                    if (!current()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+                    const status = this.statusFor === project ? this.status : undefined;
+                    const view = searchView(project, typed, result.payload, result.publication, this.refs,
+                        { ...(status?.semantic ? { semantic: status.semantic } : {}), ...(status?.vectorsEnabled !== undefined ? { vectorsEnabled: status.vectorsEnabled } : {}) });
+                    this.searchState = { ...this.searchState!, result: view, busy: false }; publish();
+                    return view;
+                } catch (error) {
+                    if (current()) { this.searchState = { ...this.searchState!, result: undefined, busy: false, error: failure(error).message }; publish(); }
+                    throw error;
+                }
             }
             case 'evidence.expand': {
                 const typed = message as WebviewMessageOf<'evidence.expand'>;
@@ -466,6 +511,32 @@ export class ExplorerController implements vscode.Disposable {
                 return exportStrategy(checked.strategy);
             }
             case 'strategy.import': return (await importStrategy()) ?? null;
+            case 'usage.read': case 'usage.action': {
+                const project = this.requireProject(), epoch = this.selectionEpoch;
+                const spec = this.host.specs().find(entry => entry.service?.project === project);
+                if (!spec || !this.host.usage) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Usage is unavailable for this project.')); }
+                if (this.usageSession?.epoch !== epoch) {
+                    void this.usageSession?.value.then(session => session.dispose(), () => undefined);
+                    const value = this.host.usage(spec, () => !this.disposed && this.host.trusted() && epoch === this.selectionEpoch);
+                    this.usageSession = { epoch, value };
+                    void value.catch(() => { if (this.usageSession?.value === value) { this.usageSession = undefined; } });
+                }
+                const session = await this.usageSession.value;
+                if (message.type === 'usage.read') { return session.view(); }
+                const typed = message as WebviewMessageOf<'usage.action'>;
+                const action = usageAction({ type: 'usage', action: typed.action, ...(typed.days !== undefined ? { days: typed.days } : {}) });
+                if (!action) { throw new EvidenceFailure(explorerError('INVALID_MESSAGE')); }
+                return session.action(action);
+            }
+            case 'studio.save': {
+                const typed = message as WebviewMessageOf<'studio.save'>, epoch = this.selectionEpoch;
+                const document = validateStudio(typed.document);
+                if (!document) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', 'Invalid Studio document.')); }
+                const root = this.host.specs().find(spec => spec.service?.project === this.selected)?.root;
+                if (!root) { throw new EvidenceFailure(explorerError('STALE_BINDING')); }
+                return saveStudioInWorkspace(document, typed.name, root, typed.expectedHash,
+                    () => this.host.trusted() && !this.disposed && epoch === this.selectionEpoch && this.draftRevisions.studio === typed.revision);
+            }
             case 'clipboard.write': await vscode.env.clipboard.writeText((message as WebviewMessageOf<'clipboard.write'>).text); return;
             case 'suggestions.get': {
                 const item = this.host.trusted() ? this.host.suggestions.get((message as WebviewMessageOf<'suggestions.get'>).id) : undefined;
@@ -503,7 +574,7 @@ export class ExplorerController implements vscode.Disposable {
                 const typed = message as WebviewMessageOf<'suggestions.revisions'>;
                 this.draftRevisions = { studio: typed.studio, planner: typed.planner }; return;
             }
-            case 'review.changes': return reviewChanges(this.reviewContext());
+            case 'review.changes': return reviewChanges(this.reviewContext(), message);
             case 'review.impact': return reviewImpact(this.reviewContext());
             case 'review.tests': return reviewTests(this.reviewContext());
             case 'recipes.list': return this.recipes();
@@ -592,6 +663,7 @@ export class ExplorerController implements vscode.Disposable {
     }
 
     dispose(): void {
+        void this.usageSession?.value.then(session => session.dispose(), () => undefined);
         if (this.disposed) { return; }
         this.disposed = true;
         this.retained?.dispose();

@@ -34,10 +34,16 @@ async function prices(): Promise<object | undefined> {
         cached_input_price_per_million: cached || null, context_assumes_uncached: assumption.value };
 }
 
-/** Each panel captures a collection; stale workspace/storage bindings reject all actions. */
+export interface UsageSurface {
+    render(value: object): void;
+    onMessage(listener: (message: unknown) => Promise<void>): { dispose(): void };
+    onDispose(listener: () => void): void;
+}
+
+/** A standalone panel or Explorer surface captures one collection and the same guarded actions. */
 export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
-    write: (args: string[], valid?: () => boolean) => Promise<unknown>): Promise<void> {
-    const panel = vscode.window.createWebviewPanel('airk.usage', `AIRK Usage & Savings: ${spec.name}`, vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] });
+    write: (args: string[], valid?: () => boolean) => Promise<unknown>, surface?: UsageSurface): Promise<void> {
+    const panel = surface ? undefined : vscode.window.createWebviewPanel('airk.usage', `AIRK Usage & Savings: ${spec.name}`, vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] });
     let days = 30, price: object | undefined, report: object = {}, busy = false, disposed = false;
     const check = () => { if (disposed || !vscode.workspace.isTrusted || !valid()) { throw new Error('This collection or storage selection changed. Reopen Usage & Savings from the current collection.'); } };
     const commit = (args:string[]) => { check();return write(args,()=>{try{check();return true;}catch{return false;}}); };
@@ -47,12 +53,12 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
         return chosenPrice ? withJson(chosenPrice, file => runText(spec.command, [...launchArgs(spec, 'usage'), ...args, '--price-scenario', file], path.dirname(spec.command),180000))
             : runText(spec.command, [...launchArgs(spec, 'usage'), ...args], path.dirname(spec.command),180000);
     };
-    const render = () => { check(); panel.webview.html = renderReport('Usage & Savings', 'usage', { ...report, days, busy }); };
+    const render = () => { check(); const value = { ...report, days, busy }; if (surface) { surface.render(value); } else { panel!.webview.html = renderReport('Usage & Savings', 'usage', value); } };
     const refresh = async () => { report = JSON.parse(await read()); render(); };
     const show = async (content: string, language: string) => { check(); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ content, language }), { preview: false }); };
-    const listener = panel.webview.onDidReceiveMessage(async message => {
+    const receive = async (message: unknown) => {
         const action = usageAction(message);
-        const json = message && typeof message === 'object' && Object.keys(message).length === 1 && message.type === 'openJson';
+        const json = message && typeof message === 'object' && Object.keys(message).length === 1 && (message as { type?: string }).type === 'openJson';
         if ((!action && !json) || busy) { return; }
         busy = true;
         try {
@@ -111,9 +117,11 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
                     if (rating) { check(); await commit(['feedback', id, '--usefulness', rating.value]); await refresh(); } break;
                 }
             }
-        } catch (error) { void vscode.window.showErrorMessage(`AIRK usage: ${String(error)}`); }
+        } catch (error) { if (surface) { throw error; } void vscode.window.showErrorMessage(`AIRK usage: ${String(error)}`); }
         finally { busy = false; try { render(); } catch { /* Stale/disposed panels stay unauthorized. */ } }
-    });
-    panel.onDidDispose(() => { disposed = true; listener.dispose(); });
-    try { await refresh(); } catch (error) { panel.dispose(); throw error; }
+    };
+    const listener = surface ? surface.onMessage(receive) : panel!.webview.onDidReceiveMessage(receive);
+    const dispose = () => { disposed = true; listener.dispose(); };
+    if (surface) { surface.onDispose(dispose); } else { panel!.onDidDispose(dispose); }
+    try { await refresh(); } catch (error) { dispose(); panel?.dispose(); throw error; }
 }

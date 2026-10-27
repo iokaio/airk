@@ -117,9 +117,11 @@ export class ServiceConsole implements vscode.Disposable {
         if(!bootstrap.inspection){this.output.appendLine('No selected runtime is available. Inspect installation settings and bootstrap diagnostics.');this.output.show(true);return;}
         const control=bootstrap.inspection.log_control_dir??bootstrap.inspection.control_dir;
         if(typeof control!=='string'||!path.isAbsolute(control)||control.length>4096||/[\u0000-\u001f\u007f]/.test(control))throw new ServiceError('log_control_binding_unavailable');
-        const result=await nativeRunner(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--limit','256']);
+        let result:RecordValue;
+        try{result=await nativeRunner(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--limit','32','--format','json']);}
+        catch(error){this.output.appendLine(`Unable to read native service logs: ${error instanceof Error?error.message:String(error)}`);this.output.show(false);throw new ServiceError('service_logs_read_failed_see_airk_service_output');}
         if(!vscode.workspace.isTrusted||this.disposed)return;
-        this.output.appendLine(JSON.stringify(result,null,2));this.output.show(true);
+        this.output.appendLine(JSON.stringify(result,null,2));this.output.show(false);
     }
     private async legacyTarget():Promise<LegacyStartupTarget|undefined>{
         const authorized=()=>{if(!vscode.workspace.isTrusted||this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');};

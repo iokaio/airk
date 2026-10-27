@@ -2,7 +2,13 @@
 
 <a id="airk-explorer-150"></a>
 
-## AIRK Explorer (1.5.4 development)
+## AIRK Explorer (1.5.5 development)
+
+Search retains query/options, the latest results and page when switching tabs or reopening the panel in the same selected project and extension-host session. Project/binding changes or extension-host restart clear that session. Results are not written to workspace storage. Search displays twenty of the retrieved hits per page; the request limit remains up to 100, subject to its byte budget. Paging does not rerun a search; a newer observed publication is labeled so users can explicitly search again.
+
+Review Changes displays fifty-file pages with totals and Previous/Next controls, without a fifty-file total cutoff. A changed Git list or publication requires refreshing instead of mixing pages. Impact/Tests inventory calls respect the native hundred-file page bound. Reports restart once on a changed, present publication identity within a shared 90-second budget; missing identity, integrity and other tool failures are not replayed. Tests distinguishes changed test files from indexed textual references, explains why each candidate appears, and shows changed test files even when indexed analysis fails. Refresh repeats analysis of the current inputs; it never executes tests or measures coverage. See the bundled [Search](../packages/vscode/src/explorerHelp/search.md), [Changes](../packages/vscode/src/explorerHelp/review-changes.md) and [Tests](../packages/vscode/src/explorerHelp/review-tests.md) guidance.
+
+Overview’s **Source work** reports saved-source reconciliation/freshness separately from published-index availability and semantic coverage. Native watcher directory planning uses indexing’s ignore rules; ignored output directories do not require listing access, while failures in included source directories remain visible. A ready semantic index does not verify that saved files still match its snapshot.
 
 Management › Projects and Indexing show **Unreadable directories** with bounded paths, error categories and observation time. The list can be incomplete because each root walk stops at its first failure. A later complete root traversal clears its failures automatically. Native logs record only project unavailable/recovered transitions; repeated retries do not add duplicate failure records.
 
@@ -15,6 +21,10 @@ Search offers **Semantic (by meaning)**, **Lexical (all words)**, **Hybrid (lexi
 **About** opens Help → About AIRK with the installed extension version, Ioka LLC credit, Munarium/VCP inspiration and independent implementation history. User-clicked links open the repository, [AIRK website](https://ioka.io/airk), [Ioka Discord community](https://discord.gg/sJase5FbE), [GitHub Issues](https://github.com/iokaio/airk/issues), contribution guide and license notices. Public sites can describe an earlier release; runtime observations identify the actual installed processes separately.
 
 Planner **Load plan…** starts in `.airk/plans` (or the configured directory), accepts validated plan JSON or AIRK-generated Markdown and confirms replacement of an existing draft. JSON preserves complete states/evidence; Markdown's abbreviated evidence summaries reopen as draft tasks without verified evidence metadata. **Export plan JSON…** provides an exact round trip. Studio imports start in `.airk/strategies`; importing cannot replace work changed during the file picker or confirmation. Loading never executes instructions or edits the selected source file. Search recipes retain their editor workspace state and can now be imported/exported as validated `airk.explorer.search-recipe/1` JSON in `.airk/recipes`. Import previews the query and confirms adding or replacing the named recipe; a changed saved recipe is refused. Loading never searches.
+
+Studio **Save** writes the complete draft inputs to `.airk/strategies/<name>.studio.airk.json` in the selected local project without a folder picker. It preserves the objective, parameters, path scope, steps, prompt profile and edited prompt under a `user/<name>` definition. Save again to update it, or change the name for a copy; outside edits are guarded. Browse saved strategies restores these inputs, with evidence recollected after loading. Accepting a suggestion does not save automatically. **Export…** continues to save only a strategy definition.
+
+Management now exposes per-project index storage roots, accounted size, reservations and quotas with explicit inspection age and a fresh inspection action. Legacy startup review is collapsed. Projects and Indexing show executable versions with their observation basis. Agents explains Terse versus Full and the context-budget reason for the default. Usage & Savings loads inside its tab with the existing report controls; exports remain explicit. Logs shows recent events and opens distinct service/extension output channels using the native 32-record limit.
 
 ### Expanded Explorer Assistance
 

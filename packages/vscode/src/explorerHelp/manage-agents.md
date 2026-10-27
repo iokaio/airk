@@ -22,3 +22,9 @@ Read Work with an AI agent for template discovery, side-effect-free validation, 
 ## Limits
 
 Helper verification proves the launcher works. Whether an agent loaded it is checked in that agent.
+
+## Terse or Full responses
+
+**Terse** is the default for routine searches and navigation. It keeps focused evidence and citations while omitting repeated metadata, so more of the agent's context budget remains for its task. **Full** adds detailed provenance, readiness and coverage information for missing or surprising results, freshness problems, parser limitations and evidence audits. Full produces larger responses; it does not make the index more complete.
+
+An agent can request response_mode: full for one call. Reconnect its MCP session after changing the default.

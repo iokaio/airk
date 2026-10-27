@@ -33,3 +33,9 @@ test('the headline reports the worst condition and never merges states into OK',
     assert.equal(headline('ready', { ...ready, freshness: 'running' }, 1).word, 'indexing');
     assert.equal(headline('degraded', ready, 1).word, 'degraded');
 });
+
+test('status versions keep frontend and worker provenance separate and never fill missing versions', () => {
+    const result = statusSummary({ runtime: { mcp_frontend: { basis: 'client_reported', process: { version: '1.5.5', process_id: 25 } },
+        index_worker: { basis: 'running_process', process: { process_id: 45 } } } });
+    assert.deepEqual(result.runtimeVersions, [['MCP frontend (airk)', '1.5.5 · client_reported · PID 25'], ['Index worker (airk)', 'not observed · running_process · PID 45']]);
+});

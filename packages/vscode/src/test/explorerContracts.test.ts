@@ -42,6 +42,13 @@ test('errors come from one registry and native codes pass through bounded', () =
 test('webview messages require the exact declared fields', () => {
     const search = { v: 1, type: 'search.run', requestId: 'r1', query: 'session refresh', mode: 'lexical', limit: 20, maxBytes: 16384, fullChunks: false };
     assert.deepEqual(parseWebviewMessage(search), search);
+    const draft = { ...search, type: 'search.form', query: '', pathPrefix: '', project: 'ab'.repeat(32), selectionEpoch: 2 };
+    assert.ok(parseWebviewMessage(draft)); assert.equal(parseWebviewMessage({ ...draft, query: 'x'.repeat(4097) }), undefined);
+    const page = { v: 1, type: 'search.page', requestId: 'page', project: 'ab'.repeat(32), selectionEpoch: 2, page: 4 };
+    assert.ok(parseWebviewMessage(page)); assert.equal(parseWebviewMessage({ ...page, page: 5 }), undefined);
+    assert.equal(parseWebviewMessage({ ...page, page: -1 }), undefined);
+    const reviewPage = { v: 1, type: 'review.changes', requestId: 'page', offset: 150, snapshot: 'ab'.repeat(32) };
+    assert.ok(parseWebviewMessage(reviewPage)); assert.equal(parseWebviewMessage({ ...reviewPage, offset: -1 }), undefined);
     assert.ok(parseWebviewMessage({ ...search, pathPrefix: 'src/auth/' }));
     const rejected: unknown[] = [
         null, [], 'search.run', { ...search, v: 2 }, { ...search, type: 'shell.exec' }, { ...search, requestId: 'has space' },
