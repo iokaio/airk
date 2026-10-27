@@ -2,8 +2,9 @@
 import type { ChangesView, CitationCheckView, CitationResult, InspectView, LiveCheck } from './explorerContracts';
 import { parseCitations } from './explorerContracts';
 import { explorerError } from './explorerErrors';
-import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
+import { absentFromIndex, EvidenceClient, EvidenceFailure, samePublication } from './explorerEvidence';
 import { RefRegistry } from './explorerSearch';
+import { FactHandles } from './explorerFacts';
 import { displayPath, liveCheck, sourceFile } from './explorerSource';
 
 type Value = Record<string, unknown>;
@@ -76,12 +77,12 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
     for (const path of paths) {
         try {
             const result = await session.call('airk_file_info', { path }, { timeout: 30000 });
-            publication ??= result.publication;
+            publication = samePublication(publication, result);
+            if (absentFromIndex(result.payload)) { records.set(path, {}); continue; }
             const hash = typeof result.payload.content_hash === 'string' ? result.payload.content_hash : '';
             records.set(path, { info: result.payload, live: hash ? (await liveOf(result.payload, hash, dirty)).live : 'unchecked', ...(result.publication ? { publication: result.publication } : {}) });
         } catch (error) {
-            if (error instanceof EvidenceFailure && ['SERVICE_UNAVAILABLE', 'REQUEST_TIMEOUT', 'INDEX_UNAVAILABLE'].includes(String(error.error.code))) { throw error; }
-            records.set(path, {});
+            throw error;
         }
     }
     const citations = parsed.citations.map((entry): CitationResult => {
@@ -91,6 +92,7 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
         if (!record) { return { ...base, status: 'unchecked', message: 'Not checked: more than 25 distinct paths in one check.' }; }
         if (!record.info) { return { ...base, status: 'not_found', message: STATUS_MESSAGE.not_found }; }
         const lines = count(record.info.indexed_lines), hash = record.info.content_hash;
+        if (lines === undefined) { return { ...base, status: 'unchecked', message: 'AIRK did not report an indexed line count; this range could not be verified.' }; }
         if (lines !== undefined && entry.endLine > lines) { return { ...base, status: 'line_out_of_range', message: `${STATUS_MESSAGE.line_out_of_range} (${lines} indexed lines)` }; }
         const status: CitationResult['status'] = record.live === 'matches_index' ? 'valid' : record.live === 'changed_since_index' ? 'changed_since_index'
             : record.live === 'not_saved' ? 'not_saved' : record.live === 'missing' ? 'missing' : 'unchecked';
@@ -103,8 +105,11 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
 }
 
 /** Evidence › Changes: bounded observed changes since an earlier publication token. */
-export async function changesSince(session: EvidenceClient, since: string, limit: number): Promise<ChangesView> {
-    const result = await session.call('airk_changes', { since, limit, max_bytes: 32768 }, { timeout: 30000 });
+export async function changesSince(session: EvidenceClient, since: string, limit: number, handles?: FactHandles, project?: string, more?: string): Promise<ChangesView> {
+    const handle = more && handles ? handles.cursors.get(more, project) : undefined;
+    const args = handle ? { ...handle.args, cursor: handle.cursor } : { since, limit, max_bytes: 32768 };
+    const result = await session.call('airk_changes', args, { timeout: 30000 });
+    if (handle) { samePublication(handle.publication, result); since = String(handle.args.since); limit = handle.limit; }
     const payload = result.payload;
     const endpoint = (value: unknown) => { const point = obj(value); return text(point.citation_path, 4096) ?? text(point.path, 4096); };
     const items = (Array.isArray(payload.changes) ? payload.changes : []).map(raw => {
@@ -119,6 +124,9 @@ export async function changesSince(session: EvidenceClient, since: string, limit
         return `${area}: complete after generation ${String(entry.complete_after ?? '?')}${entry.reason ? ` (${String(entry.reason)})` : ''}`;
     });
     if (payload.status === 'cursor_expired') { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'The change cursor expired; run the comparison again.')); }
+    if (typeof payload.cursor === 'string' && payload.cursor.length > 8192) { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'The change cursor exceeded its byte budget.')); }
+    const cursor = typeof payload.cursor === 'string' ? payload.cursor : undefined;
+    const next = cursor && handles && project ? handles.cursors.add({ project, tool: 'airk_changes', args: { since, limit, max_bytes: 32768 }, cursor, limit, publication: result.publication }) : undefined;
     return { since, baseline: text(payload.baseline_status, 64) ?? 'unknown', status: text(payload.status, 64) ?? 'unknown', items,
-        truncated: payload.truncated === true || !!payload.cursor, ...(result.publication ? { publication: result.publication } : {}), coverage };
+        ...(next ? { more: next } : {}), truncated: payload.truncated === true || !!payload.cursor, ...(result.publication ? { publication: result.publication } : {}), coverage };
 }

@@ -29,6 +29,32 @@ test('a valid search draft is admitted for review only: never accepted, applied 
     assert.equal(inbox.list()[0].client.name, 'claude-code');
 });
 
+test('proposal status reports admitted, current and acknowledged application revisions without claiming execution', () => {
+    const revisions = { planner: 2 }, { store: inbox } = store({ revisions });
+    const draft = { schema_version: '1.0', idempotency_key: 'plan-revisions', title: 'A plan', expected_target_revision: 2,
+        tasks: [{ task_id: 'T1', title: 'Review the code' }] };
+    const submitted = inbox.submit('plan', draft, CLIENT); assert.ok(submitted.ok);
+    const id = submitted.receipt.proposal_id;
+    assert.equal(inbox.status(id)?.target_draft_revision, 2); assert.equal(inbox.status(id)?.current_target_revision, 2);
+    assert.ok(inbox.resolve(id, 'applied')); assert.equal(inbox.acknowledge(id, 3), false);
+    revisions.planner = 3; assert.ok(inbox.acknowledge(id, 3));
+    const status = inbox.status(id)!;
+    assert.equal(status.applied_target_revision, 3); assert.equal(status.reason, 'applied_to_draft'); assert.equal(status.executed, false);
+    revisions.planner = 4; assert.equal(inbox.status(id)?.current_target_revision, 4); assert.equal(inbox.status(id)?.applied_target_revision, 3);
+});
+
+test('changing the window binding cannot retarget or apply a retained proposal', () => {
+    const context = { binding: 'ab12ab12ab12ab12' };
+    const { store: inbox } = store(context);
+    const result = inbox.submit('search', search(), CLIENT);
+    assert.ok(result.ok); context.binding = 'cd34cd34cd34cd34';
+    assert.equal(inbox.resolve(result.receipt.proposal_id, 'applied'), undefined);
+    assert.equal(inbox.status(result.receipt.proposal_id)?.status, 'conflicted');
+    assert.equal(inbox.status(result.receipt.proposal_id)?.reason, 'binding_changed');
+    const retried = inbox.submit('search', search(), CLIENT);
+    assert.equal(retried.ok ? undefined : retried.code, 'STALE_BINDING');
+});
+
 test('the same idempotency key and body replays the proposal; a different body conflicts (AT-14)', () => {
     const { store: inbox } = store();
     const first = inbox.submit('search', search(), CLIENT);

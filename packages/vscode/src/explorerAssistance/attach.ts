@@ -46,7 +46,7 @@ function send(descriptor: WindowDescriptor, body: Body): Promise<AssistanceIpcRe
         socket.on('connect', () => socket.write(JSON.stringify({ ...body, v: 1, credential: descriptor.credential }) + '\n'));
         socket.on('data', (chunk: string) => {
             buffer += chunk;
-            if (buffer.length > ASSISTANCE_IPC_LIMIT) { done(); return; }
+            if (Buffer.byteLength(buffer, 'utf8') > ASSISTANCE_IPC_LIMIT) { done(); return; }
             const newline = buffer.indexOf('\n');
             if (newline >= 0) { try { done(JSON.parse(buffer.slice(0, newline))); } catch { done(); } }
         });

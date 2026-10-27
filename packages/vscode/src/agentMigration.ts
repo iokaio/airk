@@ -2,7 +2,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { applyEdits, findNodeAtLocation, getNodeValue, modify, parseTree, ParseError, Node } from 'jsonc-parser';
-import { ASSISTANCE_KEY, assistanceEntry, LaunchSpec, retrievalEntry, ServerEntry } from './model';
+import { ASSISTANCE_KEY, assistanceEntry, LaunchSpec, retrievalEntry, serializeServers, ServerEntry } from './model';
 import { launchDescriptorPath } from './explorerAssistanceLaunch';
 import { readJsonConfig } from './agentConfig';
 
@@ -97,14 +97,15 @@ function migrateToml(source: string, target: Target): string | undefined {
 }
 
 /**
- * Update connection fields only. Missing entries never opt an agent in. Unsupported syntax is preserved.
+ * Update recognized connections and add Assistance beside an existing recognized Retrieval entry.
+ * Missing project Retrieval entries never opt an agent in. Unsupported syntax is preserved.
  * Retrieval entries must be recognized; an Explorer Assistance entry is updated only when recognized and is
  * otherwise left exactly as it is.
  */
-export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage: string, source: string): string {
+export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage: string, source: string, includeAssistance = true, warn: (message: string) => void = () => undefined): string {
     if (!spec.service) { throw new Error('Registered service binding required.'); }
     if (Buffer.byteLength(source) > 1_048_576) { throw new Error('Configuration exceeds 1 MiB.'); }
-    const assistance = assistanceEntry(spec, launchDescriptorPath(storage));
+    const assistance = includeAssistance ? assistanceEntry(spec, launchDescriptorPath(storage)) : undefined;
     const targets: Target[] = [
         { key: `airk-${spec.collection}`, recognize: (command, args) => recognized(spec, storage, command, args), entry: retrievalEntry(spec), strict: true },
         ...(assistance ? [{ key: ASSISTANCE_KEY, recognize: (command: unknown, args: unknown) => recognizedAssistance(spec, storage, command, args), entry: assistance, strict: false }] : []),
@@ -114,9 +115,22 @@ export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage:
         // Multiline strings could disguise table headers, so defer those files to manual review.
         if (source.includes('"""') || source.includes("'''")) { throw new Error('Multiline TOML strings require manual review.'); }
         let result = source;
+        let retrievalPresent = false, assistancePresent = false;
         for (const target of targets) {
-            try { result = migrateToml(result, target) ?? result; }
+            try {
+                const updated = migrateToml(result, target);
+                if (target.strict) { retrievalPresent = updated !== undefined; } else { assistancePresent = updated !== undefined; }
+                result = updated ?? result;
+            }
             catch (error) { if (target.strict) { throw error; } }
+        }
+        if (retrievalPresent && assistance && !assistancePresent) {
+            // An unfamiliar spelling or inline table may already reserve this key.
+            // Preserve it for review instead of appending a duplicate TOML table.
+            if (source.includes(ASSISTANCE_KEY) || /^\s*mcp_servers\s*=/m.test(source)) { throw new Error('Explorer Assistance TOML entry needs manual review; existing file preserved.'); }
+            const header = source.indexOf(`[mcp_servers.${targets[0].key}]`), quoted = source.indexOf(`[mcp_servers."${targets[0].key}"]`);
+            const start = Math.max(header, quoted), body = source.slice(start).split(/\r?\n\s*\[/)[0];
+            result = result.trimEnd() + '\n\n' + serializeServers('codex', [assistance]) + (/^\s*enabled\s*=\s*false\s*$/m.test(body) ? 'enabled = false\n' : '');
         }
         return result;
     }
@@ -124,6 +138,7 @@ export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage:
     if (!tree || tree.type !== 'object' || errors.length) { throw new Error('Invalid MCP JSON; existing file preserved.'); }
     unique(tree);
     let result = source;
+    let retrievalPresent = false;
     for (const target of targets) {
         const keys = [agent === 'copilot' ? 'servers' : 'mcpServers', target.key];
         const node = findNodeAtLocation(tree, keys);
@@ -132,18 +147,27 @@ export function migrateAgentConfig(agent: LocalAgent, spec: LaunchSpec, storage:
         if (node.type !== 'object' || 'url' in entry || 'serverUrl' in entry || entry.type && entry.type !== 'stdio'
             || !target.recognize(entry.command, entry.args)) {
             if (target.strict) { throw new Error('Unrecognized AIRK connection; review manually.'); }
+            warn('A custom Explorer Assistance entry was preserved; review its conflict manually.');
             continue;
         }
+        if (target.strict) { retrievalPresent = true; }
         for (const [key, value] of [['command', target.entry.command], ['args', target.entry.args]] as const) {
+            if (JSON.stringify(entry[key]) === JSON.stringify(value)) { continue; }
             result = applyEdits(result, modify(result, [...keys, key], value, {}));
         }
+    }
+    const group = agent === 'copilot' ? 'servers' : 'mcpServers';
+    if (retrievalPresent && assistance && !findNodeAtLocation(tree, [group, ASSISTANCE_KEY])) {
+        const retrieval = getNodeValue(findNodeAtLocation(tree, [group, targets[0].key])!);
+        result = applyEdits(result, modify(result, [group, ASSISTANCE_KEY], { command: assistance.command, args: assistance.args,
+            ...(retrieval.disabled === true ? { disabled: true } : {}), ...(retrieval.enabled === false ? { enabled: false } : {}) }, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
     }
     return result;
 }
 
 /** Local workspace files only; editor save owns unsaved-edit/version/conflict checks. */
 export async function migrateLocalAgents(spec: LaunchSpec, storage: string, check: () => void,
-    save: (destination: string, before: string, after: string) => Promise<void>): Promise<string[]> {
+    save: (destination: string, before: string, after: string) => Promise<void>, includeAssistance = true): Promise<string[]> {
     const messages: string[] = [];
     for (const agent of ['codex', 'claude', 'copilot'] as const) {
         check();
@@ -160,7 +184,8 @@ export async function migrateLocalAgents(spec: LaunchSpec, storage: string, chec
         try {
             const before = await validate();
             if (before === undefined) { continue; }
-            const after = migrateAgentConfig(agent, spec, storage, before);
+            const after = migrateAgentConfig(agent, spec, storage, before, includeAssistance,
+                warning => messages.push(`Could not update ${agent} Explorer Assistance: ${warning} (${destination})`));
             if (after === before) { continue; }
             check();
             if (await validate() !== before) { throw new Error('Configuration changed during migration.'); }

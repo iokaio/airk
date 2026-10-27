@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as nodePath from 'node:path';
 import * as vscode from 'vscode';
-import { EngineHelpView, ExplorerViewState, HostMessage, MESSAGE_VERSION, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
+import { ABOUT_LINKS, EngineHelpView, ExplorerViewState, HostMessage, MESSAGE_VERSION, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
 import { ControlSource, ExplorerControl } from './explorerControl';
 import { explorerError, ExplorerError } from './explorerErrors';
 import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
@@ -14,12 +14,14 @@ import { managementView } from './explorerManagement';
 import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary } from './explorerStatus';
 import { displayPath } from './explorerSource';
-import { exportStrategy, importStrategy, liveAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
+import { exportStrategy, importPlan, importStrategy, liveAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
 import { renderPlan, SearchRecipe, validatePlan, validateRecipe, validateStrategy } from './explorerStrategies';
 import { runStrategy } from './explorerStrategyRunner';
 import { SuggestionStore, suggestionsView } from './explorerSuggestions';
 import { ReviewContext, reviewChanges, reviewImpact, reviewTests } from './explorerReview';
 import { LaunchSpec } from './model';
+import { HandoffStore } from './explorerHandoffs';
+import type { AssistanceWindowStatus } from './explorerContracts';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
@@ -37,6 +39,7 @@ export interface ExplorerHost {
     readonly workspaceState: Pick<vscode.Memento, 'get' | 'update'>;
     /** This window's agent drafts (Suggestions Inbox). */
     readonly suggestions: SuggestionStore;
+    readonly handoffs?: HandoffStore;
 }
 
 const RECIPES_KEY = 'airk.explorer.searchRecipes';
@@ -58,6 +61,7 @@ export class ExplorerController implements vscode.Disposable {
     private readonly facts = new FactHandles(this.refs);
     private evidence?: EvidenceClient;
     private selected?: string;
+    private selectionEpoch = 0;
     private status?: StatusSummary;
     private statusFor?: string;
     private statusLoading?: Promise<void>;
@@ -93,6 +97,11 @@ export class ExplorerController implements vscode.Disposable {
     draftRevisions: { studio?: number; planner?: number } = {};
     /** Publication of the selected project's last status, if observed. */
     get publication(): string | undefined { return this.status?.publication; }
+    get assistanceStatus(): Pick<AssistanceWindowStatus, 'active_route' | 'binding_generation' | 'blockers'> {
+        return { active_route: this.route.replace(/^#/, ''), binding_generation: this.selectionEpoch,
+            blockers: [...(!this.host.trusted() ? ['WORKSPACE_UNTRUSTED'] : []), ...(!this.selected ? ['NO_PROJECT'] : []),
+                ...(!this.panelOpen ? ['EXPLORER_CLOSED'] : []), ...(this.notice ? [this.notice.code] : [])] };
+    }
 
     /** Open the Explorer with the Suggestions Inbox showing. */
     showInbox(): void {
@@ -124,6 +133,7 @@ export class ExplorerController implements vscode.Disposable {
             projects,
             ...(this.control.observedAt() !== undefined ? { projectsObservedAt: this.control.observedAt() } : {}),
             ...(this.selected ? { selectedProject: this.selected } : {}),
+            selectionEpoch: this.selectionEpoch,
             ...(this.status && this.statusFor === this.selected ? { status: this.status } : {}),
             features: FEATURES,
             ...(this.notice ? { notice: this.notice } : {}),
@@ -161,6 +171,7 @@ export class ExplorerController implements vscode.Disposable {
     private select(project: string | undefined): void {
         if (project === this.selected) { return; }
         this.selected = project;
+        this.selectionEpoch++;
         this.evidence?.dispose(); this.evidence = undefined;
         this.status = undefined; this.statusFor = undefined; this.notice = undefined;
         this.refs.clear(); this.facts.clear();
@@ -171,6 +182,8 @@ export class ExplorerController implements vscode.Disposable {
         // A changed launcher binding (runtime upgrade, storage change) invalidates the session.
         if (this.evidence && (!spec || spec.command !== this.evidence.spec.command || JSON.stringify(spec) !== JSON.stringify(this.evidence.spec))) {
             this.evidence.dispose(); this.evidence = undefined;
+            this.selectionEpoch++; this.status = undefined; this.statusFor = undefined;
+            this.refs.clear(); this.facts.clear();
         }
         this.selectDefault();
         this.publish();
@@ -211,15 +224,19 @@ export class ExplorerController implements vscode.Disposable {
     private loadStatus(): Promise<void> {
         if (this.statusLoading || this.disposed) { return this.statusLoading ?? Promise.resolve(); }
         const project = this.selected;
+        const epoch = this.selectionEpoch;
         if (!project || !this.host.trusted()) { return Promise.resolve(); }
         this.statusLoading = (async () => {
             try {
                 const result = await this.session().call('airk_status', {}, { timeout: 90000, supersede: 'status' });
-                if (project === this.selected) { this.status = statusSummary(result.payload); this.statusFor = project; this.notice = undefined; }
+                if (epoch === this.selectionEpoch) { this.status = statusSummary(result.payload); this.statusFor = project; this.notice = undefined; }
             } catch (error) {
                 // A transient missing registration is not a user-facing failure; the next refresh retries.
-                if (project === this.selected && failure(error).code !== 'NO_PROJECT') { this.notice = failure(error); }
-            } finally { this.statusLoading = undefined; this.publish(); }
+                if (epoch === this.selectionEpoch && failure(error).code !== 'NO_PROJECT') { this.notice = failure(error); }
+            } finally {
+                this.statusLoading = undefined; this.publish();
+                if (!this.disposed && epoch !== this.selectionEpoch) { void this.loadStatus(); }
+            }
         })();
         return this.statusLoading;
     }
@@ -233,8 +250,10 @@ export class ExplorerController implements vscode.Disposable {
 
     private async handle(message: WebviewMessage): Promise<void> {
         if (this.disposed) { return; }
+        const epoch = this.selectionEpoch;
         try {
             const data = await this.dispatch(message);
+            if (epoch !== this.selectionEpoch && message.type !== 'project.select' && message.type !== 'status.refresh') { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready') { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
             this.respond(message.requestId, { error: failure(error) });
@@ -243,6 +262,10 @@ export class ExplorerController implements vscode.Disposable {
 
     protected async dispatch(message: WebviewMessage): Promise<unknown> {
         switch (message.type) {
+            case 'help.openExternal': {
+                const key = (message as WebviewMessageOf<'help.openExternal'>).destination as keyof typeof ABOUT_LINKS;
+                return { opened: await vscode.env.openExternal(vscode.Uri.parse(ABOUT_LINKS[key].url)) };
+            }
             case 'ready': this.publish(); this.panel.post({ v: MESSAGE_VERSION, type: 'navigate', route: this.route }); return;
             case 'nav.go': {
                 const route = parseRoute(message.route);
@@ -285,8 +308,14 @@ export class ExplorerController implements vscode.Disposable {
                 const typed = message as WebviewMessageOf<'evidence.expand'>;
                 const project = this.requireProject();
                 const ref = this.refs.get(typed.ref, project);
-                const result = await this.session().call('airk_read_file', { path: ref.path, start_line: Math.max(1, ref.startLine - typed.before),
-                    end_line: ref.endLine + typed.after, max_bytes: 32768 }, { timeout: 30000 });
+                if (!ref.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
+                const info = await this.session().call('airk_file_info', { path: ref.path, revision: ref.publication, known_hash: ref.contentHash });
+                if (info.publication !== ref.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
+                // Extracted coordinates have no host-known page boundary: keep one cited line.
+                const sourceLines = info.payload.line_basis === 'source';
+                const result = await this.session().call('airk_context', { path: ref.path, line: ref.startLine,
+                    before: sourceLines ? typed.before : 0, after: sourceLines ? typed.after : 0, revision: ref.publication, known_hash: ref.contentHash, max_bytes: 32768 }, { timeout: 30000 });
+                if (result.publication !== ref.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
                 return passageView(project, result.payload, result.publication, this.refs);
             }
             case 'source.open': {
@@ -346,12 +375,15 @@ export class ExplorerController implements vscode.Disposable {
             case 'evidence.changes': {
                 const typed = message as WebviewMessageOf<'evidence.changes'>;
                 this.requireProject();
-                return changesSince(this.session(), typed.since, typed.limit);
+                return changesSince(this.session(), typed.since, typed.limit, this.facts, this.requireProject());
             }
+            case 'evidence.changesMore': return changesSince(this.session(), '', 50, this.facts, this.requireProject(), message.more);
             case 'help.engine': {
                 const typed = message as WebviewMessageOf<'help.engine'>;
                 this.requireProject();
-                const result = await this.session().call('airk_help', { ...(typed.topic ? { topic: typed.topic } : {}), max_bytes: 16384 }, { timeout: 30000 });
+                if ([typed.topic, typed.command, typed.tool].filter(Boolean).length > 1) { throw new EvidenceFailure(explorerError('INVALID_MESSAGE', 'Choose one help selector.')); }
+                const result = await this.session().call('airk_help', { ...(typed.topic ? { topic: typed.topic } : {}), ...(typed.command ? { command: typed.command } : {}),
+                    ...(typed.tool ? { tool: typed.tool } : {}), ...(typed.startLine ? { start_line: typed.startLine } : {}), max_bytes: 16384 }, { timeout: 30000 });
                 return engineHelp(result.payload);
             }
             case 'list.more': {
@@ -380,10 +412,30 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'suggestions.resolve': {
                 const typed = message as WebviewMessageOf<'suggestions.resolve'>;
+                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                const item = this.host.suggestions.get(typed.id);
+                const current = item?.kind === 'strategy' ? this.draftRevisions.studio : item?.kind === 'plan' ? this.draftRevisions.planner : undefined;
+                if (typed.status === 'applied' && current !== undefined && typed.targetRevision !== current) { throw new EvidenceFailure(explorerError('PROPOSAL_CONFLICT')); }
                 if (!this.host.suggestions.resolve(typed.id, typed.status)) { throw new EvidenceFailure(explorerError('PROPOSAL_EXPIRED', 'This suggestion was already resolved or has expired.')); }
                 return;
             }
             case 'suggestions.discardAll': return { discarded: this.host.suggestions.discardAll() };
+            case 'suggestions.applied': {
+                const typed = message as WebviewMessageOf<'suggestions.applied'>;
+                if (!this.host.trusted() || !this.host.suggestions.acknowledge(typed.id, typed.revision)) { throw new EvidenceFailure(explorerError('PROPOSAL_CONFLICT')); }
+                return;
+            }
+            case 'handoff.share': {
+                const typed = message as WebviewMessageOf<'handoff.share'>;
+                if (!this.host.trusted() || !this.host.handoffs) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED')); }
+                const owner = this.selectionEpoch;
+                const approved = await vscode.window.showWarningMessage('Share this Explorer text with a coding agent?', { modal: true,
+                    detail: 'Only this complete snapshot will be available through an expiring token for ten minutes. Review the displayed text before sharing; the agent cannot read other drafts with it.' }, 'Share snapshot');
+                if (approved !== 'Share snapshot') { return { shared: false }; }
+                if (owner !== this.selectionEpoch) { throw new EvidenceFailure(explorerError('STALE_BINDING')); }
+                const value = this.host.handoffs.share(typed.kind as 'studio' | 'planner', typed.revision, typed.content, typed.publication);
+                return { shared: true, token: value.token, content_sha256: value.content_sha256, expires_unix_ms: value.expires_unix_ms };
+            }
             case 'suggestions.revisions': {
                 const typed = message as WebviewMessageOf<'suggestions.revisions'>;
                 this.draftRevisions = { studio: typed.studio, planner: typed.planner }; return;
@@ -406,11 +458,23 @@ export class ExplorerController implements vscode.Disposable {
                 return this.recipes();
             }
             case 'planner.openDraft': return openPlanDraft(this.planMarkdown((message as WebviewMessageOf<'planner.openDraft'>).plan));
+            case 'planner.import': return (await importPlan()) ?? null;
+            case 'planner.exportJSON': {
+                const typed = message as WebviewMessageOf<'planner.exportJSON'>, checked = validatePlan(typed.plan), epoch = this.selectionEpoch;
+                if (!checked.ok) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', checked.errors.slice(0, 5).join('; '))); }
+                if (checked.plan.project && checked.plan.project !== this.selected) { throw new EvidenceFailure(explorerError('STALE_BINDING')); }
+                return savePlanInWorkspace(JSON.stringify(checked.plan, null, 2) + '\n', typed.fileName,
+                    () => this.host.trusted() && !this.disposed && epoch === this.selectionEpoch && this.draftRevisions.planner === typed.revision,
+                    { title: 'Export AIRK plan JSON', filters: { 'AIRK plan JSON': ['json'] } });
+            }
             case 'planner.saveInWorkspace': {
                 const typed = message as WebviewMessageOf<'planner.saveInWorkspace'>;
                 if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                if (typed.plan.project && typed.plan.project !== this.selected) { throw new EvidenceFailure(explorerError('STALE_BINDING')); }
+                const epoch = this.selectionEpoch;
                 // The revision comes back unchanged so the webview can ignore a result for an older draft.
-                return { ...(await savePlanInWorkspace(this.planMarkdown(typed.plan), typed.fileName)), revision: typed.revision };
+                return { ...(await savePlanInWorkspace(this.planMarkdown(typed.plan), typed.fileName,
+                    () => this.host.trusted() && !this.disposed && epoch === this.selectionEpoch && this.draftRevisions.planner === typed.revision)), revision: typed.revision };
             }
             default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${(message as WebviewMessage).type} is not available in this build.`));
         }
@@ -455,7 +519,10 @@ function engineHelp(payload: Record<string, unknown>): EngineHelpView {
     });
     return { topic: typeof payload.topic === 'string' ? payload.topic : 'overview', title: typeof payload.title === 'string' ? payload.title.slice(0, 200) : 'AIRK help',
         content: typeof payload.content === 'string' ? payload.content.slice(0, 32768) : '', ...(typeof payload.version === 'string' ? { version: payload.version } : {}),
-        topics, truncated: payload.truncated === true || payload.next_line != null };
+        topics, truncated: payload.truncated === true || payload.next_line != null,
+        ...(Number.isSafeInteger(payload.start_line) && Number(payload.start_line) > 0 ? { startLine: Number(payload.start_line) } : {}),
+        ...(Number.isSafeInteger(payload.next_line) && Number(payload.next_line) > 0 ? { nextLine: Number(payload.next_line) } : {}),
+        ...(typeof payload.command === 'string' ? { command: payload.command } : {}), ...(typeof payload.tool === 'string' ? { tool: payload.tool } : {}) };
 }
 
 /** A flat record of short strings (strategy parameters or scope); anything else is refused. */

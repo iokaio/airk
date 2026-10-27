@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
-import { ExplorerError } from '../explorerErrors';
+import { ExplorerError, EXPLORER_ERRORS, friendlyError } from '../explorerErrors';
 import { ExplorerViewState, HostMessage, MESSAGE_VERSION, WebviewMessageOf, WebviewMessageType } from '../explorerContracts';
 
 const host = acquireVsCodeApi();
 let counter = 0;
-const pending = new Map<string, { resolve(value: unknown): void; reject(error: ExplorerError): void }>();
+const pending = new Map<string, { resolve(value: unknown): void; reject(error: ExplorerError): void; timer: ReturnType<typeof setTimeout>; uncertain: boolean }>();
 const listeners = new Set<(message: HostMessage) => void>();
 
 export class HostFailure extends Error {
-    constructor(readonly error: ExplorerError) { super(error.message); }
+    constructor(readonly error: ExplorerError) { super(friendlyError(error)); }
 }
 
 type Fields<T extends WebviewMessageType> = Omit<WebviewMessageOf<T>, 'v' | 'type' | 'requestId'>;
@@ -16,15 +16,24 @@ type Fields<T extends WebviewMessageType> = Omit<WebviewMessageOf<T>, 'v' | 'typ
 /** Send one typed request; the host validates it again and answers with a result message. */
 export function request<T = unknown, K extends WebviewMessageType = WebviewMessageType>(type: K, fields: Fields<K>): Promise<T> {
     const requestId = `w${++counter}`;
+    if (pending.size >= 64) { return Promise.reject(new HostFailure({ code: 'RATE_LIMITED', message: 'Explorer already has 64 requests waiting.' })); }
+    const uncertain = /^(manage\.(action|command)|planner\.(saveInWorkspace|exportJSON)|strategy\.export|suggestions\.(resolve|applied|discardAll)|handoff\.share|recipes\.(save|delete))$/.test(type);
+    const interactive = uncertain || type === 'planner.import' || type === 'strategy.import' || type === 'source.open';
     return new Promise<T>((resolve, reject) => {
-        pending.set(requestId, { resolve: value => resolve(value as T), reject: error => reject(new HostFailure(error)) });
-        host.postMessage({ ...fields, v: MESSAGE_VERSION, type, requestId });
+        const fail = (code: 'REQUEST_TIMEOUT' | 'REQUEST_OUTCOME_UNKNOWN' | 'HOST_UNAVAILABLE') => {
+            const waiter = pending.get(requestId); if (!waiter) { return; }
+            pending.delete(requestId); clearTimeout(waiter.timer); waiter.reject({ code, message: EXPLORER_ERRORS[code].message });
+        };
+        const timer = setTimeout(() => fail(uncertain ? 'REQUEST_OUTCOME_UNKNOWN' : 'REQUEST_TIMEOUT'), interactive ? 900000 : 180000);
+        pending.set(requestId, { resolve: value => resolve(value as T), reject: error => reject(new HostFailure(error)), timer, uncertain });
+        try { host.postMessage({ ...fields, v: MESSAGE_VERSION, type, requestId }); }
+        catch { fail('HOST_UNAVAILABLE'); }
     });
 }
 
 /** Fire-and-forget notification (the host still replies; the reply is ignored). */
 export function notify<K extends WebviewMessageType>(type: K, fields: Fields<K>): void {
-    void request(type, fields).catch(() => undefined);
+    try { host.postMessage({ ...fields, v: MESSAGE_VERSION, type, requestId: `n${++counter}` }); } catch { /* A closed webview cannot report revisions; it will report current state when reopened. */ }
 }
 
 export function onHost(listener: (message: HostMessage) => void): () => void {
@@ -42,10 +51,20 @@ window.addEventListener('message', event => {
         const waiter = pending.get(message.requestId);
         if (!waiter) { return; }
         pending.delete(message.requestId);
+        clearTimeout(waiter.timer);
         if (message.ok) { waiter.resolve(message.data); } else { waiter.reject(message.error); }
         return;
     }
     for (const listener of listeners) { listener(message); }
+});
+
+window.addEventListener('pagehide', () => {
+    for (const waiter of pending.values()) {
+        clearTimeout(waiter.timer);
+        const code = waiter.uncertain ? 'REQUEST_OUTCOME_UNKNOWN' : 'HOST_UNAVAILABLE';
+        waiter.reject({ code, message: EXPLORER_ERRORS[code].message });
+    }
+    pending.clear();
 });
 
 export function ready(): void { host.postMessage({ v: MESSAGE_VERSION, type: 'ready', requestId: 'ready' }); }

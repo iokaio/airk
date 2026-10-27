@@ -8,7 +8,7 @@ related_airk_help: workflows
 ---
 # Agent suggestions inbox
 
-Coding agents connected to Explorer Assistance can propose a Search form, a Studio strategy, a Planner plan, a Review tab to look at, or management guidance that opens one Management screen. Each proposal waits in this window's Suggestions inbox; nothing is applied, run or saved until you act. Open it with the **Suggestions** button in the Explorer header, the count in the AIRK sidebar, or **AIRK: Show Agent Suggestions**.
+Coding agents connected to Explorer Assistance can propose a Search form, a Studio strategy, a Planner plan, a Review tab, management guidance or navigation with supported form fields. Each proposal waits in this window's Suggestions inbox; nothing is applied, run or saved until you act. Open it with the **Suggestions** button in the Explorer header, the count in the AIRK sidebar, or **AIRK: Show Agent Suggestions**.
 
 Each card shows the agent's self-reported name (not authenticated), when it arrived, where it would go, its status and any warnings, such as evidence that cites an older publication. Cards with the same destination and title collapse into one with a count, and at most 20 are shown.
 
@@ -20,3 +20,5 @@ Each card shows the agent's self-reported name (not authenticated), when it arri
 4. Or choose **Defer** or **Reject**. **Discard all** rejects every open draft for this window.
 
 Drafts live in memory for this window only and expire after airk.explorer.suggestions.ttlHours (default 24). Clicking a card never applies it.
+
+Navigation cards show the exact route, filters and agent note. **Open screen** fills supported fields; you choose whether to submit that form. Agents can dry-run validation without adding cards. Proposal status reports fixed reason codes and admitted/current/applied draft revisions; copied into a draft does not mean executed. Read Work with an AI agent for tool names and recovery guidance.

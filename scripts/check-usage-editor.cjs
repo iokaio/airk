@@ -149,6 +149,9 @@ exports.checkUsage = async (port, folder) => {
         checks.push('two collection reports stay separate', 'clear cancellation preserves evidence', 'confirmed clear resets selected report');
         await fs.writeFile(path.join(folder, 'usage-ui-complete.json'), '{}');
         await until(() => exists(path.join(folder, 'a-usage-storage-changed.json')), 'driver storage switch');
+        // Reviewing the replacement binding opens its source editor. Reveal the
+        // original report before exercising its stale-binding refusal.
+        await activateReport();
         await click('refresh');
         await until(async () => (await workbench("document.body.innerText.includes('This collection or storage selection changed.')"))?.value, 'stale report error');
         checks.push('open report rejects refresh after actual storage switch');

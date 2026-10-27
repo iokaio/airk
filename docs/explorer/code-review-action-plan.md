@@ -1,6 +1,6 @@
 # AIRK Explorer branch code review and action plan
 
-Review date: 26 October 2026. This is a review record and a proposed plan; none of the recommendations below has been implemented by this review.
+Review date: 26 October 2026. The original review below is historical. The implementation follow-up at the end records the corrective work and its separate validation; original findings and original test receipts are retained for traceability.
 
 ## Scope and method
 
@@ -220,3 +220,100 @@ At review start the worktree already contained changes in CLI `lib.rs`, `main.rs
 The supplemental review traced pointer publication/resolution, early launcher dispatch, launch argument serialization, default versus custom/managed installation selection and recognized agent-entry migration. The extension tests exercise serialization/migration, but the real universal-launcher test skipped without `AIRK_TEST_BINARY`, and native compilation was unavailable. Do not treat the supplemental inspection as native qualification. Before committing that separate work, run the actual installed launcher path, repeat concurrent publication/retargeting and redirected-file checks, and verify migration preserves foreign agent entries and installation identity.
 
 Only this action-plan document was added by the review. All actions above remain recommendations.
+
+## Implementation follow-up — 26 October 2026
+
+The current branch implements F01–F11 while retaining version 1.5.0 as requested for local installation. The original review above describes the pre-correction checkpoint.
+
+| Finding | Implemented behavior | Regression evidence |
+|---|---|---|
+| F01 | Local Planner saves reject redirected directories, symlink/hardlink targets and oversized existing targets. Exact target identity/content, authorization and dirty editors are checked after confirmation, with no asynchronous gap before the guarded descriptor write. New files use exclusive creation. Remote providers use Open as draft and the editor Save command. | Real temporary-directory tests for junction escape, hard links, concurrent target edits, dirtying during confirmation and authorization revocation. |
+| F02 | Studio input changes invalidate runs/generated prompts; edited prompts are marked stale and blocked from export until rebuilt. Delayed run admission checks draft revision and project/binding identity. | Bundled UI-state tests edit inputs, replace generations, switch projects and attempt old-run admission. |
+| F03 | Parallel steps stop admitting new items on failure and settle every started worker before finalizing or advancing. | Deferred sibling-read test proves no early return and no fourth-item admission. |
+| F04 | Expand uses revision/hash-bound native context and clamps EOF. Extracted documents conservatively retain one cited line because the host cannot prove page boundaries. | Host request-contract test and native EOF/stale-token regression. |
+| F05 | Status completions carry a binding epoch and reschedule the current selection after an older request settles. | Deferred A-to-B status test; old results cannot replace B. |
+| F06 | Evidence screens remount per route/project/binding epoch; old host replies are superseded. Inspector/publication/query state is cleared at project transitions. Studio evidence is invalidated and Planner ownership is explicit. | Bundled state and host generation tests; native/editor acceptance remains a separate lane. |
+| F07 | Review/Checker compare every constituent publication, preserve tool/service failures, and recognize only native explicit absence as not indexed. Missing line counts remain unchecked. | Mixed-publication and integrity-failure regressions plus real native missing-path checks. |
+| F08 | Host proposal resolution succeeds before local mutation. Reviewed target revisions and binding generations are checked before and after admission; conflicts preserve local work and report conflicted status. | Bundled apply-order/expired/racing-revision tests and existing store expiration/conflict tests. |
+| F09 | Planner accepts complete Studio prompts only. Oversized/stale snapshots are refused with guidance, never sliced; unstored prompts are compiled before adding. | Bundled over-8,000-character rejection and intact-instructions tests. |
+| F10 | Evidence budgets cover the complete UTF-8 JSON record array; strategy/plan schema limits also count UTF-8 bytes. | CJK and JSON-escaping boundary tests. |
+| F11 | Current README, architecture, design status, docs index, Windows guide, release notes, Marketplace README and bundled help describe Explorer Management and the current save/evidence contracts. Historical review/release receipts retain their dates and scope. | Version, documentation/build and repository checks. |
+
+Additional code improvements from the plan are included: Changes cursor paging with project/publication-bound handles; retained old rename/deletion path review and disclosure when old declarations are no longer indexed; path/location-aware declaration deduplication; explicit test-candidate clipping; finite evidence/stdio/Assistance request queues and output backpressure; disabled selection of projects outside the window; keyboard tab navigation, dialog focus cycling/restoration and combobox/tab/panel ARIA relationships.
+
+This is a local Windows implementation and qualification effort. Linux, both Mac architectures, remote editor providers, real external coding-agent sessions, installed 1.4.4 upgrade/rollback and a full screen-reader/contrast audit require their respective environments. No hosted matrix, deployment or publication is implied. Remote guarded saving deliberately refuses providers without a proven containment/conditional-write contract. Local save checks defend against observed redirection and concurrent review changes; they do not claim protection against a malicious same-user process continuously racing filesystem namespace operations.
+
+The complete diff is reviewed explicitly by the implementing reviewer after the corrections; no independent review is claimed. Current validation results and the local installer receipt are recorded below when their runs finish.
+
+### Current validation receipts
+
+Implementation began at `09f1c9d` with a clean worktree: the previously uncommitted universal launcher had been committed as `c9baace`. This corrective pass changes extension code/tests and documentation; it preserves the native launcher implementation. All native checks include that committed launcher work.
+
+- `cargo fmt --all --check`: passed.
+- `cargo clippy --workspace --all-targets --all-features --locked --offline -- -D warnings`: passed.
+- `cargo test --workspace --all-features --locked --offline`: passed, including doctests. Full local Windows workspace coverage was requested for this implementation; no hosted CI was invoked.
+- Extension build and mock lane: 264 tests, 253 passed, 11 platform/native skips, zero failures. Native-enabled results are recorded separately below.
+- Python contracts: 172 tests, four skipped, zero failures.
+- Repository checks: passed for 1,142 public files, including new lifecycle/backpressure tests. Whitespace, documentation UTF-8 and byte-identical AGENTS.md/CLAUDE.md checks passed.
+- Version synchronization: native, extension and lockfiles remain 1.5.0.
+- Notice generation: succeeded for 411 third-party packages. The generator repeats the existing missing-standalone-license-text review notices documented in THIRD_PARTY_NOTICES.md; this run does not constitute a new license approval.
+- Explicit complete-diff review checked save authorization/root/target guards, post-confirmation editor state, worker settlement, late result admission, suggestion lookup/application races, project binding, publication checks and packaged-module closure. Two additional related cases were corrected during that pass: root replacement during a save dialog, and proposal binding changes after admission. Their regressions pass in the extension lane.
+- The first native-enabled extension run stalled during universal-launcher cleanup: a Windows executable-removal race could skip disposal of its owned service fixture. Cleanup now retries removal and always disposes the fixture. The focused real-launcher test passes; the full native lane is rerun after this correction. The interrupted run is retained as diagnostic evidence, not counted as passing.
+
+### Local installer receipt
+
+- Release runtime pair: built and verified with `scripts/build-service-runtime.py --profile release`; includes the committed universal launcher.
+- Final native-enabled extension suite: 264 tests, 262 passed, two skips (POSIX startup and the old-helper replacement fixture), zero failures (85.7 seconds). This rerun includes the cleanup correction and the final BigInt filesystem-identity checks.
+- Exact-pair service-client/model qualification: passed with two isolated projects, 16 retrieval tools, real local-model queries and preserved source bytes.
+- Native archive and platform VSIX: verified by `scripts/package-native.py` and `scripts/package-extension.py`, including payload inventories, runtime identity, digests and packaged module closure.
+- Installer: [`airk-1.5.0-win32-x64.vsix`](../../artifacts/local/explorer-review-150-20261026/vscode/publish/airk-1.5.0-win32-x64.vsix), Windows x64, version 1.5.0. SHA-256: `fdd88d363f91fcb7084ff5a6aa393ce9f5cfab92c26dc331fbb714d943594822`.
+- Evidence directory: `artifacts/local/explorer-review-150-20261026/`, including package manifests, build/test logs and `service-client-check.json`. This is a local candidate built from the uncommitted corrective work on baseline `09f1c9d`; it is not a published release.
+- Private-profile VSIX installation succeeded. The initial installed-editor attempt failed before extension loading because the command sandbox denied Electron access to the VS Code installation; no editor ACLs were changed. Outside-sandbox acceptance used isolated profiles/extensions and made no change to the normal editor profile.
+- All five installed-VSIX scenarios passed: same-project windows, different-project windows, multi-root Search/Management, usage reporting and untrusted workspace. The first three receipts are in `artifacts/editor-qualification/native-installed-OU8Sf0/summary.json`; usage/untrusted are in `artifacts/editor-qualification/native-installed-c51Xtf/summary.json`.
+- The first usage attempt reached its final stale-binding check but the harness timed out because storage review left the source editor active; the hidden report could not receive its Refresh click. The harness now explicitly activates the original report before clicking, retaining the stale-refusal assertion. Only usage and untrusted scenarios were rerun; both passed against the same verified VSIX. The already passed scenarios were not repeated.
+
+## Subsequent requested Assistance, Help and UI work — 26 October 2026
+
+This follow-up includes the original F01–F11 corrections above and the later requested features. Version 1.5.0 remains synchronized as requested. Earlier installer receipts identify earlier snapshots; the installer below supersedes them for local testing.
+
+| Requested work | Implemented behavior and evidence |
+|---|---|
+| Five new Assistance tools | `airk_explorer_templates_list`, `airk_explorer_template_get`, `airk_explorer_validate_draft`, `airk_explorer_suggest_navigation`, `airk_explorer_handoff_get`; fourteen tools total. Offline template/paging/budget tests, real bundled MCP/IPC tests and installed native-forwarder tests exercise the contracts. |
+| Existing status tools | UI status reports route, binding generation, blockers and revisions. Proposal status reports fixed reasons and admitted/current/acknowledged application revisions. Applying to a draft is distinct from execution. Binding changes cannot retarget retained proposals or snapshots. |
+| Project setup | New configurations include Retrieval and Assistance. Installation/repair backfills a missing companion only beside a recognized project Retrieval entry, preserving disabled settings, unrelated entries and custom conflicts. Codex supports an explicit guarded update of an existing recognized project config. Trust, unsaved-edit, foreign-entry, idempotency and disable-setting tests pass. |
+| Required UI | Navigation cards preview supported route/form fields; users submit queries themselves. Studio and Planner offer explicit shared snapshots with confirmation, ten-minute tokens, complete content/hash/revision metadata, bounded storage and revocation. Read-only MCP access cannot enumerate or inspect other drafts. |
+| Unified Help | One searchable, ranked, area-filtered offline catalog contains Explorer articles and every static native engine topic. Both the UI and Assistance help tools use it. Live CLI command help/tool schemas retain runtime identity and bounded page navigation. Old reference replies cannot replace another topic. |
+| Four primary roles | Developer, Tester, Architect and Writer guides cover purpose, code/document evidence, verification, strategies and handoff. Indexing and format guides distinguish Search Only/Agent Lean/Rich Structure/Detailed, independent vectors, watching, supported syntax, original PDF/Office locations, spreadsheet caches and explicit local OCR. Roles never silently change settings. |
+| About and community | Header About opens Help > About AIRK with version, Ioka LLC credit, Munarium/VCP inspiration and independent implementation history. Fixed user-clicked links include ioka.io/airk, the repository, Discord invitation, GitHub Issues, contribution guide and license notices. Public history was checked against Ioka's page and the repository's inspiration record; no private reference material was copied. |
+| Local files | Planner Load plan starts in .airk/plans and validates JSON or AIRK-generated Markdown; replacement confirms and rechecks draft/project identity. JSON retains complete states/provenance; abbreviated Markdown imports as unverified draft tasks with an explicit notice. Export plan JSON uses the guarded save path. Strategy import starts in .airk/strategies and cannot overwrite intervening Studio edits. Recipes remain editor workspace state. |
+| UI controls and style | Static TypeScript JSX audit checked 120 native buttons, 28 inputs, 17 selects, six text areas and eight forms: no inert buttons or controlled editable fields without handlers were found. Custom action controls delegate to shared typed handlers. Dialog focus/restoration, hover feedback, long text/token wrapping, Help layout and friendly detail labels were refined. This is not a claim of exhaustive manual accessibility qualification. |
+| Recoverable errors | Error codes remain available for diagnostics; common failures explain the next step. Webview admission is bounded to 64 awaited requests; revisions/navigation notifications reserve no pending slots. Read deadlines release controls, late replies are ignored and lost action acknowledgments report unknown outcome. Saves/configuration/proposal/repair operations are never automatically replayed. Recovery Help works offline. |
+
+### Validation for the updated installer
+
+- Full Rust workspace/all-features tests and doctests: passed. Final formatting and workspace/all-targets/all-features Clippy with warnings denied: passed. Four focused native help tests also passed after the final help-topic changes.
+- Extension native-enabled suite: 283 tests, 281 passed, two skips, zero failures. Final extension suite after the additional local-import regression: 284 tests, 273 passed, eleven native/platform skips, zero failures. Tests run the actual bundled server and deferred/lifecycle/temporary-file boundaries; no source-string-only claim substitutes for execution.
+- Python repository/packaging contracts: 172 tests, four skipped, zero failures. Repository checks pass for 1,157 public files; whitespace and version synchronization checks pass. AGENTS.md/CLAUDE.md remain byte-identical.
+- Fresh release runtime pair built and verified. Exact runtime service-client/model check passed for two isolated projects and sixteen Retrieval tools, preserving source bytes. The packaged native executable also answers its current About/Discord guidance directly through airk_help.
+- Native archive and extension package inventory/digest/module closure checks passed. License notices were generated for the same 411 packages; the existing three missing-standalone-text notices remain review notices rather than newly approved licenses.
+- Installer: [airk-1.5.0-win32-x64.vsix](../../artifacts/local/explorer-assistance-150-20261026/vscode-final/publish/airk-1.5.0-win32-x64.vsix). SHA-256: `2083df201b489aaeb2a587a617f1afdeaceb871beb3489a56b9575e1ce3a8dac`.
+- The full five-scenario installed-editor run passed against the first expanded candidate: same project, different projects, multiple roots with Help search/role/purpose/offline engine/live schema/About checks, usage reporting and untrusted workspace. Receipt: `artifacts/editor-qualification/native-installed-yQ2XWA/summary.json`.
+- Final review then reproduced a Windows path comparison issue in the new Codex update flow: native extended-path registrations were compared with an ordinary canonical directory spelling. The update now follows the same canonical-root path as configuration creation. The actual setup/save regression now supplies a namespaced native registration and passes; the complete final 284-test extension suite passes after this fix.
+- The final repack changes only `extension/out/agentSetup.js`; comparison of every VSIX entry proves the native runtime, Help/Assistance/UI bundles and all other payload bytes match the five-scenario candidate. Receipt: `artifacts/local/explorer-assistance-150-20261026/final-payload-comparison.json`. The exact final VSIX passed the focused installed multi-root/Help/About check; final receipt: `artifacts/editor-qualification/native-installed-1z6Ku9/summary.json`.
+- Evidence directory: `artifacts/local/explorer-assistance-150-20261026/`, with manifests, runtime/service-model checks, native help output, test logs and package inventories.
+
+The implementing reviewer explicitly reviewed the combined changes and validation evidence; no independent review is claimed. No commit, publication, normal-profile installation or change to editor ACLs was performed. Linux/macOS, remote providers, real external agents, installed-version upgrade/rollback and a full accessibility audit remain environment-specific qualification work. The authorized work here produces a Windows local installer and preserves the earlier review corrections.
+
+## Local commit preparation — 27 October 2026
+
+The user requested a local commit without a push. The pre-commit review checked the combined changes, save guards, project/publication identity, proposal admission, shared snapshot revocation, transport bounds, packaging modules and documentation agreement. This was an explicit review pass, not an independent review. Native, extension and lockfile versions remain synchronized at the previously requested 1.5.0.
+
+- Extension compilation and tests: 284 tests, 273 passed, eleven native/platform skips, zero failures.
+- Python repository/packaging contracts: 172 tests, four skipped, zero failures.
+- Rust formatting and workspace/all-targets/all-features Clippy with warnings denied: passed using the installed Cargo toolchain and offline dependency resolution.
+- The Rust workspace/all-features test rerun was stopped at the user's request before completion; no complete passing result is claimed for this rerun.
+- Repository checks: passed for 1,157 public files; version synchronization and whitespace checks passed. AGENTS.md and CLAUDE.md remain byte-identical.
+- Notice generation: succeeded for 411 third-party packages after adding the installed Cargo directory to the process PATH. The existing adobe-cmap-parser, pdf-extract and type1-encoding-parser standalone-text review notices remain unresolved.
+- Native-enabled extension, service-client/model, packaging and installed-editor qualification were not repeated during commit preparation; the dated receipts above retain their original scope. No cross-platform qualification or publication is claimed.
+
+Commit-preparation logs are retained locally under target/commit-*.log and are excluded from the commit along with build artifacts and private/index state.

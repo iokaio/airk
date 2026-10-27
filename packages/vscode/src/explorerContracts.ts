@@ -2,10 +2,23 @@
 // Pure, versioned contracts between the extension host and the AIRK Explorer webview.
 // No Node, vscode or host imports: the webview bundle and the host share this file.
 import type { Availability } from './explorerFeatures';
-import type { DraftKind, ProposalReceipt } from './explorerDrafts';
+import type { DraftKind, ProposalOutcome, ProposalReceipt } from './explorerDrafts';
 import type { ExplorerError, ExplorerErrorCode } from './explorerErrors';
 
 export const MESSAGE_VERSION = 1;
+/** Fixed public destinations for user-clicked About links; never agent-supplied URLs. */
+export const ABOUT_LINKS = {
+    website: { title: 'AIRK at ioka.io', url: 'https://ioka.io/airk' },
+    repository: { title: 'Source repository', url: 'https://github.com/iokaio/airk' },
+    issues: { title: 'Report an issue on GitHub', url: 'https://github.com/iokaio/airk/issues' },
+    contribute: { title: 'Contribute to AIRK', url: 'https://github.com/iokaio/airk/blob/main/CONTRIBUTING.md' },
+    ioka: { title: 'Ioka', url: 'https://ioka.io/' },
+    discord: { title: 'Join the Ioka Discord community', url: 'https://discord.gg/sJase5FbE' },
+    munarium: { title: 'Munarium', url: 'https://github.com/iokaio/munarium' },
+    inspiration: { title: 'Inspiration and independent implementation', url: 'https://github.com/iokaio/airk/blob/main/docs/inspiration.md' },
+    license: { title: 'Apache 2.0 license', url: 'https://github.com/iokaio/airk/blob/main/LICENSE' },
+    notices: { title: 'Third-party notices', url: 'https://github.com/iokaio/airk/blob/main/THIRD_PARTY_NOTICES.md' },
+} as const;
 
 // ---- Shared state vocabulary (design §9.2). Words are used identically on every screen.
 export type ConnectionState = 'connecting' | 'ready' | 'degraded' | 'disconnected' | 'incompatible' | 'untrusted';
@@ -65,6 +78,8 @@ export interface ExplorerViewState {
     readonly projects: readonly ProjectSummary[];
     readonly projectsObservedAt?: number;
     readonly selectedProject?: string;
+    /** Changes whenever project or launcher binding changes. */
+    readonly selectionEpoch?: number;
     readonly status?: StatusSummary;
     readonly features: Readonly<Record<string, Availability>>;
     readonly notice?: ExplorerError;
@@ -209,6 +224,7 @@ export interface CitationCheckView {
 
 export interface ChangeItemView { readonly path?: string; readonly subject: string; readonly causes: readonly string[]; readonly dimensions: readonly string[]; readonly observations?: number }
 export interface ChangesView {
+    readonly more?: string;
     readonly since: string;
     readonly baseline: string;
     readonly status: string;
@@ -308,7 +324,8 @@ export interface HelpCatalog { readonly catalogVersion: 1; readonly extensionVer
 export const ASSISTANCE_SERVER_NAME = 'airk-explorer';
 /** Assistance tools shipped in this version, in tools/list order. Draft tools arrive with the Suggestions Inbox. */
 export const ASSISTANCE_TOOLS = ['airk_explorer_help_search', 'airk_explorer_help_get', 'airk_explorer_ui_status', 'airk_explorer_suggest_search',
-    'airk_explorer_suggest_strategy', 'airk_explorer_suggest_plan', 'airk_explorer_suggest_review', 'airk_explorer_suggest_management', 'airk_explorer_proposal_status'] as const;
+    'airk_explorer_suggest_strategy', 'airk_explorer_suggest_plan', 'airk_explorer_suggest_review', 'airk_explorer_suggest_management', 'airk_explorer_proposal_status',
+    'airk_explorer_templates_list', 'airk_explorer_template_get', 'airk_explorer_validate_draft', 'airk_explorer_suggest_navigation', 'airk_explorer_handoff_get'] as const;
 export const ASSISTANCE_HELP_URI = 'airk-explorer-help://';
 
 /**
@@ -352,6 +369,8 @@ export function parseWindowDescriptor(value: unknown): WindowDescriptor | undefi
 /** One request per connection: the window credential and a typed request. */
 export type AssistanceIpcRequest = { readonly v: 1; readonly credential: string } & (
     | { readonly type: 'status' }
+    | { readonly type: 'validate'; readonly kind: DraftKind; readonly draft: unknown }
+    | { readonly type: 'handoff_get'; readonly token: string }
     | { readonly type: 'suggest'; readonly kind: DraftKind; readonly draft: unknown; readonly client: { readonly name: string; readonly version: string } }
     | { readonly type: 'proposal_status'; readonly proposal_id: string });
 export interface AssistanceWindowStatus {
@@ -359,14 +378,31 @@ export interface AssistanceWindowStatus {
     readonly explorer_open: boolean;
     /** Current Studio and Planner draft revisions, for expected_target_revision. */
     readonly target_revisions: { readonly studio?: number; readonly planner?: number };
+    readonly active_route?: string;
+    readonly binding_generation?: number;
+    readonly blockers?: readonly string[];
+}
+export interface ExplorerHandoff {
+    readonly token: string;
+    readonly kind: 'studio' | 'planner';
+    readonly draft_revision: number;
+    readonly workspace_binding: string;
+    readonly evidence_publication?: string;
+    readonly content: string;
+    readonly content_sha256: string;
+    readonly expires_unix_ms: number;
+    readonly executed: false;
 }
 export type AssistanceIpcReply =
     | { readonly v: 1; readonly ok: true; readonly status: AssistanceWindowStatus }
     | { readonly v: 1; readonly ok: true; readonly receipt: ProposalReceipt }
-    | { readonly v: 1; readonly ok: true; readonly proposal: Pick<ProposalReceipt, 'proposal_id' | 'status' | 'destination' | 'applied' | 'executed' | 'expires_at'> }
+    | { readonly v: 1; readonly ok: true; readonly proposal: ProposalOutcome }
+    | { readonly v: 1; readonly ok: true; readonly validation: Record<string, unknown> }
+    | { readonly v: 1; readonly ok: true; readonly handoff: ExplorerHandoff }
     | { readonly v: 1; readonly ok: false; readonly code: ExplorerErrorCode; readonly message?: string };
 /** airk_help reply as shown in the Explorer. */
-export interface EngineHelpView { readonly topic: string; readonly title: string; readonly content: string; readonly version?: string; readonly topics: readonly { id: string; title: string }[]; readonly truncated: boolean }
+export interface EngineHelpView { readonly topic: string; readonly title: string; readonly content: string; readonly version?: string; readonly topics: readonly { id: string; title: string }[]; readonly truncated: boolean;
+    readonly startLine?: number; readonly nextLine?: number; readonly command?: string; readonly tool?: string }
 
 /** A citation parsed from free text, e.g. "src/a.ts:12", "src/a.ts:12-20", "src/a.ts#L12-L20". */
 export interface ParsedCitation { readonly text: string; readonly path: string; readonly startLine: number; readonly endLine: number; readonly absolute: boolean }
@@ -409,6 +445,7 @@ const REF = { kind: 'string', min: 1, max: 64, pattern: /^[A-Za-z0-9_-]+$/ } as 
 export const WEBVIEW_MESSAGES = {
     'ready': {},
     'nav.go': { route: { kind: 'string', min: 1, max: 128 } },
+    'help.openExternal': { destination: { kind: 'enum', values: Object.keys(ABOUT_LINKS) } },
     'project.select': { project: PROJECT },
     'status.refresh': {},
     'search.run': {
@@ -427,10 +464,13 @@ export const WEBVIEW_MESSAGES = {
     'code.relationships': { symbol: REF, direction: { kind: 'enum', values: ['incoming', 'outgoing'] }, hops: { kind: 'int', min: 1, max: 3 }, limit: { kind: 'int', min: 1, max: 100 } },
     'code.outline': { ref: { ...REF, optional: true } },
     'list.more': { more: REF },
-    'help.engine': { topic: { kind: 'string', min: 1, max: 64, pattern: /^[a-z][a-z0-9-]*$/, optional: true } },
+    'help.engine': { topic: { kind: 'string', min: 1, max: 64, pattern: /^[a-z][a-z0-9-]*$/, optional: true },
+        command: { kind: 'string', min: 1, max: 160, pattern: /^[a-z0-9][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*)*$/, optional: true },
+        tool: { kind: 'string', min: 1, max: 128, pattern: /^airk_[a-z_]+$/, optional: true }, startLine: { kind: 'int', min: 1, max: 100000, optional: true } },
     'evidence.inspect': { ref: REF },
     'evidence.check': { text: { kind: 'string', min: 1, max: 65536 } },
     'evidence.changes': { since: { kind: 'string', min: 9, max: 256, pattern: /^airk-r1:[0-9A-Za-z:_-]+$/ }, limit: { kind: 'int', min: 1, max: 100 } },
+    'evidence.changesMore': { more: REF },
     'docs.facts': {
         kind: { kind: 'enum', values: ['any', 'requirement', 'decision', 'design', 'architecture', 'feature', 'acceptance', 'date', 'section', 'table_row', 'table_cell'] },
         name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 },
@@ -453,6 +493,9 @@ export const WEBVIEW_MESSAGES = {
     'strategy.import': {},
     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
     'planner.openDraft': { plan: { kind: 'json', max: 131072 } },
+    'planner.import': {},
+    'planner.exportJSON': { plan: { kind: 'json', max: 131072 }, revision: { kind: 'int', min: 0, max: 1_000_000_000 },
+        fileName: { kind: 'string', min: 6, max: 120, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,113}\.json$/ } },
     'planner.saveInWorkspace': { plan: { kind: 'json', max: 131072 }, revision: { kind: 'int', min: 0, max: 1_000_000_000 },
         fileName: { kind: 'string', min: 4, max: 120, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,115}\.md$/ } },
     'review.changes': {},
@@ -460,9 +503,13 @@ export const WEBVIEW_MESSAGES = {
     'review.tests': {},
     'recipes.list': {},
     'suggestions.get': { id: { kind: 'string', min: 24, max: 24, pattern: /^ex-prop-[0-9a-f]{16}$/ } },
-    'suggestions.resolve': { id: { kind: 'string', min: 24, max: 24, pattern: /^ex-prop-[0-9a-f]{16}$/ }, status: { kind: 'enum', values: ['applied', 'rejected', 'deferred', 'conflicted'] } },
+    'suggestions.resolve': { id: { kind: 'string', min: 24, max: 24, pattern: /^ex-prop-[0-9a-f]{16}$/ }, status: { kind: 'enum', values: ['applied', 'rejected', 'deferred', 'conflicted'] },
+        targetRevision: { kind: 'int', min: 0, max: 1000000000, optional: true } },
     'suggestions.discardAll': {},
     'suggestions.revisions': { studio: { kind: 'int', min: 0, max: 1_000_000_000 }, planner: { kind: 'int', min: 0, max: 1_000_000_000 } },
+    'suggestions.applied': { id: { kind: 'string', min: 24, max: 24, pattern: /^ex-prop-[0-9a-f]{16}$/ }, revision: { kind: 'int', min: 0, max: 1_000_000_000 } },
+    'handoff.share': { kind: { kind: 'enum', values: ['studio', 'planner'] }, revision: { kind: 'int', min: 0, max: 1_000_000_000 },
+        content: { kind: 'string', min: 1, max: 24576 }, publication: { kind: 'string', min: 9, max: 256, optional: true } },
     'recipes.save': { recipe: { kind: 'json', max: 8192 } },
     'recipes.delete': { name: { kind: 'string', min: 1, max: 80 } },
 } as const satisfies Record<string, Record<string, FieldSpec>>;
@@ -486,7 +533,7 @@ function valid(spec: FieldSpec, value: unknown): boolean {
         case 'enum': return typeof value === 'string' && spec.values.includes(value);
         case 'json': {
             if (!value || typeof value !== 'object' || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype) { return false; }
-            try { return JSON.stringify(value).length <= spec.max; } catch { return false; }
+            try { return new TextEncoder().encode(JSON.stringify(value)).length <= spec.max; } catch { return false; }
         }
     }
 }

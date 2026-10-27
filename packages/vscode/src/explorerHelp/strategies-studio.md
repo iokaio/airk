@@ -20,11 +20,16 @@ Steps come from a closed operator catalog: AIRK retrieval tools, a saved-file ha
 4. Read the outcome. A verified snapshot means every cited file's saved bytes matched the index; otherwise the run is partial and lists why (truncation, budgets, a step error or a live hash mismatch).
 5. Choose the prompt profile: Portable includes the excerpts and assumes no AIRK; MCP-aware also asks the agent to re-check with AIRK if it has the tools.
 6. Edit the prompt if needed, then **Copy prompt**. **Rebuild** asks before discarding edits.
+7. Or choose **Share snapshot with agent**, review the confirmation and give the ten-minute token to the agent for airk_explorer_handoff_get. The full snapshot is capped at 24 KiB; edits, binding changes and observed evidence changes revoke the token. Read Share a reviewed snapshot for the full contract.
 
 ## Import and export
 
 **Export…** saves the strategy as a .strategy.airk.json file through the save dialog. **Import…** validates a file exactly like a template before Studio shows it.
 
+The import picker starts in .airk/strategies and can read another explicit file you select. Importing asks before replacing Studio work; edits or a project change while the picker/confirmation is open keep the current draft. The source file is never modified by import.
+
 ## Warnings
 
 The token count is an estimate. Review the prompt before sharing it: repositories can contain confidential code or instructions planted in source comments.
+
+Changing the strategy, objective, parameters or scope invalidates its run and generated prompt. A delayed result for an older draft or project is discarded. Edited prompts are retained with a stale warning and must be rebuilt before export. Evidence and schema budgets count serialized UTF-8 bytes, including metadata and escaping. Failed parallel steps settle their started reads before the run can finish.

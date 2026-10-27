@@ -3,11 +3,11 @@
 // draft tools reach one trusted Explorer window over its private endpoint. No tool reads source,
 // calls AIRK Retrieval, runs commands, changes settings or writes files: drafts wait for the user.
 import { ASSISTANCE_HELP_URI, ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from '../explorerContracts';
-import { DESTINATIONS, DRAFT_LIMIT_BYTES, DRAFT_SCHEMA_VERSION, DraftKind, MANAGEMENT_INTENTS, REVIEW_SCOPES, validateDraft } from '../explorerDrafts';
+import { DESTINATIONS, DRAFT_KINDS as KINDS, DRAFT_LIMIT_BYTES, DRAFT_SCHEMA_VERSION, DraftKind, MANAGEMENT_INTENTS, REVIEW_SCOPES, validateDraft } from '../explorerDrafts';
 import { EXPLORER_ERRORS, type ExplorerErrorCode } from '../explorerErrors';
 import { FEATURES } from '../explorerFeatures';
 import { ROUTE_KEYS } from '../explorerRoutes';
-import { OPERATORS } from '../explorerStrategies';
+import { CORE_PACK, OPERATORS } from '../explorerStrategies';
 import type { WindowChannel } from './attach';
 import { DETAILS, type Detail, HelpIndex, location, SEARCH_BYTES, SEARCH_LIMIT, steps, summary } from './help';
 
@@ -38,7 +38,7 @@ const DRAFT_NOTE = ` The draft goes to the Suggestions Inbox of the attached Exp
 export function toolDefinitions(index: HelpIndex): object[] {
     const definitions: Record<typeof ASSISTANCE_TOOLS[number], object> = {
         airk_explorer_help_search: {
-            description: 'Search how-to topics for the AIRK Explorer in this VS Code extension version. Deterministic lexical ranking over a bundled, offline catalog. Returns topic ids for airk_explorer_help_get; check applicability before directing a user to a screen.',
+            description: 'Search offline Explorer and AIRK engine guidance for this version: Developer, Tester, Architect, Writer workflows, indexing choices, document types, OCR, tools and UX. Returns topic ids for airk_explorer_help_get; check applicability before directing a user to a screen.',
             inputSchema: { type: 'object', additionalProperties: false, required: ['query'], properties: {
                 query: { type: 'string', minLength: 1, maxLength: 256 },
                 area: { type: 'string', enum: index.areas },
@@ -95,9 +95,33 @@ export function toolDefinitions(index: HelpIndex): object[] {
                 intent: { type: 'string', enum: Object.keys(MANAGEMENT_INTENTS) }, mode: { type: 'string', const: 'show_guidance' }, reason: { type: 'string', maxLength: 1000 } } }, annotations: DRAFT,
         },
         airk_explorer_proposal_status: {
-            description: 'Read the status of a proposal you submitted: pending_review, applied, rejected, deferred, expired or conflicted. Returns no body.',
+            description: 'Read proposal status, machine-readable reason, admitted/current/applied draft revisions and expiry. Applied means copied into an Explorer draft; executed is always false. Returns no body.',
             inputSchema: { type: 'object', additionalProperties: false, required: ['proposal_id'], properties: { proposal_id: { type: 'string', pattern: '^ex-prop-[0-9a-f]{16}$' } } },
             annotations: READ_ONLY,
+        },
+        airk_explorer_templates_list: {
+            description: 'Discover installed core strategy templates, their ids, versions, purposes and runnable/preview availability. Offline, bounded and paginated; never runs a template.',
+            inputSchema: { type: 'object', additionalProperties: false, properties: { offset: { type: 'integer', minimum: 0, maximum: 25, default: 0 },
+                limit: { type: 'integer', minimum: 1, maximum: 25, default: 10 }, max_bytes: { type: 'integer', minimum: 1024, maximum: 32768, default: 8192 } } }, annotations: READ_ONLY,
+        },
+        airk_explorer_template_get: {
+            description: 'Read one complete installed template: exact parameters/defaults, steps, budgets, instructions and operator argument contracts. Includes runnable/preview availability. No execution.',
+            inputSchema: { type: 'object', additionalProperties: false, required: ['template_id'], properties: { template_id: { type: 'string', pattern: '^airk\\.core/[a-z][a-z0-9-]*$' } } }, annotations: READ_ONLY,
+        },
+        airk_explorer_validate_draft: {
+            description: 'Dry-run the same strict draft validation as submission, without Inbox admission, rate consumption or idempotency reservation. If a trusted window is attached, also check binding, target revision and existing idempotency conflicts. Offline validation never proves live applicability.',
+            inputSchema: { type: 'object', additionalProperties: false, required: ['kind', 'draft'], properties: { kind: { type: 'string', enum: KINDS }, draft: { type: 'object', description: 'Exact arguments you would pass to the corresponding suggest tool, including its envelope.' } } }, annotations: READ_ONLY,
+        },
+        airk_explorer_suggest_navigation: {
+            description: `Propose opening an implemented Explorer route and prefilling its supported fields. Code/docs allow name and path_prefix; docs also kind; Checker allows text; indexed Changes allows since. Other routes accept no filters. Applying never submits a query or executes management.${DRAFT_NOTE}`,
+            inputSchema: { type: 'object', additionalProperties: false, required: ['schema_version', 'idempotency_key', 'title', 'route'], properties: { ...ENVELOPE,
+                route: { type: 'string', enum: ROUTE_KEYS.filter(route => FEATURES[route] === 'implemented') }, note: { type: 'string', maxLength: 1000 },
+                filters: { type: 'object', additionalProperties: false, properties: { name: { type: 'string', maxLength: 256 }, path_prefix: { type: 'string', maxLength: 1024 },
+                    kind: { type: 'string', maxLength: 32 }, text: { type: 'string', maxLength: 8000 }, since: { type: 'string', maxLength: 256 } } } } }, annotations: DRAFT,
+        },
+        airk_explorer_handoff_get: {
+            description: 'Read only a complete Studio prompt or Planner task explicitly shared by the user. Requires its expiring opaque token. Returns revision, workspace binding, evidence publication when present, text and SHA-256. Draft/binding/publication changes revoke access. No general draft access or execution.',
+            inputSchema: { type: 'object', additionalProperties: false, required: ['token'], properties: { token: { type: 'string', pattern: '^ex-share-[0-9a-f]{64}$' } } }, annotations: READ_ONLY,
         },
     };
     return ASSISTANCE_TOOLS.map(name => ({ name, ...definitions[name] }));
@@ -125,7 +149,7 @@ function parse(args: unknown, fields: Record<string, Field>, required: readonly 
 
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
 const DRAFT_KINDS: Record<string, DraftKind> = { airk_explorer_suggest_search: 'search', airk_explorer_suggest_strategy: 'strategy', airk_explorer_suggest_plan: 'plan',
-    airk_explorer_suggest_review: 'review', airk_explorer_suggest_management: 'management' };
+    airk_explorer_suggest_review: 'review', airk_explorer_suggest_management: 'management', airk_explorer_suggest_navigation: 'navigation' };
 
 export class AssistanceTools {
     constructor(private readonly index: HelpIndex, private readonly window: WindowChannel) {}
@@ -141,8 +165,51 @@ export class AssistanceTools {
         case 'airk_explorer_help_get': return this.get(args);
         case 'airk_explorer_ui_status': return this.status(args);
         case 'airk_explorer_proposal_status': return this.proposal(args);
+        case 'airk_explorer_templates_list': return this.templates(args);
+        case 'airk_explorer_template_get': return this.template(args);
+        case 'airk_explorer_validate_draft': return this.validate(args);
+        case 'airk_explorer_handoff_get': return this.handoff(args);
         default: return { ok: false, code: 'CAPABILITY_DISABLED', detail: 'Unknown Explorer Assistance tool.' };
         }
+    }
+
+    private templates(args: unknown): ToolResult {
+        const input = parse(args, { offset: { kind: 'integer', min: 0, max: CORE_PACK.length }, limit: { kind: 'integer', min: 1, max: 25 }, max_bytes: { kind: 'integer', min: 1024, max: 32768 } }, []);
+        if (typeof input === 'string') { return { ok: false, code: 'INVALID_SCHEMA', detail: input }; }
+        const offset = Number(input.offset ?? 0), limit = Number(input.limit ?? 10), budget = Number(input.max_bytes ?? 8192);
+        const value = { ...this.identity(), templates: [] as object[], total: CORE_PACK.length, next_offset: null as number | null };
+        for (const entry of CORE_PACK.slice(offset, offset + limit)) {
+            const item = { template_id: entry.strategy.id, version: entry.strategy.version, title: entry.strategy.title, summary: entry.strategy.summary,
+                category: entry.strategy.category, runnable: entry.runnable, ...(entry.reason ? { reason: entry.reason } : {}) };
+            if (bytes({ ...value, templates: [...value.templates, item], next_offset: CORE_PACK.length }) > budget) { break; }
+            value.templates.push(item);
+        }
+        if (offset + value.templates.length < CORE_PACK.length) { value.next_offset = offset + value.templates.length; }
+        return { ok: true, value };
+    }
+    private template(args: unknown): ToolResult {
+        const input = parse(args, { template_id: { kind: 'string', max: 80, pattern: /^airk\.core\/[a-z][a-z0-9-]*$/ } }, ['template_id']);
+        if (typeof input === 'string') { return { ok: false, code: 'INVALID_SCHEMA', detail: input }; }
+        const entry = CORE_PACK.find(item => item.strategy.id === input.template_id);
+        if (!entry) { return { ok: false, code: 'CAPABILITY_DISABLED', detail: 'Unknown template; use airk_explorer_templates_list.' }; }
+        return { ok: true, value: { ...this.identity(), ...entry, operators: Object.fromEntries([...new Set(entry.strategy.steps.map(step => step.op))].map(op => [op, OPERATORS[op]])) } };
+    }
+    private async validate(args: unknown): Promise<ToolResult> {
+        if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(key => !['kind', 'draft'].includes(key))) { return { ok: false, code: 'INVALID_SCHEMA' }; }
+        const { kind, draft } = args as { kind: DraftKind; draft: unknown };
+        if (!KINDS.includes(kind)) { return { ok: false, code: 'INVALID_SCHEMA', detail: 'Unknown draft kind.' }; }
+        const checked = validateDraft(kind, draft);
+        if (!checked.ok) { return { ok: true, value: { ...this.identity(), valid: false, code: checked.code, errors: checked.errors.map(message => ({ field: message.split(':')[0], message })), live_checked: false, admitted: false, executed: false } }; }
+        const reply = await this.window({ type: 'validate', kind, draft });
+        return { ok: true, value: { ...this.identity(), valid: true, admitted: false, executed: false,
+            ...(reply.ok && 'validation' in reply.reply ? { ...reply.reply.validation, live_checked: true } : { live_checked: false, live_check_code: reply.ok ? 'HOST_UNAVAILABLE' : reply.code }) } };
+    }
+    private async handoff(args: unknown): Promise<ToolResult> {
+        const input = parse(args, { token: { kind: 'string', max: 73, pattern: /^ex-share-[0-9a-f]{64}$/ } }, ['token']);
+        if (typeof input === 'string') { return { ok: false, code: 'INVALID_SCHEMA', detail: input }; }
+        const reply = await this.window({ type: 'handoff_get', token: String(input.token) });
+        if (!reply.ok) { return { ok: false, code: reply.code, detail: reply.message }; }
+        return 'handoff' in reply.reply ? { ok: true, value: { ...reply.reply.handoff } } : { ok: false, code: 'HOST_UNAVAILABLE' };
     }
 
     private search(args: unknown): ToolResult {
@@ -178,7 +245,8 @@ export class AssistanceTools {
             applicability: topic.applicability, ...(topic.route ? { route: topic.route, location: location(topic.route) } : {}),
             summary: summary(topic.body), ...(detail !== 'summary' ? { steps: steps(topic.body) } : {}), ...(detail === 'full' ? { body: topic.body } : {}),
             aliases: topic.aliases, related_airk_help: topic.relatedAirkHelp,
-            notes: [CLI_NOTE, ...(shipped ? [] : [`This screen is ${topic.applicability.replace('_', ' ')} in extension ${this.index.catalog.extensionVersion}; do not tell the user it exists yet.`])],
+            notes: [topic.area === 'engine' ? 'Bundled engine guidance, not live state. Use AIRK Retrieval airk_help command/tool selectors for the running binary\'s exact command flags and tool schemas.' : CLI_NOTE,
+                ...(shipped ? [] : [`This screen is ${topic.applicability.replace('_', ' ')} in extension ${this.index.catalog.extensionVersion}; do not tell the user it exists yet.`])],
         } };
     }
 
@@ -189,9 +257,9 @@ export class AssistanceTools {
         const window = reply.ok && 'status' in reply.reply ? reply.reply.status : undefined;
         const code = reply.ok ? undefined : reply.code;
         return { ok: true, value: {
-            ...this.identity(), schema_versions: { ui_status: 1, help: 1, drafts: [DRAFT_SCHEMA_VERSION] },
-            ui: window ? { attached: true, binding_fingerprint: window.binding_fingerprint, explorer_open: window.explorer_open, target_revisions: window.target_revisions }
-                : { attached: false, code: code ?? 'UI_NOT_ATTACHED', message: EXPLORER_ERRORS[code ?? 'UI_NOT_ATTACHED'].message },
+            ...this.identity(), schema_versions: { ui_status: 2, help: 1, drafts: [DRAFT_SCHEMA_VERSION], handoff: 1 },
+            ui: window ? { attached: true, ...window }
+                : { attached: false, code: code ?? 'UI_NOT_ATTACHED', blockers: [code ?? 'UI_NOT_ATTACHED'], message: EXPLORER_ERRORS[code ?? 'UI_NOT_ATTACHED'].message },
             routes: ROUTE_KEYS.map(route => ({ route, location: location(route), availability: FEATURES[route] })),
             draft_destinations: DESTINATIONS, tools: [...ASSISTANCE_TOOLS], help_uri_prefix: ASSISTANCE_HELP_URI,
             notes: ['Help works without an attached window. Drafts need an attached, trusted Explorer window and wait in its Suggestions Inbox for the user.'],

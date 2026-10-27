@@ -2,7 +2,7 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 
 export class McpSessionError extends Error {
-    constructor(readonly code: 'exited' | 'invalid_json' | 'oversize' | 'timeout' | 'closed' | 'rpc', message: string, readonly detail?: unknown) {
+    constructor(readonly code: 'exited' | 'invalid_json' | 'oversize' | 'timeout' | 'closed' | 'rpc' | 'overloaded', message: string, readonly detail?: unknown) {
         super(message);
     }
 }
@@ -64,6 +64,7 @@ export class McpStdioSession {
 
     request(method: string, params: unknown, timeout = 120000): Promise<any> {
         if (this.failure) { return Promise.reject(this.failure); }
+        if (this.pending.size >= 64 || this.child.stdin.writableLength > 1024 * 1024) { return Promise.reject(new McpSessionError('overloaded', 'AIRK MCP request queue is full.')); }
         const id = this.nextId++;
         return new Promise((resolve, reject) => {
             const pending: Pending = { resolve, reject };

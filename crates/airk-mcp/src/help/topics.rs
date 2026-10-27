@@ -4,6 +4,46 @@ use super::Topic;
 
 pub(super) const TOPICS: &[Topic] = &[
     Topic {
+        id: "about",
+        title: "About AIRK, Ioka and the community",
+        text: r#"AIRK means Artifact Indexing and Retrieval Kernel: local indexed evidence for coding agents, with bounded passages/facts, original locations, source hashes and exact indexed revision identities. AIRK is an open-source project by Ioka LLC under the iokaio identity. Ioka describes coding agents assisting implementation under human design, verification and release authority. Original source/documentation is Apache-2.0; dependency notices retain their own licenses.
+AIRK's design was informed by Munarium's extraction/provenance/file-artifact work and VCP's coding-agent retrieval experiments. Ioka's public history records VCP being paused on October 6, 2026 as its scope became too extensive alongside Munarium. AIRK focuses independently on local indexing/retrieval and leaves reasoning/development to the user's agent. Munarium and VCP implementation/orchestration stacks are not incorporated; the inspiration record and NOTICE preserve this distinction.
+Website: https://ioka.io/airk ; source: https://github.com/iokaio/airk ; inspiration: https://github.com/iokaio/airk/blob/main/docs/inspiration.md . AIRK Explorer's Help > About AIRK shows the installed extension version, credits/history, license notices and user-clicked public links. A public website may describe an earlier release; inspect the actual installed version/runtime separately.
+Join the Ioka Discord community for community help, questions, workflows and feedback: https://discord.gg/sJase5FbE . Please report bugs or propose improvements at https://github.com/iokaio/airk/issues . Code, test and documentation contributions are welcome; read https://github.com/iokaio/airk/blob/main/CONTRIBUTING.md . Review shared diagnostics for private paths/source/share tokens before posting."#,
+    },
+    Topic {
+        id: "explorer",
+        title: "Explorer UI and agent assistance",
+        text: r#"AIRK 1.5 provides AIRK Explorer: Overview, Search, Code, Documents, Evidence, Review, Strategies and Management. Open AIRK: Open Explorer. The Help screen searches bundled Explorer and engine guidance offline; role guides cover Developer, Tester, Architect and Writer. Help for this screen opens contextual guidance. Overview lenses reorder journeys without changing indexing settings.
+AIRK Retrieval keeps its 16 read-only evidence tools. The separate extension-owned airk_explorer connection supplies 14 Explorer Assistance tools: help search/get, UI status, template list/get, dry-run draft validation, six suggestion tools (Search, Strategy, Plan, Review, Management, Navigation), proposal status and explicit user-shared handoff retrieval. It does not proxy Retrieval, execute commands, change settings or write source files.
+Connect Coding Agent configures both connections for a registered project. Restart that agent and check its actual server list/tools; a launcher handshake cannot prove a separate agent loaded the configuration. Recognized existing project Retrieval entries receive a missing Assistance companion during installation/repair unless Assistance is disabled; custom conflicts and unsupported files remain for review. VS Code provides a separate AIRK Explorer Assistance entry. Configure remote agents on the extension host that owns those paths.
+For UI guidance use airk_explorer_help_search then airk_explorer_help_get. The agent checks airk_explorer_ui_status for attachment, binding generation, target revisions and blockers before proposing inert drafts. Validation is side-effect-free; live_checked=false does not prove applicability. The user reviews Suggestions and submits forms or approves management actions separately. Applied to a draft is not executed.
+Studio and Planner expose Share snapshot with agent. After explicit confirmation the user gives an expiring token to airk_explorer_handoff_get; it reads only that complete snapshot with revision/binding/publication/hash metadata. Tokens expire in ten minutes and revoke when the relevant draft, binding, trust or observed evidence changes. General draft enumeration is unavailable. See the bundled agent-handoffs and assistance-tools Explorer help topics.
+Use this server's airk_help command/tool selectors for exact native flags and schemas; Explorer tool schemas belong to the separate Assistance server. Ask topic=roles and topic=indexing-choices before choosing richer evidence or semantic work."#,
+    },
+    Topic {
+        id: "roles",
+        title: "Developer, Tester, Architect and Writer",
+        text: r#"Choose the user's purpose and source formats before recommending indexing changes. Ask when these are unknown. Read airk_status for the selected collection/publication and airk_capabilities for actual adapters. Overview's four role lenses are navigation aids, not automatic indexing presets. The Explorer Help screen has an offline guide for each role plus indexing-choices and document-types.
+Developer: start with Agent Lean for supported declarations/imports/call candidates; use lexical search for exact errors and names, then symbols, code_facts, references and bounded context. Inspect tests/specifications too. Rich Structure helps when broader supported structure or declaration continuity is needed. A Runnable bug/API/component strategy can prepare evidence; verify live files before edits and run the project's own checks outside AIRK.
+Tester: retain code, tests and requirements sources. Agent Lean supplies useful syntax/prose facts; consider Rich Structure for broader document/table inventories. document_facts can find requirement/acceptance candidates, and references can find written IDs. Review Changes/Impact/Tests produces leads, not test execution or certified coverage. A Planner task should state expected behavior, boundary/negative cases and acceptance checks. Citation validation does not verify behavior.
+Architect: compare documented decisions with written imports and structural/candidate relationships. Agent Lean is a starting point; Rich Structure may add needed structure/continuity. Bound each investigation by component and collection; additional source roots need review. Inspect historical ADR status, unresolved edges, imported-producer claims and old rename/deletion paths. No absent edge proves absence of coupling or behavior.
+Writer: Search Only suits text/quotation lookup; choose Agent Lean or richer detail for requirements, decisions, headings and table facts. Verify actual implementation before documenting shipped behavior. Check PDF page/Office locations, OCR provenance and spreadsheet formula-cache limitations. Conceptual vector/hybrid discovery still needs cited source support. Review the complete prompt or task before sharing and check returned citations before publishing.
+Across roles: retain exact publication tokens, source hashes, original document locations and independent freshness/semantic observations. Follow needed continuation pages and disclose clipping. Never claim test success, complete language understanding, live freshness or full document coverage from a search result or a verified saved-byte snapshot alone."#,
+    },
+    Topic {
+        id: "indexing-choices",
+        title: "Indexing choices by purpose and source",
+        text: r#"Choose evidence detail, vector work and extraction separately. In Explorer open Management > Indexing, inspect the project, then Project settings. The Index detail picker uses essential, agent_lean, balanced and detailed. The CLI collections extraction detail command preserves adapter overrides; ask its generated command help for exact flags. Changing settings is not proof the index has published them; inspect configured/published state and the native job outcome.
+Search Only (essential): text and citation lookup without rich structured facts. Suitable for known phrases and quotations. Poor fit for requirement/acceptance/table inventories or code relationships. Qualified parsers still run; no proportional PDF/Office conversion speedup is promised.
+Agent Lean (agent_lean): new-collection default, retaining selected declarations, imports, local structure, unresolved calls and useful prose facts. A starting point for Developer/Tester and mixed sources. Broad document inventories and continuity fingerprints are omitted. Existing saved policies retain their semantics; opening a role lens does not rewrite them.
+Rich Structure (balanced): broader supported structural/framework/document evidence and declaration continuity. Consider it for architecture/impact or document/table inventory gaps demonstrated in lean output. Detailed (detailed) retains the full existing adapter-supported evidence, including document-unit continuity where implemented. Neither level creates complete semantic resolution; richer detail costs more extraction and retained data.
+Vectors are independent: lexical suits exact names, IDs and quotations; vector/hybrid can help conceptual questions if a local model and selected vectors are ready. Querying never downloads models or starts enrichment. Agent Lean's default vector policy skips reviewed lockfiles and minified JS/CSS while retaining lexical evidence; it is not a general generated/vendor/test classifier. Preserve useful tests/specifications and scope semantic exclusions deliberately. Explicit saved vector policies and opt-outs remain authoritative.
+Choose extraction for actual formats. Code/config adapters supply supported syntax, not build execution. Markdown/plain text and text-layer PDF, DOCX, XLSX and PPTX expose different original locations and limitations; ask topic=documents and topic=formats. Scanned PDF/images require explicit local OCR and provisioned assets; raising detail or enabling vectors cannot recover absent text. Adapter overrides cannot expand supported dialects, run macros or recalculate spreadsheets.
+Automatic watching suits evolving sources. Manual watching suits deliberate snapshots or costly trees; the user requests Index now. Watch off, project Pause, job cancellation and service Stop are distinct. Ordinary source changes usually need ordinary indexing, not repair/rebuild. Source ignores, scan limits, fact/byte budgets and resource admission can reduce coverage independently of detail. Check representative file_info records and native failures before increasing limits.
+Ask the user about purpose, formats, dataset size, machine budget and freshness needs when choosing settings. Validate a proposed policy before saving it, preserve roots/overrides, observe publication completion and compare useful evidence/cost. Do not infer complete coverage or live-source equality from file counts."#,
+    },
+    Topic {
         id: "job-management",
         title: "CLI options for managing project work",
         text: r#"Use the registered project's actual global scope selectors with every project command; ask command for its generated flags before assembling the invocation. These descriptions execute nothing.
@@ -11,7 +51,7 @@ Use work.serving_worker.project from airk_status when present, or its broker-fal
 airk status reads published readiness plus runtime/work observations. airk index submits ordinary indexing; acceptance is not completion. airk inspect submits a bounded native inspection job. airk setup-model submits bundled model setup while preserving an existing/custom selection.
 airk pause and airk resume change the selected project's native pause policy; they do not stop the shared service or delete data. Some configuration/maintenance operations may be eligible while paused. airk watch on and airk watch off change automatic source watching; disabling watching is not cancellation of already accepted work.
 Canceling an active job and canceling a queued job are distinct typed service RPC operations, cancel and cancel_pending. Use the exact observed job ID from airk_status.work and the verified runtime control location. Ask command="service rpc" for transport flags. Do not invent request keys, IDs, preview digests or approval values.
-Whole-service start/restart/stop and runtime installation are separate from project pause. Ask command="runtime start" and command="runtime lifecycle" for exact help. Low-level service shutdown is a drain request, not the durable explicit-stop preference. Service Console provides the corresponding guarded controls if a complete CLI lifecycle request has not been prepared.
+Whole-service start/restart/stop and runtime installation are separate from project pause. Ask command="runtime start" and command="runtime lifecycle" for exact help. Low-level service shutdown is a drain request, not the durable explicit-stop preference. AIRK Explorer > Management provides the corresponding guarded controls if a complete CLI lifecycle request has not been prepared.
 For uncertain submission outcomes, recover the exact saved request through service requests rather than creating duplicate work. Ask command="service requests" and topic=request-recovery."#,
     },
     Topic {
@@ -43,7 +83,7 @@ This help is bundled with the reported native version; it does not inspect local
         text: r#"Install the matching platform VSIX and trust the workspace. Default activation installs the verified native runtime and terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. Existing 1.4 registrations, storage choices and watching settings are preserved.
 Close old terminal sessions completely, open a new terminal, then run: airk --version
 Developer: Reload Window can reconnect terminals with their old environment. External terminal applications may need restarting.
-Open AIRK Service Console to inspect service health, progress and index readiness. Connect Coding Agent is a separate explicit step. Use AIRK: Install or Repair CLI when automatic setup reports incomplete installation.
+Open AIRK Explorer > Management to inspect service health, progress and index readiness. Connect Coding Agent is a separate explicit step. Use AIRK: Install or Repair CLI when automatic setup reports incomplete installation.
 For standalone CLI setup, ask command=init, command=runtime, command=index and command=setup. Replace example paths and collection names with real values before running commands."#,
     },
     Topic {
@@ -51,7 +91,7 @@ For standalone CLI setup, ask command=init, command=runtime, command=index and c
         title: "CLI scope and invocation",
         text: r#"The CLI is a native service client. Public project operations use a registered canonical source root, separate index-data directory and collection. Global selectors include --service-install-dir, --root, --data-dir, --collection and --service-project. Use exact command help for required combinations.
 Run airk --help for root command help; append --help to a public command path for its actual flags. airk tools list --json lists MCP tools and schemas without opening a workspace. airk tools help airk_search explains one tool. airk tools call airk_help --args-file help.json returns this guidance offline.
-CLI index acceptance is not indexing completion. Read airk_status or Service Console observations after submitting work. Mutation requests retain exact identities across uncertain outcomes; do not submit new requests merely because a response was lost.
+CLI index acceptance is not indexing completion. Read airk_status or AIRK Explorer > Management observations after submitting work. Mutation requests retain exact identities across uncertain outcomes; do not submit new requests merely because a response was lost.
 Private worker roles and hidden development transport switches are not ordinary user workflows. The tools console is a collection-bound interface, not a general shell. JSON argument files avoid shell quoting errors."#,
     },
     Topic {
@@ -94,7 +134,7 @@ Ask tool=airk_search for the current argument schema and command=search for nati
         text: r#"Native source work discovers and captures admitted files, extracts retained evidence, prepares changes and publishes bounded batches. Semantic work can continue independently in later embedding batches. A published lexical generation can be usable before all selected semantic artifacts finish.
 Captured/extracted files, prepared/committed changes and published batches describe different stages. A missing total remains unknown; do not invent a completion percentage. Job accepted or pending means durable scheduling, not finished indexing.
 Use airk_status.work for scoped job, progress, watcher and sampled wait observations, and top-level readiness/publication fields for what is actually queryable. Compare sample age and worker identity before treating cached progress as current. Service health and worker heartbeats are not real-work advancement.
-Use airk index for ordinary indexing and Service Console for pause/resume, queued cancellation or guarded rebuild/repair. Ask command=index and topic=jobs."#,
+Use airk index for ordinary indexing and AIRK Explorer > Management for pause/resume, queued cancellation or guarded rebuild/repair. Ask command=index and topic=jobs."#,
     },
     Topic {
         id: "jobs",
@@ -102,7 +142,7 @@ Use airk index for ordinary indexing and Service Console for pause/resume, queue
         text: r#"Job records identify kind and state independently of progress. Source reconciliation/indexing, model setup, semantic embedding, inspection, configuration and maintenance can be separate jobs. The queue observation is capped at 16 pending jobs and includes a truncation flag; pending_job identifies its first item.
 airk_status.work distinguishes sampled progress from the current worker generation, the latest/active job, bounded queued jobs, project pause policy and available wait metadata. No matching wait observation means there is no applicable sample; it does not prove that work is unstuck or CPU-active.
 Compare job ID, service/worker identities and fencing generation. A wait reason belongs only to its matching job. last_advance_age_ms measures time since real progress; unpaused_idle_ms excludes explicit pause. No single elapsed interval proves a deadlock.
-CLI management uses typed service RPC and durable request keys. Ask command=service and topic=request-recovery for exact recovery rules. Service Console exposes reviewed pause/resume/cancel/restart and repair controls."#,
+CLI management uses typed service RPC and durable request keys. Ask command=service and topic=request-recovery for exact recovery rules. AIRK Explorer > Management exposes reviewed pause/resume/cancel/restart and repair controls."#,
     },
     Topic {
         id: "freshness",
@@ -140,7 +180,7 @@ Original sources remain read-only. Extraction budgets, ignored files, file-size 
         title: "Offline models and inference",
         text: r#"The runtime pair separates lightweight airk from airk-embed, which contains the offline MiniLM inference payload. Compatible projects share verified model assets and loaded sessions. Opening a read-only connection does not itself load a model.
 Model setup, source discovery and semantic embedding are separate work. Vector opt-out keeps lexical evidence available. An explicit vector query fails honestly when the required model/index is unavailable. Querying does not download or install models.
-Custom models require supported local manifests and verified assets. Use the reviewed project configuration path; do not point a workspace setting at an arbitrary executable. Service Console exposes bundled-model installation and owned helper controls.
+Custom models require supported local manifests and verified assets. Use the reviewed project configuration path; do not point a workspace setting at an arbitrary executable. AIRK Explorer > Management exposes bundled-model installation and owned helper controls.
 Use airk_status semantic_readiness/local_model_ready and runtime/work observations, then airk_capabilities for adapter limits. Ask command=model-catalog and command=configure for current CLI help."#,
     },
     Topic {
@@ -156,7 +196,7 @@ Ask command=runtime, command=service, topic=resources and topic=troubleshooting.
         title: "Memory, workers and resource policy",
         text: r#"Native resource presets bound resident workers, concurrent work, extraction/inference threads, admitted memory and background I/O. Queued projects can wait for memory or capacity even while service health is responsive.
 Reserved memory is admission accounting, not measured RSS. Available host memory does not automatically increase a selected service allowance. Logical CPU count is not the number of extraction or inference threads currently admitted.
-Use Service Console resource observations and sampled job waits. Changing policy should use native reviewed controls or typed service RPC, not retired editor scheduler settings. Preserve worker/project isolation and explicit memory-pressure/failure signals.
+Use AIRK Explorer > Management resource observations and sampled job waits. Changing policy should use native reviewed controls or typed service RPC, not retired editor scheduler settings. Preserve worker/project isolation and explicit memory-pressure/failure signals.
 Ask command=service for the current RPC interface and topic=jobs to interpret waits. Help does not sample resources or modify a preset."#,
     },
     Topic {
@@ -181,7 +221,7 @@ Managed runtimes remain under provider control. Ask command=runtime retire-previ
         text: r#"Project settings use native preparation, exact incarnation/settings guards and durable job receipts. Supported changes include model/vectors, extraction detail/policy, vector selection, source roots, scan limits, usage and shared quota policy. Use command=settings for available views and command=configure for the bounded draft input interface.
 Native configuration can be asynchronous. A submitted/accepted job is not completed configuration. Keep the last configuration result separate from later indexing progress; reinspection is required when effect is uncertain or a reviewed guard changed.
 Extension user/machine runtime and storage settings ignore repository overrides. Existing registered storage and watching preferences remain native selections. Choosing new default storage does not silently move or delete existing index files.
-Do not invent JSON draft fields. Use exact CLI help, Service Console reviewed project controls and the version-matched configuration contract when constructing advanced requests."#,
+Do not invent JSON draft fields. Use exact CLI help, AIRK Explorer > Management reviewed project controls and the version-matched configuration contract when constructing advanced requests."#,
     },
     Topic {
         id: "storage",
@@ -197,7 +237,7 @@ Index deletion requires its own exact native cleanup review. Do not recursively 
         text: r#"Repair planning inspects scoped state before choosing actions. Native plans retain exact identities, guarded previews and per-project outcomes; all required preview pages must be reviewed before execution. Partial failure and cancellation are distinct from successful project receipts.
 Ordinary index requests are not full rebuilds. Full rebuilds and destructive derived-data cleanup require guarded native previews and separate approval. The public index --full shortcut refuses unreviewed rebuilding.
 Unregister preserves sources, saved settings and index files. Cleanup is a separate operation on owner-verified derived state. Payload repair preserves damaged slots according to its native inventory/ownership rules. Unknown files are not silently removed.
-Use Service Console Diagnose & Repair or exact typed CLI management interfaces. Ask command=service, command=runtime repair-payload and topic=request-recovery. Help does not authorize or execute repairs."#,
+Use AIRK Explorer > Management Diagnose & Repair or exact typed CLI management interfaces. Ask command=service, command=runtime repair-payload and topic=request-recovery. Help does not authorize or execute repairs."#,
     },
     Topic {
         id: "agent-setup",
@@ -213,7 +253,7 @@ Use the runtime bundle to distinguish frontend/service/worker identities and pay
         text: r#"AIRK management requests retain durable caller/key/scope identities before submission. A lost response can leave Outcome unknown even when native work was accepted or completed. Recheck/retry the exact saved request instead of creating new work with a different key.
 Forgetting an extension-side receipt does not cancel native work. Canceling queued work, pausing a project and stopping the service are different operations. Native completed-request replay returns retained effects rather than repeating them.
 Saved activation and executable retirement have separate native recovery journals. Changed selections, expired epochs, stale previews and unproven ownership are explicit refusals. Reinspect rather than editing journal files or weakening guards.
-Use Service Console request-recovery controls and exact CLI help for the affected command. Ask topic=jobs, command=index and command=runtime."#,
+Use AIRK Explorer > Management request-recovery controls and exact CLI help for the affected command. Ask topic=jobs, command=index and command=runtime."#,
     },
     Topic {
         id: "troubleshooting",
@@ -266,7 +306,7 @@ Independent collections share one per-user service but preserve root/data/revisi
         id: "workflows",
         title: "Common user workflows",
         text: r#"Find a definition: discover paths, request an outline or exact symbol/code fact, then read a bounded cited excerpt. Explain behavior: search one component, expand hits, check call candidates and verify live source before edits.
-Check indexing: read airk_status, separate published readiness from work progress, compare sample age/worker/job identity, then inspect failures/waits. Use Service Console or typed CLI management for an intentional pause, cancellation or scoped repair.
+Check indexing: read airk_status, separate published readiness from work progress, compare sample age/worker/job identity, then inspect failures/waits. Use AIRK Explorer > Management or typed CLI management for an intentional pause, cancellation or scoped repair.
 Manage installation: verify terminal resolution and runtime identities, reconnect agents separately, review ownership and retry deferred cleanup after old clients release files. Preserve project data and sources.
 Ask airk_help for a topic, an exact command path or tool schema before constructing management commands. Help supplies explanations and examples; the agent must still use actual observed paths/IDs and the required native approval guards."#,
     },

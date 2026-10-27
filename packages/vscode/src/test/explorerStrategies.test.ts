@@ -136,3 +136,14 @@ test('search recipes accept only the documented fields', () => {
     assert.equal(validateRecipe({ ...recipe, command: 'x' }), undefined);
     assert.equal(validateRecipe({ ...recipe, limit: 1000 }), undefined);
 });
+
+test('evidence and schema limits measure serialized UTF-8 bytes, including escaping', () => {
+    const record: LedgerRecord = { path: '資料.ts', startLine: 1, endLine: 1, contentHash: 'ab'.repeat(32), producer: 'test', evidenceClass: 'E1', text: '界'.repeat(800), truncated: false, step: 'read' };
+    assert.equal(clipRecords([record], 1024).kept.length, 0);
+    const escaped = { ...record, text: '\n"\\'.repeat(100) };
+    const size = Buffer.byteLength(JSON.stringify([escaped]));
+    assert.equal(clipRecords([escaped], size).kept.length, 1);
+    assert.equal(clipRecords([escaped], size - 1).kept.length, 0);
+    const plan = { ...PLAN, tasks: Array.from({ length: 7 }, (_, n) => ({ id: `T${n + 1}`, title: 'Task', instructions: '界'.repeat(7000), dependsOn: [], state: 'draft' })) };
+    assert.equal(validatePlan(plan).ok, false);
+});

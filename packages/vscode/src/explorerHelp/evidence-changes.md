@@ -13,3 +13,5 @@ Evidence › Changes runs `airk_changes` between an earlier publication token an
 ## Limits
 
 Changes are bounded observations between two publications. They do not prove filesystem intent, and an unavailable baseline is reported as such.
+
+Choose Load more changes until every native cursor page is consumed. Continuations keep the exact baseline, filters and publication; republishing expires the comparison. Do not advance a baseline while pages remain.

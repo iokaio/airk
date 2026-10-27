@@ -1,5 +1,7 @@
 # AIRK Explorer: Final Design
 
+**Later authorized additions, 26 October 2026 (local 1.5.0 candidate):** fourteen Assistance tools add template discovery, dry-run validation, navigation proposals and explicit expiring shared snapshots. Help now searches the same offline Explorer/native-guidance catalog used by Assistance; all four role guides, purpose/format choices, contextual links and About/community information are accessible in the UI. Live command/tool references retain runtime identity and pagination. Planner adds bounded local plan loading/JSON export; Markdown loads as unverified drafts because its evidence digests are abbreviated. Request recovery distinguishes failed reads from unknown mutation outcomes. The approved design below remains the original record; implementation and qualification receipts are in code-review-action-plan.md.
+
 **Status: approved for implementation, 26 October 2026, targeting AIRK 1.5.0.** The maintainer decided every item marked **Decision**; §15 records the outcomes. Phases P0–P5 are in scope, and P6 needs separate approval. Statements about a feature describe the design. A feature is shipped only when its route's availability in the feature manifest says `implemented`.
 
 **Implementation record, 26 October 2026 (1.5.0 source on `feat/airkexplorer`).** P0–P5 were implemented as designed, with these recorded differences: on Windows the per-window named pipe relies on the user-only descriptor's credential because Node cannot set a pipe ACL (§8.5); Runnable templates are not yet exposed as MCP prompts (§8.2); UI strings are English and do not yet go through `vscode.l10n` (§11.1); plan export as `SKILL.md` is not implemented (§7.7); P6 was not started. The [1.5.0 release record](../release-1.5.0.md) lists what was verified and what remains unqualified. The rest of this document is the design as approved.
@@ -788,7 +790,7 @@ The maintainer decided every item on 26 October 2026. Implementation is phases P
 
 ## Appendix B. Service Console → Management parity checklist
 
-**Status (1.5.0):** implemented. `packages/vscode/src/explorerCommands.ts` maps each former console command to its tab, `MANAGE_ACTIONS` equals the console's own action allowlist, and `explorerParity.test.ts` checks both. The legacy view is hidden behind `airk.explorer.showServiceConsole`.
+**Status (1.5.0):** implemented. `packages/vscode/src/explorerCommands.ts` maps each former console command to its tab, `MANAGE_ACTIONS` equals the console's own action allowlist, and `explorerParity.test.ts` checks both. The legacy Service Console view and `airk.explorer.showServiceConsole` setting were removed in 1.5.0; hiding them was an intermediate implementation stage.
 
 Management is at parity when every row below works from its tab, with the same confirmations and receipts as today. Only then can `airk.service` be hidden and the commands redirected.
 

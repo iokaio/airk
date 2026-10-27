@@ -4,6 +4,7 @@ import { FactListView } from '../explorerContracts';
 import { request } from './api';
 import { FactList, useAsync } from './facts';
 import type { ScreenProps } from './workspaces';
+import { navigationFilters } from '../explorerDrafts';
 
 const KINDS: [string, string][] = [['any', 'All'], ['requirement', 'Requirements'], ['decision', 'Decisions'], ['design', 'Design'],
     ['architecture', 'Architecture'], ['feature', 'Features'], ['acceptance', 'Acceptance'], ['date', 'Dates'], ['section', 'Sections'],
@@ -11,9 +12,10 @@ const KINDS: [string, string][] = [['any', 'All'], ['requirement', 'Requirements
 type Kind = 'any' | 'requirement' | 'decision' | 'design' | 'architecture' | 'feature' | 'acceptance' | 'date' | 'section' | 'table_row' | 'table_cell';
 
 export function DocumentFactsScreen(props: ScreenProps) {
-    const [kind, setKind] = useState<Kind>('requirement');
-    const [name, setName] = useState('');
-    const [prefix, setPrefix] = useState('');
+    const initial = navigationFilters(props, 'docs/facts');
+    const [kind, setKind] = useState<Kind>((initial.kind as Kind) ?? 'requirement');
+    const [name, setName] = useState(initial.name ?? '');
+    const [prefix, setPrefix] = useState(initial.path_prefix ?? '');
     const result = useAsync<FactListView>();
     const run = (next: Kind = kind) => result.run(() => request<FactListView>('docs.facts', { kind: next, limit: 50,
         ...(name.trim() ? { name: name.trim() } : {}), ...(prefix.trim() ? { pathPrefix: prefix.trim() } : {}) }));

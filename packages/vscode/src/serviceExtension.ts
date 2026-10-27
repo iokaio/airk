@@ -19,6 +19,7 @@ import type { ExplorerController, ExplorerHost } from './explorerController';
 import { migrateLocalAgents } from './agentMigration';
 import { readJsonConfig } from './agentConfig';
 import { AssistanceIpcHost } from './explorerAssistanceHost';
+import { HandoffStore } from './explorerHandoffs';
 import { SuggestionStore } from './explorerSuggestions';
 import { assistanceDirectory, launchDescriptorPath, serverInvocation, writeLaunchDescriptor } from './explorerAssistanceLaunch';
 
@@ -300,7 +301,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 if(document.version!==version||!await vscode.workspace.applyEdit(edit))throw new Error('Agent configuration edit failed.');
                 check();
                 if(document.getText()!==after||!await document.save())throw new Error('Agent configuration was not saved; review the editor changes.');
-            });
+            },vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true));
             for(const message of messages){
                 this.output.appendLine(message);
                 if(message.startsWith('Updated '))this.migratedConnections=true;
@@ -422,8 +423,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 return root?this.specs.find(spec=>same(spec.root,root.canonical))?.service?.project:undefined;
             },
             onDidChangeSpecs:this.treeChanges.event,control:this.console,log:line=>this.output.appendLine(line),
-            setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}},workspaceState:this.context.workspaceState,suggestions:this.suggestions};
+            setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}},workspaceState:this.context.workspaceState,suggestions:this.suggestions,handoffs:this.handoffs};
     }
+    private readonly handoffs=new HandoffStore({authorized:()=>this.assistanceEnabled(),binding:()=>this.assistanceHost?.bindingFingerprint??'',
+        revisions:()=>this.explorerLoaded?.draftRevisions??{},publication:()=>this.explorerLoaded?.publication});
     private assistanceEnabled():boolean{return vscode.workspace.isTrusted&&!this.disposed&&vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true);}
     private assistanceFolders():vscode.WorkspaceFolder[]{return (vscode.workspace.workspaceFolders??[]).filter(folder=>folder.uri.scheme==='file'||folder.uri.scheme==='vscode-remote');}
     /** Refresh the external launch descriptor and this window's attachment endpoint; untrusted windows publish neither. */
@@ -436,7 +439,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         catch(error){this.output.appendLine(`Explorer Assistance launch descriptor was not written: ${error instanceof Error?error.message:String(error)}`);}
         try{
             const host=await AssistanceIpcHost.start({directory:assistanceDirectory(storage),version,roots:this.assistanceFolders().map(folder=>folder.uri.fsPath),
+                authorized:()=>this.assistanceEnabled(),
                 explorerOpen:()=>this.explorerLoaded?.panelOpen??false,targetRevisions:()=>this.explorerLoaded?.draftRevisions??{},
+                uiStatus:()=>this.explorerLoaded?.assistanceStatus??{binding_generation:0,blockers:['EXPLORER_CLOSED']},
+                validate:(kind,draft)=>this.assistanceEnabled()?this.suggestions.validate(kind,draft):{valid:false,code:'WORKSPACE_UNTRUSTED'},
+                handoff:token=>this.handoffs.get(token),
                 suggest:(kind,draft,client)=>this.assistanceEnabled()?this.suggestions.submit(kind,draft,client):{ok:false,code:'WORKSPACE_UNTRUSTED',message:'The workspace is not trusted.'},
                 proposalStatus:id=>this.suggestions.status(id)});
             if(generation!==this.assistanceGeneration||!this.assistanceEnabled()){host?.dispose();return;}

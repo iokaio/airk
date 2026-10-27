@@ -2,6 +2,7 @@
 import { randomBytes } from 'node:crypto';
 import * as vscode from 'vscode';
 import { HostMessage, parseWebviewMessage, WebviewMessage } from './explorerContracts';
+import { explorerError } from './explorerErrors';
 
 export const EXPLORER_VIEW_TYPE = 'airk.explorer';
 
@@ -46,7 +47,13 @@ export class ExplorerPanel implements vscode.Disposable {
         this.listeners.push(
             panel.webview.onDidReceiveMessage(value => {
                 const message = parseWebviewMessage(value);
-                if (!message) { this.handlers.rejected?.(value); return; }
+                if (!message) {
+                    this.handlers.rejected?.(value);
+                    if (value?.v === 1 && typeof value.requestId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(value.requestId)) {
+                        void panel.webview.postMessage({ v: 1, type: 'result', requestId: value.requestId, ok: false, error: explorerError('INVALID_MESSAGE', 'Fields are invalid or exceed their UTF-8 byte budget.') });
+                    }
+                    return;
+                }
                 if (message.type === 'ready') { this.ready = true; for (const queued of this.queued.splice(0)) { void panel.webview.postMessage(queued); } }
                 this.handlers.message(message);
             }),

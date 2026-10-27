@@ -98,3 +98,30 @@ test('JSON message fields accept bounded plain objects only', () => {
     assert.equal(parseWebviewMessage({ ...base, strategy: { big: 'x'.repeat(40000) } }), undefined);
     assert.equal(parseWebviewMessage({ ...base, strategy: Object.create({ inherited: true }) }), undefined);
 });
+
+test('a failing fan-out settles started siblings and stops admitting new items before finalizing', async () => {
+    let release!: () => void, siblingStarted = false, returned = false;
+    const sibling = new Promise<void>(resolve => { release = resolve; });
+    const paths: string[] = [];
+    const base = template('bug');
+    const strategy: Strategy = { ...base, params: [], budgets: { ...base.budgets, concurrency: 2 }, steps: [
+        { id: 'status', op: 'airk.status', args: {} }, { id: 'search', op: 'airk.search', args: { query: 'x' } },
+        { id: 'read', op: 'airk.readFile', args: {}, input: 'search' }, { id: 'pack', op: 'core.renderPrompt', args: {} },
+    ] };
+    const session = { call: async (tool: string, args: any) => {
+        if (tool === 'airk_status') { return { publication: 'p', payload: {} }; }
+        if (tool === 'airk_search') { return { publication: 'p', payload: { hits: ['a', 'b', 'c'].map(path => ({ citation: cite(path, 1), text: path })) } }; }
+        if (tool === 'airk_file_info') { return { publication: 'p', payload: { indexed_lines: 1, source: { root: '/r', relative_path: args.path } } }; }
+        paths.push(args.path);
+        if (args.path === 'a') { throw new Error('failed first read'); }
+        siblingStarted = true; await sibling;
+        return { publication: 'p', payload: { hits: [{ citation: cite(args.path, 1), text: 'settled' }] } };
+    } } as any;
+    const pending = runStrategy({ strategy, params: {}, scope: {} }, deps(session)).then(value => { returned = true; return value; });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(siblingStarted, true); assert.equal(returned, false);
+    release(); const result = await pending;
+    assert.deepEqual(paths, ['a', 'b']);
+    assert.equal(result.manifest.outcome, 'partial');
+    assert.ok(result.records.some(record => record.text === 'settled'));
+});

@@ -127,3 +127,11 @@ None of the following was run for this candidate:
 - Rollback to a 1.4 runtime after Explorer use.
 - A full accessibility audit.
 - The complete Rust workspace suite (routine CI runs it on Linux).
+
+## Explorer review follow-up (26 October 2026)
+
+The subsequent local follow-up expands Explorer Assistance to fourteen tools (templates list/get, dry-run validation, navigation proposals and explicit handoff retrieval), with richer UI/proposal status and paired project installation/backfill. Explorer now has unified offline Help search over native engine and UI guidance, four role guides, purpose/format indexing advice, contextual help, paged live references and About with Ioka/Munarium history, Discord, issues and contribution links. Planner loads local Markdown as unverified drafts or exact JSON; Studio import/replacement and dialog focus are guarded. Friendly errors, bounded UI requests and unknown-action-outcome guidance support deliberate recovery. The candidate remains 1.5.0; updated build/test/installer receipts follow in the action plan. Earlier installer receipts describe their earlier source checkpoint.
+
+This local 1.5.0 candidate implements the eleven findings in the Explorer action plan and the code improvements for Changes pagination, deletion/rename review, bounded transport queues, project selection and keyboard focus. Save checks reject redirected/linked targets and concurrent review changes; remote plan saves use Open as draft and the editor Save command. Studio discards old-run completions, invalidates generated prompts after edits and refuses truncated Planner snapshots. Review and Checker require consistent publications and preserve unavailable failures. Proposals are authorized before changing local drafts. Budgets measure serialized UTF-8 bytes.
+
+The earlier validation and independent-review paragraphs above describe the earlier branch checkpoint. Current follow-up results and remaining cross-platform, remote, real-agent and upgrade/rollback qualification are recorded in docs/explorer/code-review-action-plan.md. The version remains 1.5.0 for the requested local installer; nothing is published by this build.

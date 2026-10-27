@@ -4,6 +4,7 @@ import { FactItemView, FactListView } from '../explorerContracts';
 import { request } from './api';
 import { FactList, useAsync } from './facts';
 import type { ScreenProps } from './workspaces';
+import { navigationFilters } from '../explorerDrafts';
 
 function Relationships(props: { symbol: string }) {
     const [direction, setDirection] = useState<'incoming' | 'outgoing'>('outgoing');
@@ -40,8 +41,9 @@ function SymbolActions(props: { item: FactItemView }) {
 }
 
 export function SymbolsScreen(props: ScreenProps) {
-    const [name, setName] = useState('');
-    const [prefix, setPrefix] = useState('');
+    const initial = navigationFilters(props, 'code/symbols');
+    const [name, setName] = useState(initial.name ?? '');
+    const [prefix, setPrefix] = useState(initial.path_prefix ?? '');
     const [exact, setExact] = useState(true);
     const result = useAsync<FactListView>();
     const search = () => result.run(() => exact && name.trim()
@@ -63,8 +65,9 @@ export function SymbolsScreen(props: ScreenProps) {
 }
 
 export function ReferencesScreen(props: ScreenProps) {
-    const [name, setName] = useState('');
-    const [prefix, setPrefix] = useState('');
+    const initial = navigationFilters(props, 'code/references');
+    const [name, setName] = useState(initial.name ?? '');
+    const [prefix, setPrefix] = useState(initial.path_prefix ?? '');
     const result = useAsync<FactListView>();
     return (
         <div>

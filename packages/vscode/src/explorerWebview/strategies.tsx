@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import {
     CATEGORIES, CatalogEntry, compilePrompt, CORE_PACK, estimateTokens, operator, OPERATORS, OperatorId, PromptProfile, RunResult, Strategy, StrategyStep,
     PLAN_SCHEMA, unavailableReason, validateStrategy,
 } from '../explorerStrategies';
 import { request } from './api';
 import { shortToken } from './format';
-import { taskFromStudio } from './planner';
-import { StudioDraft, studioHasWork, usePlanner, useStudio } from './strategyStore';
+import { canAddStudio, taskFromStudio } from './planner';
+import { acceptStudioRun, currentSelection, studioDraft, StudioDraft, studioHasWork, usePlanner, useStudio } from './strategyStore';
 import type { ScreenProps } from './workspaces';
+import { dialogFocus, ShareSnapshot } from './components';
 
 const message = (failure: unknown) => failure instanceof Error ? failure.message : String(failure);
 const STUDIO = { workspace: 'strategies', tab: 'studio' } as const;
@@ -24,16 +25,23 @@ export function LibraryScreen(props: ScreenProps) {
     const [category, setCategory] = useState<string>('all');
     const [filter, setFilter] = useState('');
     const [pending, setPending] = useState<CatalogEntry>();
+    const [notice, setNotice] = useState<string>();
+    const pendingGeneration = useRef<string>();
+    const root = useRef<HTMLDivElement>(null);
+    useEffect(() => dialogFocus(root.current?.querySelector<HTMLElement>('[role="alertdialog"]') ?? null, () => setPending(undefined)), [pending]);
     const shown = CORE_PACK.filter(entry => (category === 'all' || entry.strategy.category === category)
         && `${entry.strategy.title} ${entry.strategy.summary}`.toLowerCase().includes(filter.trim().toLowerCase()));
     const load = (entry: CatalogEntry, confirmed = false) => {
-        if (!confirmed && studioHasWork(studio)) { setPending(entry); return; }
+        const generation = JSON.stringify([currentSelection(), studioDraft().revision]);
+        if (!confirmed && studioHasWork(studio)) { pendingGeneration.current = generation; setPending(entry); return; }
+        if (confirmed && pendingGeneration.current !== generation) { setPending(undefined); setNotice('Studio changed while the confirmation was open; your work was kept. Choose the template again.'); return; }
         setPending(undefined);
         setStudio(prior => draftFor(entry.strategy, prior, entry.strategy.id));
         props.go(STUDIO);
     };
     return (
-        <div class="strategies">
+        <div class="strategies" ref={root}>
+            {notice && <p class="callout" role="status">{notice}</p>}
             <p class="muted">25 templates in the AIRK core pack. A strategy gathers bounded, cited evidence and compiles a prompt; the Explorer never runs an agent.</p>
             <div class="search-form">
                 <label>Category
@@ -94,6 +102,10 @@ export function StudioScreen(props: ScreenProps) {
     const [error, setError] = useState<string>();
     const [notice, setNotice] = useState<string>();
     const [confirmRebuild, setConfirmRebuild] = useState(false);
+    const [pendingImport, setPendingImport] = useState<{ strategy: Strategy; revision: number | undefined; owner: string | undefined }>();
+    const root = useRef<HTMLDivElement>(null);
+    useEffect(() => dialogFocus(root.current?.querySelector<HTMLElement>('[role="alertdialog"]') ?? null,
+        () => { setPendingImport(undefined); setConfirmRebuild(false); }), [pendingImport, confirmRebuild]);
     const [adding, setAdding] = useState<OperatorId>('airk.search');
     const strategy = draft.strategy;
     const checked = useMemo(() => strategy ? validateStrategy(strategy) : undefined, [strategy]);
@@ -102,7 +114,7 @@ export function StudioScreen(props: ScreenProps) {
 
     if (!strategy) {
         return (
-            <div class="strategies">
+            <div class="strategies" ref={root}>
                 <article class="card">
                     <h2>No strategy loaded</h2>
                     <p>Open a template from the Library, or import a <code>.strategy.airk.json</code> file.</p>
@@ -117,11 +129,20 @@ export function StudioScreen(props: ScreenProps) {
     }
 
     async function importFile() {
-        setError(undefined);
+        setError(undefined); setConfirmRebuild(false);
+        const revision = studioDraft().revision, owner = currentSelection();
         try {
             const imported = await request<Strategy | null>('strategy.import', {});
-            if (imported) { setDraft(prior => draftFor(imported, prior)); setNotice(`Imported ${imported.title}.`); }
+            if (!imported) { return; }
+            if (studioDraft().revision !== revision || currentSelection() !== owner) { setError('Studio or the project changed while the file picker was open; your work was kept.'); return; }
+            const pending = { strategy: imported, revision, owner };
+            if (studioHasWork(studioDraft())) { setPendingImport(pending); } else { applyImported(pending); }
         } catch (failure) { setError(message(failure)); }
+    }
+    function applyImported(pending: { strategy: Strategy; revision: number | undefined; owner: string | undefined }) {
+        setPendingImport(undefined);
+        if (studioDraft().revision !== pending.revision || currentSelection() !== pending.owner) { setError('Studio changed during review; your work was kept. Import again.'); return; }
+        setDraft(prior => draftFor(pending.strategy, prior)); setNotice(`Imported ${pending.strategy.title}.`);
     }
     const edit = (steps: StrategyStep[]) => setDraft(prior => ({ ...prior, strategy: fork(prior.strategy!, steps), origin: undefined, run: undefined }));
     const move = (index: number, by: number) => { const steps = [...strategy.steps]; const [step] = steps.splice(index, 1); steps.splice(index + by, 0, step); edit(steps); };
@@ -129,22 +150,25 @@ export function StudioScreen(props: ScreenProps) {
         edit(strategy.steps.map((step, at) => at === index ? { ...step, args: { ...step.args, [key]: value } } : step));
     const compile = (run: RunResult | undefined, profile: PromptProfile) => compilePrompt({ strategy, objective: draft.objective, profile, ...(run ? { run } : {}) });
     const run = async () => {
+        const revision = draft.revision, selection = currentSelection();
         setBusy(true); setError(undefined); setNotice(undefined);
         try {
             // Send only the parameters this strategy declares; values left over from removed steps or other drafts are dropped.
             const params = Object.fromEntries(strategy.params.map(param => [param.name, draft.params[param.name] ?? '']));
             const result = await request<RunResult>('strategy.run', { strategy: strategy as unknown as Record<string, unknown>, params,
                 scope: draft.pathPrefix.trim() ? { pathPrefix: draft.pathPrefix.trim() } : {} });
-            setDraft(prior => ({ ...prior, run: result, ...(prior.promptEdited ? {} : { prompt: compile(result, prior.profile) }) }));
+            if (!acceptStudioRun(result, revision, selection, compile(result, draft.profile))) { setNotice('The draft or project changed; the old run was discarded.'); return; }
             if (draft.promptEdited) { setNotice('The run finished. Your edited prompt was kept; use Rebuild to include the new evidence.'); }
         } catch (failure) { setError(message(failure)); } finally { setBusy(false); }
     };
-    const rebuild = () => { setConfirmRebuild(false); setDraft(prior => ({ ...prior, prompt: compile(prior.run, prior.profile), promptEdited: false })); };
+    const rebuild = () => { setConfirmRebuild(false); setDraft(prior => ({ ...prior, prompt: compile(prior.run, prior.profile), promptEdited: false, promptStale: false })); };
     const prompt = draft.prompt ?? compile(draft.run, draft.profile);
     const manifest = draft.run?.manifest;
 
     return (
-        <div class="strategies studio">
+        <div class="strategies studio" ref={root}>
+            {pendingImport && <div class="callout" role="alertdialog" aria-label="Replace Studio with imported file"><p>Replace Studio work with {pendingImport.strategy.title}? The selected file is unchanged.</p>
+                <button onClick={() => applyImported(pendingImport)}>Replace Studio draft</button><button class="ghost" onClick={() => setPendingImport(undefined)}>Keep Studio work</button></div>}
             <header class="studio-head">
                 <h2>{strategy.title} {draft.origin && <span class={blocked ? 'tag' : 'tag ok'}>{blocked ? 'Preview' : 'Runnable'}</span>}{strategy.id.startsWith('user/') && <span class="tag">fork</span>}</h2>
                 <p class="muted"><code>{strategy.id}@{strategy.version}</code> · {strategy.summary}</p>
@@ -231,6 +255,7 @@ export function StudioScreen(props: ScreenProps) {
             )}
             <section class="card">
                 <h3>Prompt</h3>
+                {draft.promptStale && <p class="callout">Inputs changed. Your edited prompt is stale; rebuild it before copying or adding it to Planner.</p>}
                 <div class="search-form">
                     <label>Profile
                         <select value={draft.profile} onChange={event => { const profile = (event.target as HTMLSelectElement).value as PromptProfile; setDraft(prior => ({ ...prior, profile, ...(prior.promptEdited ? {} : { prompt: compile(prior.run, profile) }) })); }}>
@@ -249,9 +274,9 @@ export function StudioScreen(props: ScreenProps) {
                     </div>
                 )}
                 <div class="actions">
-                    <button onClick={async () => { try { await request('clipboard.write', { text: prompt }); setNotice('Prompt copied.'); } catch (failure) { setError(message(failure)); } }}>Copy prompt</button>
+                    <button disabled={draft.promptStale} onClick={async () => { try { await request('clipboard.write', { text: prompt }); setNotice('Prompt copied.'); } catch (failure) { setError(message(failure)); } }}>Copy prompt</button>
                     <button class="ghost" onClick={() => draft.promptEdited ? setConfirmRebuild(true) : rebuild()}>Rebuild</button>
-                    <button class="ghost" onClick={() => {
+                    <button class="ghost" disabled={!canAddStudio({ ...draft, prompt })} title="A complete snapshot must fit 8,000 characters. Reduce evidence explicitly; nothing is truncated." onClick={() => {
                         const snapshot = { ...draft, prompt };
                         setPlanner(prior => {
                             const plan = prior.plan ?? { schema: PLAN_SCHEMA, title: strategy.title, objective: draft.objective, ...(props.state.selectedProject ? { project: props.state.selectedProject } : {}), tasks: [] };
@@ -261,6 +286,8 @@ export function StudioScreen(props: ScreenProps) {
                         props.go({ workspace: 'strategies', tab: 'planner' });
                     }}>Add to Planner</button>
                 </div>
+                <ShareSnapshot kind="studio" revision={draft.revision ?? 0} content={prompt} disabled={draft.promptStale}
+                    publication={manifest?.publication === 'unknown' ? undefined : manifest?.publication} />
                 <p class="muted">Review the prompt before sharing it: repositories can contain confidential code, secrets, or instructions planted in source comments.</p>
             </section>
         </div>

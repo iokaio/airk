@@ -50,6 +50,17 @@ const INIT = rpc(0, 'initialize', { protocolVersion: '2025-06-18', capabilities:
 const byId = (responses: Response[], id: number) => responses.find(response => response.id === id)!;
 const structured = (responses: Response[], id: number) => byId(responses, id).result.structuredContent;
 
+test('role, purpose, format and native engine guidance plus About are available offline through the real help tools', async () => {
+    const ids = ['role-developer', 'role-tester', 'role-architect', 'role-writer', 'indexing-choices', 'document-types', 'assistance-tools', 'agent-handoffs', 'about-airk', 'engine.roles', 'engine.indexing-choices'];
+    const { responses, stderr, code } = await exchange([INIT, ...ids.map((topic_id, at) => call(at + 1, 'airk_explorer_help_get', { topic_id }))]);
+    assert.equal(code, 0); assert.equal(stderr, '');
+    for (const [at, id] of ids.entries()) {
+        const reply = structured(responses, at + 1); assert.equal(reply.topic_id, id); assert.equal(reply.applicability, 'implemented'); assert.ok(reply.body.length > 100);
+    }
+    assert.ok(structured(responses, 9).body.includes('https://discord.gg/sJase5FbE'));
+    assert.ok(structured(responses, 10).source_id.includes('crates/airk-mcp'));
+});
+
 test('the server answers help offline with no process, socket or file effects', { timeout: 30000 }, async () => {
     assert.ok(fs.existsSync(bundle), 'compile builds out/explorerAssistance.js');
     const { responses, stderr, code } = await exchange([

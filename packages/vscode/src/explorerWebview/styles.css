@@ -33,6 +33,7 @@ button {
 button:hover { background: var(--vscode-button-hoverBackground); }
 button:disabled { opacity: 0.5; cursor: default; }
 button.ghost { color: var(--vscode-foreground); background: transparent; border-color: var(--airk-border); }
+button.ghost:hover:not(:disabled), button.link:hover:not(:disabled) { background: var(--vscode-list-hoverBackground); }
 select, input, textarea {
   padding: 0.3rem 0.45rem;
   color: var(--vscode-input-foreground);
@@ -173,9 +174,16 @@ details summary { cursor: pointer; color: var(--airk-muted); }
 
 label.block { display: flex; flex-direction: column; gap: 0.25rem; margin-bottom: 0.4rem; color: var(--airk-muted); }
 textarea { width: 100%; font-family: var(--vscode-editor-font-family); resize: vertical; }
+textarea { min-height: 4rem; }
+.callout code, .help-topic { overflow-wrap: anywhere; }
+.help-topic { min-width: 0; }
 
 .help { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr); gap: var(--airk-gap); }
 .help-index input { width: 100%; margin-bottom: 0.4rem; }
+.help-index label { display: grid; gap: 0.2rem; margin-bottom: 0.4rem; }
+.help-index select { width: 100%; }
+.help-index form { margin-top: 0.5rem; }
+.help-index .chips { gap: 0.3rem; }
 .help-index ul { list-style: none; margin: 0 0 0.5rem; padding: 0; max-height: 60vh; overflow: auto; }
 button.link { display: block; width: 100%; text-align: left; background: transparent; color: var(--vscode-foreground); border: 0; padding: 0.25rem 0.4rem; }
 button.link.current { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }

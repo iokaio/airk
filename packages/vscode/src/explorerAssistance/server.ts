@@ -71,15 +71,27 @@ export class AssistanceServer {
 }
 
 /** Serve newline-delimited messages in order. Oversized lines are refused without buffering them. */
-export function serve(server: AssistanceServer, input: NodeJS.ReadableStream, write: (text: string) => void): Promise<void> {
-    return new Promise(resolve => {
+export function serve(server: AssistanceServer, input: NodeJS.ReadableStream, write: (text: string) => void | Promise<void>): Promise<void> {
+    return new Promise((resolve, reject) => {
         let pending = '', discarding = false, queue = Promise.resolve();
+        let queued = 0, stopped = false;
         // Responses keep request order, including refusals of oversized input.
         const dispatch = (respond: () => Promise<object | undefined>) => {
+            // A peer that continues flooding despite pause is disconnected, never buffered indefinitely.
+            if (stopped) { return; }
+            if (queued >= 64) {
+                stopped = true; input.pause(); input.removeAllListeners('data'); queued++;
+                queue = queue.then(async () => { await write(JSON.stringify(failure(null, -32000, 'Request queue full; reconnect')) + '\n'); resolve(); }).catch(reject);
+                return;
+            }
+            if (++queued >= 16) { input.pause(); }
             queue = queue.then(async () => {
                 const response = await respond().catch(() => failure(null, -32603, 'Internal error'));
-                if (response) { write(JSON.stringify(response) + '\n'); }
-            });
+                if (response) { await write(JSON.stringify(response) + '\n'); }
+                queued--;
+                if (!stopped && queued < 16) { input.resume(); }
+                if (stopped && queued === 0) { resolve(); }
+            }).catch(error => { stopped = true; input.pause(); input.removeAllListeners('data'); reject(error); });
         };
         const tooLarge = () => dispatch(async () => failure(null, -32600, 'Message too large'));
         input.setEncoding('utf8');
