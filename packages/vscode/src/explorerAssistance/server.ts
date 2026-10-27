@@ -8,7 +8,8 @@ import { type AssistanceTools, toolDefinitions } from './tools';
 /** Newest first; an unknown requested version is answered with the newest. */
 export const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
 export const MAX_LINE_BYTES = 1_048_576;
-const INSTRUCTIONS = 'AIRK Explorer Assistance: how-to help for the AIRK Explorer in VS Code, from a catalog bundled with this extension version. '
+const INSTRUCTIONS = 'AIRK Explorer Assistance: how-to help for the AIRK Explorer in VS Code, from a catalog bundled with this extension version, '
+    + 'and inert drafts (search, strategy, plan) for the user to review in the Explorer Suggestions Inbox. '
     + 'It does not search code or documents; use AIRK Retrieval (airk_* tools) for evidence. It never runs commands, changes settings or writes files.';
 
 type Id = string | number;
@@ -18,6 +19,8 @@ const failure = (id: Id | null, code: number, message: string) => ({ jsonrpc: '2
 
 export class AssistanceServer {
     private initialized = false;
+    /** Self-reported by the agent in initialize; shown in the Inbox, never trusted. */
+    private client = { name: 'unknown client', version: '' };
 
     constructor(private readonly index: HelpIndex, private readonly tools: AssistanceTools, private readonly version: string) {}
 
@@ -36,6 +39,8 @@ export class AssistanceServer {
         if (message.method === 'ping') { return reply(id, {}); }
         if (message.method === 'initialize') {
             this.initialized = true;
+            const info = params.clientInfo as Record<string, unknown> | undefined;
+            if (info && typeof info.name === 'string') { this.client = { name: info.name.slice(0, 64), version: typeof info.version === 'string' ? info.version.slice(0, 32) : '' }; }
             const requested = params.protocolVersion;
             const protocolVersion = PROTOCOL_VERSIONS.find(version => version === requested) ?? PROTOCOL_VERSIONS[0];
             return reply(id, { protocolVersion, capabilities: { tools: { listChanged: false }, resources: { listChanged: false } },
@@ -46,7 +51,7 @@ export class AssistanceServer {
         case 'tools/list': return reply(id, { tools: toolDefinitions(this.index) });
         case 'tools/call': {
             if (typeof params.name !== 'string') { return failure(id, -32602, 'Tool name required'); }
-            const result = await this.tools.call(params.name, params.arguments);
+            const result = await this.tools.call(params.name, params.arguments, this.client);
             const structured = result.ok ? result.value : { error: { code: result.code, message: EXPLORER_ERRORS[result.code].message, ...(result.detail ? { detail: result.detail } : {}) } };
             return reply(id, { content: [{ type: 'text', text: JSON.stringify(structured) }], structuredContent: structured, isError: !result.ok });
         }
