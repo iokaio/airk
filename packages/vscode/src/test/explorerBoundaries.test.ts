@@ -56,7 +56,7 @@ test('Explorer webview sources import only Preact, their own files and contracts
 test('Explorer Assistance sources never reach host, service or retrieval modules', () => {
     for (const file of sources(path.join(source, 'explorerAssistance'))) {
         for (const specifier of imports(file)) {
-            const allowed = ASSISTANCE_BUILTINS.has(specifier) || within(file, specifier, 'explorerAssistance') || contract(file, specifier);
+            const allowed = ASSISTANCE_BUILTINS.has(specifier) || specifier === 'airk-explorer-help' || within(file, specifier, 'explorerAssistance') || contract(file, specifier);
             assert.ok(allowed, `${path.relative(source, file)} imports ${specifier}; Assistance may not call vscode, the service or retrieval`);
         }
     }

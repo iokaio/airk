@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": [
+      "ES2022"
+    ],
+    "strict": true,
+    "noImplicitOverride": true,
+    "isolatedModules": true,
+    "skipLibCheck": false,
+    "noEmit": true,
+    "types": [
+      "node"
+    ],
+    "paths": {
+      "airk-explorer-help": [
+        "./src/explorerAssistance/helpCatalog.d.ts"
+      ]
+    }
+  },
+  "include": [
+    "src/explorerAssistance/**/*.ts",
+    "src/explorerContracts.ts",
+    "src/explorerRoutes.ts",
+    "src/explorerFeatures.ts",
+    "src/explorerErrors.ts",
+    "src/explorerStatus.ts"
+  ]
+}

@@ -21,6 +21,7 @@ export const EXPLORER_ERRORS = {
     RATE_LIMITED: { plane: 'assistance', message: 'Too many proposals; retry later.' },
     POLICY_DENIED: { plane: 'assistance', message: 'The request would execute, mutate storage or reach outside the workspace.' },
     REJECTED_BY_USER: { plane: 'assistance', message: 'The user rejected the proposal.' },
+    HELP_TOPIC_UNKNOWN: { plane: 'assistance', message: 'No Explorer help topic has that id; search the catalog first.' },
     // Extension host.
     SERVICE_UNAVAILABLE: { plane: 'host', message: 'The AIRK service is not connected.' },
     SERVICE_INCOMPATIBLE: { plane: 'host', message: 'The AIRK runtime version does not match this extension.' },

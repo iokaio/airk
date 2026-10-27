@@ -529,7 +529,7 @@
     ]
   },
   "scripts": {
-    "compile": "tsc -p . && tsc -p tsconfig.webview.json && node scripts/build-explorer.cjs",
+    "compile": "tsc -p . && tsc -p tsconfig.webview.json && tsc -p tsconfig.assistance.json && node scripts/build-explorer.cjs",
     "test": "npm run compile && node --test out/test/*.test.js"
   },
   "devDependencies": {

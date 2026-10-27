@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Bundles the AIRK Explorer webview into flat out/ files. Host modules stay
+// Bundles the AIRK Explorer webview and Assistance server into flat out/ files. Host modules stay
 // tsc-compiled CommonJS; bundles may only contain allowlisted inputs so host
 // classes (service clients, journals, MCP sessions) never ship a second copy.
 const esbuild = require('esbuild');
@@ -61,7 +61,7 @@ function helpCatalog(directory = path.join(root, 'src', 'explorerHelp')) {
         const applicability = fields.route ? FEATURES[fields.route] ?? 'unsupported' : 'implemented';
         if (applicability === 'implemented' && body.includes(PLANNED_MARKER)) { throw new Error(`${file}: the route is implemented; replace the planned text with current behavior`); }
         topics.push({ id: fields.id, title: fields.title, ...(fields.route ? { route: fields.route } : {}), area: fields.area, applicability,
-            aliases: list(fields.aliases), relatedAirkHelp: related, body });
+            aliases: list(fields.aliases), relatedAirkHelp: related, source: `packages/vscode/src/explorerHelp/${file}`, body });
     }
     const manifest = JSON.parse(read('package.json'));
     return { catalogVersion: 1, extensionVersion: manifest.version, topics };
@@ -99,6 +99,17 @@ async function build() {
         banner: { js: preactBanner() },
     });
     checkInputs('Webview', webview.metafile, [/^src\/explorerWebview\//, ...CONTRACTS, /^node_modules\/preact\//, /^airk-explorer-help:/]);
+    const assistance = await esbuild.build({
+        ...common,
+        entryPoints: ['src/explorerAssistance/main.ts'],
+        outfile: 'out/explorerAssistance.js',
+        format: 'cjs',
+        platform: 'node',
+        target: 'node20',
+        banner: { js: `/*! AIRK Explorer Assistance MCP server ${catalog.extensionVersion}. No third-party code. */` },
+    });
+    // Node built-ins only: no packages, no host modules, no VS Code API.
+    checkInputs('Assistance', assistance.metafile, [/^src\/explorerAssistance\//, ...CONTRACTS, /^airk-explorer-help:/]);
 }
 
 module.exports = { helpCatalog, engineTopics };

@@ -26,7 +26,7 @@ MODULES = ("extension.js", "serviceExtension.js", "serviceDashboard.js", "servic
            "explorerFacts.js", "explorerInspect.js", "explorerManagement.js",
            "explorerCommands.js")
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
-BUNDLES = ("explorerWebview.js", "explorerWebview.css")
+BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js")
 # Host-only implementations that must never ship a second bundled copy.
 HOST_MARKERS = ("class ServiceClient", "class NativeControlTransport", "class IntentJournal", "function probeMcp",
                 "class ServiceConsoleController", "class RuntimeHost")
@@ -104,6 +104,12 @@ def stage_bundles(compiled, destination, preact_version):
                 raise ValueError("Webview bundle must not require modules")
             if not text.startswith("/*! AIRK Explorer webview. Includes Preact " + preact_version + " (MIT).\n"):
                 raise ValueError("Webview bundle lacks the pinned Preact notice")
+        if name == "explorerAssistance.js":
+            if not text.startswith("/*! AIRK Explorer Assistance MCP server "):
+                raise ValueError("Assistance bundle lacks its identifying banner")
+            loads = re.findall(r'''\b(?:require|import)\s*\(\s*(["'`]?)([^"'`)]*)''', text)
+            if any(not quote or not module.startswith("node:") for quote, module in loads):
+                raise ValueError("Assistance bundle may load Node built-ins only")
         bundles[name] = data
     destination.mkdir(parents=True, exist_ok=True)
     for name, data in bundles.items():
