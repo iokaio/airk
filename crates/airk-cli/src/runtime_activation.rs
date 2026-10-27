@@ -285,12 +285,6 @@ async fn rollback(root: &Path, intent: &Intent) -> Result<()> {
 /// process death; a committed public selection is never silently undone.
 pub(super) async fn resume(root: &Path) -> Result<()> {
     let mut intent = pending(root)?.context("no pending activation")?;
-    let _launcher_guard = if matches!(intent.phase, Phase::Drain | Phase::Launcher) {
-        let (main, _) = verify_runtime(root, &intent.candidate)?;
-        launcher_repair::replacement_guard(root, &main)?
-    } else {
-        None
-    };
     result(root)?;
     ensure!(
         layout::control(root)? == intent.control,
@@ -302,12 +296,23 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     }
     let owner = manager(root, &intent)?;
     if intent.phase == Phase::Drain {
+        if intent.manager {
+            owner.stop()?;
+        }
+        if let Some(prior) = &intent.prior {
+            upgrade_stop::stop(root, &prior.active)?;
+        }
+    }
+    let _launcher_guard = if matches!(intent.phase, Phase::Drain | Phase::Launcher) {
+        let (main, _) = verify_runtime(root, &intent.candidate)?;
+        launcher_repair::replacement_guard(root, &main)?
+    } else {
+        None
+    };
+    if intent.phase == Phase::Drain {
         if let Some(prior) = &intent.prior {
             let (main, approval) = verify_runtime(root, &prior.active)?;
             drain(root, &main, &approval).await?;
-        }
-        if intent.manager {
-            owner.stop()?;
         }
         owner.require_stopped_for_maintenance()?;
         drop(quiescent(root)?);
@@ -383,8 +388,7 @@ pub(super) fn reviewed_request(root: &Path, candidate: &str, expected: &str) -> 
 
 pub(super) async fn begin(root: &Path, candidate: &str) -> Result<Selection> {
     managed::require_unmanaged(root)?;
-    let (candidate_main, _) = verify_runtime(root, candidate)?;
-    let _launcher_guard = launcher_repair::replacement_guard(root, &candidate_main)?;
+    verify_runtime(root, candidate)?;
     ensure!(
         !exists(&root.join("uninstall.json"))?,
         "resume pending uninstall before activation"
@@ -445,6 +449,27 @@ pub(super) async fn abort(root: &Path) -> Result<()> {
     );
     intent.phase(root, Phase::Rollback)?;
     rollback(root, &intent).await
+}
+
+/// A newer installer may cancel an exact older intent only before candidate probe.
+/// Keep the guard under the installer lock, including across competing windows.
+pub(super) fn require_superseded(root: &Path, candidate: &str, active: &str) -> Result<()> {
+    let intent = pending(root)?.context("saved activation disappeared")?;
+    ensure!(
+        layout::control(root)? == intent.control,
+        "activation state location changed"
+    );
+    manager(root, &intent)?;
+    ensure!(
+        intent.candidate == candidate
+            && intent
+                .prior
+                .as_ref()
+                .is_some_and(|prior| prior.active == active)
+            && matches!(intent.phase, Phase::Drain | Phase::Launcher),
+        "saved activation changed or candidate probe already began; inspect before superseding"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

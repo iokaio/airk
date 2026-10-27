@@ -190,18 +190,28 @@ pub(super) async fn retire_previous(root: &Path, expected: &str) -> Result<serde
     let (main, approval) = verify_runtime(root, expected)?;
     let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
     let owned_manager = manager.owns_restart()?;
-    drain(root, &main, &approval).await?;
+    let was_healthy = health(root, &approval, &runtime_pair::digest_file(&main)?)
+        .await
+        .is_ok();
     if owned_manager {
         manager.stop()?;
     }
+    upgrade_stop::stop(root, expected)?;
+    drain(root, &main, &approval).await?;
     manager.require_stopped_for_maintenance()?;
     let cleanup = {
         let _quiescence = quiescent(root)?;
         finish_previous(root, &intent)
     };
     // Restore the healthy replacement even when locked/unknown old files defer cleanup.
-    activation::start_selected(root, &approval, &main, Some(owned_manager))
-        .await
+    let restarted = if owned_manager {
+        activation::start_selected(root, &approval, &main, Some(true)).await
+    } else {
+        // An exact healthy instance was deliberately stopped by this installer.
+        // Its controlled restart is not another failed on-demand startup attempt.
+        start(root, &approval, &main, !was_healthy).await
+    };
+    restarted
         .context("replacement runtime remains selected but restart after retirement is pending")?;
     cleanup.context("previous runtime cleanup is incomplete; retry retire-previous")?;
     Ok(serde_json::json!({"active":expected,"retired_previous":intent.previous}))

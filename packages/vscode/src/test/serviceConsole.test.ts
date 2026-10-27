@@ -40,7 +40,7 @@ test('trusted rebuild commands create a saved guarded preview and never approve 
     f.setTrusted(false);await f.controller.projectPlan(project,'rebuild');assert.equal(calls.length,1);f.controller.dispose();
 });
 function fixture(){
-    let trusted=true,fail=false;const sent:unknown[]=[],values=new Map<string,unknown>(),copied:string[]=[];
+    let trusted=true,fail=false,lastKind='inspect';const sent:unknown[]=[],values=new Map<string,unknown>(),copied:string[]=[];
     const row={project:{registration:{binding:project,root:'/sensitive/<source>',data_root:'/private/data',collection:'<script>name</script>'},paused:false,fencing_generation:1},progress:null,inspection:null};
     const binding={installDir:'/install',controlDir:'/control',executable:'/executable',launcher:null,runtimeSha256:'90'.repeat(32),version:'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
     const client=new ServiceClient({dispose(){},async request(method){
@@ -57,8 +57,10 @@ function fixture(){
             case 'enqueue':case 'configure_project':{
                 assert.equal([...values.keys()].filter(key=>key.startsWith('airk.service.intent.')).length,1,'persist before send');
                 if(fail)throw new ServiceError('console_transport_closed',true);
-                return {status:'job',job:{id:job,project}};
+                lastKind=name==='enqueue'?String((method as {enqueue:{kind:string}}).enqueue.kind):'configure';
+                return {status:'job',job:{id:job,project,kind:lastKind}};
             }
+            case 'job':return {status:'job',job:{id:job,project,kind:lastKind,outcome:{state:'succeeded'}}};
             default:return {status:name};
         }
     }});
@@ -135,6 +137,29 @@ test('configuration requires an inspection before opening host choices or prepar
     await f.controller.refresh();await f.action('configureProject',{project});
     assert.equal(prompted,false);assert.equal(prepared,false);assert.equal(f.controller.state.pending.length,0);
     assert.match(f.controller.state.message!,/Inspect this project/);f.controller.dispose();
+});
+
+test('direct removal inspects a missing-source project and requires approval before unregistering',async()=>{
+    for(const decision of ['approve','decline','lose-trust'] as const){
+        const f=fixture();let prepared=false,reviewed='';
+        f.host.runtime.prepareConfiguration=async(_binding,selected,draft)=>{
+            assert.equal(selected,project);assert.deepEqual(draft,{operation:'unregister'});
+            assert.ok(f.sent.some(value=>typeof value==='object'&&value!==null&&'job' in value));
+            prepared=true;return {incarnation:'cd'.repeat(16),settings:'ef'.repeat(32),configuration:draft};
+        };
+        f.host.confirm=async message=>{assert.equal(prepared,true);reviewed=message;if(decision==='lose-trust')f.setTrusted(false);return decision!=='decline';};
+        await f.controller.refresh();
+        f.controller.state.page!.projects[0].watch={failure:'root_unavailable'};
+        assert.equal(f.controller.state.page!.projects[0].inspection,null);
+        await f.action('unregisterProject',{project});
+        assert.match(reviewed,/source folder has been deleted/);
+        assert.match(reviewed,/Sources, settings and index data are retained/);
+        assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value).length,decision==='approve'?1:0);
+        assert.equal(f.controller.state.inactiveProjects===true,decision==='approve');
+        assert.equal(f.controller.state.pending.length,0);
+        if(decision==='approve')assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'unregisterProject',project},f.controller.state),undefined);
+        f.controller.dispose();
+    }
 });
 
 test('unregister binds the prepared project and requires approval before durable dispatch',async()=>{

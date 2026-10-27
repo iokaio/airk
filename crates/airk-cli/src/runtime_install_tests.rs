@@ -1,6 +1,32 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+#[tokio::test]
+async fn stopped_upgrade_checks_v6_without_migration_and_reports_damage_immediately() -> Result<()>
+{
+    let (_owner, root, _) = unselected_fixture()?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    drop(airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?);
+    let path = control.join("service-1.4.sqlite3");
+    let connection = rusqlite::Connection::open(&path)?;
+    connection.execute_batch("DROP TABLE service_watch_traversal; PRAGMA user_version=6;")?;
+    drop(connection);
+    let before = fs::read(&path)?;
+    wait_quiescent(&root).await?;
+    assert_eq!(fs::read(&path)?, before);
+    fs::write(&path, b"Preserve damaged registry")?;
+    let started = std::time::Instant::now();
+    let error = wait_quiescent(&root).await.err().unwrap();
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(format!("{error:#}").contains("database"));
+    assert_eq!(fs::read(path)?, b"Preserve damaged registry");
+    Ok(())
+}
+
 pub(super) fn fixture(root: &Path) -> Result<String> {
     local_ipc::prepare_root(&root.join("notices"))?;
     let mut directory = root.to_path_buf();

@@ -20,6 +20,8 @@ pub enum LogKind {
     ModelFailed,
     ModelStopped,
     SourceWorkerFailed,
+    SourceTraversalUnavailable,
+    SourceTraversalRecovered,
     MetadataUnavailable,
     RecordsDropped,
 }

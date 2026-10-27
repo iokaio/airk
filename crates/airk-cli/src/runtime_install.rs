@@ -26,6 +26,8 @@ mod launcher_repair;
 mod layout;
 #[path = "runtime_managed.rs"]
 mod managed;
+#[path = "runtime_upgrade_stop.rs"]
+mod upgrade_stop;
 pub use managed::ManagedLifecycle;
 #[path = "runtime_lifecycle.rs"]
 mod lifecycle;
@@ -123,6 +125,10 @@ pub enum RuntimeCommand {
     AbortActivation {
         #[arg(long)]
         install_dir: PathBuf,
+        #[arg(long, requires = "expected_active")]
+        expected_candidate: Option<String>,
+        #[arg(long, requires = "expected_candidate")]
+        expected_active: Option<String>,
     },
     /// Pin an approved organization-provided payload without copying or modifying it.
     Managed {
@@ -1288,14 +1294,16 @@ fn saved_payload_identity(directory: &Path, identity: &str) -> Result<(Approval,
 async fn wait_quiescent(root: &Path) -> Result<()> {
     let until = tokio::time::Instant::now() + Duration::from_secs(45);
     loop {
-        if let Ok(guard) = quiescent(root) {
-            drop(guard);
-            return Ok(());
+        let error = match quiescent(root) {
+            Ok(guard) => {
+                drop(guard);
+                return Ok(());
+            }
+            Err(error) => error,
+        };
+        if !ownership_contention(&error) || tokio::time::Instant::now() >= until {
+            return Err(error).context("service owners have not released after stop");
         }
-        ensure!(
-            tokio::time::Instant::now() < until,
-            "service owners have not released after stop"
-        );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
@@ -1344,16 +1352,25 @@ async fn drain_identity(root: &Path, approval: &Approval, expected_sha256: &str)
     }
     let until = tokio::time::Instant::now() + Duration::from_secs(45);
     loop {
-        if let Ok(guard) = quiescent(root) {
-            drop(guard);
-            return Ok(());
+        let error = match quiescent(root) {
+            Ok(guard) => {
+                drop(guard);
+                return Ok(());
+            }
+            Err(error) => error,
+        };
+        if !ownership_contention(&error) || tokio::time::Instant::now() >= until {
+            return Err(error).context("service drain failed; runtime selection preserved");
         }
-        ensure!(
-            tokio::time::Instant::now() < until,
-            "service has not released ownership; runtime selection preserved"
-        );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+}
+
+fn ownership_contention(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::fs::TryLockError>()
+        .is_some_and(|error| matches!(error, std::fs::TryLockError::WouldBlock))
+        || airk_store::service::registry::is_read_contention(error)
 }
 
 struct Quiescence {
@@ -1367,13 +1384,17 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
     let control = layout::control(root)?;
     local_ipc::prepare_root(&control)?;
     let service = airk_store::service::ServiceLease::acquire(&control)?;
-    layout::record_control(&service)?;
-    let registry = airk_store::service::registry::ServiceRegistry::open(
-        &control,
-        airk_kernel::service_broker::new_instance_id()?,
-    )?;
-    let projects = registry
-        .bindings()?
+    layout::validate_control(&control)?;
+    let bindings = if control.join("service-1.4.sqlite3").try_exists()? {
+        airk_store::service::registry::ServiceRegistry::open_saved(&control)?.bindings()?
+    } else {
+        ensure!(
+            !control.join("service-1.4.owner.json").try_exists()?,
+            "initialized service registry is missing"
+        );
+        Vec::new()
+    };
+    let projects = bindings
         .into_iter()
         .map(|binding| airk_store::service::ProjectLease::acquire(&control, binding))
         .collect::<Result<Vec<_>>>()?;

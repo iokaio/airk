@@ -61,6 +61,21 @@ test('search results become cited hit views with opaque references and honest co
     assert.throws(() => passageView(project, { hits: [] }, undefined, refs), failure('TOOL_ERROR'));
 });
 
+test('explicit semantic search keeps vector mode and reports partial coverage with cited results', () => {
+    const query = message({ mode: 'vector', query: 'how sessions are renewed', pathPrefix: 'src/' });
+    assert.equal(searchArgs(query).mode, 'vector');
+    assert.equal(searchArgs(query).query, 'how sessions are renewed');
+    assert.equal(searchArgs(query).path_prefix, 'src/');
+    const refs = new RefRegistry();
+    const view = searchView(project, query, { ...payload, semantic_readiness: { state: 'partial' } }, 'airk-r1:x:3:y', refs, { semantic: 'ready' });
+    assert.equal(view.appliedMode, 'vector');
+    assert.equal(view.ordering, 'fused_rank');
+    assert.equal(view.semantic, 'partial');
+    assert.match(view.warnings.join(' '), /coverage is partial/);
+    assert.equal(refs.get(view.hits[0].ref, project).publication, 'airk-r1:x:3:y');
+    assert.equal(appliedMode('vector', { semantic_readiness: { state: 'pending' } }, {}).mode, 'vector', 'explicit semantic search never silently changes to lexical');
+});
+
 test('the reference registry is bounded and expires the oldest handles first', () => {
     const refs = new RefRegistry(2);
     const first = refs.add({ project, path: 'a', startLine: 1, endLine: 1, contentHash: hash });

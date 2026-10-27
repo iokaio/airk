@@ -27,6 +27,27 @@ fn tracker(now: Instant) -> Result<Tracker, anyhow::Error> {
     ))
 }
 #[test]
+fn long_semantic_preparation_advances_without_claiming_committed_coverage() -> anyhow::Result<()> {
+    let start = Instant::now();
+    let mut tracker = tracker(start)?;
+    for seconds in [120, 400, 700, 1000] {
+        let now = start + Duration::from_secs(seconds);
+        tracker.semantic_prepared(now);
+        assert_eq!(tracker.watchdog(now), (false, false));
+    }
+    let snapshot = tracker.snapshot(start + Duration::from_secs(1001));
+    assert_eq!(snapshot.last_advance_age_ms, Some(1000));
+    assert_eq!(snapshot.publications, 0);
+    assert_eq!(snapshot.committed_changes, 0);
+    assert_eq!(snapshot.completed_semantic_units, None);
+    assert_eq!(
+        tracker.watchdog(start + Duration::from_secs(1600)),
+        (true, false)
+    );
+    Ok(())
+}
+
+#[test]
 fn heartbeat_and_phase_changes_do_not_extend_real_progress_deadline() -> anyhow::Result<()> {
     let start = Instant::now();
     let mut tracker = tracker(start)?;

@@ -20,7 +20,7 @@ export interface ServiceConsoleState {
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
 export const CONSOLE_SIMPLE_ACTIONS=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
-export const CONSOLE_PROJECT_ACTIONS=['previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
+export const CONSOLE_PROJECT_ACTIONS=['unregisterProject','previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
 export const CONSOLE_OPERATIONS=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
 export function consoleAction(value:unknown,current:ServiceConsoleState):ConsoleAction|undefined {

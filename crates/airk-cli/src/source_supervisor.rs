@@ -7,7 +7,7 @@ use crate::{
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service::{ControlResponse, PROTOCOL_VERSION, ProjectBinding},
-    service_watch::{WatchBackend, WatchFailure},
+    service_watch::{WatchBackend, WatchFailure, WatchTraversal},
 };
 use airk_kernel::service_broker::new_instance_id;
 use airk_store::service::{
@@ -34,8 +34,16 @@ struct Replies {
     directories: Option<u16>,
     projects: Option<u16>,
     pending: Option<u16>,
-    observations: BTreeMap<ProjectBinding, (u64, u16, WatchBackend, Option<WatchFailure>)>,
+    observations: BTreeMap<ProjectBinding, WatchReport>,
     events: BTreeMap<ProjectBinding, (u64, u64)>,
+}
+
+struct WatchReport {
+    epoch: u64,
+    native: u16,
+    backend: WatchBackend,
+    failure: Option<WatchFailure>,
+    traversal: Option<WatchTraversal>,
 }
 enum Outgoing {
     Initialize(protocol::Init),
@@ -155,8 +163,13 @@ impl WatchChild {
                                 native_roots,
                                 backend,
                                 failure,
+                                traversal,
                             } => {
-                                if native_roots > 17 {
+                                if native_roots > 17
+                                    || traversal
+                                        .as_ref()
+                                        .is_some_and(|value| value.validate().is_err())
+                                {
                                     break;
                                 }
                                 let Ok(mut observed) = observed.lock() else {
@@ -170,11 +183,17 @@ impl WatchChild {
                                 if observed
                                     .observations
                                     .get(&project)
-                                    .is_none_or(|(epoch, _, _, _)| *epoch <= configuration_epoch)
+                                    .is_none_or(|report| report.epoch <= configuration_epoch)
                                 {
                                     observed.observations.insert(
                                         project,
-                                        (configuration_epoch, native_roots, backend, failure),
+                                        WatchReport {
+                                            epoch: configuration_epoch,
+                                            native: native_roots,
+                                            backend,
+                                            failure,
+                                            traversal,
+                                        },
                                     );
                                 }
                             }
@@ -436,13 +455,40 @@ impl SourceSupervisor {
                             } else {
                                 (vec![], vec![])
                             };
-                            for (project, (epoch, native, backend, failure)) in observations {
+                            for (
+                                project,
+                                WatchReport {
+                                    epoch,
+                                    native,
+                                    backend,
+                                    failure,
+                                    traversal,
+                                },
+                            ) in observations
+                            {
                                 if failure == Some(WatchFailure::RootLimit) {
                                     sent.remove(&project);
                                 }
-                                let _ = registry.record_watch_observation(
-                                    project, epoch, native, backend, failure, now_ms,
-                                );
+                                if registry
+                                    .record_watch_observation(
+                                        project, epoch, native, backend, failure, now_ms,
+                                    )
+                                    .is_ok()
+                                    && let Some(traversal) = traversal
+                                    && let Ok(Some(unavailable)) = registry
+                                        .record_watch_traversal(project, epoch, &traversal, now_ms)
+                                {
+                                    use airk_core::service_logs::LogKind;
+                                    log.record(
+                                        if unavailable {
+                                            LogKind::SourceTraversalUnavailable
+                                        } else {
+                                            LogKind::SourceTraversalRecovered
+                                        },
+                                        Some(project),
+                                        None,
+                                    );
+                                }
                             }
                             for (project, (epoch, sequence)) in events {
                                 if registry

@@ -445,20 +445,7 @@ export class ServiceConsoleController {
             check();identifier(project,32);if(!this.client)await this.discover();check();
             if(!this.client||!this.binding)throw new ServiceError('console_not_connected');
             await this.observe();check();
-            const wait=async(response:RecordValue,kind:string)=>{
-                const accepted=record(response.job),id=identifier(accepted.id,32),deadline=Date.now()+90000;
-                if(accepted.project!==project||accepted.kind!==kind)throw new ServiceError('crossed_configuration_job');
-                while(true){
-                    check();const observed=record((await this.rpc({job:{id}},'job')).job);check();
-                    if(observed.id!==id||observed.project!==project||observed.kind!==kind)throw new ServiceError('crossed_configuration_job');
-                    if(observed.outcome){
-                        if(record(observed.outcome).state!=='succeeded')throw new ServiceError('configuration_job_failed');
-                        return id;
-                    }
-                    if(Date.now()>=deadline)throw new ServiceError('configuration_job_still_pending');
-                    await new Promise(resolve=>setTimeout(resolve,100));
-                }
-            };
+            const wait=(response:RecordValue,kind:string)=>this.waitForProjectJob(response,project,kind,check);
             await wait(await this.mutation(`Inspect configuration ${project}`,{enqueue:await this.client.prepareJob(project,'inspect')}),'inspect');check();
             const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);check();
             const id=await wait(await this.mutation(`Configure ${String(request.configuration.operation)} ${project}`,await this.client.prepareConfiguration(project,request)),'configure');
@@ -480,9 +467,40 @@ export class ServiceConsoleController {
         }catch(error){this.state.message=code(error);}
         finally{try{this.pending();}catch(error){this.state.message=code(error);}this.state.busy=false;this.publish();this.releaseIdle();}
     }
+    private async waitForProjectJob(response:RecordValue,project:string,kind:string,check:()=>void=()=>this.authorized()):Promise<string>{
+        const accepted=record(response.job),id=identifier(accepted.id,32),deadline=Date.now()+90000;
+        if(accepted.project!==project||accepted.kind!==kind)throw new ServiceError('crossed_configuration_job');
+        while(true){
+            check();const observed=record((await this.rpc({job:{id}},'job')).job);check();
+            if(observed.id!==id||observed.project!==project||observed.kind!==kind)throw new ServiceError('crossed_configuration_job');
+            if(observed.outcome){
+                if(record(observed.outcome).state!=='succeeded')throw new ServiceError('configuration_job_failed');
+                return id;
+            }
+            if(Date.now()>=deadline)throw new ServiceError('configuration_job_still_pending');
+            await new Promise(resolve=>setTimeout(resolve,100));
+        }
+    }
     private async connectedAction(action:NonNullable<ReturnType<typeof consoleAction>>):Promise<void>{
         const project=action.project!,id=action.id!;
         switch(action.action){
+            case 'unregisterProject':{
+                const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===project);
+                if(!row||!this.binding||this.state.inactiveProjects)throw new ServiceError('project_configuration_unavailable');
+                // Native inspection can use retained settings when the source folder is gone.
+                // Complete preparation before asking the user to approve the exact removal.
+                await this.waitForProjectJob(await this.mutation(`Inspect removal ${project}`,{enqueue:await this.client!.prepareJob(project,'inspect')}),project,'inspect');
+                const request=await this.host.runtime.prepareConfiguration(this.binding,project,{operation:'unregister'});this.authorized();
+                if(request.configuration.operation!=='unregister')throw new ServiceError('unexpected_removal_configuration');
+                const registration=record(record(row.project).registration);
+                if(!await this.host.confirm(`Remove ${String(registration.collection)} from AIRK on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. This unregisters the project, stops automatic work and drains its worker, including when the source folder has been deleted. Sources, settings and index data are retained. After removal, use Preview / resume index cleanup and Delete reviewed index state to reclaim its index storage.`))return;
+                this.authorized();
+                await this.waitForProjectJob(await this.mutation(`Unregister ${project}`,await this.client!.prepareConfiguration(project,request)),project,'configure');
+                this.state.inactiveProjects=true;this.state.selected.clear();
+                await this.page(false,true);
+                this.state.message='Project removed from active indexing. Preview its retained index cleanup, then confirm deletion to reclaim storage.';
+                return;
+            }
             case 'registeredProjects':case 'inactiveProjects':{
                 this.state.inactiveProjects=action.action==='inactiveProjects';this.state.selected.clear();
                 await this.page(false,true);return;

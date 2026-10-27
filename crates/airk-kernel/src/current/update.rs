@@ -38,7 +38,7 @@ pub(super) fn reclaim_current_objects(
     if writer.has_object_captures() {
         return Ok(());
     }
-    let read = store.current_read(scope)?;
+    let read = store.current_build_read(scope, writer)?;
     if read.collection_state()?.is_none() {
         return Ok(());
     }
@@ -212,6 +212,7 @@ impl VectorPlan<'_> {
         if units.is_empty() {
             return Ok(());
         }
+        crate::service_execution::checkpoint()?;
         let mut keys = Vec::new();
         let mut missing = BTreeMap::new();
         for (index, unit) in units.iter().enumerate() {
@@ -255,6 +256,7 @@ impl VectorPlan<'_> {
         );
         semantic.cache.stats.vector_reused_inputs += (units.len() - missing.len()) as u64;
         for ((key, _), vector) in missing.into_iter().zip(vectors) {
+            crate::service_execution::checkpoint()?;
             ensure!(
                 self.registry.len() < MAX_PENDING_VECTOR_INPUTS,
                 "current vector registry work limit exceeded"
@@ -291,6 +293,7 @@ impl VectorPlan<'_> {
                 None
             };
             self.registry.insert(key, id);
+            crate::service_execution::progress_semantic_prepared();
         }
         for (pending, key) in units.drain(..).zip(keys) {
             let Some(id) = self.registry[&key] else {
@@ -341,6 +344,7 @@ impl VectorPlan<'_> {
             });
             *ordinal += 1;
         }
+        crate::service_execution::progress_semantic_prepared();
         Ok(())
     }
 }
@@ -457,7 +461,7 @@ impl CurrentUpdater<'_> {
         let capacity = self.store.current_database_capacity(self.scope)?;
         let read = self
             .store
-            .current_read(self.scope)
+            .current_build_read(self.scope, self.writer)
             .context("open current update read")?;
         let trusted_cache = read
             .resource(self.store, "embedding-cache")?

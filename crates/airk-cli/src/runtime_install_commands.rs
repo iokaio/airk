@@ -154,9 +154,21 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             layout::abort(install_dir)?;
             serde_json::json!({"pending_layout_aborted":true,"state_preserved":true})
         }
-        RuntimeCommand::AbortActivation { install_dir } => {
+        RuntimeCommand::AbortActivation {
+            install_dir,
+            expected_candidate,
+            expected_active,
+        } => {
             let _lock = install_lock(install_dir)?;
             managed::require_unmanaged(install_dir)?;
+            if let (Some(candidate), Some(active)) = (expected_candidate, expected_active) {
+                activation::require_superseded(install_dir, candidate, active)?;
+                let owner = crate::service_manager::ServiceManager::for_runtime(install_dir)?;
+                if owner.owns_restart()? {
+                    owner.stop()?;
+                }
+                upgrade_stop::stop(install_dir, active)?;
+            }
             activation::abort(install_dir).await?;
             serde_json::json!({"activation_aborted":true,"payloads_preserved":true})
         }

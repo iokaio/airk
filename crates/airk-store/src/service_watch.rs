@@ -5,10 +5,17 @@ use crate::service::ProjectLease;
 use airk_core::{
     identity::Sha256Digest,
     service::{ProjectBinding, RegisteredProject},
-    service_watch::{WatchBackend, WatchFailure, WatchObservation},
+    service_watch::{WatchBackend, WatchFailure, WatchObservation, WatchTraversal},
 };
 use anyhow::{Context, Result, ensure};
 use rusqlite::{OptionalExtension, TransactionBehavior, params};
+
+pub(super) const TRAVERSAL_SCHEMA: &str = "
+    CREATE TABLE service_watch_traversal(
+        project TEXT PRIMARY KEY REFERENCES projects(binding) ON DELETE CASCADE,
+        configuration_epoch INTEGER NOT NULL CHECK(configuration_epoch>=0),
+        observation BLOB NOT NULL CHECK(length(observation)<=8192),
+        observed_ms INTEGER NOT NULL CHECK(observed_ms>=0)) WITHOUT ROWID;";
 
 pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS service_watch(
@@ -130,7 +137,7 @@ impl ServiceRegistry {
                 .map(String::len)
                 .sum::<usize>()
                 + serde_json::to_vec(&project.project)?.len()
-                + 512;
+                + serde_json::to_vec(&project.observation)?.len();
             if bytes + weight > 512 * 1024 {
                 break;
             }
@@ -206,10 +213,27 @@ impl ServiceRegistry {
                     failure: None,
                     observed_unix_ms: None,
                     last_reconciled_unix_ms: None,
+                    traversal: None,
+                    traversal_observed_unix_ms: None,
                 },
             });
         };
         let additional_roots = roots(&bytes)?;
+        let traversal = if self.watch_traversal_state {
+            self.connection.query_row(
+            "SELECT substr(observation,1,8193),observed_ms FROM service_watch_traversal WHERE project=?1 AND configuration_epoch=?2",
+            params![project.to_string(),epoch], |row| Ok((row.get::<_,Vec<u8>>(0)?,row.get::<_,i64>(1)?))).optional()?
+        } else {
+            None
+        };
+        let traversal = traversal
+            .map(|(bytes, time)| -> Result<_> {
+                ensure!(bytes.len() <= 8192, "oversized watch traversal observation");
+                let value: WatchTraversal = serde_json::from_slice(&bytes)?;
+                value.validate()?;
+                Ok((value, u64::try_from(time)?))
+            })
+            .transpose()?;
         let observation = WatchObservation {
             enabled,
             requested_revision: u64::try_from(requested)?,
@@ -227,6 +251,8 @@ impl ServiceRegistry {
                 .transpose()?,
             observed_unix_ms: observed_ms.map(u64::try_from).transpose()?,
             last_reconciled_unix_ms: last.map(u64::try_from).transpose()?,
+            traversal_observed_unix_ms: traversal.as_ref().map(|(_, time)| *time),
+            traversal: traversal.map(|(value, _)| value),
         };
         observation.validate()?;
         Ok(WatchProject {
@@ -416,6 +442,71 @@ impl ServiceRegistry {
             params![native_roots,backend,failure,i64::try_from(now_ms)?,project.to_string(),i64::try_from(configuration_epoch)?])?;
         ensure!(changed == 1, "source watcher configuration changed");
         Ok(())
+    }
+
+    /// Merge observed failures until their root is fully traversed. Return only
+    /// availability transitions for the bounded, path-free process log. Durable
+    /// state suppresses repeat events across watcher/service restarts.
+    pub fn record_watch_traversal(
+        &mut self,
+        project: ProjectBinding,
+        epoch: u64,
+        report: &WatchTraversal,
+        now_ms: u64,
+    ) -> Result<Option<bool>> {
+        report.validate()?;
+        let state = self.watch(project)?;
+        ensure!(
+            state.configuration_epoch == epoch,
+            "source watcher configuration changed"
+        );
+        ensure!(
+            report
+                .incomplete_roots
+                .iter()
+                .all(|index| *index < state.observation.configured_roots),
+            "foreign watch root index"
+        );
+        let roots = std::iter::once(state.project.registration.root.as_str())
+            .chain(state.additional_roots.iter().map(String::as_str))
+            .collect::<Vec<_>>();
+        for entry in &report.unreadable {
+            let path = std::path::Path::new(&entry.path);
+            ensure!(
+                path.starts_with(roots[usize::from(entry.root)])
+                    && !path
+                        .components()
+                        .any(|part| matches!(part, std::path::Component::ParentDir)),
+                "foreign watch diagnostic path"
+            );
+        }
+        let previous = state.observation.traversal.unwrap_or_default();
+        let was_unavailable = previous.unavailable();
+        let mut merged = WatchTraversal {
+            unreadable: vec![],
+            incomplete_roots: report.incomplete_roots.clone(),
+            truncated: report.truncated
+                || (previous.truncated && !report.incomplete_roots.is_empty()),
+        };
+        for entry in previous
+            .unreadable
+            .into_iter()
+            .filter(|entry| report.incomplete_roots.contains(&entry.root))
+        {
+            merged.push(entry);
+        }
+        for entry in &report.unreadable {
+            merged.push(entry.clone());
+        }
+        merged.validate()?;
+        let unavailable = merged.unavailable();
+        let bytes = serde_json::to_vec(&merged)?;
+        let changed = self.connection.execute("INSERT INTO service_watch_traversal(project,configuration_epoch,observation,observed_ms)
+            SELECT project,configuration_epoch,?3,?4 FROM service_watch WHERE project=?1 AND configuration_epoch=?2
+            ON CONFLICT(project) DO UPDATE SET configuration_epoch=excluded.configuration_epoch,observation=excluded.observation,observed_ms=excluded.observed_ms",
+            params![project.to_string(),i64::try_from(epoch)?,bytes,i64::try_from(now_ms)?])?;
+        ensure!(changed == 1, "source watcher configuration changed");
+        Ok((was_unavailable != unavailable).then_some(unavailable))
     }
 }
 

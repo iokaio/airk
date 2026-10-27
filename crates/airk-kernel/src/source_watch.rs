@@ -4,7 +4,7 @@
 use crate::watcher::{comparison_path, deliver, relevant};
 use airk_core::{
     service::{ProjectBinding, ProjectRegistration},
-    service_watch::{WatchBackend, WatchFailure},
+    service_watch::{UnreadableDirectory, WatchBackend, WatchFailure, WatchTraversal},
 };
 use anyhow::{Result, ensure};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -61,6 +61,7 @@ pub struct Observation {
     pub native_roots: u16,
     pub backend: WatchBackend,
     pub failure: Option<WatchFailure>,
+    pub traversal: Option<WatchTraversal>,
 }
 pub struct Notice {
     pub project: ProjectBinding,
@@ -106,6 +107,7 @@ struct ProjectUsage {
     directories: usize,
     path_bytes: usize,
     entries: usize,
+    traversal: WatchTraversal,
 }
 
 pub struct SourceWatcher {
@@ -201,6 +203,7 @@ impl SourceWatcher {
                     native_roots: 0,
                     backend: WatchBackend::PeriodicFallback,
                     failure: Some(WatchFailure::RootLimit),
+                    traversal: None,
                 },
             );
             return Ok(false);
@@ -281,6 +284,7 @@ impl SourceWatcher {
                         native_roots: 0,
                         backend: WatchBackend::PeriodicFallback,
                         failure: Some(WatchFailure::EventOverflow),
+                        traversal: None,
                     },
                 );
             }
@@ -368,6 +372,7 @@ impl SourceWatcher {
                             native_roots: 0,
                             backend: WatchBackend::PeriodicFallback,
                             failure: Some(WatchFailure::BackendUnavailable),
+                            traversal: None,
                         },
                     );
                 }
@@ -470,6 +475,18 @@ impl SourceWatcher {
                         (!entry.binding.configuration_observed)
                             .then_some(WatchFailure::MetadataUnavailable)
                     }),
+                    traversal: Some({
+                        let mut traversal =
+                            plan.usage.remove(project).unwrap_or_default().traversal;
+                        traversal.incomplete_roots = failures
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, failure)| {
+                                failure.is_some().then_some(index as u16)
+                            })
+                            .collect();
+                        traversal
+                    }),
                 },
             );
         }
@@ -551,6 +568,20 @@ impl SourceWatcher {
 }
 
 impl Plan {
+    fn unreadable(&mut self, path: PathBuf, reason: &'static str) {
+        let walk = self.walk.as_ref().unwrap();
+        let traversal = &mut self.usage.entry(walk.task.project).or_default().traversal;
+        let root = walk.task.index as u16;
+        if !traversal.incomplete_roots.contains(&root) {
+            traversal.incomplete_roots.push(root);
+        }
+        traversal.push(UnreadableDirectory {
+            root,
+            path: path.to_string_lossy().into_owned(),
+            reason: reason.into(),
+        });
+        self.fail(WatchFailure::RootUnavailable);
+    }
     fn fail(&mut self, failure: WatchFailure) {
         if let Some(walk) = self.walk.as_ref() {
             self.failures.get_mut(&walk.task.project).unwrap()[walk.task.index] = Some(failure);
@@ -582,12 +613,15 @@ impl Plan {
                 continue;
             }
             let walk = self.walk.as_mut().unwrap();
-            if let Some((_, depth, reader)) = walk.cursor.as_mut() {
+            if let Some((directory, depth, reader)) = walk.cursor.as_mut() {
                 match reader.next() {
                     None => {
                         walk.cursor = None;
                     }
-                    Some(Err(_)) => self.fail(WatchFailure::RootUnavailable),
+                    Some(Err(error)) => {
+                        let path = directory.clone();
+                        self.unreadable(path, directory_error(&error));
+                    }
                     Some(Ok(entry)) => {
                         self.usage.entry(project).or_default().entries += 1;
                         let path = entry.path();
@@ -624,7 +658,10 @@ impl Plan {
                                     walk.queued_bytes += bytes;
                                 }
                             }
-                            Err(_) => self.fail(WatchFailure::RootUnavailable),
+                            Err(error) => {
+                                let path = directory.clone();
+                                self.unreadable(path, directory_error(&error));
+                            }
                             _ => {}
                         }
                     }
@@ -668,8 +705,12 @@ impl Plan {
                     );
                     Ok(())
                 })();
-                if safe.is_err() {
-                    self.fail(WatchFailure::RootUnavailable);
+                if let Err(error) = safe {
+                    let reason = error
+                        .downcast_ref::<std::io::Error>()
+                        .map(directory_error)
+                        .unwrap_or("redirected");
+                    self.unreadable(path, reason);
                     continue;
                 }
                 match fs::read_dir(&path) {
@@ -682,13 +723,21 @@ impl Plan {
                         }
                         walk.cursor = Some((path, depth, reader));
                     }
-                    Err(_) => self.fail(WatchFailure::RootUnavailable),
+                    Err(error) => self.unreadable(path, directory_error(&error)),
                 }
             } else {
                 self.walk = None;
             }
         }
         Ok(false)
+    }
+}
+
+fn directory_error(error: &std::io::Error) -> &'static str {
+    match error.kind() {
+        std::io::ErrorKind::NotFound => "not_found",
+        std::io::ErrorKind::PermissionDenied => "permission_denied",
+        _ => "io_error",
     }
 }
 

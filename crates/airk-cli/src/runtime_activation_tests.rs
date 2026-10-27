@@ -76,6 +76,21 @@ fn reviewed_activation_refuses_a_changed_selection_and_crossed_pending_intent() 
     Ok(())
 }
 
+#[test]
+fn superseding_a_saved_upgrade_requires_exact_preprobe_identity() -> Result<()> {
+    let (_owner, root, mut intent) = fixture()?;
+    let active = intent.prior.as_ref().unwrap().active.clone();
+    intent.save(&root)?;
+    require_superseded(&root, &intent.candidate, &active)?;
+    assert!(require_superseded(&root, &"f".repeat(64), &active).is_err());
+    assert!(require_superseded(&root, &intent.candidate, &"f".repeat(64)).is_err());
+    intent.phase(&root, Phase::Probe)?;
+    assert!(require_superseded(&root, &intent.candidate, &active).is_err());
+    assert!(pending(&root)?.is_some());
+    assert!(selection(&root)? == intent.prior);
+    Ok(())
+}
+
 #[tokio::test]
 async fn completed_reviewed_activation_acknowledges_without_starting_or_reinitializing_state()
 -> Result<()> {

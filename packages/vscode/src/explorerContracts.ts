@@ -253,6 +253,7 @@ export interface WorkspaceFilesView {
 /** A labeled observation; values are already formatted text. Unknown stays "Not observed". */
 export type FactRow = readonly [string, string];
 export interface ManagedProject {
+    readonly watchDiagnostics?: readonly FactRow[];
     readonly summary: ProjectSummary;
     readonly rows: readonly FactRow[];
     readonly activity: readonly FactRow[];
@@ -311,7 +312,7 @@ export const MANAGE_ACTIONS = [
     'refresh', 'connect', 'start', 'stop', 'restart', 'repairRuntime', 'upgradeRuntime', 'rollbackRuntime', 'resumeActivation', 'logs', 'resources',
     'responseMode', 'recoverLifecycle', 'abandonLifecycle', 'startEmbedding', 'stopEmbedding', 'forceEmbedding', 'firstPage', 'nextPage', 'morePlan',
     'refreshPlan', 'pausePlan', 'resumePlan', 'cancelPlan', 'approvePlan', 'previewReport', 'copyReport',
-    'previewCleanup', 'deleteDerived', 'inspect', 'index', 'pause', 'resume', 'restartProject', 'watch', 'modelSetup', 'configureProject', 'copyConfiguration',
+    'unregisterProject', 'previewCleanup', 'deleteDerived', 'inspect', 'index', 'pause', 'resume', 'restartProject', 'watch', 'modelSetup', 'configureProject', 'copyConfiguration',
     'select', 'repair', 'resumeLegacyStartup', 'retryJob', 'cancelJob', 'retryIntent', 'forgetIntent', 'forceIntent',
 ] as const;
 /** Existing AIRK commands that Management may open; each keeps its own dialogs and confirmations. */

@@ -2,7 +2,7 @@
 
 A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). Its complete cumulative diff must stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only then do PR/main CI run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remains the authenticated producer.
 
-The current package version is **1.5.2**; see [its release record](release-1.5.2.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+The current package version is **1.5.4**; see [its release record](release-1.5.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
 
 Native smoke and qualification tools distinguish a raw diagnostic status from an available publication. They share scoped, bounded observation helpers and preserve explicit failed readiness, typed read-retry limits and exact usage accounting; see the [MCP consumer contract](mcp.md). The mandatory 16-file/model service-client and document-table smokes remain routine on every native host. Local verification uses a freshly constructed matching release pair before a corrective push; hosted CI is not the primary debugging loop.
 
@@ -52,7 +52,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.5.2 candidate notes](release-1.5.2.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact sixteen-tool MCP catalog, including airk_help; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.5.4 candidate notes](release-1.5.4.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact sixteen-tool MCP catalog, including airk_help; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 

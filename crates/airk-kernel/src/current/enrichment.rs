@@ -363,7 +363,7 @@ impl Kernel {
         let quota = self.collection_quota()?;
         super::recover_current(&self.store, &quota, &scope)?;
         let writer = self.store.lock()?;
-        let read = self.store.current_read(&scope)?;
+        let read = self.store.current_build_read(&scope, &writer)?;
         if let Some(work) = read_work(&read, &self.store)?
             && work.regeneration_job == Some(job)
         {
@@ -774,7 +774,7 @@ impl Kernel {
                 .flat_map(|job| &job.recent_paths)
                 .map(String::as_str)
                 .collect();
-            let read = self.store.current_read(&scope)?;
+            let read = self.store.current_build_read(&scope, &writer)?;
             let Some(mut work) = read_work(&read, &self.store)? else {
                 break;
             };

@@ -204,6 +204,7 @@ pub fn run() -> Result<()> {
                 native_roots: observation.native_roots,
                 backend: observation.backend,
                 failure: observation.failure,
+                traversal: observation.traversal,
             })?;
         }
         for event in watcher.notices(16)? {

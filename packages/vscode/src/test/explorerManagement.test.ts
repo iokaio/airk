@@ -58,3 +58,17 @@ test('enabled actions follow the console rules for lifecycle, trust and plan pag
     assert.equal(inactive.inactive, true);
     assert.equal(inactive.projects[0].summary.collection, 'demo');
 });
+
+test('management exposes bounded traversal diagnostics and clears the current list on recovery', () => {
+    const current = state();
+    const watch = current.page!.projects[0].watch as Record<string, unknown>;
+    watch.traversal = { unreadable: [{ root: 0, path: '/src/demo/artifacts/unreadable', reason: 'permission_denied' }], incomplete_roots: [0], truncated: false };
+    watch.traversal_observed_unix_ms = 1234;
+    const failed = managementView(current).projects[0].watchDiagnostics!;
+    assert.ok(failed.some(([label, value]) => label.includes('permission_denied') && value === '/src/demo/artifacts/unreadable'));
+    assert.ok(failed.some(([label, value]) => label === 'Last directory check' && value === '1970-01-01T00:00:01.234Z'));
+    watch.traversal = { unreadable: [], incomplete_roots: [], truncated: false };
+    const recovered = managementView(current).projects[0].watchDiagnostics!;
+    assert.ok(recovered.some(([, value]) => value === 'None in the latest completed traversal'));
+    assert.ok(!recovered.some(([label]) => label.startsWith('Directory ')));
+});

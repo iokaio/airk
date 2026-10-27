@@ -1,10 +1,10 @@
 # Build and review the Windows app and VS Code extension
 
-The current development package version is **1.5.2**; see [its release record](release-1.5.2.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+The current development package version is **1.5.4**; see [its release record](release-1.5.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
 
-Historical October 25 manual-test checkpoint: cleanup, help and live-status changes used 1.4.0. The later 1.4.1 installer candidate is also historical; follow [versioning](versioning.md) and [current release notes](release-1.5.2.md). Those earlier Windows checks do not replace installed-editor acceptance or native macOS/Linux qualification. The source now advertises sixteen MCP tools, including airk_help.
+Historical October 25 manual-test checkpoint: cleanup, help and live-status changes used 1.4.0. The later 1.4.1 installer candidate is also historical; follow [versioning](versioning.md) and [current release notes](release-1.5.4.md). Those earlier Windows checks do not replace installed-editor acceptance or native macOS/Linux qualification. The source now advertises sixteen MCP tools, including airk_help.
 
 October 25 onboarding follow-up: the new automatic trusted-workspace setup is covered by extension regressions and package closure checks. Earlier installed-editor receipts and the manual-dialog harness below describe the previous VSIX, not qualification of this follow-up.
 
@@ -146,3 +146,9 @@ Hosted equivalents and credentials are described in [CI and builds](ci-and-build
 ## Targeted local agent installer check
 
 Run `node scripts/check-agent-install.cjs <Code.exe> <new-vsix> <previous-vsix>` to test a running upgrade, or omit the previous VSIX to install the VSIX into an isolated editor profile with existing Codex, Claude Code and Copilot workspace entries. The check verifies automatic connection migration, preserved settings, repeat repair and a real MCP status handshake. It shuts down its private service and retains results under ignored `artifacts/editor-qualification/`. It does not change the normal editor profile or qualify replacement of already connected external agent processes.
+
+### Native previous-version upgrade fixture
+
+Run `python scripts/check-runtime-upgrade.py --runtime <new-native-payload> --previous-runtime <old-native-payload> --output target/upgrade-receipt.json` on Windows or Linux. An optional `--interrupted-runtime <superseded-native-payload>` also checks guarded recovery of an exact older Drain intent. Use independently built payloads with their original manifests; never relabel a binary. The fixture creates isolated source, data, installation and state directories under `target`, starts an old launcher/MCP client, upgrades with that client connected, checks registry migration and source/registration preservation, then uninstalls its runtime. It writes a passing receipt only after teardown succeeds. This is a native process regression, separate from installed-editor qualification and the routine CI matrix.
+
+The fixture creates both roots required by `register`, lets the stable launcher supply installation context, completes the MCP handshake and explicitly closes read-only SQLite connections before teardown. Bounded client startup diagnostics distinguish setup errors from upgrade failures.
