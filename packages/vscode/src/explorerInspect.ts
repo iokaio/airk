@@ -33,16 +33,26 @@ async function liveOf(info: Value, contentHash: string, dirty: DirtyCheck): Prom
 }
 
 /** Evidence › Inspector: the full indexed record for one cited file, compared with its saved bytes. */
-export async function inspect(session: EvidenceClient, refs: RefRegistry, project: string, id: string, dirty: DirtyCheck): Promise<InspectView> {
-    const ref = refs.get(id, project);
-    const result = await session.call('airk_file_info', { path: ref.path, response_mode: 'full' }, { timeout: 30000 });
+export async function inspect(session: EvidenceClient, refs: RefRegistry, project: string, id: string | undefined, dirty: DirtyCheck, selectedPath?: string): Promise<InspectView> {
+    let ref = id ? refs.get(id, project) : undefined;
+    const path = ref?.path ?? selectedPath;
+    if (!path) { throw new EvidenceFailure(explorerError('NO_SOURCE_FILE')); }
+    const result = await session.call('airk_file_info', { path, response_mode: 'full' }, { timeout: 30000 });
     const info = result.payload;
+    if (!ref) {
+        if (absentFromIndex(info)) { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'The selected file is not in this project’s published index.')); }
+        if (typeof info.content_hash !== 'string' || !/^[0-9a-f]{64}$/.test(info.content_hash) || !result.publication) {
+            throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'AIRK did not report the selected file’s indexed hash and publication.'));
+        }
+        ref = { project, path, startLine: 1, endLine: 1, contentHash: info.content_hash, publication: result.publication };
+        id = refs.add(ref);
+    }
     const indexedHash = typeof info.content_hash === 'string' ? info.content_hash : ref.contentHash;
     const { live, root } = await liveOf(info, indexedHash, dirty);
     const message = indexedHash !== ref.contentHash
         ? `${LIVE_MESSAGE[live]} The index was republished since this citation was captured.` : LIVE_MESSAGE[live];
     return {
-        ref: id, path: ref.path, startLine: ref.startLine, endLine: ref.endLine, contentHash: indexedHash, live, liveMessage: message,
+        ref: id!, path: ref.path, startLine: ref.startLine, endLine: ref.endLine, contentHash: indexedHash, live, liveMessage: message,
         ...(result.publication ? { publication: result.publication } : {}),
         ...(text(info.language) ? { language: text(info.language) } : {}), ...(text(info.parse_status) ? { parseStatus: text(info.parse_status) } : {}),
         ...(text(info.line_basis) ? { lineBasis: text(info.line_basis) } : {}), ...(text(info.extraction_method) ? { extractionMethod: text(info.extraction_method) } : {}),

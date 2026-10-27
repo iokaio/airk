@@ -408,10 +408,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     /** The AIRK Explorer is loaded on first use; it shares this extension's console and registrations. */
     explorerController():Promise<ExplorerController>{
-        this.explorer??=import('./explorerController').then(({ExplorerController})=>{
+        this.explorer??=Promise.all(['explorerController.js','explorerWebview.js','explorerWebview.css'].map(name=>fs.access(path.join(this.context.extensionUri.fsPath,'out',name))))
+        .then(()=>import('./explorerController')).then(({ExplorerController})=>{
             if(this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');
             return this.explorerLoaded=new ExplorerController(this.explorerHost());
-        });
+        }).catch(error=>{this.explorer=undefined;throw error;});
         return this.explorer;
     }
     private explorerHost():ExplorerHost{
@@ -491,7 +492,9 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
         commandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode','airk.manageVscodeMcp','airk.explorer.open','airk.collections','airk.explorer.showSuggestions'],
         folders:()=>(vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme)).length,
         attach:async listener=>(await controller.explorerController()).onSnapshot(listener),
-        open:()=>{void explorerOpen().catch(error=>controller.output.appendLine(String(error)));},
+        open:()=>explorerOpen(),
+        hide:async()=>{await vscode.commands.executeCommand('workbench.action.closeSidebar');},
+        fallback:unavailable=>{void vscode.commands.executeCommand('setContext','airk.explorerUnavailable',unavailable);},
         search:query=>{void controller.explorerController().then(explorer=>explorer.search(query),error=>controller.output.appendLine(String(error)));},
     });
     context.subscriptions.push(sidebar,

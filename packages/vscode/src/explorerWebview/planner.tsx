@@ -7,6 +7,7 @@ import { currentSelection, plannerDraft, PlannerDraft, StudioDraft, usePlanner, 
 import type { ScreenProps } from './workspaces';
 import { dialogFocus, ShareSnapshot } from './components';
 import type { ImportedPlan } from '../explorerStrategies';
+import { FileBrowser, type LibraryFile } from './fileBrowser';
 
 const message = (failure: unknown) => failure instanceof Error ? failure.message : String(failure);
 const LABELS: Record<TaskState, string> = { draft: 'Draft', ready: 'Ready', exported: 'Exported', review: 'Review', needs_work: 'Needs work', completed: 'Completed', blocked: 'Blocked', stale: 'Stale' };
@@ -58,11 +59,11 @@ export function PlannerScreen(props: ScreenProps) {
         setDraft(prior => ({ plan: pending.imported.plan, revision: prior.revision + 1 })); setCheck(undefined); setHandoffTask(undefined);
         setNotice(`Loaded ${pending.imported.format} plan. ${pending.imported.warnings.join(' ')}`);
     };
-    const loadPlan = async () => {
+    const loadPlan = async (file?: LibraryFile) => {
         setBusy(true); setError(undefined);
         const revision = plannerDraft().revision, owner = currentSelection();
         try {
-            const imported = await request<ImportedPlan | null>('planner.import', {});
+            const imported = file ? await request<ImportedPlan>('files.load', { kind: 'plans', ...file }) : await request<ImportedPlan | null>('planner.import', {});
             if (!imported) { return; }
             if (plannerDraft().revision !== revision || currentSelection() !== owner) { setError('The draft or project changed while the file picker was open; your work was kept.'); return; }
             const pending = { imported, revision, owner };
@@ -87,6 +88,7 @@ export function PlannerScreen(props: ScreenProps) {
                     <p class="muted">Load validated plan JSON or AIRK-saved Markdown from <code>.airk/plans</code> or another file you choose.</p>
                     {error && <p class="callout" role="alert">{error}</p>}
                 </article>
+                <FileBrowser kind="plans" trusted={props.state.trusted} disabled={busy} load={loadPlan} />
             </div>
         );
     }
@@ -124,6 +126,7 @@ export function PlannerScreen(props: ScreenProps) {
 
     return (
         <div class="strategies planner" ref={root}>
+            <details class="library-disclosure"><summary>Browse saved plans</summary><FileBrowser kind="plans" trusted={props.state.trusted} disabled={busy} load={loadPlan} /></details>
             {projectMismatch && <p class="callout">This plan belongs to another project. Select its project before saving or handing it off.</p>}
             <section class="card">
                 <label>Title<input value={plan.title} maxLength={160} onInput={event => edit(current => ({ ...current, title: (event.target as HTMLInputElement).value }))} /></label>

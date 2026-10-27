@@ -38,6 +38,15 @@ test('the session identifies as the Explorer and returns parsed payloads with pu
     assert.equal(client.project, project);
 });
 
+test('native references retain their nested publication and conflicting identities fail closed', async () => {
+    const { client } = harness(async (_tool, args) => text({ evidence: { hits: [], publication: { token: 'airk-r1:references' } },
+        ...(args.name === 'conflict' ? { publication: { token: 'airk-r1:other' } } : {}) }));
+    try {
+        assert.equal((await client.call('airk_references', { name: 'sample' })).publication, 'airk-r1:references');
+        await assert.rejects(client.call('airk_references', { name: 'conflict' }), failure('EVIDENCE_MISMATCH'));
+    } finally { client.dispose(); }
+});
+
 test('the evidence queue refuses overload without growing unbounded or losing accepted calls', async () => {
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });

@@ -29,7 +29,8 @@ async function checkExplorer(ui){
     if(!hits.paths.some(value=>value.startsWith('fixture.ts')))throw new Error('Explorer search did not cite the fixture: '+JSON.stringify(hits));
     const click=async(label,selector='button')=>ui.until(async()=>(await inExplorer(`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(selector)})].find(n=>n.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)return false;b.click();return true;})()`))?.value,`Explorer ${label}`);
     const contains=async(text)=>ui.until(async()=>(await inExplorer(`document.querySelector('.help-topic')?.innerText.includes(${JSON.stringify(text)})`))?.value,`Explorer help ${text}`);
-    await click('Help','.topbar button');
+    await ui.until(async()=>(await inExplorer("(()=>{const b=[...document.querySelectorAll('.topbar button')].find(n=>n.textContent.trim().startsWith('Help'));if(!b)return false;b.click();return true;})()"))?.value,'Explorer contextual Help');
+    await ui.quickPick('Browse all help','AIRK Help');
     await ui.until(async()=>(await inExplorer("(()=>{const i=document.querySelector('input[aria-label=\"Search help\"]');if(!i)return false;i.value='tester PDF';i.dispatchEvent(new Event('input',{bubbles:true}));return true;})()"))?.value,'Explorer help search');
     await click('Tester workflow','.help-index ul button');await contains('scanned requirements');
     await click('Choose indexing by purpose','.help-index .chips button');await contains('Search Only (essential)');
@@ -40,7 +41,7 @@ async function checkExplorer(ui){
     await click('About','.topbar button');await contains('Ioka LLC');await contains('Munarium');await contains('https://discord.gg/sJase5FbE');
     const about=await ui.until(async()=>(await inExplorer("(()=>{const labels=[...document.querySelectorAll('[aria-label=\"AIRK public links\"] button')].map(b=>b.textContent.trim());return labels.some(x=>x.includes('Report an issue'))&&labels.some(x=>x.includes('Contribute to AIRK'))?labels:false;})()"))?.value,'Explorer About community links');
     await ui.until(async()=>(await inExplorer("(()=>{const b=[...document.querySelectorAll('.rail button')].find(n=>n.textContent.startsWith('Management'));if(!b)return false;b.click();return true;})()"))?.value,'Explorer Management rail');
-    const rows=await ui.until(async()=>(await inExplorer("(()=>{const r=[...document.querySelectorAll('table.grid tbody tr')].map(x=>x.innerText);return r.length?r:false;})()"))?.value,'Explorer Management projects');
+    const rows=await ui.until(async()=>(await inExplorer("(()=>{const r=[...document.querySelectorAll('.project-card')].map(x=>x.innerText);return r.length?r:false;})()"))?.value,'Explorer Management projects');
     if(!rows.some(row=>row.includes('workspace-a')||row.includes('workspace-b')))throw new Error('Explorer Management did not list the project: '+JSON.stringify(rows));
     return {hits,rows,help:['role search','purpose and format guide','offline native engine guide','live tool schema','About credits/history/community links'],about};
 }

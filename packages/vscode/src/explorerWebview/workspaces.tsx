@@ -3,7 +3,6 @@ import { JSX } from 'preact';
 import { ExplorerViewState } from '../explorerContracts';
 import type { SearchRecipe } from '../explorerStrategies';
 import type { NavigationFilters } from '../explorerDrafts';
-import catalog from 'airk-explorer-help';
 import { Route, routeKey, WORKSPACES } from '../explorerRoutes';
 import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
@@ -65,8 +64,8 @@ export function WorkspaceView(props: ScreenProps) {
     const Screen = props.state.features[key] === 'implemented' ? SCREENS[key] : undefined;
     return (
         <section class="workspace">
-            <h1>{workspace.title}</h1>
-            {key !== 'help' && <button type="button" class="ghost" onClick={() => { const topic = catalog.topics.find(entry => entry.route === key); props.go({ workspace: 'help', ...(topic ? { focus: topic.id.replaceAll('.', '-') } : {}) }); }}>Help for this screen</button>}
+            <div class="workspace-heading"><div><p class="eyebrow">AIRK workspace</p><h1>{workspace.title}</h1></div>
+            </div>
             {workspace.tabs.length > 0 && (
                 <div class="tabs" role="tablist" aria-label={`${workspace.title} views`}>
                     {workspace.tabs.map(tab => {

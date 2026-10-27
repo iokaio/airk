@@ -33,3 +33,7 @@ The import picker starts in .airk/strategies and can read another explicit file 
 The token count is an estimate. Review the prompt before sharing it: repositories can contain confidential code or instructions planted in source comments.
 
 Changing the strategy, objective, parameters or scope invalidates its run and generated prompt. A delayed result for an older draft or project is discarded. Edited prompts are retained with a stale warning and must be rebuilt before export. Evidence and schema budgets count serialized UTF-8 bytes, including metadata and escaping. Failed parallel steps settle their started reads before the run can finish.
+
+## Saved-strategy library
+
+Saved strategies lists .airk/strategies in the chosen workspace. Navigate folders and breadcrumbs, then Load or double-click a JSON file. Browse saved strategies remains available while editing. Replacement confirms and rechecks the current draft/project. The source file remains unchanged. Refresh and bounded paging are explicit; linked/redirected library paths are refused.

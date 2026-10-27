@@ -8,6 +8,8 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import { FactHandles } from '../explorerFacts';
 import { RefRegistry } from '../explorerSearch';
+import { EvidenceClient } from '../explorerEvidence';
+import { NativeServiceFixture } from './nativeServiceFixture';
 
 const uri = (fsPath: string) => ({ fsPath });
 function load(repositories: unknown[], setting?: string) {
@@ -45,6 +47,7 @@ test('Review joins the editor\'s Git changes with indexed records and live hashe
             return { publication: 'airk-r1:p:1', payload: args.path_prefix === 'src/session.ts'
                 ? { items: [{ kind: 'function', name: 'renew', citation: { path: 'src/session.ts', start_line: 1, end_line: 1, content_hash: hash('x') } }] } : { items: [] } };
         }
+        if (tool === 'airk_list_files') { return { publication: 'airk-r1:p:1', payload: { paths: ['test/session.test.ts'] } }; }
         assert.equal(tool, 'airk_references');
         return { publication: 'airk-r1:p:1', payload: { evidence: { hits: [
             { citation: { path: 'src/auth.ts', start_line: 4, end_line: 4, content_hash: hash('a') }, text: 'renew()' },
@@ -79,12 +82,71 @@ test('Git status numbers follow the vscode.git enum, including type changes and 
     assert.deepEqual(kinds, ['modified', 'added', 'deleted', 'renamed', 'modified', 'deleted', 'untracked', 'added', 'renamed', 'modified', 'conflicted', 'conflicted', 'conflicted', 'conflicted']);
 });
 
+test('documentation cannot crowd out source changes; scoped test reads survive a crowded global hit limit', async () => {
+    const root = path.resolve('review-many-files');
+    const files = [...Array.from({ length: 15 }, (_, at) => `docs/${at}.md`), 'src/main.ts', 'test/main.test.ts'];
+    const review = load([{ rootUri: uri(root), state: { indexChanges: [], workingTreeChanges: files.map(file => ({ uri: uri(path.join(root, file)), status: 5 })), mergeChanges: [] } }]);
+    const calls: { tool: string; args: any }[] = [];
+    const session = { call: async (tool: string, args: any) => {
+        calls.push({ tool, args });
+        if (tool === 'airk_symbols') {
+            return { publication: 'p', payload: { files: [{ path: args.path_prefix, content_hash: hash('source') }], items: args.path_prefix === 'src/main.ts'
+                ? [{ file: 0, kind: 'definition', name: 'changedApi', signature: 'export function changedApi()', lines: [5, 9] }] : [] } };
+        }
+        assert.equal(tool, 'airk_references');
+        return { publication: 'p', payload: { evidence: { truncated: !args.path_prefix, hits: args.path_prefix ? [
+            { citation: { path: 'test/main.test.ts', start_line: 7, end_line: 7, content_hash: hash('test') }, text: 'assert.equal(changedApi(), 1)' },
+        ] : Array.from({ length: 20 }, (_, at) => ({ citation: { path: `src/caller-${at}.ts`, start_line: 1, end_line: 1, content_hash: hash('call') }, text: 'changedApi()' })) } } };
+    } } as any;
+    const context = { session, handles: new FactHandles(new RefRegistry()), project: 'ab'.repeat(32), root };
+    const impact = await review.reviewImpact(context);
+    assert.equal(calls[0].args.path_prefix, 'src/main.ts');
+    assert.equal(impact.items[0].testReferences, 1);
+    assert.equal(impact.items[0].references, 21); assert.equal(impact.truncated, true);
+    const tests = await review.reviewTests(context);
+    assert.ok(tests.candidates.some(item => item.path === 'test/main.test.ts' && item.line === undefined && item.reason === 'changed_test_file'));
+    assert.ok(tests.candidates.some(item => item.path === 'test/main.test.ts' && item.line === 7 && item.mentions === 'changedApi'));
+    assert.ok(calls.some(call => call.tool === 'airk_references' && call.args.path_prefix === 'test/'));
+});
+
+test('changed tests are visible even when the index has no declarations', async () => {
+    const root = path.resolve('review-unindexed-test');
+    const review = load([{ rootUri: uri(root), state: { indexChanges: [], workingTreeChanges: [{ uri: uri(path.join(root, 'tests', 'fresh.test.ts')), status: 7 }], mergeChanges: [] } }]);
+    const result = await review.reviewTests({ root, handles: new FactHandles(new RefRegistry()), project: 'ab'.repeat(32), session: { call: async () => ({ publication: 'p', payload: { items: [] } }) } as any });
+    assert.equal(result.declarations, 0);
+    assert.deepEqual(result.candidates, [{ path: 'tests/fresh.test.ts', mentions: '', text: '', reason: 'changed_test_file' }]);
+    assert.ok(result.notes.some(note => note.includes('No usable indexed declarations')));
+});
+
+test('Review finds source impact and tests through real native minimal symbols and nested reference publications', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
+    const fixture = await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    let session: EvidenceClient | undefined;
+    try {
+        const spec = await fixture.register('review-real');
+        await fs.promises.mkdir(path.join(spec.root, 'src')); await fs.promises.mkdir(path.join(spec.root, 'tests')); await fs.promises.mkdir(path.join(spec.root, 'docs'));
+        await fs.promises.writeFile(path.join(spec.root, 'src', 'contract.ts'), 'export function ChangedContract(value: number) { return value + 1; }\n');
+        await fs.promises.writeFile(path.join(spec.root, 'tests', 'contract.test.ts'), 'import { ChangedContract } from "../src/contract";\nconst expected = ChangedContract(1) === 2;\n');
+        const files = [...Array.from({ length: 15 }, (_, at) => `docs/${at}.md`), 'src/contract.ts', 'tests/contract.test.ts'];
+        for (const file of files.filter(file => file.endsWith('.md'))) { await fs.promises.writeFile(path.join(spec.root, file), '# Fictional review fixture\n'); }
+        await fixture.configure(spec, { operation: 'vectors', enabled: false }); await fixture.job(spec); await fixture.publishedStatus(spec);
+        const review = load([{ rootUri: uri(spec.root), state: { indexChanges: [], workingTreeChanges: files.map(file => ({ uri: uri(path.join(spec.root, file)), status: 5 })), mergeChanges: [] } }]);
+        session = new EvidenceClient(spec, 'review-native-test', { timeout: 60000 });
+        const context = { root: spec.root, session, handles: new FactHandles(new RefRegistry()), project: spec.service!.project };
+        const impact = await review.reviewImpact(context);
+        assert.ok(impact.items.some(item => item.name === 'ChangedContract' && item.testReferences >= 1), JSON.stringify(impact));
+        const tests = await review.reviewTests(context);
+        assert.ok(tests.candidates.some(item => item.path === 'tests/contract.test.ts' && item.reason === 'changed_test_file'));
+        assert.ok(tests.candidates.some(item => item.path === 'tests/contract.test.ts' && item.line && item.text.includes('ChangedContract')));
+        assert.equal(tests.publication, impact.publication);
+    } finally { session?.dispose(); await fixture.dispose(); }
+});
+
 test('Review preserves failed lookups and refuses mixed declarations/reference publications', async () => {
     const root = path.resolve('review-root');
     const review = load([{ rootUri: uri(root), state: { indexChanges: [], workingTreeChanges: [{ uri: uri(path.join(root, 'a.ts')), status: 5 }], mergeChanges: [] } }]);
     const base = { handles: new FactHandles(new RefRegistry()), project: 'ab'.repeat(32), root };
     await assert.rejects(review.reviewChanges({ ...base, session: { call: async () => { throw new Error('integrity failed'); } } as any }), /integrity/);
-    const session = { call: async (tool: string) => tool === 'airk_symbols' ? { publication: 'p1', payload: { items: [{ kind: 'function', name: 'changed', citation: { path: 'a.ts', start_line: 1, end_line: 1, content_hash: hash('a') } }] } }
+    const session = { call: async (tool: string) => tool === 'airk_list_files' ? { publication: 'p1', payload: { paths: ['test/a.test.ts'] } } : tool === 'airk_symbols' ? { publication: 'p1', payload: { items: [{ kind: 'function', name: 'changed', citation: { path: 'a.ts', start_line: 1, end_line: 1, content_hash: hash('a') } }] } }
         : { publication: 'p2', payload: { evidence: { hits: [] } } } } as any;
     await assert.rejects(review.reviewImpact({ ...base, session }), /index changed/);
     await assert.rejects(review.reviewTests({ ...base, session }), /index changed/);

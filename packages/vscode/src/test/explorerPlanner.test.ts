@@ -35,12 +35,57 @@ test('local plan and strategy imports start in .airk folders, are bounded and pr
     assert.equal((await strategy.io.importStrategy())?.id, CORE_PACK[0].strategy.id);
     assert.equal(strategy.events[0], `open ${path.join(root, '.airk', 'strategies')}`);
 });
+
+test('workspace libraries browse nested files without creating folders and load each validated format', async t => {
+    const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'airk-libraries-')));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const f = load(root, {}), workspace = Uri.file(root).toString();
+    assert.equal((await f.io.listWorkspaceFiles('plans', '')).missing, true);
+    assert.equal(fs.existsSync(path.join(root, '.airk')), false, 'browsing never creates a directory');
+    const { CORE_PACK } = await import('../explorerStrategies');
+    const plan = { schema: 'airk.explorer.plan/1', title: 'Nested', objective: 'Read', tasks: [] };
+    const recipe = { schema: 'airk.explorer.search-recipe/1', name: 'Find', query: 'needle', mode: 'lexical', limit: 10, maxBytes: 8192, fullChunks: false };
+    for (const [kind, value] of [['plans', plan], ['strategies', CORE_PACK[0].strategy], ['recipes', recipe]] as const) {
+        const folder = path.join(root, '.airk', kind, 'release'); fs.mkdirSync(folder, { recursive: true });
+        const file = path.join(folder, 'saved.json'), text = JSON.stringify(value); fs.writeFileSync(file, text);
+        assert.ok((await f.io.listWorkspaceFiles(kind, '', workspace)).entries.some(entry => entry.directory && entry.path === 'release'));
+        const nested = await f.io.listWorkspaceFiles(kind, 'release', workspace);
+        assert.deepEqual(nested.entries, [{ name: 'saved.json', path: 'release/saved.json', directory: false }]);
+        const imported = await f.io.loadWorkspaceFile(kind, workspace, 'release/saved.json');
+        assert.deepEqual(kind === 'plans' ? (imported as any).plan : imported, value);
+        assert.equal(fs.readFileSync(file, 'utf8'), text);
+    }
+    const plans = path.join(root, '.airk', 'plans');
+    for (let at = 0; at < 110; at++) { fs.writeFileSync(path.join(plans, `${at}.json`), '{}'); }
+    const first = await f.io.listWorkspaceFiles('plans', '', workspace);
+    assert.ok(first.more !== undefined); assert.ok(first.entries.length <= 100);
+    const second = await f.io.listWorkspaceFiles('plans', '', workspace, first.more);
+    assert.ok(second.entries.length > 0); assert.equal(second.more, undefined);
+    assert.equal(new Set([...first.entries, ...second.entries].map(entry => entry.path)).size, 111);
+    fs.writeFileSync(path.join(plans, 'bad.json'), '{');
+    await assert.rejects(f.io.loadWorkspaceFile('plans', workspace, 'bad.json'));
+    fs.writeFileSync(path.join(root, '.airk', 'recipes', 'oversize.json'), ' '.repeat(8193));
+    await assert.rejects(f.io.loadWorkspaceFile('recipes', workspace, 'oversize.json'), /exceeds/);
+    for (const entry of ['../private.json', '/private.json', 'release/../../private.json']) { await assert.rejects(f.io.loadWorkspaceFile('plans', workspace, entry), /relative/); }
+    await assert.rejects(f.io.listWorkspaceFiles('plans', '', 'file:///foreign'), /open workspace/);
+    await assert.rejects(f.io.listWorkspaceFiles('plans', '', workspace, 10001), /paging/);
+    const outside = path.join(root, 'outside'); fs.mkdirSync(outside);
+    fs.symlinkSync(outside, path.join(plans, 'redirected'), process.platform === 'win32' ? 'junction' : 'dir');
+    assert.ok(!(await f.io.listWorkspaceFiles('plans', '', workspace)).entries.some(entry => entry.name === 'redirected'));
+    await assert.rejects(f.io.listWorkspaceFiles('plans', 'redirected', workspace), /redirected/);
+    fs.linkSync(path.join(plans, 'bad.json'), path.join(plans, 'hard.json'));
+    await assert.rejects(f.io.loadWorkspaceFile('plans', workspace, 'hard.json'), /unlinked/);
+    f.stub.workspace.isTrusted = false;
+    await assert.rejects(f.io.listWorkspaceFiles('plans', '', workspace), /Trust/);
+    await assert.rejects(f.io.loadWorkspaceFile('plans', workspace, 'release/saved.json'), /Trust/);
+});
 /** Load explorerWorkspaceIO against a stub editor whose folder is a real temporary directory. */
 function load(root: string, script: Script) {
     const events: string[] = [];
     const stub = {
-        Uri, FileType: { File: 1, Directory: 2 },
+        Uri, FileType: { File: 1, Directory: 2 }, ViewColumn: { Beside: 2 },
         workspace: {
+            isTrusted: true,
             workspaceFolders: [{ name: 'fixture', uri: Uri.file(root) }],
             textDocuments: (script.dirty ?? []).map(file => ({ uri: Uri.file(file), isDirty: true })),
             getConfiguration: () => ({ get: (_key: string, fallback: unknown) => script.directory ?? fallback }),

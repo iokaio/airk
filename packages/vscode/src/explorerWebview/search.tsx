@@ -5,6 +5,9 @@ import { RECIPE_SCHEMA, SearchRecipe } from '../explorerStrategies';
 import { HostFailure, request } from './api';
 import { countLine, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
+import { FileBrowser, type LibraryFile } from './fileBrowser';
+import { currentSelection } from './strategyStore';
+import { dialogFocus } from './components';
 
 interface Form { query: string; mode: SearchMode; pathPrefix: string; limit: number; maxBytes: number; fullChunks: boolean }
 const DEFAULT: Form = { query: '', mode: 'policy', pathPrefix: '', limit: 20, maxBytes: 16384, fullChunks: false };
@@ -57,6 +60,7 @@ export function SearchScreen(props: ScreenProps) {
 
     return (
         <div class="search">
+            <p class="muted">Search this project’s published index using the query and path scope below. The source file selected in the header does not limit this search. On a result, Inspect opens its indexed record and saved-file comparison in Evidence › Inspector; Open source opens its cited lines in the editor.</p>
             <form class="search-form" onSubmit={event => { event.preventDefault(); void run(form); }}>
                 <label class="grow">Query
                     <input ref={input} value={form.query} maxLength={4096} required placeholder="Words that must all appear"
@@ -135,13 +139,13 @@ function SaveRecipe(props: { form: Form }) {
     const [name, setName] = useState('');
     const [status, setStatus] = useState<string>();
     const save = async () => {
-        try { await request<SearchRecipe[]>('recipes.save', { recipe: recipeOf(name, props.form) as unknown as Record<string, unknown> }); setStatus(`Saved recipe "${name.trim()}".`); setName(''); }
+        try { await request<SearchRecipe[]>('recipes.save', { recipe: recipeOf(name, props.form) as unknown as Record<string, unknown> }); setStatus(`Saved search "${name.trim()}".`); setName(''); }
         catch (failure) { setStatus(failure instanceof Error ? failure.message : String(failure)); }
     };
     return (
         <form class="search-form recipe-save" onSubmit={event => { event.preventDefault(); void save(); }}>
-            <label>Save as recipe<input value={name} maxLength={80} placeholder="Recipe name" onInput={event => setName((event.target as HTMLInputElement).value)} /></label>
-            <button type="submit" class="ghost" disabled={!name.trim() || !props.form.query.trim()}>Save recipe</button>
+            <label>Search name<input value={name} maxLength={80} placeholder="Name this search" onInput={event => setName((event.target as HTMLInputElement).value)} /></label>
+            <button type="submit" class="ghost" disabled={!name.trim() || !props.form.query.trim()}>Save</button>
             {status && <span class="muted" role="status">{status}</span>}
         </form>
     );
@@ -151,27 +155,67 @@ function SaveRecipe(props: { form: Form }) {
 export function RecipesScreen(props: ScreenProps) {
     const [recipes, setRecipes] = useState<SearchRecipe[]>();
     const [error, setError] = useState<string>();
+    const [notice, setNotice] = useState<string>(), [busy, setBusy] = useState(false);
+    const [pending, setPending] = useState<{ recipe: SearchRecipe; expected: string; owner: string | undefined }>();
+    const root = useRef<HTMLDivElement>(null), epoch = useRef(0);
+    useEffect(() => dialogFocus(root.current?.querySelector<HTMLElement>('[role="alertdialog"]') ?? null, () => setPending(undefined)), [pending]);
+    useEffect(() => () => { epoch.current++; }, []);
     useEffect(() => { request<SearchRecipe[]>('recipes.list', {}).then(setRecipes, failure => setError(failure instanceof Error ? failure.message : String(failure))); }, []);
     const remove = async (name: string) => {
+        epoch.current++; setPending(undefined);
         try { setRecipes(await request<SearchRecipe[]>('recipes.delete', { name })); } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
     };
-    if (error) { return <p class="callout" role="alert">{error}</p>; }
-    if (!recipes) { return <p class="muted">Loading recipes…</p>; }
+    const loadFile = async (file?: LibraryFile) => {
+        const generation = ++epoch.current, owner = currentSelection();
+        setBusy(true); setError(undefined); setPending(undefined);
+        try {
+            const recipe = file ? await request<SearchRecipe>('files.load', { kind: 'recipes', ...file }) : await request<SearchRecipe | null>('recipes.import', {});
+            if (recipe && generation === epoch.current && owner === currentSelection()) { setPending({ recipe, expected: JSON.stringify(recipes?.find(entry => entry.name === recipe.name) ?? null), owner }); }
+        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+        finally { setBusy(false); }
+    };
+    const acceptImport = async () => {
+        if (!pending || pending.owner !== currentSelection()) { setPending(undefined); return; }
+        setBusy(true); setError(undefined);
+        try {
+            setRecipes(await request<SearchRecipe[]>('recipes.save', { recipe: pending.recipe as unknown as Record<string, unknown>, expected: pending.expected }));
+            setNotice(`Imported "${pending.recipe.name}". Choose Run explicitly to search.`); setPending(undefined);
+        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+        finally { setBusy(false); }
+    };
+    const exportFile = async (recipe: SearchRecipe) => {
+        setBusy(true); setError(undefined);
+        try {
+            const reply = await request<{ saved: boolean; path?: string; reason?: string }>('recipes.export', { recipe: recipe as unknown as Record<string, unknown> });
+            setNotice(reply.saved ? `Exported ${reply.path}.` : reply.reason);
+        } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+        finally { setBusy(false); }
+    };
+    if (!recipes && !error) { return <p class="muted">Loading saved searches…</p>; }
     return (
-        <div class="recipes">
-            <p class="muted">Recipes are saved Search arguments for this workspace. Running one fills the Search form and runs it; recipes never change the index.</p>
-            {!recipes.length ? <p class="muted">No recipes yet. Use <strong>Save as recipe</strong> on Search › Query.</p> : (
+        <div class="recipes" ref={root}>
+            <h2>Saved Searches</h2>
+            <p class="muted">Saved searches keep the query and search options for this workspace. Run fills the Search form and submits it; saving never changes the index.</p>
+            <div class="actions"><button class="ghost" disabled={busy || !props.state.trusted} onClick={() => void loadFile()}>Import search…</button></div>
+            {error && <p class="callout" role="alert">{error}</p>}{notice && <p class="muted" role="status">{notice}</p>}
+            {pending && <section class="card" role="alertdialog" aria-label="Import saved search"><h2>Import {pending.recipe.name}?</h2>
+                <p>{pending.expected === 'null' ? 'Add this search to this workspace.' : 'Replace the same-named saved search.'} Loading never runs a search.</p>
+                <pre class="excerpt">{pending.recipe.query}</pre><p class="muted">Mode: {pending.recipe.mode} · Scope: {pending.recipe.pathPrefix ?? '(all)'}</p>
+                <div class="actions"><button disabled={busy} onClick={() => void acceptImport()}>{pending.expected === 'null' ? 'Add search' : 'Replace saved search'}</button>
+                    <button class="ghost" disabled={busy} onClick={() => setPending(undefined)}>Cancel import</button></div></section>}
+            {!recipes?.length ? <p class="muted">No saved searches yet. Enter a search name and choose <strong>Save</strong> on Search › Query.</p> : (
                 <div class="table-wrap"><table class="grid">
                     <thead><tr><th>Name</th><th>Query</th><th>Mode</th><th>Path scope</th><th>Limit</th><th></th></tr></thead>
                     <tbody>{recipes.map(recipe => (
                         <tr key={recipe.name}>
                             <td>{recipe.name}</td><td><code>{recipe.query}</code></td><td>{recipe.mode === 'policy' ? 'collection policy' : recipe.mode}</td>
                             <td>{recipe.pathPrefix ?? '(all)'}</td><td>{recipe.limit}</td>
-                            <td class="actions"><button onClick={() => props.runRecipe(recipe)}>Run</button> <button class="ghost" onClick={() => void remove(recipe.name)}>Delete</button></td>
+                            <td class="actions"><button disabled={busy} onClick={() => props.runRecipe(recipe)}>Run</button> <button class="ghost" disabled={busy} onClick={() => void exportFile(recipe)}>Export JSON</button> <button class="ghost" disabled={busy} onClick={() => void remove(recipe.name)}>Delete</button></td>
                         </tr>
                     ))}</tbody>
                 </table></div>
             )}
+            <FileBrowser kind="recipes" trusted={props.state.trusted} disabled={busy} load={loadFile} />
         </div>
     );
 }

@@ -4,6 +4,7 @@
 import type { Availability } from './explorerFeatures';
 import type { DraftKind, ProposalOutcome, ProposalReceipt } from './explorerDrafts';
 import type { ExplorerError, ExplorerErrorCode } from './explorerErrors';
+import { ROUTE_KEYS } from './explorerRoutes';
 
 export const MESSAGE_VERSION = 1;
 /** Fixed public destinations for user-clicked About links; never agent-supplied URLs. */
@@ -78,6 +79,8 @@ export interface ExplorerViewState {
     readonly projects: readonly ProjectSummary[];
     readonly projectsObservedAt?: number;
     readonly selectedProject?: string;
+    /** Last selected source file for this project, independent of editor focus. */
+    readonly sourceFile?: string;
     /** Changes whenever project or launcher binding changes. */
     readonly selectionEpoch?: number;
     readonly status?: StatusSummary;
@@ -232,6 +235,18 @@ export interface ChangesView {
     readonly truncated: boolean;
     readonly publication?: string;
     readonly coverage: readonly string[];
+}
+
+export type WorkspaceFileKind = 'plans' | 'strategies' | 'recipes';
+export interface WorkspaceFilesView {
+    readonly kind: WorkspaceFileKind;
+    readonly workspace: string;
+    readonly roots: readonly { id: string; name: string }[];
+    readonly base: string;
+    readonly directory: string;
+    readonly entries: readonly { name: string; path: string; directory: boolean }[];
+    readonly more?: number;
+    readonly missing: boolean;
 }
 
 // ---- Management (shared Service Console controller, organized into tabs).
@@ -467,7 +482,7 @@ export const WEBVIEW_MESSAGES = {
     'help.engine': { topic: { kind: 'string', min: 1, max: 64, pattern: /^[a-z][a-z0-9-]*$/, optional: true },
         command: { kind: 'string', min: 1, max: 160, pattern: /^[a-z0-9][a-z0-9-]*(?: [a-z0-9][a-z0-9-]*)*$/, optional: true },
         tool: { kind: 'string', min: 1, max: 128, pattern: /^airk_[a-z_]+$/, optional: true }, startLine: { kind: 'int', min: 1, max: 100000, optional: true } },
-    'evidence.inspect': { ref: REF },
+    'evidence.inspect': { ref: { ...REF, optional: true } },
     'evidence.check': { text: { kind: 'string', min: 1, max: 65536 } },
     'evidence.changes': { since: { kind: 'string', min: 9, max: 256, pattern: /^airk-r1:[0-9A-Za-z:_-]+$/ }, limit: { kind: 'int', min: 1, max: 100 } },
     'evidence.changesMore': { more: REF },
@@ -494,6 +509,14 @@ export const WEBVIEW_MESSAGES = {
     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
     'planner.openDraft': { plan: { kind: 'json', max: 131072 } },
     'planner.import': {},
+    'source.choose': {},
+    'help.choose': { route: { kind: 'enum', values: ROUTE_KEYS } },
+    'files.list': { kind: { kind: 'enum', values: ['plans', 'strategies', 'recipes'] },
+        workspace: { kind: 'string', min: 1, max: 4096, optional: true }, directory: { kind: 'string', min: 0, max: 1024 }, offset: { kind: 'int', min: 0, max: 10000, optional: true } },
+    'files.load': { kind: { kind: 'enum', values: ['plans', 'strategies', 'recipes'] }, workspace: { kind: 'string', min: 1, max: 4096 },
+        path: { kind: 'string', min: 1, max: 1024, pattern: /^(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))(?!.*\/\/)(?!.*\/$)[^\\:\u0000-\u001f\u007f]+$/ } },
+    'recipes.export': { recipe: { kind: 'json', max: 8192 } },
+    'recipes.import': {},
     'planner.exportJSON': { plan: { kind: 'json', max: 131072 }, revision: { kind: 'int', min: 0, max: 1_000_000_000 },
         fileName: { kind: 'string', min: 6, max: 120, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,113}\.json$/ } },
     'planner.saveInWorkspace': { plan: { kind: 'json', max: 131072 }, revision: { kind: 'int', min: 0, max: 1_000_000_000 },
@@ -510,7 +533,7 @@ export const WEBVIEW_MESSAGES = {
     'suggestions.applied': { id: { kind: 'string', min: 24, max: 24, pattern: /^ex-prop-[0-9a-f]{16}$/ }, revision: { kind: 'int', min: 0, max: 1_000_000_000 } },
     'handoff.share': { kind: { kind: 'enum', values: ['studio', 'planner'] }, revision: { kind: 'int', min: 0, max: 1_000_000_000 },
         content: { kind: 'string', min: 1, max: 24576 }, publication: { kind: 'string', min: 9, max: 256, optional: true } },
-    'recipes.save': { recipe: { kind: 'json', max: 8192 } },
+    'recipes.save': { recipe: { kind: 'json', max: 8192 }, expected: { kind: 'string', min: 4, max: 8192, optional: true } },
     'recipes.delete': { name: { kind: 'string', min: 1, max: 80 } },
 } as const satisfies Record<string, Record<string, FieldSpec>>;
 

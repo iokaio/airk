@@ -42,7 +42,7 @@ With Docker available, use `docker build --target test -t airk:local-test .` for
 
 ## Candidate and release versions
 
-Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch is synchronized at **1.5.0** across the Rust workspace/local lock entries, extension manifest and npm lock entries. Verify with `python scripts/release-version.py check --expected 1.5.0`. Do not repeat this bump for the same change or relabel tested binaries after qualification. Installer-only local testing does not waive full main CI before publishing.
+Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch is synchronized at **1.5.2** across the Rust workspace/local lock entries, extension manifest and npm lock entries. Verify with `python scripts/release-version.py check --expected 1.5.2`. Do not repeat this bump for the same change or relabel tested binaries after qualification. Installer-only local testing does not waive full main CI before publishing.
 
 ## Submitting
 

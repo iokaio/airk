@@ -52,7 +52,7 @@ ${state.notice ? `<p class="note" role="alert">${esc(state.notice.message)}</p>`
 <p><a href="command:airk.setupAgent">Connect a coding agent</a> · <a href="command:airk.collections">Management</a></p>`;
 }
 
-export function renderSidebar(state: ExplorerViewState | undefined, folders: number, nonce: string): string {
+export function renderSidebar(state: ExplorerViewState | undefined, folders: number, nonce: string, opening = false): string {
     return `<!doctype html><html><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -63,7 +63,7 @@ dl{display:grid;grid-template-columns:auto 1fr;gap:2px 10px}dt{color:var(--vscod
 form{display:flex;flex-direction:column;gap:6px;margin:12px 0}input{padding:6px;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,transparent)}
 button{font:inherit;padding:6px 10px;color:var(--vscode-button-foreground);background:var(--vscode-button-background);border:0;cursor:pointer}
 button.primary{width:100%}button:focus-visible,input:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}</style>
-</head><body><main id="content">${sidebarContent(state, folders)}</main>
+</head><body><main id="content">${opening ? '<p role="status">Opening AIRK Explorer…</p>' : sidebarContent(state, folders)}</main>
 <script nonce="${nonce}">const vscode=acquireVsCodeApi();
 document.addEventListener('click',event=>{const button=event.target.closest('button[data-action="open"]');if(button)vscode.postMessage({type:'sidebar',action:'open'});});
 document.addEventListener('submit',event=>{event.preventDefault();const input=document.getElementById('query');if(input&&input.value.trim())vscode.postMessage({type:'sidebar',action:'search',query:input.value});});
@@ -71,40 +71,86 @@ window.addEventListener('message',event=>{const value=event.data;if(value&&value
 </body></html>`;
 }
 
-/** The AIRK activity bar view (id airk.dashboard): status card, quick search and setup guidance. */
+/** Activity-bar entry point. The old sidebar is exposed only if Explorer cannot open. */
 export class ExplorerSidebar implements vscode.WebviewViewProvider, vscode.Disposable {
     private view?: vscode.WebviewView;
     private state?: ExplorerViewState;
+    private fallback = false;
+    private opening?: Promise<void>;
+    private openingView?: vscode.WebviewView;
+    private failure?: string;
     private readonly listeners: vscode.Disposable[] = [];
 
     constructor(private readonly options: {
         commandUris: readonly string[];
         folders(): number;
         attach(listener: (state: ExplorerViewState) => void): Promise<vscode.Disposable>;
-        open(): void;
+        open(): Promise<void>;
+        hide(): Promise<void>;
+        fallback?(unavailable: boolean): void;
         search(query: string): void;
     }) {}
 
     resolveWebviewView(view: vscode.WebviewView): void {
         this.view = view;
         view.webview.options = { enableScripts: true, enableCommandUris: [...this.options.commandUris], localResourceRoots: [] };
-        view.webview.html = renderSidebar(this.state, this.options.folders(), randomBytes(24).toString('base64url'));
+        this.fallback = false;
+        view.webview.html = renderSidebar(this.state, this.options.folders(), randomBytes(24).toString('base64url'), true);
         // Listeners belong to this resolved view; VS Code resolves the view again after it is disposed.
         const owned: vscode.Disposable[] = [];
         const release = () => { for (const listener of owned.splice(0)) { listener.dispose(); this.listeners.splice(this.listeners.indexOf(listener) >>> 0, 1); } };
         const own = (listener: vscode.Disposable) => { owned.push(listener); this.listeners.push(listener); };
         own(view.webview.onDidReceiveMessage(value => {
             const message = sidebarMessage(value);
-            if (message?.action === 'open') { this.options.open(); }
+            if (message?.action === 'open') { void this.launch(view); }
             else if (message?.action === 'search') { this.options.search(message.query); }
         }));
         own(view.onDidDispose(() => { if (this.view === view) { this.view = undefined; } release(); }));
-        void this.options.attach(state => this.update(state)).then(listener => { if (this.view === view) { own(listener); } else { listener.dispose(); } });
+        own(view.onDidChangeVisibility(() => { if (view.visible) { void this.launch(view); } }));
+        void this.options.attach(state => this.update(state)).then(listener => { if (this.view === view) { own(listener); } else { listener.dispose(); } }).catch(() => { /* Opening reports the failure; setup remains available without a snapshot. */ });
+        if (view.visible) { void this.launch(view); }
+    }
+
+    private launch(view: vscode.WebviewView): Promise<void> {
+        if (this.opening) {
+            return this.openingView === view ? this.opening : this.opening.then(() => {
+                if (this.view === view && view.visible) { return this.launch(view); }
+            });
+        }
+        this.openingView = view;
+        this.fallback = false;
+        this.failure = undefined;
+        this.options.fallback?.(false);
+        void view.webview.postMessage({ type: 'render', html: '<p role="status">Opening AIRK Explorer…</p>' });
+        this.opening = (async () => {
+            try { await this.options.open(); }
+            catch (error) {
+                if (this.view === view) {
+                    this.fallback = true;
+                    this.options.fallback?.(true);
+                    this.failure = error instanceof Error ? error.message : String(error);
+                    this.renderFallback();
+                }
+                return;
+            }
+            // Never close a different sidebar if this view lost visibility while opening.
+            if (this.view === view && view.visible) {
+                void view.webview.postMessage({ type: 'render', html: '<p role="status">AIRK Explorer is open in the editor.</p><button data-action="open">Open AIRK Explorer</button>' });
+                try { await this.options.hide(); } catch { /* Explorer is still available; do not replace it with the old panel. */ }
+            }
+        })().finally(() => { this.opening = undefined; this.openingView = undefined; });
+        return this.opening;
+    }
+
+    private renderFallback(): void {
+        if (this.view && this.fallback) {
+            void this.view.webview.postMessage({ type: 'render', html: `<p class="note" role="alert">AIRK Explorer could not open. ${esc(this.failure ?? '')}</p><button data-action="open">Retry AIRK Explorer</button>${sidebarContent(this.state, this.options.folders())}` });
+        }
     }
 
     private update(state: ExplorerViewState): void {
         this.state = state;
-        if (this.view) { void this.view.webview.postMessage({ type: 'render', html: sidebarContent(state, this.options.folders()) }); }
+        this.renderFallback();
     }
 
     dispose(): void { for (const listener of this.listeners.splice(0)) { listener.dispose(); } this.view = undefined; }

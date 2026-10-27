@@ -59,12 +59,14 @@ export function readRetryDelay(envelope: unknown): number | undefined {
 
 function publicationOf(payload: Record<string, unknown>): string | undefined {
     const read = payload.read as Record<string, unknown> | undefined;
-    const publication = payload.publication ?? read?.current_publication ?? read?.publication;
-    if (typeof publication === 'string') { return publication; }
-    if (publication && typeof publication === 'object' && typeof (publication as Record<string, unknown>).token === 'string') {
-        return (publication as Record<string, unknown>).token as string;
-    }
-    return undefined;
+    const evidence = payload.evidence as Record<string, unknown> | undefined;
+    const tokens = [payload.publication, evidence?.publication, read?.current_publication, read?.publication].flatMap(publication => {
+        if (typeof publication === 'string') { return [publication]; }
+        return publication && typeof publication === 'object' && typeof (publication as Record<string, unknown>).token === 'string'
+            ? [(publication as Record<string, unknown>).token as string] : [];
+    });
+    if (new Set(tokens).size > 1) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'AIRK returned inconsistent publication identities.')); }
+    return tokens[0];
 }
 
 function toolFailure(text: string): EvidenceFailure {

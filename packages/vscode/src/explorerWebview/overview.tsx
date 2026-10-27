@@ -3,7 +3,7 @@ import { useState } from 'preact/hooks';
 import { ExplorerViewState, ProjectSummary } from '../explorerContracts';
 import { Route } from '../explorerRoutes';
 import { request, savedState, saveState } from './api';
-import { Facts } from './components';
+import { BrandMark, Facts, WorkspaceIcon } from './components';
 import { ago, observed, shortToken } from './format';
 
 const JOURNEYS: { id: string; title: string; text: string; route: Route }[] = [
@@ -39,7 +39,8 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
         : undefined;
     return (
         <section class="workspace">
-            <h1>Overview</h1>
+            <div class="hero-block"><div><p class="eyebrow">Local evidence. Clear provenance.</p><h1>Your workspace, connected.</h1>
+                <p>Explore code and documents, prepare cited context, and hand off a plan.</p></div><BrandMark /></div>
             {first && <p class="callout">{first}</p>}
             <div class="cards two">
                 <article class="card">
@@ -89,7 +90,7 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
             <div class="cards three">
                 {order.map(id => JOURNEYS.find(entry => entry.id === id)!).map(journey => (
                     <button type="button" key={journey.id} class="card journey" onClick={() => props.go(journey.route)}>
-                        <strong>{journey.title}</strong><span>{journey.text}</span>
+                        <WorkspaceIcon name={journey.route.workspace} /><strong>{journey.title}</strong><span>{journey.text}</span>
                     </button>
                 ))}
             </div>

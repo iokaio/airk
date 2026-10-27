@@ -9,7 +9,7 @@ interface ChangedFile { path: string; change: string; staged: boolean; workingTr
 interface Changes { git: 'available' | 'unavailable' | 'no_repository'; files: ChangedFile[]; truncated: boolean; publication?: string; notes: string[] }
 interface ImpactItem { name: string; kind: string; path: string; line?: number; references: number; referenceFiles: string[]; testReferences: number; truncated: boolean }
 interface Impact { items: ImpactItem[]; files: number; truncated: boolean; publication?: string; notes: string[] }
-interface Tests { candidates: { path: string; line: number; mentions: string; text: string }[]; declarations: number; pattern: string; truncated: boolean; notes: string[] }
+interface Tests { candidates: { path: string; line?: number; mentions: string; text: string; reason?: string }[]; declarations: number; pattern: string; truncated: boolean; notes: string[] }
 
 const LIVE: Record<string, string> = { matches_index: 'matches index', changed_since_index: 'changed since index', not_saved: 'unsaved edits', missing: 'missing', unchecked: 'comparison unavailable', deleted: 'deleted', outside_workspace: 'outside workspace' };
 
@@ -68,7 +68,7 @@ export function ReviewImpactScreen(props: ScreenProps) {
         <Frame busy={busy} error={error} reload={load} connected={connected}>
             {data && <>
                 {data.notes.map(note => <p key={note} class="muted">{note}</p>)}
-                <p class="result-meta"><strong>{data.items.length} changed declaration(s)</strong> in {data.files} changed file(s){data.truncated ? ' · more exist' : ''}</p>
+                <p class="result-meta">{data.items.length} sampled declaration(s) from {data.files} changed file(s){data.truncated ? ' · incomplete review' : ''}</p>
                 {!data.items.length && <p class="muted">No indexed declarations were found in the changed files.</p>}
                 <ul class="checklist">
                     {data.items.map(item => {
@@ -76,7 +76,7 @@ export function ReviewImpactScreen(props: ScreenProps) {
                         return (
                             <li key={key}>
                                 <label class="check"><input type="checkbox" checked={!!checked[key]} onChange={event => setChecked(prior => ({ ...prior, [key]: (event.target as HTMLInputElement).checked }))} />
-                                    <span><strong>{item.name}</strong> ({item.kind}) at <code>{item.path}{item.line ? `:${item.line}` : ''}</code> — {item.references}{item.truncated ? '+' : ''} textual reference(s)
+                                    <span><code class="source-inline">{item.name}</code> ({item.kind}) at <code>{item.path}{item.line ? `:${item.line}` : ''}</code> — {item.references}{item.truncated ? '+' : ''} textual reference(s)
                                         {item.referenceFiles.length ? <> in {item.referenceFiles.map(file => <code key={file}>{file}</code>).reduce((all: preact.ComponentChildren[], node, index) => index ? [...all, ', ', node] : [node], [])}</> : null}
                                         {item.testReferences ? ` · ${item.testReferences} in test paths` : ''}</span></label>
                             </li>
@@ -96,12 +96,12 @@ export function ReviewTestsScreen(props: ScreenProps) {
         <Frame busy={busy} error={error} reload={load} connected={connected}>
             {data && <>
                 {data.notes.map(note => <p key={note} class="callout">{note}</p>)}
-                <p class="result-meta"><strong>{data.candidates.length} declared test candidate(s)</strong> for {data.declarations} changed declaration(s){data.truncated ? ' · more may exist' : ''}</p>
+                <p class="result-meta">{data.candidates.length} test candidate(s) · {data.declarations} sampled declaration(s) and changed test files{data.truncated ? ' · incomplete review' : ''}</p>
                 <p class="muted">Test paths match <code>{data.pattern}</code> (setting airk.explorer.review.testPathPattern).</p>
                 <ol class="hits">{data.candidates.map(candidate => (
                     <li key={`${candidate.path}:${candidate.line}:${candidate.mentions}`} class="hit card">
-                        <div class="hit-head"><code class="path">{candidate.path}:{candidate.line}</code><span class="tag">mentions {candidate.mentions}</span><span class="tag">not executed</span></div>
-                        <pre class="excerpt">{candidate.text}</pre>
+                        <div class="hit-head"><code class="path">{candidate.path}{candidate.line ? `:${candidate.line}` : ''}</code><span class="tag">{candidate.reason === 'changed_test_file' ? 'changed test file' : `mentions ${candidate.mentions}`}</span><span class="tag">not executed</span></div>
+                        {candidate.text ? <pre class="excerpt">{candidate.text}</pre> : <p class="muted">Included because Git reports changes to this test file. No indexed source excerpt is claimed.</p>}
                     </li>
                 ))}</ol>
             </>}

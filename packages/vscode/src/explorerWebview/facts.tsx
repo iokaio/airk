@@ -73,10 +73,10 @@ export function FactList(props: { list: FactListView; empty: string; actions?: (
                             {item.ref && props.inspect && <button type="button" class="ghost" onClick={() => props.inspect!(item.ref!)}>Inspect</button>}
                             {item.ref && <OpenButton ref_={item.ref} />}
                         </div>
-                        <div class="fact-name"><strong>{item.name || '(unnamed)'}</strong>{item.signature && item.signature !== item.name && <code class="sig"> {item.signature}</code>}</div>
+                        <div class="source-text fact-name"><span>{item.name || '(unnamed)'}</span>{item.signature && item.signature !== item.name && <code class="sig"> {item.signature}</code>}</div>
                         {item.heading && <p class="muted">{item.heading.join(' › ')}</p>}
-                        {item.qualifiedName && item.qualifiedName !== item.name && <p class="muted">qualified: <code>{item.qualifiedName}</code></p>}
-                        {item.detail && (item.kind === 'occurrence' ? <pre class="excerpt">{item.detail}</pre> : <p class="muted">{item.detail}</p>)}
+                        {item.qualifiedName && item.qualifiedName !== item.name && <p class="muted">qualified: <code class="source-inline">{item.qualifiedName}</code></p>}
+                        {item.detail && (item.kind === 'occurrence' ? <pre class="excerpt">{item.detail}</pre> : <p class="source-text">{item.detail}</p>)}
                         {item.producer && <p class="muted">producer {item.producer}{item.basis ? ` · basis ${item.basis}` : ''}</p>}
                     </li>
                 ))}
