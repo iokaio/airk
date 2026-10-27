@@ -25,12 +25,16 @@ interface GitChange { readonly uri: vscode.Uri; readonly status: number }
 interface GitRepository { readonly rootUri: vscode.Uri; readonly state: { readonly indexChanges: readonly GitChange[]; readonly workingTreeChanges: readonly GitChange[]; readonly mergeChanges: readonly GitChange[] } }
 interface GitApi { readonly repositories: readonly GitRepository[] }
 
-/** Git API status numbers → change kinds (index and working tree). */
-function kind(status: number): ChangeKind {
-    if ([1, 7, 9].includes(status)) { return status === 7 ? 'untracked' : 'added'; }
+/**
+ * vscode.git Status → change kind. 0–4 index, 5–11 working tree (9 intent to add,
+ * 10 intent to rename, 11 type changed), 12–18 merge states.
+ */
+export function kind(status: number): ChangeKind {
+    if (status === 7) { return 'untracked'; }
+    if ([1, 9].includes(status)) { return 'added'; }
     if ([2, 6].includes(status)) { return 'deleted'; }
-    if ([3, 4].includes(status)) { return 'renamed'; }
-    if (status >= 10 && status <= 16) { return 'conflicted'; }
+    if ([3, 4, 10].includes(status)) { return 'renamed'; }
+    if (status >= 12 && status <= 18) { return 'conflicted'; }
     return 'modified';
 }
 

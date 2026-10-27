@@ -153,6 +153,8 @@ function strategyBody(value: Record<string, unknown>, title: string, errors: str
         budgets: { ...base.budgets, ...(value.evidence_budget_bytes ? { evidenceBytes: value.evidence_budget_bytes as number } : {}) } };
     const checked = validateStrategy(strategy);
     if (!checked.ok) { errors.push(...checked.errors.map(error => `strategy ${error}`)); return undefined; }
+    const undeclared = Object.keys(parameters).filter(name => !checked.strategy.params.some(param => param.name === name));
+    if (undeclared.length) { errors.push(`parameters ${undeclared.join(', ').slice(0, 200)} are not used by this strategy`); return undefined; }
     return { kind: 'strategy', strategy: checked.strategy, objective: String(value.objective ?? ''), params: parameters as Record<string, string>,
         ...(value.path_prefix ? { pathPrefix: String(value.path_prefix) } : {}) };
 }
@@ -235,8 +237,9 @@ export function canonical(value: unknown): string {
  * Append suggested tasks after an existing plan, renumbering their ids (and dependencies on each
  * other) past the highest existing id, so applying a draft never overwrites the user's tasks.
  */
-export function appendTasks(plan: Plan, tasks: readonly PlanTask[]): Plan {
+export function appendTasks(plan: Plan, tasks: readonly PlanTask[]): Plan | undefined {
+    if (plan.tasks.length + tasks.length > 40) { return undefined; }
     let next = Math.max(0, ...plan.tasks.map(task => Number(task.id.slice(1))));
     const renamed = new Map(tasks.map(task => [task.id, `T${++next}`]));
-    return { ...plan, tasks: [...plan.tasks, ...tasks.map(task => ({ ...task, id: renamed.get(task.id)!, dependsOn: task.dependsOn.map(dep => renamed.get(dep) ?? dep) }))].slice(0, 40) };
+    return { ...plan, tasks: [...plan.tasks, ...tasks.map(task => ({ ...task, id: renamed.get(task.id)!, dependsOn: task.dependsOn.map(dep => renamed.get(dep) ?? dep) }))] };
 }

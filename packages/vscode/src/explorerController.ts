@@ -146,6 +146,7 @@ export class ExplorerController implements vscode.Disposable {
     }
 
     private visibility(visible: boolean): void {
+        if (!visible && !this.panel.open) { this.managementOpen = false; }
         if (visible && !this.retained) { this.retained = this.control.retain(); void this.loadStatus(); }
         else if (!visible && this.retained) { this.retained.dispose(); this.retained = undefined; }
     }

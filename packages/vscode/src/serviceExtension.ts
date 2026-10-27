@@ -156,7 +156,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             await this.enqueue(binding,registered.binding,'index',client);
         }finally{client.dispose();}
         await this.refresh();
-        this.output.appendLine(`Registered ${registered.binding}. Native indexing continues independently; inspect its readiness in the Service Console.`);
+        this.output.appendLine(`Registered ${registered.binding}. Native indexing continues independently; check its readiness in AIRK Explorer › Management › Projects.`);
     }
     private async enqueue(binding:RuntimeBinding,project:string,kind:'index'|'inspect'|'model_setup',existing?:ReturnType<RuntimeHost['client']>):Promise<void>{
         this.trusted();const client=existing??this.runtime().client(binding);

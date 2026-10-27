@@ -131,7 +131,9 @@ export function StudioScreen(props: ScreenProps) {
     const run = async () => {
         setBusy(true); setError(undefined); setNotice(undefined);
         try {
-            const result = await request<RunResult>('strategy.run', { strategy: strategy as unknown as Record<string, unknown>, params: { ...draft.params },
+            // Send only the parameters this strategy declares; values left over from removed steps or other drafts are dropped.
+            const params = Object.fromEntries(strategy.params.map(param => [param.name, draft.params[param.name] ?? '']));
+            const result = await request<RunResult>('strategy.run', { strategy: strategy as unknown as Record<string, unknown>, params,
                 scope: draft.pathPrefix.trim() ? { pathPrefix: draft.pathPrefix.trim() } : {} });
             setDraft(prior => ({ ...prior, run: result, ...(prior.promptEdited ? {} : { prompt: compile(result, prior.profile) }) }));
             if (draft.promptEdited) { setNotice('The run finished. Your edited prompt was kept; use Rebuild to include the new evidence.'); }

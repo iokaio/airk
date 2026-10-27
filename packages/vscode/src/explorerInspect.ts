@@ -60,6 +60,7 @@ const STATUS_MESSAGE: Record<CitationResult['status'], string> = {
     not_found: 'Not in this project’s published index.',
     line_out_of_range: 'Indexed, but the cited lines are beyond the indexed line count.',
     outside_collection: 'Absolute or parent-relative paths are outside the collection and are not checked.',
+    unchecked: 'Indexed and in range; the saved file could not be compared, so this citation is not verified.',
 };
 
 /**
@@ -87,15 +88,15 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
         const base = { text: entry.text, path: entry.path, startLine: entry.startLine, endLine: entry.endLine };
         if (entry.absolute) { return { ...base, status: 'outside_collection', message: STATUS_MESSAGE.outside_collection }; }
         const record = records.get(entry.path);
-        if (!record) { return { ...base, status: 'not_found', message: 'Not checked: more than 25 distinct paths in one check.' }; }
+        if (!record) { return { ...base, status: 'unchecked', message: 'Not checked: more than 25 distinct paths in one check.' }; }
         if (!record.info) { return { ...base, status: 'not_found', message: STATUS_MESSAGE.not_found }; }
         const lines = count(record.info.indexed_lines), hash = record.info.content_hash;
         if (lines !== undefined && entry.endLine > lines) { return { ...base, status: 'line_out_of_range', message: `${STATUS_MESSAGE.line_out_of_range} (${lines} indexed lines)` }; }
         const status: CitationResult['status'] = record.live === 'matches_index' ? 'valid' : record.live === 'changed_since_index' ? 'changed_since_index'
-            : record.live === 'not_saved' ? 'not_saved' : record.live === 'missing' ? 'missing' : 'valid';
+            : record.live === 'not_saved' ? 'not_saved' : record.live === 'missing' ? 'missing' : 'unchecked';
         const ref = typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash)
             ? refs.add({ project, path: entry.path, startLine: entry.startLine, endLine: entry.endLine, contentHash: hash, ...(record.publication ? { publication: record.publication } : {}) }) : undefined;
-        const message = record.live === 'unchecked' ? 'Indexed and in range; the saved file could not be compared.' : STATUS_MESSAGE[status];
+        const message = STATUS_MESSAGE[status];
         return { ...base, status, message, ...(ref ? { ref } : {}) };
     });
     return { supported: citations.length > 0, citations, limited: parsed.limited, ...(publication ? { publication } : {}) };

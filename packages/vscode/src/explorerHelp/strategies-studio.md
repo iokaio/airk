@@ -10,7 +10,7 @@ related_airk_help: workflows, search
 
 Strategies › Studio edits one strategy, runs it against one pinned AIRK publication, and compiles an editable prompt.
 
-Steps come from a closed operator catalog: AIRK retrieval tools, a saved-file hash check and evidence transforms. There are no shell, write, network or recursion operators, and search steps are always lexical. Arguments can bind only ${params.*} and ${scope.*}. Editing a core template creates a fork named user/NAME, and adding, removing or reordering a step clears the run.
+Steps come from a closed operator catalog: AIRK retrieval tools, a saved-file hash check and evidence transforms. There are no shell, write, network or recursion operators, and search steps are always lexical. Arguments can bind only ${params.*} and ${scope.*}. The first step is always airk.status, which pins the publication. Editing a core template creates a fork named user/NAME, and adding, removing or reordering a step clears the run.
 
 ## Steps
 

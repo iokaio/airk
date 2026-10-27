@@ -43,7 +43,7 @@ export function InspectorScreen(props: ScreenProps) {
     );
 }
 
-const STATUS_CLASS: Record<string, string> = { valid: 'ok', changed_since_index: 'warn', not_saved: 'warn', line_out_of_range: 'error', not_found: 'error', missing: 'error', outside_collection: 'error' };
+const STATUS_CLASS: Record<string, string> = { valid: 'ok', changed_since_index: 'warn', not_saved: 'warn', line_out_of_range: 'error', not_found: 'error', missing: 'error', outside_collection: 'error', unchecked: 'warn' };
 
 export function CheckerScreen(props: ScreenProps) {
     const [text, setText] = useState('');

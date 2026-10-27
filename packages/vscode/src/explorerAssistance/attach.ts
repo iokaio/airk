@@ -66,9 +66,15 @@ export function windowChannel(directory: string | undefined, cwd: string): Windo
     return async body => {
         if (!directory) { return { ok: false, code: 'UI_NOT_ATTACHED' }; }
         for (let attempt = 0; attempt < 2; attempt++) {
-            const matches = (await descriptors(directory, Date.now())).filter(descriptor => descriptor.roots.some(root => contains(root, cwd)));
+            let matches = (await descriptors(directory, Date.now())).filter(descriptor => descriptor.roots.some(root => contains(root, cwd)));
             if (!matches.length) { return { ok: false, code: 'UI_NOT_ATTACHED' }; }
-            if (matches.length > 1) { return { ok: false, code: 'AMBIGUOUS_TARGET' }; }
+            // A window that crashed leaves its descriptor until it expires; only windows that answer count.
+            if (matches.length > 1) {
+                const live = await Promise.all(matches.map(async descriptor => (await send(descriptor, { type: 'status' }))?.ok === true));
+                matches = matches.filter((_, index) => live[index]);
+                if (!matches.length) { continue; }
+                if (matches.length > 1) { return { ok: false, code: 'AMBIGUOUS_TARGET' }; }
+            }
             const reply = await send(matches[0], body);
             if (reply?.ok) { return { ok: true, reply }; }
             if (reply) { return { ok: false, code: reply.code, ...(reply.message ? { message: reply.message } : {}) }; }
