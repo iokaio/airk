@@ -30,6 +30,7 @@
     "src/explorerFeatures.ts",
     "src/explorerErrors.ts",
     "src/explorerStatus.ts",
-    "src/explorerStrategies.ts"
+    "src/explorerStrategies.ts",
+    "src/explorerDrafts.ts"
   ]
 }

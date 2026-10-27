@@ -25,7 +25,8 @@ MODULES = ("extension.js", "serviceExtension.js", "serviceDashboard.js", "servic
            "explorerRoutes.js", "explorerSearch.js", "explorerSource.js", "explorerWorkspaceIO.js",
            "explorerFacts.js", "explorerInspect.js", "explorerManagement.js",
            "explorerCommands.js", "explorerAssistanceHost.js", "explorerAssistanceLaunch.js",
-           "explorerStrategies.js", "explorerStrategyRunner.js")
+           "explorerStrategies.js", "explorerStrategyRunner.js",
+           "explorerDrafts.js", "explorerSuggestions.js")
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
 BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js")
 # Host-only implementations that must never ship a second bundled copy.
