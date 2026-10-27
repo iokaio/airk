@@ -81,7 +81,7 @@ export interface ExplorerViewState {
 /** One Inbox card. Duplicates by destination and title collapse into one card with a count. */
 export interface SuggestionCard {
     readonly id: string;
-    readonly kind: 'search' | 'strategy' | 'plan';
+    readonly kind: DraftKind;
     readonly title: string;
     /** Self-reported by the agent; never authenticated. */
     readonly client: string;
@@ -306,7 +306,7 @@ export interface HelpCatalog { readonly catalogVersion: 1; readonly extensionVer
 export const ASSISTANCE_SERVER_NAME = 'airk-explorer';
 /** Assistance tools shipped in this version, in tools/list order. Draft tools arrive with the Suggestions Inbox. */
 export const ASSISTANCE_TOOLS = ['airk_explorer_help_search', 'airk_explorer_help_get', 'airk_explorer_ui_status', 'airk_explorer_suggest_search',
-    'airk_explorer_suggest_strategy', 'airk_explorer_suggest_plan', 'airk_explorer_proposal_status'] as const;
+    'airk_explorer_suggest_strategy', 'airk_explorer_suggest_plan', 'airk_explorer_suggest_review', 'airk_explorer_suggest_management', 'airk_explorer_proposal_status'] as const;
 export const ASSISTANCE_HELP_URI = 'airk-explorer-help://';
 
 /**

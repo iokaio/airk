@@ -74,7 +74,7 @@ export function App() {
                         limit: search.limit, maxBytes: search.maxBytes, fullChunks: search.fullChunks };
                     setIncoming(prior => ({ query: search.query, recipe, run: false, serial: (prior?.serial ?? 0) + 1 })); go({ workspace: 'search', tab: 'query' });
                 }}
-                goStudio={() => go({ workspace: 'strategies', tab: 'studio' })} goPlanner={() => go({ workspace: 'strategies', tab: 'planner' })} />}
+                goStudio={() => go({ workspace: 'strategies', tab: 'studio' })} goPlanner={() => go({ workspace: 'strategies', tab: 'planner' })} go={go} />}
             <div class="frame">
                 <Rail route={route} state={state} go={go} />
                 <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>

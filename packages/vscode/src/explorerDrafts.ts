@@ -8,9 +8,36 @@ import {
 
 export const DRAFT_SCHEMA_VERSION = '1.0';
 export const DRAFT_LIMIT_BYTES = 16384;
-export const DRAFT_TOOLS = ['airk_explorer_suggest_search', 'airk_explorer_suggest_strategy', 'airk_explorer_suggest_plan'] as const;
-export type DraftKind = 'search' | 'strategy' | 'plan';
-export const DESTINATIONS: Readonly<Record<DraftKind, string>> = { search: 'search/query', strategy: 'strategies/studio', plan: 'strategies/planner' };
+export const DRAFT_TOOLS = ['airk_explorer_suggest_search', 'airk_explorer_suggest_strategy', 'airk_explorer_suggest_plan', 'airk_explorer_suggest_review',
+    'airk_explorer_suggest_management'] as const;
+export type DraftKind = 'search' | 'strategy' | 'plan' | 'review' | 'management';
+/** Default destination per kind; review and management drafts name a more specific screen. */
+export const DESTINATIONS: Readonly<Record<DraftKind, string>> = { search: 'search/query', strategy: 'strategies/studio', plan: 'strategies/planner', review: 'review/changes',
+    management: 'manage/projects' };
+export const REVIEW_SCOPES = ['changes', 'impact', 'tests'] as const;
+
+/**
+ * The only management guidance an agent may propose. Each intent opens one screen with fixed,
+ * extension-authored guidance; none can start, approve or run a native operation.
+ */
+export const MANAGEMENT_INTENTS = {
+    'indexing.index_now': { route: 'manage/projects', guidance: 'Review the project in Management › Projects and choose Index now yourself if the index is out of date.' },
+    'indexing.change_mode': { route: 'manage/indexing', guidance: 'Review indexing mode, pause state and vector settings in Management › Indexing; each change asks for confirmation.' },
+    'indexing.review_activity': { route: 'manage/activity', guidance: 'Check the current job, its phase and wait reason in Management › Activity before changing anything.' },
+    'recovery.verify_retained_data': { route: 'manage/repair', guidance: 'In Management › Repair, create a verify preview, read every page, and approve it only if it matches what you expect.' },
+    'recovery.review_failure': { route: 'manage/repair', guidance: 'Read the failure and request status in Management › Repair and Activity; a rebuild is a last resort you choose explicitly.' },
+    'storage.review': { route: 'manage/storage', guidance: 'Review storage location, quotas and cleanup previews in Management › Storage.' },
+    'service.review': { route: 'manage/service', guidance: 'Check service health and runtime state in Management › Service; lifecycle actions ask for confirmation.' },
+    'agents.setup': { route: 'manage/agents', guidance: 'Use Management › Agents to connect or check a coding agent; each connection is configured and verified separately.' },
+    'usage.review': { route: 'manage/usage', guidance: 'Open Management › Usage for local usage and savings estimates; they are not billing data.' },
+    'logs.review': { route: 'manage/logs', guidance: 'Open Management › Logs to read recent extension and service output.' },
+} as const;
+export type ManagementIntent = keyof typeof MANAGEMENT_INTENTS;
+
+/** Where a draft would go in the Explorer. */
+export function destinationOf(body: DraftBody): string {
+    return body.kind === 'review' ? `review/${body.scope}` : body.kind === 'management' ? MANAGEMENT_INTENTS[body.intent].route : DESTINATIONS[body.kind];
+}
 export type ProposalStatus = 'pending_review' | 'applied' | 'rejected' | 'deferred' | 'expired' | 'conflicted';
 
 export interface SearchDraft { readonly query: string; readonly mode: 'policy' | 'lexical' | 'vector' | 'hybrid'; readonly pathPrefix?: string; readonly limit: number; readonly maxBytes: number; readonly fullChunks: boolean }
@@ -19,7 +46,9 @@ export interface DraftEvidence { readonly publication: string; readonly citation
 export type DraftBody =
     | { readonly kind: 'search'; readonly search: SearchDraft; readonly intent?: string }
     | { readonly kind: 'strategy'; readonly strategy: Strategy; readonly objective: string; readonly params: Readonly<Record<string, string>>; readonly pathPrefix?: string }
-    | { readonly kind: 'plan'; readonly plan: Plan; readonly pathHint?: string };
+    | { readonly kind: 'plan'; readonly plan: Plan; readonly pathHint?: string }
+    | { readonly kind: 'review'; readonly scope: typeof REVIEW_SCOPES[number]; readonly names: readonly string[]; readonly note?: string }
+    | { readonly kind: 'management'; readonly intent: ManagementIntent; readonly reason?: string };
 export interface ValidDraft {
     readonly idempotencyKey: string;
     readonly title: string;
@@ -148,6 +177,21 @@ function planBody(value: Record<string, unknown>, title: string, errors: string[
     return { kind: 'plan', plan: checked.plan, ...(value.path_hint ? { pathHint: String(value.path_hint) } : {}) };
 }
 
+function reviewBody(value: Record<string, unknown>, errors: string[]): DraftBody | undefined {
+    const scope = value.scope ?? 'changes';
+    if (!(REVIEW_SCOPES as readonly unknown[]).includes(scope)) { errors.push(`scope must be one of ${REVIEW_SCOPES.join(', ')}`); return undefined; }
+    const names = value.names ?? [];
+    if (!Array.isArray(names) || names.length > 20 || !names.every(name => typeof name === 'string' && /^[A-Za-z_$][\w$]{0,127}$/.test(name))) { errors.push('names must be at most 20 identifiers'); return undefined; }
+    if (value.note !== undefined && !text(value.note, 2000, 0)) { errors.push('note must be at most 2000 characters'); return undefined; }
+    return { kind: 'review', scope: scope as typeof REVIEW_SCOPES[number], names: names as string[], ...(value.note ? { note: String(value.note) } : {}) };
+}
+
+function managementBody(value: Record<string, unknown>, errors: string[]): DraftBody | undefined {
+    if (typeof value.intent !== 'string' || !Object.hasOwn(MANAGEMENT_INTENTS, value.intent)) { errors.push(`intent must be one of ${Object.keys(MANAGEMENT_INTENTS).join(', ')}`); return undefined; }
+    if (value.reason !== undefined && !text(value.reason, 1000, 0)) { errors.push('reason must be at most 1000 characters'); return undefined; }
+    return { kind: 'management', intent: value.intent as ManagementIntent, ...(value.reason ? { reason: String(value.reason) } : {}) };
+}
+
 /** Strict validation of one draft call. Unknown fields, action fields, deep nesting and oversize bodies are refused. */
 export function validateDraft(kind: DraftKind, input: unknown): DraftCheck {
     if (!record(input)) { return { ok: false, code: 'INVALID_SCHEMA', errors: ['arguments must be an object'] }; }
@@ -159,7 +203,11 @@ export function validateDraft(kind: DraftKind, input: unknown): DraftCheck {
     if (action) { return { ok: false, code: 'POLICY_DENIED', errors: [`${action}: drafts never save, run or execute anything; the user applies them`] }; }
     if (input.schema_version !== DRAFT_SCHEMA_VERSION) { return { ok: false, code: 'SCHEMA_UNSUPPORTED', errors: [`schema_version must be "${DRAFT_SCHEMA_VERSION}"`] }; }
     const errors: string[] = [];
-    const specific = { search: ['draft', 'intent'], strategy: ['template_id', 'objective', 'parameters', 'path_prefix', 'steps', 'evidence_budget_bytes'], plan: ['objective', 'tasks', 'path_hint'] }[kind];
+    const specific = { search: ['draft', 'intent'], strategy: ['template_id', 'objective', 'parameters', 'path_prefix', 'steps', 'evidence_budget_bytes'], plan: ['objective', 'tasks', 'path_hint'],
+        review: ['scope', 'names', 'note'], management: ['intent', 'mode', 'reason'] }[kind];
+    if (kind === 'management' && input.mode !== undefined && input.mode !== 'show_guidance') {
+        return { ok: false, code: 'POLICY_DENIED', errors: ['management drafts only show guidance (mode "show_guidance"); they never run an operation'] };
+    }
     keys(input, [...ENVELOPE, ...specific], ['schema_version', 'idempotency_key', 'title'], 'draft call', errors);
     if (typeof input.idempotency_key !== 'string' || !/^[A-Za-z0-9._:-]{1,128}$/.test(input.idempotency_key)) { errors.push('idempotency_key must be 1–128 letters, digits or ._:-'); }
     if (!text(input.title, 160)) { errors.push('title must be 1–160 characters'); }
@@ -168,7 +216,8 @@ export function validateDraft(kind: DraftKind, input: unknown): DraftCheck {
     const cited = evidence(input.evidence, errors);
     if (errors.length) { return { ok: false, code: 'INVALID_SCHEMA', errors: errors.slice(0, 20) }; }
     const title = String(input.title);
-    const body = kind === 'search' ? searchBody(input, errors) : kind === 'strategy' ? strategyBody(input, title, errors) : planBody(input, title, errors);
+    const body = kind === 'search' ? searchBody(input, errors) : kind === 'strategy' ? strategyBody(input, title, errors) : kind === 'plan' ? planBody(input, title, errors)
+        : kind === 'review' ? reviewBody(input, errors) : managementBody(input, errors);
     if (!body || errors.length) { return { ok: false, code: 'INVALID_SCHEMA', errors: errors.slice(0, 20) }; }
     return { ok: true, draft: { idempotencyKey: String(input.idempotency_key), title, body,
         ...(input.expected_target_revision !== undefined ? { expectedTargetRevision: input.expected_target_revision as number } : {}),

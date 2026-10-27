@@ -137,7 +137,7 @@ export class AssistanceIpcHost {
                 return { v: 1, ok: true, status: { binding_fingerprint: this.fingerprint, explorer_open: this.port.explorerOpen(), target_revisions: this.port.targetRevisions?.() ?? {} } };
             case 'suggest': {
                 const client = request.client as Record<string, unknown> | undefined;
-                if (!fields('kind', 'draft', 'client') || !['search', 'strategy', 'plan'].includes(request.kind as string) || !client || typeof client.name !== 'string' || typeof client.version !== 'string') { break; }
+                if (!fields('kind', 'draft', 'client') || !['search', 'strategy', 'plan', 'review', 'management'].includes(request.kind as string) || !client || typeof client.name !== 'string' || typeof client.version !== 'string') { break; }
                 if (!this.port.suggest) { return { v: 1, ok: false, code: 'CAPABILITY_DISABLED' }; }
                 // The host validates the draft again; the server's validation is only a fast first check.
                 const result = this.port.suggest(request.kind as DraftKind, request.draft, { name: client.name, version: client.version });

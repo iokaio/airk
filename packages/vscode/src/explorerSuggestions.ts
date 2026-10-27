@@ -3,7 +3,7 @@
 // bounded by TTL, count, bytes and rate. Admission is not acceptance: nothing here applies,
 // runs or saves a draft; the user does that from the Inbox.
 import { randomBytes } from 'node:crypto';
-import { canonical, DESTINATIONS, DRAFT_SCHEMA_VERSION, DraftKind, ProposalReceipt, ProposalStatus, validateDraft, ValidDraft } from './explorerDrafts';
+import { canonical, destinationOf, DRAFT_SCHEMA_VERSION, DraftKind, ProposalReceipt, ProposalStatus, validateDraft, ValidDraft } from './explorerDrafts';
 import type { ExplorerErrorCode } from './explorerErrors';
 import type { SuggestionCard, SuggestionsView } from './explorerContracts';
 
@@ -65,7 +65,7 @@ export class SuggestionStore {
     }
 
     private receipt(item: Suggestion): ProposalReceipt {
-        return { schema_version: DRAFT_SCHEMA_VERSION, proposal_id: item.id, proposal_type: item.kind, status: item.status, destination: DESTINATIONS[item.kind],
+        return { schema_version: DRAFT_SCHEMA_VERSION, proposal_id: item.id, proposal_type: item.kind, status: item.status, destination: destinationOf(item.draft.body),
             workspace_binding: this.context.binding(), ...(item.targetRevision !== undefined ? { target_draft_revision: item.targetRevision } : {}),
             accepted: false, applied: item.status === 'applied', executed: false, received_at: new Date(item.receivedAt).toISOString(),
             expires_at: new Date(item.expiresAt).toISOString(), warnings: item.warnings };
@@ -117,7 +117,7 @@ export class SuggestionStore {
     status(id: string): Pick<ProposalReceipt, 'proposal_id' | 'status' | 'destination' | 'applied' | 'executed' | 'expires_at'> | undefined {
         this.sweep();
         const item = this.items.get(id);
-        return item && { proposal_id: item.id, status: item.status, destination: DESTINATIONS[item.kind], applied: item.status === 'applied', executed: false,
+        return item && { proposal_id: item.id, status: item.status, destination: destinationOf(item.draft.body), applied: item.status === 'applied', executed: false,
             expires_at: new Date(item.expiresAt).toISOString() };
     }
 
@@ -153,7 +153,9 @@ function summary(item: Suggestion): string {
     const body = item.draft.body;
     if (body.kind === 'search') { return `"${body.search.query.slice(0, 120)}" · ${body.search.mode}${body.search.pathPrefix ? ` · ${body.search.pathPrefix}` : ''}`; }
     if (body.kind === 'strategy') { return `${body.strategy.id}@${body.strategy.version} · ${body.strategy.steps.length} steps`; }
-    return `${body.plan.tasks.length} task(s)${body.pathHint ? ` · suggested path ${body.pathHint}` : ''}`;
+    if (body.kind === 'plan') { return `${body.plan.tasks.length} task(s)${body.pathHint ? ` · suggested path ${body.pathHint}` : ''}`; }
+    if (body.kind === 'review') { return `Review › ${body.scope}${body.names.length ? ` · ${body.names.slice(0, 5).join(', ')}` : ''}`; }
+    return `Guidance: ${body.intent}`;
 }
 
 /**
@@ -171,5 +173,5 @@ export function suggestionsView(items: readonly Suggestion[]): SuggestionsView {
 }
 function card(item: Suggestion, duplicates: number): SuggestionCard {
     return { id: item.id, kind: item.kind, title: item.draft.title, client: item.client.name, receivedAt: item.receivedAt, expiresAt: item.expiresAt,
-        status: item.status, destination: DESTINATIONS[item.kind], warnings: item.warnings, duplicates, summary: summary(item) };
+        status: item.status, destination: destinationOf(item.draft.body), warnings: item.warnings, duplicates, summary: summary(item) };
 }
