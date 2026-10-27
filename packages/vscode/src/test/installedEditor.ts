@@ -117,7 +117,8 @@ export async function run(): Promise<void> {
     let uiSequence=0;
     const reviewedRegistration=async(root:string)=>{
         root=await fs.realpath(root);
-        await vscode.commands.executeCommand('airk.serviceConnect');
+        // Management › Projects holds the reviewed registration control.
+        await vscode.commands.executeCommand('airk.collections');
         const sequence=++uiSequence;
         await mark('ui-request',{sequence,action:'register',root:path.basename(root),source:root,storage:vscode.workspace.getConfiguration('airk').inspect<string>('storage.path')?.globalValue});
         await waitFor(marker(`ui-done-${sequence}`));
@@ -136,7 +137,7 @@ export async function run(): Promise<void> {
         await assert.rejects(Promise.resolve(vscode.commands.executeCommand('airk.usage')), /runtime_client_no_longer_authorized/);
         assert.deepEqual(await fs.readdir(path.join(folder, 'storage')), [], 'Untrusted workspace must not create an index');
         checks.push('untrusted definitions empty', 'index and usage commands rejected', 'storage untouched', 'dashboard focus');
-        await vscode.commands.executeCommand('airk.service.focus');
+        await vscode.commands.executeCommand('airk.explorer.open', '#manage/agents');
     } else {
         assert.equal(vscode.workspace.isTrusted, true);
         assert.deepEqual(await api.getServerDefinitions(),[],'A fresh profile must review roots before advertising MCP');
@@ -165,9 +166,9 @@ export async function run(): Promise<void> {
                 assert.ok(found,'Native accepted work published the fixture symbols');
             }finally{ready.close();}
         }
-        if (scenario === 'same' && role === 'a') {
+        if (scenario === 'multi' && role === 'a') {
             // The installed Explorer: Search renders a cited hit and Management lists the project (checked over CDP).
-            await vscode.commands.executeCommand('airk.explorer.search', 'WindowAlphaEvidence');
+            await vscode.commands.executeCommand('airk.explorer.search', 'return 42');
             await mark('explorer-ready');
             await waitFor(path.join(folder, 'explorer-checked.json'));
             checks.push('installed Explorer search cites the fixture', 'installed Explorer Management lists the project');
@@ -212,7 +213,7 @@ export async function run(): Promise<void> {
             await waitFor(path.join(folder, 'usage-stale-checked.json'));
             assert.deepEqual(await fs.readdir(next), reboundContents, 'stale usage panel must not create additional storage');
             checks.push('reviewed storage rebinding invalidates open reporting panels');
-            await vscode.commands.executeCommand('airk.service.focus');
+            await vscode.commands.executeCommand('airk.explorer.open', '#manage/agents');
             await mark('result', evidence); await mark('capture');
             await waitFor(path.join(folder, 'capture-complete.json'));
             return;
@@ -304,7 +305,7 @@ export async function run(): Promise<void> {
             assert.ok((await fs.stat(path.join(next,'collections-1.4',specs[1].collection,'active.json'))).isFile());
             checks.push('storage switch keeps previous indexes');
         }
-        await vscode.commands.executeCommand('airk.service.focus');
+        await vscode.commands.executeCommand('airk.explorer.open', '#manage/agents');
     }
     await mark('result', evidence);
     await mark('capture');

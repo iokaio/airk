@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import type { ConnectionState, ProjectSummary, SemanticState } from './explorerContracts';
 import type { RecordValue } from './serviceClient';
 import type { ServiceConsoleState } from './serviceConsoleView';
+import { displayPath } from './explorerSource';
 
 /**
  * The Explorer's control plane is the existing Service Console controller: one native
@@ -29,7 +30,7 @@ export function projectSummaries(state: ServiceConsoleState): ProjectSummary[] {
         if (!binding || !/^[0-9a-f]{64}$/.test(binding)) { return []; }
         const inspection = obj(row.inspection), snapshot = obj(inspection.snapshot), semantic = obj(snapshot.semantic);
         const progress = obj(row.progress), job = obj(progress.job), work = obj(progress.progress), watch = obj(row.watch);
-        const root = text(registration.root) ?? '';
+        const root = displayPath(text(registration.root) ?? '');
         const semanticState = SEMANTIC.find(value => value === semantic.state);
         const summary: ProjectSummary = {
             project: binding,

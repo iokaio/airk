@@ -32,7 +32,7 @@ export function sidebarContent(state: ExplorerViewState | undefined, folders: nu
     const status = state.status;
     const { word, severity } = headline(state.connection, status, registered);
     const facts: [string, unknown][] = [
-        ['Project', project ? `${project.collection} (${project.name})` : 'None selected'],
+        ['Project', project ? project.name : 'None selected'],
         ['Service', state.connection],
         ['Published index', status ? status.indexState : 'not observed'],
         ['Indexed files', status?.files ?? 'not observed'],
