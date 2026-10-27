@@ -13,6 +13,7 @@ import { IntentJournal } from './serviceIntents';
 import { ServiceWorkspace } from './serviceWorkspace';
 import { installLauncherCli } from './cliInstall';
 import { openUsagePanel } from './usagePanel';
+import { renderUsage } from './usageReport';
 import { COMMAND_ROUTES } from './explorerCommands';
 import { ExplorerSidebar } from './explorerSidebar';
 import type { ExplorerController, ExplorerHost } from './explorerController';
@@ -228,7 +229,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     async usage():Promise<void>{
         const spec=await this.chooseSpec();if(!spec)return;this.trusted();await this.runtime().ensure();this.trusted();
         const generation=this.generation,valid=()=>generation===this.generation&&this.isCurrent(spec);
-        await openUsagePanel(spec,valid,async(args,continuing)=>{
+        await openUsagePanel(spec,valid,this.usageWriter(spec,valid));
+    }
+    private usageWriter(spec:LaunchSpec,valid:()=>boolean):(args:string[],continuing?:()=>boolean)=>Promise<unknown>{
+        return async(args,continuing)=>{
             this.trusted();if(!valid()||continuing?.()===false)throw new ServiceError('project_configuration_selection_changed');
             let draft:Record<string,unknown>;
             if(args.length===1&&args[0]==='clear')draft={operation:'clear_usage'};
@@ -240,8 +244,20 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }else throw new ServiceError('invalid_usage_action');
             if(!spec.service)throw new ServiceError('native_project_binding_required');
             await this.console.configureProject(spec.service.project,draft,()=>valid()&&continuing?.()!==false);
-        });
+        };
     }
+    private async embeddedUsage(spec:LaunchSpec,current:()=>boolean):Promise<import('./explorerController').EmbeddedUsage>{
+        this.trusted();if(!current()||!this.isCurrent(spec))throw new ServiceError('project_configuration_selection_changed');
+        await this.runtime().ensure();this.trusted();
+        const generation=this.generation,valid=()=>generation===this.generation&&this.isCurrent(spec)&&current();
+        let value:object={},receive:(message:unknown)=>Promise<void>=async()=>undefined,dispose=()=>{};
+        await openUsagePanel(spec,valid,this.usageWriter(spec,valid),{
+            render:next=>{value=next;},onMessage:listener=>{receive=listener;return {dispose(){receive=async()=>{throw new ServiceError('usage_session_disposed');};}};},onDispose:listener=>{dispose=listener;},
+        });
+        const view=()=>{this.trusted();if(!valid())throw new ServiceError('project_configuration_selection_changed');return {html:renderUsage(value)};};
+        return {view,action:async message=>{await receive(message);return view();},dispose};
+    }
+
     async installCommandLine():Promise<void>{
         this.installationWarnings=false;
         this.reportInstall('Checking selected runtime…');
@@ -430,6 +446,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 const root=active&&this.roots.find(root=>same(root.opened,active.uri.fsPath));
                 return root?this.specs.find(spec=>same(spec.root,root.canonical))?.service?.project:undefined;
             },
+            usage:(spec,valid)=>this.embeddedUsage(spec,valid),
             onDidChangeSpecs:this.treeChanges.event,control:this.console,log:line=>this.output.appendLine(line),
             setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}},workspaceState:this.context.workspaceState,suggestions:this.suggestions,handoffs:this.handoffs};
     }
@@ -530,6 +547,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.retryUpdate=()=>controller.retryUpdate();
     commands.openTools=()=>controller.openTools();
     commands.usage=()=>controller.usage();
+    commands.showExtensionOutput=()=>controller.output.show(false);
     commands['explorer.open']=route=>explorerOpen(route);
     commands['explorer.showSuggestions']=async()=>(await controller.explorerController()).showInbox();
     commands['explorer.search']=async query=>{

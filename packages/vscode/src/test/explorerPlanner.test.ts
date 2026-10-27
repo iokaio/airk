@@ -18,6 +18,55 @@ class Uri {
 
 interface Script { save?: Uri; open?: Uri; replace?: boolean; dirty?: string[]; directory?: string; confirm?(): void }
 
+test('Studio Save round trips all inputs without a picker and guards edits, names and ownership', async t => {
+    const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'airk-studio-save-')));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const { CORE_PACK, STUDIO_SCHEMA, validateStudio } = await import('../explorerStrategies');
+    const document: import('../explorerStrategies').StudioDocument = { schema: STUDIO_SCHEMA, strategy: CORE_PACK.find(entry => entry.strategy.id === 'airk.core/bug')!.strategy,
+        objective: 'Review the Explorer UI', params: { query: 'Search', symbol: 'ReviewTestsScreen' }, pathPrefix: 'packages/vscode/src/', profile: 'mcp_aware' as const,
+        editedPrompt: 'My edited instructions' };
+    assert.ok(validateStudio(document));
+    for (const bad of [{ ...document, run: {} }, { ...document, params: { foreign: 'value' } }, { ...document, pathPrefix: '../outside' },
+        { ...document, objective: 'x'.repeat(4001) }, { ...document, profile: 'foreign' }]) { assert.equal(validateStudio(bad), undefined); }
+    const f = load(root, {}), allowed = () => f.stub.workspace.isTrusted;
+    const first = await f.io.saveStudioInWorkspace(document, 'ui-refinements', root, undefined, allowed);
+    assert.ok(first.saved); if (!first.saved) { return; }
+    assert.deepEqual(f.events, [], 'no folder picker, confirmation or editor navigation for a new save');
+    const target = path.join(root, first.path), saved = { ...document, strategy: { ...document.strategy, id: 'user/ui-refinements' } };
+    assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), saved);
+    assert.deepEqual(await f.io.loadWorkspaceFile('strategies', Uri.file(root).toString(), 'ui-refinements.studio.airk.json'), saved);
+    assert.deepEqual(await load(root, { open: Uri.file(target) }).io.importStrategy(), saved);
+    const updated = await f.io.saveStudioInWorkspace({ ...document, objective: 'Updated objective' }, 'ui-refinements', root, first.hash, allowed);
+    assert.ok(updated.saved); assert.deepEqual(f.events, []);
+    const changedBytes = fs.readFileSync(target, 'utf8');
+    assert.equal((await f.io.saveStudioInWorkspace(document, 'ui-refinements', root, first.hash, allowed)).saved, false, 'outside/stale edits must not be overwritten');
+    assert.equal(fs.readFileSync(target, 'utf8'), changedBytes);
+    const dirty = load(root, { dirty: [target] });
+    assert.equal((await dirty.io.saveStudioInWorkspace(document, 'ui-refinements', root, undefined, () => true)).saved, false);
+    for (const name of ['../outside', 'con', 'a/b', 'with.dot']) { await assert.rejects(f.io.saveStudioInWorkspace(document, name, root, undefined, allowed)); }
+    assert.equal((await f.io.saveStudioInWorkspace(document, 'foreign', path.join(root, 'missing'), undefined, allowed)).saved, false);
+    f.stub.workspace.isTrusted = false;
+    assert.equal((await f.io.saveStudioInWorkspace(document, 'untrusted', root, undefined, allowed)).saved, false);
+    assert.equal(fs.existsSync(path.join(root, '.airk', 'strategies', 'untrusted.studio.airk.json')), false);
+});
+
+test('Studio Save checks redirected directories and authorization after collision review', async t => {
+    const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'airk-studio-guard-')));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const { CORE_PACK, STUDIO_SCHEMA } = await import('../explorerStrategies');
+    const document: import('../explorerStrategies').StudioDocument = { schema: STUDIO_SCHEMA, strategy: CORE_PACK[0].strategy, objective: '', params: {}, pathPrefix: '', profile: 'portable' as const };
+    const outside = path.join(root, 'outside'); fs.mkdirSync(outside); fs.mkdirSync(path.join(root, '.airk'));
+    fs.symlinkSync(outside, path.join(root, '.airk', 'strategies'), process.platform === 'win32' ? 'junction' : 'dir');
+    const f = load(root, {});
+    await assert.rejects(f.io.saveStudioInWorkspace(document, 'sample', root, undefined, () => true), /redirected/);
+    fs.unlinkSync(path.join(root, '.airk', 'strategies')); fs.mkdirSync(path.join(root, '.airk', 'strategies'));
+    const target = path.join(root, '.airk', 'strategies', 'sample.studio.airk.json'); fs.writeFileSync(target, 'existing');
+    let allowed = true;
+    const collision = load(root, { replace: true, confirm: () => { allowed = false; } });
+    assert.equal((await collision.io.saveStudioInWorkspace(document, 'sample', root, undefined, () => allowed)).saved, false);
+    assert.equal(fs.readFileSync(target, 'utf8'), 'existing');
+});
+
 test('local plan and strategy imports start in .airk folders, are bounded and preserve the selected file', async t => {
     const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'airk-plan-import-')));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -32,7 +81,7 @@ test('local plan and strategy imports start in .airk folders, are bounded and pr
     const strategyFile = path.join(root, 'strategy.json'), { CORE_PACK } = await import('../explorerStrategies');
     fs.writeFileSync(strategyFile, JSON.stringify(CORE_PACK[0].strategy));
     const strategy = load(root, { open: Uri.file(strategyFile) });
-    assert.equal((await strategy.io.importStrategy())?.id, CORE_PACK[0].strategy.id);
+    assert.equal(((await strategy.io.importStrategy()) as import('../explorerStrategies').Strategy)?.id, CORE_PACK[0].strategy.id);
     assert.equal(strategy.events[0], `open ${path.join(root, '.airk', 'strategies')}`);
 });
 

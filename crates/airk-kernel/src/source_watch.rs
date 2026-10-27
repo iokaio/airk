@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded directory notifications. The native adapter isolates filesystem stalls
-//! in a supervised watcher process; this engine never opens index or source bytes.
+//! in a supervised watcher process. Directory planning reads ignore configuration
+//! through ingestion's scope adapter, never source documents or derived indexes.
 use crate::watcher::{comparison_path, deliver, relevant};
 use airk_core::{
     service::{ProjectBinding, ProjectRegistration},
@@ -88,6 +89,7 @@ struct RootTask {
 }
 struct Walk {
     task: RootTask,
+    ignores: airk_ingest::source_scope::DirectoryIgnore,
     pending: Vec<(PathBuf, usize)>,
     queued_bytes: usize,
     cursor: Option<(PathBuf, usize, fs::ReadDir)>,
@@ -388,6 +390,7 @@ impl SourceWatcher {
     }
     fn publish_plan(&mut self, mut plan: Plan) -> Result<Option<Plan>> {
         plan.publishing = true;
+        let now = Instant::now();
         if self.force_rebind {
             plan.published_after = None;
         }
@@ -402,6 +405,20 @@ impl SourceWatcher {
             for path in &removals {
                 let _ = watcher.unwatch(path);
                 self.watched.remove(path);
+                // Ignore configuration outside a watched root can shrink the
+                // admitted directory scope without producing a native event.
+                // Reconcile the existing source receipt just as for additions.
+                let normalized = comparison_path(path);
+                let projects = normalized
+                    .ancestors()
+                    .take(128)
+                    .filter_map(|ancestor| self.root_index.get(ancestor))
+                    .flatten()
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                for project in projects {
+                    Self::dirty(self.entries.get_mut(&project).unwrap(), now);
+                }
             }
             if !removals.is_empty() {
                 return Ok(Some(plan));
@@ -417,7 +434,6 @@ impl SourceWatcher {
                 .take(64)
                 .cloned()
                 .collect::<Vec<_>>();
-            let now = Instant::now();
             for path in &paths {
                 if self.watched.contains(path) {
                     continue;
@@ -601,6 +617,7 @@ impl Plan {
                 let root = task.root.clone();
                 let bytes = root.as_os_str().len();
                 self.walk = Some(Walk {
+                    ignores: airk_ingest::source_scope::DirectoryIgnore::new(&root),
                     task,
                     pending: vec![(root, 0)],
                     queued_bytes: bytes,
@@ -627,6 +644,17 @@ impl Plan {
                         let path = entry.path();
                         if !relevant(&path, &walk.task.root, &walk.task.data) {
                             continue;
+                        }
+                        // This is a potential directory: ignored subtrees do not
+                        // need even child type metadata. Its parent was admitted
+                        // before the matcher can load that parent's rules.
+                        match walk.ignores.ignored(&path) {
+                            Ok(true) => continue,
+                            Ok(false) => (),
+                            Err(_) => {
+                                self.fail(WatchFailure::MetadataUnavailable);
+                                continue;
+                            }
                         }
                         match entry.file_type() {
                             Ok(kind) if kind.is_dir() && !kind.is_symlink() => {

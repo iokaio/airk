@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { OpenSourceResult, PassageView, SearchMode, SearchResultView } from '../explorerContracts';
+import { OpenSourceResult, PassageView, SearchMode, SearchForm } from '../explorerContracts';
 import { RECIPE_SCHEMA, SearchRecipe } from '../explorerStrategies';
 import { HostFailure, request } from './api';
 import { countLine, shortToken } from './format';
@@ -8,16 +8,13 @@ import type { ScreenProps } from './workspaces';
 import { FileBrowser, type LibraryFile } from './fileBrowser';
 import { currentSelection } from './strategyStore';
 import { dialogFocus } from './components';
+import { beginSearch, consumeSearchInput, editSearch, editSearchPage, failSearch, searchPage, useSearchSession } from './searchStore';
 
-interface Form { query: string; mode: SearchMode; pathPrefix: string; limit: number; maxBytes: number; fullChunks: boolean }
-const DEFAULT: Form = { query: '', mode: 'policy', pathPrefix: '', limit: 20, maxBytes: 16384, fullChunks: false };
+type Form = SearchForm;
 
 export function SearchScreen(props: ScreenProps) {
     const status = props.state.status;
-    const [form, setForm] = useState<Form>(DEFAULT);
-    const [result, setResult] = useState<SearchResultView>();
-    const [error, setError] = useState<string>();
-    const [busy, setBusy] = useState(false);
+    const { form, result, error, busy, page } = useSearchSession();
     const [passages, setPassages] = useState<Record<string, PassageView>>({});
     const [opened, setOpened] = useState<Record<string, OpenSourceResult | string>>({});
     const input = useRef<HTMLInputElement>(null);
@@ -30,24 +27,25 @@ export function SearchScreen(props: ScreenProps) {
 
     const run = async (next: Form) => {
         if (!next.query.trim()) { return; }
-        setBusy(true); setError(undefined); setPassages({}); setOpened({});
+        const owner = beginSearch(next); setPassages({}); setOpened({});
         try {
-            setResult(await request<SearchResultView>('search.run', { query: next.query, mode: next.mode, limit: next.limit, maxBytes: next.maxBytes,
-                fullChunks: next.fullChunks, ...(next.pathPrefix.trim() ? { pathPrefix: next.pathPrefix.trim() } : {}) }));
+            await request('search.run', { query: next.query, mode: next.mode, limit: next.limit, maxBytes: next.maxBytes,
+                fullChunks: next.fullChunks, ...(next.pathPrefix.trim() ? { pathPrefix: next.pathPrefix.trim() } : {}) });
         } catch (failure) {
             if (failure instanceof HostFailure && failure.error.code === 'REQUEST_SUPERSEDED') { return; }
-            setResult(undefined); setError(failure instanceof Error ? failure.message : String(failure));
-        } finally { setBusy(false); }
+            failSearch(owner, failure instanceof Error ? failure.message : String(failure));
+        }
     };
 
     useEffect(() => {
+        if (!consumeSearchInput(props.incoming?.serial)) { input.current?.focus(); return; }
         const recipe = props.incoming?.recipe;
         if (recipe) {
             const next: Form = { query: recipe.query, mode: recipe.mode, pathPrefix: recipe.pathPrefix ?? '', limit: recipe.limit, maxBytes: recipe.maxBytes, fullChunks: recipe.fullChunks };
-            setForm(next);
+            editSearch(next);
             // An applied agent draft only fills the form; the user decides whether to run it.
             if (props.incoming?.run !== false) { void run(next); }
-        } else if (props.incoming?.query) { const next = { ...form, query: props.incoming.query }; setForm(next); void run(next); }
+        } else if (props.incoming?.query) { const next = { ...form, query: props.incoming.query }; editSearch(next); void run(next); }
         else { input.current?.focus(); }
     }, [props.incoming?.serial]);
 
@@ -59,7 +57,7 @@ export function SearchScreen(props: ScreenProps) {
         try { const outcome = await request<OpenSourceResult>('source.open', { ref }); setOpened(prior => ({ ...prior, [ref]: outcome })); }
         catch (failure) { setOpened(prior => ({ ...prior, [ref]: failure instanceof Error ? failure.message : String(failure) })); }
     };
-    const field = <K extends keyof Form>(key: K, value: Form[K]) => setForm(prior => ({ ...prior, [key]: value }));
+    const field = <K extends keyof Form>(key: K, value: Form[K]) => editSearch({ ...form, [key]: value });
 
     return (
         <div class="search">
@@ -98,14 +96,21 @@ export function SearchScreen(props: ScreenProps) {
             {error && <p class="callout" role="alert">{error}</p>}
             {result && (
                 <section aria-label="Search results">
+                    <p class="muted">Results for “{result.query}”</p>
+                    {result.publication && status?.publication && result.publication !== status.publication && <p class="callout">These retained results are from an earlier publication. Run Search again to use the current index.</p>}
                     <p class="result-meta">
                         <strong>{countLine(result.returned, result.limit, result.truncated)}</strong>
                         {' · '}mode: {result.appliedMode === 'vector' ? 'semantic' : result.appliedMode}{result.semantic && <> · semantic coverage: {result.semantic}</>}{' · '}publication <span title={result.publication}>{shortToken(result.publication)}</span>
                     </p>
                     {result.warnings.map(warning => <p key={warning} class="muted">{warning}</p>)}
+                    {result.hits.length > 0 && <nav class="actions pagination" aria-label="Search result pages">
+                        <button class="ghost" disabled={page === 0} onClick={() => editSearchPage(page - 1)}>Previous</button>
+                        <span role="status" aria-live="polite" aria-atomic="true">{page * 20 + 1}–{Math.min((page + 1) * 20, result.hits.length)} of {result.hits.length} results · Page {page + 1} of {Math.ceil(result.hits.length / 20)}</span>
+                        <button class="ghost" disabled={(page + 1) * 20 >= result.hits.length} onClick={() => editSearchPage(page + 1)}>Next</button>
+                    </nav>}
                     {!result.hits.length && <p class="callout">No indexed evidence matched. That is not proof the text is absent from unindexed or changed files.</p>}
-                    <ol class="hits">
-                        {result.hits.map(hit => {
+                    <ol class="hits" start={page * 20 + 1}>
+                        {searchPage(result.hits, page).map(hit => {
                             const outcome = opened[hit.ref];
                             const passage = passages[hit.ref];
                             return (

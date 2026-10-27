@@ -14,6 +14,218 @@ fn binding(source: &Path, data: &Path, collection: &str) -> Result<Binding> {
     })
 }
 
+fn directory_plan(root: &Path, data: &Path) -> Result<(ProjectBinding, Plan)> {
+    let project = binding(root, data, "ignore-scope")?.registration.binding;
+    let mut plan = Plan {
+        tasks: VecDeque::from([RootTask {
+            project,
+            index: 0,
+            root: root.into(),
+            data: data.into(),
+        }]),
+        walk: None,
+        wanted: BTreeSet::new(),
+        path_bytes: 0,
+        usage: BTreeMap::new(),
+        failures: BTreeMap::from([(project, vec![None])]),
+        publishing: false,
+        published_after: None,
+    };
+    while !plan.step()? {}
+    Ok((project, plan))
+}
+
+#[test]
+fn directory_plans_share_indexing_ignores_negations_and_reload_changed_rules() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let root = base.join("source");
+    let data = base.join("data");
+    fs::create_dir(&root)?;
+    fs::create_dir(&data)?;
+    let paths = [
+        "artifacts/private",
+        "nested/drop",
+        "nested/keep",
+        "ignored",
+        "custom",
+        "src/cache",
+        "src/live",
+        "parent-ignored",
+        "local-excluded",
+    ];
+    for path in paths {
+        fs::create_dir_all(root.join(path))?;
+        fs::write(
+            root.join(path).join("marker.txt"),
+            b"Original fictional source.\n",
+        )?;
+    }
+    fs::write(
+        root.join(".gitignore"),
+        "artifacts/\nnested/*\n!nested/keep/\n",
+    )?;
+    fs::write(root.join(".ignore"), "ignored/\n")?;
+    fs::write(root.join(".airkignore"), "custom/\n")?;
+    fs::write(root.join("src/.gitignore"), "cache/\n")?;
+    fs::write(base.join(".gitignore"), "source/parent-ignored/\n")?;
+    fs::create_dir_all(root.join(".git/info"))?;
+    fs::write(root.join(".git/info/exclude"), "local-excluded/\n")?;
+    let (project, plan) = directory_plan(&root, &data)?;
+    assert_eq!(plan.failures[&project], vec![None]);
+    assert!(
+        plan.wanted.contains(&root),
+        "the parent must observe ignore-file edits"
+    );
+    for path in paths {
+        let indexed =
+            airk_ingest::read_selected_source(&root, &data, &format!("{path}/marker.txt")).is_ok();
+        assert_eq!(
+            plan.wanted.contains(&root.join(path)),
+            indexed,
+            "watch/index scope differs at {path}"
+        );
+    }
+    assert!(!plan.wanted.contains(&root.join("artifacts")));
+    assert!(plan.wanted.contains(&root.join("nested/keep")));
+    assert!(!plan.wanted.contains(&root.join("nested/drop")));
+
+    fs::write(root.join(".gitignore"), "")?;
+    fs::write(root.join("src/.gitignore"), "")?;
+    fs::write(base.join(".gitignore"), "")?;
+    fs::write(root.join(".git/info/exclude"), "")?;
+    let (_, refreshed) = directory_plan(&root, &data)?;
+    assert!(refreshed.wanted.contains(&root.join("artifacts/private")));
+    assert!(refreshed.wanted.contains(&root.join("nested/drop")));
+    assert!(refreshed.wanted.contains(&root.join("src/cache")));
+    assert!(refreshed.wanted.contains(&root.join("parent-ignored")));
+    assert!(refreshed.wanted.contains(&root.join("local-excluded")));
+    assert!(!refreshed.wanted.contains(&root.join("ignored")));
+    assert!(!refreshed.wanted.contains(&root.join("custom")));
+    assert_eq!(
+        fs::read(root.join("src/live/marker.txt"))?,
+        b"Original fictional source.\n"
+    );
+    Ok(())
+}
+
+#[test]
+fn removing_an_ignored_watch_scope_keeps_its_parent_and_requests_source_reconciliation()
+-> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let root = base.join("source");
+    let data = base.join("data");
+    fs::create_dir_all(root.join("generated"))?;
+    fs::create_dir(&data)?;
+    let (project, initial) = directory_plan(&root, &data)?;
+    let mut watcher = SourceWatcher::new();
+    assert!(watcher.watcher.is_some());
+    watcher.install(binding(&root, &data, "ignore-scope")?)?;
+    watcher.watched = initial.wanted.clone();
+    watcher.force_rebind = false;
+    watcher.entries.get_mut(&project).unwrap().dirty = None;
+    assert!(watcher.publish_plan(initial)?.is_none());
+    assert!(watcher.entries[&project].dirty.is_none());
+
+    fs::write(base.join(".gitignore"), "source/generated/\n")?;
+    let (_, changed) = directory_plan(&root, &data)?;
+    assert!(watcher.publish_plan(changed)?.is_some());
+    assert!(watcher.watched.contains(&root));
+    assert!(!watcher.watched.contains(&root.join("generated")));
+    assert!(watcher.entries[&project].dirty.is_some());
+    Ok(())
+}
+
+#[test]
+fn ignore_configuration_errors_and_foreign_matcher_paths_remain_explicit() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let root = base.join("source");
+    let data = base.join("data");
+    fs::create_dir_all(root.join("included"))?;
+    fs::create_dir(&data)?;
+    fs::write(root.join(".gitignore"), "[z-a]\n")?;
+    let (project, plan) = directory_plan(&root, &data)?;
+    assert_eq!(
+        plan.failures[&project],
+        vec![Some(WatchFailure::MetadataUnavailable)]
+    );
+    let mut ignores = airk_ingest::source_scope::DirectoryIgnore::new(&root);
+    assert!(ignores.ignored(&base.join("foreign")).is_err());
+    assert!(ignores.ignored(&root.join("../foreign")).is_err());
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn ignored_unreadable_directory_is_pruned_but_an_included_denial_remains_a_failure() -> Result<()> {
+    use std::{
+        os::windows::process::CommandExt,
+        process::{Command, Stdio},
+    };
+    struct Restore {
+        path: PathBuf,
+        tool: PathBuf,
+    }
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = Command::new(&self.tool)
+                .arg(&self.path)
+                .args(["/remove:d", "*S-1-1-0"])
+                .creation_flags(0x08000000)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+    let owner = tempfile::tempdir()?;
+    let base = owner.path().canonicalize()?;
+    let root = base.join("source");
+    let data = base.join("data");
+    let locked = root.join("artifacts/locked");
+    fs::create_dir_all(&locked)?;
+    fs::create_dir(&data)?;
+    let restore = Restore {
+        path: locked.clone(),
+        tool: PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/icacls.exe"),
+    };
+    ensure!(
+        Command::new(&restore.tool)
+            .arg(&locked)
+            .args(["/deny", "*S-1-1-0:(RD)"])
+            .creation_flags(0x08000000)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?
+            .success(),
+        "fixture could not deny listing its owned directory"
+    );
+    assert_eq!(
+        fs::read_dir(&locked).err().unwrap().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    fs::write(root.join(".gitignore"), "artifacts/\n")?;
+    let (project, ignored) = directory_plan(&root, &data)?;
+    assert_eq!(ignored.failures[&project], vec![None]);
+    assert_eq!(ignored.wanted, BTreeSet::from([root.clone()]));
+    assert!(!ignored.usage[&project].traversal.unavailable());
+
+    fs::write(root.join(".gitignore"), "")?;
+    let (_, included) = directory_plan(&root, &data)?;
+    assert_eq!(
+        included.failures[&project],
+        vec![Some(WatchFailure::RootUnavailable)]
+    );
+    let unreadable = &included.usage[&project].traversal.unreadable;
+    assert_eq!(unreadable.len(), 1);
+    assert_eq!(unreadable[0].path, locked.to_string_lossy());
+    assert_eq!(unreadable[0].reason, "permission_denied");
+    drop(restore);
+    assert!(fs::read_dir(&locked).is_ok());
+    Ok(())
+}
+
 #[test]
 fn traversal_reports_a_disappeared_subdirectory_and_clears_on_the_next_successful_plan()
 -> Result<()> {
@@ -25,6 +237,7 @@ fn traversal_reports_a_disappeared_subdirectory_and_clears_on_the_next_successfu
     let mut plan = Plan {
         tasks: VecDeque::new(),
         walk: Some(Walk {
+            ignores: airk_ingest::source_scope::DirectoryIgnore::new(&root),
             task: RootTask {
                 project,
                 index: 0,

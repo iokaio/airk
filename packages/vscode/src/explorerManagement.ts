@@ -14,6 +14,7 @@ function scalar(value: unknown): string {
     return 'See details';
 }
 const rows = (values: [string, unknown][]): FactRow[] => values.map(([name, value]) => [name, scalar(value)]);
+const bytes = (value: unknown): number | undefined => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 const observed = (name: string, value: ConsoleObservation): FactRow =>
     [name, `${value.state}${value.code ? ` · ${value.code}` : ''} · checked ${new Date(value.checkedAt).toISOString()}`];
 
@@ -30,6 +31,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         : worker.automatic_start_blocked ? 'Worker startup requires explicit retry' : worker.restarting ? 'Worker restart is pending'
         : matchingWait ? waitLabel(waiting.reason) : 'No matching native wait observation';
     const semantic = obj(snapshot.semantic), discovery = obj(snapshot.discovery), configuration = obj(row.configuration);
+    const storage = obj(snapshot.storage), used = bytes(storage.collection_used_bytes), reserved = bytes(storage.collection_reserved_bytes), limit = bytes(storage.collection_limit_bytes);
     const result = state.configurationResults?.get(binding), resultValue = result && result.job === configuration.id ? result.value : undefined;
     const traversal = obj(watch.traversal);
     const unreadable = Array.isArray(traversal.unreadable) ? traversal.unreadable.slice(0, 8).map(obj) : undefined;
@@ -53,6 +55,20 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
             ['Last real advance (ms ago at sample)', work.last_advance_age_ms], ['Unpaused time without progress (ms)', work.unpaused_idle_ms],
             ['Phase elapsed (ms)', work.phase_elapsed_ms], ['Last job failure code', obj(job.outcome).code]]),
         extra: {
+            storage: {
+                ...(typeof registration.data_root === 'string' ? { root: registration.data_root } : {}),
+                usedBytes: used, reservedBytes: reserved, limitBytes: limit,
+                observedAt: bytes(inspection.observed_unix_ms),
+                availableBytes: used !== undefined && reserved !== undefined && limit !== undefined ? Math.max(0, limit - used - reserved) : undefined,
+                rows: rows([
+                    ['Accounted index bytes', used], ['Reserved bytes', reserved], ['Collection quota (bytes)', limit],
+                    ['Storage-root quota remaining (bytes)', bytes(storage.root_available_bytes)],
+                    ['Physical growth allowance (bytes)', bytes(storage.physical_available_growth_bytes)],
+                    ['Replacement estimate (bytes)', bytes(storage.replacement_estimate_bytes)],
+                    ['Indexed vectors (cached)', snapshot.indexed_vectors], ['Vectors enabled (cached)', snapshot.vectors_enabled],
+                    ['Inspection failure', snapshot.failure],
+                ]),
+            },
             ...(unreadable ? { watchDiagnostics: rows([
                 ['Last directory check', traversalTime && Number.isFinite(traversalTime.getTime()) ? traversalTime.toISOString() : undefined],
                 ['Unreadable directories', unreadable.length || traversal.truncated === true ? 'Observed failures; coverage is incomplete'
@@ -136,6 +152,11 @@ export function managementView(state: ServiceConsoleState): ManagementView {
             ['Pending native lifecycle request', pendingLifecycle.id], ['Native lifecycle phase', pendingLifecycle.phase], ['Pending runtime activation', activation.candidate],
             ['Activation phase', activation.phase], ['Runtime staging error', diagnosis.staging_error], ['Runtime activation error', diagnosis.activation_error],
             ['Last activation outcome', activationResult.outcome]])],
+        runtimeVersions: rows([
+            ['Native CLI (airk)', typeof bootstrap.selectedVersion === 'string' ? `${bootstrap.selectedVersion} · selected payload${bootstrap.payloadVerified === true ? ', verified' : ', verification not observed'}` : undefined],
+            ['Inference helper (airk-embed)', bootstrap.payloadVerified === true && typeof bootstrap.selectedVersion === 'string' ? `${bootstrap.selectedVersion} · verified selected payload; running helper version not observed` : undefined],
+            ['Service (airk)', typeof health.version === 'string' ? `${health.version} · ${state.health.state} health observation${typeof health.process_id === 'number' ? ` · PID ${health.process_id}` : ''}` : undefined],
+        ]),
         resources: [observed('Resources', state.resources), observed('Source work', state.sources), ...rows([['Preset', configuration.preset],
             ['Resident workers / limit', resources.resident_workers === undefined ? undefined : `${scalar(resources.resident_workers)} / ${scalar(resources.resident_limit)}`],
             ['Running jobs', resources.running_jobs], ['Waiting projects', resources.waiting_projects], ['Logical CPUs', resources.logical_cpus],
@@ -156,6 +177,7 @@ export function managementView(state: ServiceConsoleState): ManagementView {
             const event = obj(value); return `${scalar(event.kind)} · ${scalar(event.instance)} · ${scalar(event.project)} · ${scalar(event.observed_unix_ms)}`;
         }),
         historyOmitted: state.historyOmitted,
+        processLogStatus: state.serviceEvents ? observed('Process logs', state.serviceEvents)[1] : 'Not observed; refresh to request recent service events.',
         configurationResultsOmitted: state.configurationResultsOmitted === true,
         ...(state.legacyAvailable ? { legacy: {
             rows: legacyReview ? rows([['Captured review', new Date(legacyReview.checkedAt).toISOString()], ['Saved removal phase', legacyReview.phase], ['Old source', target.root],

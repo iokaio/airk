@@ -26,6 +26,7 @@ export class ExplorerPanel implements vscode.Disposable {
     private readonly listeners: vscode.Disposable[] = [];
     private ready = false;
     private queued: HostMessage[] = [];
+    generation = 0;
 
     constructor(private readonly extensionUri: vscode.Uri, private readonly handlers: {
         message(message: WebviewMessage): void;
@@ -42,6 +43,7 @@ export class ExplorerPanel implements vscode.Disposable {
             localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, 'out')],
         });
         this.panel = panel; this.ready = false;
+        this.generation++;
         panel.iconPath = vscode.Uri.joinPath(this.extensionUri, 'images', 'airk.svg');
         panel.webview.html = explorerHtml(panel.webview, this.extensionUri, randomBytes(24).toString('base64url'));
         this.listeners.push(

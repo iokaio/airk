@@ -17,7 +17,7 @@ type Fields<T extends WebviewMessageType> = Omit<WebviewMessageOf<T>, 'v' | 'typ
 export function request<T = unknown, K extends WebviewMessageType = WebviewMessageType>(type: K, fields: Fields<K>): Promise<T> {
     const requestId = `w${++counter}`;
     if (pending.size >= 64) { return Promise.reject(new HostFailure({ code: 'RATE_LIMITED', message: 'Explorer already has 64 requests waiting.' })); }
-    const uncertain = /^(manage\.(action|command)|planner\.(saveInWorkspace|exportJSON)|strategy\.export|suggestions\.(resolve|applied|discardAll)|handoff\.share|recipes\.(save|delete|export))$/.test(type);
+    const uncertain = /^(manage\.(action|command)|planner\.(saveInWorkspace|exportJSON)|strategy\.export|studio\.save|usage\.action|suggestions\.(resolve|applied|discardAll)|handoff\.share|recipes\.(save|delete|export))$/.test(type);
     const interactive = uncertain || type === 'planner.import' || type === 'strategy.import' || type === 'recipes.import' || type === 'source.open' || type === 'source.choose' || type === 'help.choose';
     return new Promise<T>((resolve, reject) => {
         const fail = (code: 'REQUEST_TIMEOUT' | 'REQUEST_OUTCOME_UNKNOWN' | 'HOST_UNAVAILABLE') => {

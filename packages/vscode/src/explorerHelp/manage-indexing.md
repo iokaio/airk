@@ -19,3 +19,5 @@ Start with representative source formats and the evidence the task needs. Requir
 ## Limits
 
 Inspect a project before configuring it so the request binds its current settings. An uncertain configuration outcome is shown; inspect again before requesting another change.
+
+The executable-version table at the top repeats Management Projects: extension, selected CLI/helper payloads, service, selected-project MCP frontend and index worker. Observation basis and missing values are explicit; payload versions do not establish which helper process is running.

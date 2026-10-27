@@ -3,6 +3,32 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import Module = require('node:module');
 
+test('embedded usage loads and changes windows without creating a panel, and rejects stale actions', async () => {
+    let receive: (message: unknown) => Promise<void> = async () => undefined, dispose = () => {}, valid = true;
+    const rendered: any[] = [], reads: string[][] = [];
+    const stub = { workspace: { isTrusted: true }, window: { createWebviewPanel: () => { throw new Error('An embedded report must not open a panel'); } } };
+    const native = require('../native'), previousRun = native.runText;
+    native.runText = async (_command: string, args: string[]) => { reads.push(args); return JSON.stringify({ report: { collection: 'fixture', calls: 0 } }); };
+    const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
+    loader._load = function (request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
+    try {
+        delete require.cache[require.resolve('../usagePanel')]; const { openUsagePanel } = require('../usagePanel');
+        await openUsagePanel({ command: 'fixture', root: '/source', dataDir: '/data', collection: 'fixture', name: 'Fixture' }, () => valid,
+            async () => { throw new Error('Read-only test must not mutate'); }, {
+                render: (value: unknown) => rendered.push(value), onMessage: (listener: typeof receive) => { receive = listener; return { dispose() {} }; }, onDispose: (listener: typeof dispose) => { dispose = listener; },
+            });
+        assert.equal(rendered.at(-1).days, 30);
+        await receive({ type: 'usage', action: 'days', days: 7 });
+        assert.equal(rendered.at(-1).days, 7); assert.ok(reads.at(-1)!.includes('7'));
+        const before = reads.length;
+        await receive({ type: 'usage', action: 'days', days: 8 }); assert.equal(reads.length, before);
+        valid = false;
+        await assert.rejects(receive({ type: 'usage', action: 'refresh' }), /selection changed/);
+        assert.equal(reads.length, before);
+        dispose();
+    } finally { loader._load = original; native.runText = previousRun; delete require.cache[require.resolve('../usagePanel')]; }
+});
+
 test('usage import binds reviewed bytes and refuses approval after the captured panel becomes stale',async()=>{
     let message:(value:unknown)=>Promise<void>=async()=>undefined,disposed=()=>undefined,valid=true,staleOnApproval=false;
     const writes:string[][]=[],errors:string[]=[],reads:string[][]=[];let continuing:(()=>boolean)|undefined;

@@ -345,6 +345,30 @@ export function clipRecords(records: readonly LedgerRecord[], budget: number): {
 }
 
 export type PromptProfile = 'portable' | 'mcp_aware';
+export const STUDIO_SCHEMA = 'airk.explorer.studio/1';
+export const STUDIO_LIMIT_BYTES = 393216;
+/** Portable inputs only. Evidence must be collected again after loading. */
+export interface StudioDocument {
+    readonly schema: typeof STUDIO_SCHEMA;
+    readonly strategy: Strategy;
+    readonly objective: string;
+    readonly params: Readonly<Record<string, string>>;
+    readonly pathPrefix: string;
+    readonly profile: PromptProfile;
+    readonly editedPrompt?: string;
+}
+export function validateStudio(value: unknown): StudioDocument | undefined {
+    if (!record(value) || value.schema !== STUDIO_SCHEMA || jsonBytes(value) > STUDIO_LIMIT_BYTES
+        || Object.keys(value).some(key => !['schema', 'strategy', 'objective', 'params', 'pathPrefix', 'profile', 'editedPrompt'].includes(key))) { return undefined; }
+    const checked = validateStrategy(value.strategy);
+    if (!checked.ok || typeof value.objective !== 'string' || value.objective.length > 4000
+        || typeof value.pathPrefix !== 'string' || value.pathPrefix.length > 1024 || !safePrefix(value.pathPrefix)
+        || !['portable', 'mcp_aware'].includes(String(value.profile)) || !record(value.params)
+        || Object.entries(value.params).some(([key, text]) => !checked.strategy.params.some(param => param.name === key)
+            || typeof text !== 'string' || text.length > 512 || checked.strategy.params.some(param => param.name === key && param.kind === 'path' && !safePrefix(text as string)))
+        || (value.editedPrompt !== undefined && (typeof value.editedPrompt !== 'string' || value.editedPrompt.length > 262144))) { return undefined; }
+    return value as unknown as StudioDocument;
+}
 export interface PromptInput { readonly strategy: Strategy; readonly objective: string; readonly run?: RunResult; readonly profile: PromptProfile }
 
 const fence = (text: string) => { const ticks = '`'.repeat(Math.max(3, ...[...text.matchAll(/`+/g)].map(match => match[0].length + 1))); return `${ticks}text\n${text}\n${ticks}`; };

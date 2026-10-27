@@ -8,6 +8,16 @@ export function observed(value: number | string | boolean | null | undefined): s
     return value;
 }
 
+/** Binary units for native quota accounting; unsafe or absent counts remain unknown. */
+export function byteSize(value: number | undefined): string {
+    if (value === undefined) { return 'not observed'; }
+    if (!Number.isSafeInteger(value) || value < 0) { return 'unknown'; }
+    const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
+    let size = value, unit = 0;
+    while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
+    return `${size.toLocaleString(undefined, { maximumFractionDigits: unit ? 1 : 0 })} ${units[unit]}`;
+}
+
 export function ago(ms: number | undefined, now = Date.now()): string {
     if (ms === undefined) { return 'not observed'; }
     const seconds = Math.max(0, Math.round((now - ms) / 1000));

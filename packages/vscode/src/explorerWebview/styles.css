@@ -178,6 +178,12 @@ input[type='checkbox'] { accent-color: var(--airk-accent); flex: none; }
 .search-form label.check { flex-direction: row; align-items: center; gap: 0.3rem; }
 .search-form input[type='number'] { width: 5rem; }
 .result-meta { margin: 0 0 0.4rem; }
+.pagination { align-items: center; margin: 0.75rem 0 1rem; }
+.pagination [role='status'] { color: var(--airk-muted); }
+.review-screen > section { margin: 1.5rem 0; }
+.review-screen > .actions { margin-bottom: 1rem; }
+.studio-head .actions { align-items: end; }
+.studio-head .actions label { display: flex; flex-direction: column; gap: 0.25rem; max-width: 100%; }
 .hits { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
 .hit-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
 .hit-head .spacer { flex: 1; }
@@ -225,6 +231,19 @@ button.link.current { background: var(--vscode-list-activeSelectionBackground); 
 @media (max-width: 1100px) { .help { grid-template-columns: 1fr; } .help-index ul { max-height: 15rem; } }
 
 .manage .card { margin-bottom: var(--airk-gap); }
+.storage-location code { display: block; margin: 0.35rem 0 0.8rem; }
+.storage-card .actions, .project-card .project-footer { margin-top: 1rem; }
+.storage-card details, .project-card > details { margin: 0.65rem 0; }
+.legacy-startup > summary { font-size: 1.05rem; font-weight: 650; }
+.usage-report fieldset { border: 0; margin: 0; padding: 0; min-inline-size: 0; }
+.usage-report .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: 0.75rem; }
+.usage-report .metric { display: flex; flex-direction: column; gap: 0.4rem; padding: 1rem; border: 1px solid var(--airk-border); border-radius: var(--airk-radius); background: var(--airk-surface); }
+.usage-report .metric strong { font-size: 1.5rem; } .usage-report .metric span, .usage-report .note { color: var(--airk-muted); }
+.usage-report nav { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin: 0.8rem 0; }
+.usage-report section, .usage-report details { overflow-x: auto; margin: 1.4rem 0; }
+.usage-report table { border-collapse: collapse; width: 100%; }
+.usage-report th, .usage-report td { text-align: left; padding: 0.65rem; border-bottom: 1px solid var(--airk-border); }
+.usage-report button { margin: 0.3rem; }
 .manage h2 .muted { font-weight: normal; font-size: 0.85em; }
 ol.log { margin: 0; padding-left: 1.2rem; max-height: 16rem; overflow: auto; }
 

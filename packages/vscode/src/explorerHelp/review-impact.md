@@ -12,6 +12,8 @@ Review › Impact builds a checklist from the declarations AIRK indexed in the c
 
 This is a checklist, not a verdict: references are textual occurrences, not resolved callers, and declarations come from the indexed version of each file.
 
+Test-directory discovery uses native inventory pages of at most 100 files. A changed, present publication identity restarts the entire report once within a shared 90-second budget. Results from different attempts are never combined. If the index keeps changing, wait for indexing to settle and refresh. Missing identity, integrity errors and other tool failures remain explicit; they are not treated as ordinary publication churn.
+
 ## Steps
 
 1. Open Review › Impact after Review › Changes shows the files you expect.

@@ -7,8 +7,9 @@ import type { LiveCheck, OpenSourceResult, WorkspaceFileKind, WorkspaceFilesView
 import { caseFold, displayPath, inside, liveCheck, sourceFile } from './explorerSource';
 import { explorerError } from './explorerErrors';
 import { EvidenceFailure } from './explorerEvidence';
-import { PLAN_LIMIT_BYTES, safePrefix, SearchRecipe, Strategy, STRATEGY_LIMIT_BYTES, validateRecipe, validateStrategy } from './explorerStrategies';
+import { PLAN_LIMIT_BYTES, safePrefix, SearchRecipe, Strategy, validateRecipe, validateStrategy } from './explorerStrategies';
 import { ImportedPlan, parsePlanFile } from './explorerPlanFiles';
+import { StudioDocument, STUDIO_LIMIT_BYTES, STUDIO_SCHEMA, validateStudio } from './explorerStrategies';
 
 const MESSAGES: Record<LiveCheck, string> = {
     matches_index: 'The saved file matches the indexed bytes.',
@@ -61,14 +62,23 @@ export async function exportStrategy(strategy: Strategy): Promise<{ saved: boole
 }
 
 /** Import one strategy file; it is validated exactly like a template before Studio sees it. */
-export async function importStrategy(): Promise<Strategy | undefined> {
+export async function importStrategy(): Promise<Strategy | StudioDocument | undefined> {
     const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
     const [source] = await vscode.window.showOpenDialog({ title: 'Import AIRK strategy', canSelectMany: false, filters: STRATEGY_FILTERS,
         ...(folder ? { defaultUri: vscode.Uri.joinPath(folder, '.airk', 'strategies') } : {}) }) ?? [];
     if (!source) { return undefined; }
     let value: unknown;
-    try { value = JSON.parse(await readImport(source, STRATEGY_LIMIT_BYTES * 2)); }
+    try { value = JSON.parse(await readImport(source, STUDIO_LIMIT_BYTES * 2)); }
     catch { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', 'The strategy file is not valid JSON.')); }
+    return parseStrategyDocument(value);
+}
+
+function parseStrategyDocument(value: unknown): Strategy | StudioDocument {
+    if ((value as { schema?: string } | null)?.schema === STUDIO_SCHEMA) {
+        const document = validateStudio(value);
+        if (!document) { throw new Error('Invalid AIRK Studio document.'); }
+        return document;
+    }
     const checked = validateStrategy(value);
     if (!checked.ok) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', checked.errors.slice(0, 5).join('; '))); }
     return checked.strategy;
@@ -181,7 +191,7 @@ export async function listWorkspaceFiles(kind: WorkspaceFileKind, directory: str
     return { kind, workspace: target.workspace, roots: target.roots, base: fileBase(kind), directory, entries, ...(more !== undefined ? { more } : {}), missing };
 }
 
-export async function loadWorkspaceFile(kind: WorkspaceFileKind, workspace: string, relative: string): Promise<ImportedPlan | Strategy | SearchRecipe> {
+export async function loadWorkspaceFile(kind: WorkspaceFileKind, workspace: string, relative: string): Promise<ImportedPlan | Strategy | StudioDocument | SearchRecipe> {
     relativeFile(relative);
     const target = libraryTarget(kind, workspace, relative);
     if (!(kind === 'plans' ? /\.(md|json)$/i : /\.json$/i).test(relative)) { throw new Error('Choose a supported plan, strategy or recipe file.'); }
@@ -189,14 +199,12 @@ export async function loadWorkspaceFile(kind: WorkspaceFileKind, workspace: stri
         const stat = fs.lstatSync(target.uri.fsPath);
         if (!stat.isFile() || stat.nlink !== 1) { throw new Error('Choose a regular, unlinked file.'); }
     } else { await checkRemoteLibrary(target.root, kind, relative, false); }
-    const text = await readImport(target.uri, kind === 'plans' ? PLAN_LIMIT_BYTES * 2 : kind === 'strategies' ? STRATEGY_LIMIT_BYTES * 2 : 8192);
+    const text = await readImport(target.uri, kind === 'plans' ? PLAN_LIMIT_BYTES * 2 : kind === 'strategies' ? STUDIO_LIMIT_BYTES * 2 : 8192);
     libraryTarget(kind, workspace, relative); // Recheck trust/root membership after a provider read.
     if (kind === 'plans') { return parsePlanFile(text); }
     const value = JSON.parse(text);
     if (kind === 'recipes') { const recipe = validateRecipe(value); if (!recipe) { throw new Error('Invalid AIRK search recipe.'); } return recipe; }
-    const checked = validateStrategy(value);
-    if (!checked.ok) { throw new Error(checked.errors.slice(0, 5).join('; ')); }
-    return checked.strategy;
+    return parseStrategyDocument(value);
 }
 
 export async function importRecipe(): Promise<SearchRecipe | undefined> {
@@ -230,17 +238,17 @@ export function plannerDirectory(): string {
  * replaced only after confirmation, and the written bytes are read back and compared.
  */
 export async function savePlanInWorkspace(markdown: string, fileName: string, authorized: () => boolean = () => vscode.workspace.isTrusted !== false,
-    options: { title: string; filters: Record<string, string[]>; directory?: string } = { title: 'Save AIRK plan', filters: { Markdown: ['md'] } }): Promise<PlanSaveResult> {
+    options: { title: string; filters: Record<string, string[]>; directory?: string; direct?: { root: string; expectedHash?: string } } = { title: 'Save AIRK plan', filters: { Markdown: ['md'] } }): Promise<PlanSaveResult> {
     const folders = (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file' || folder.uri.scheme === 'vscode-remote');
     if (!folders.length) { return { saved: false, reason: 'Open a workspace folder to save plans in it.' }; }
-    const folder = folders.length === 1 ? folders[0] : (await vscode.window.showQuickPick(folders.map(entry => ({ label: entry.name, description: entry.uri.fsPath, folder: entry })),
+    const folder = options.direct ? folders.find(entry => caseFold(path.resolve(entry.uri.fsPath)) === caseFold(path.resolve(options.direct!.root))) : folders.length === 1 ? folders[0] : (await vscode.window.showQuickPick(folders.map(entry => ({ label: entry.name, description: entry.uri.fsPath, folder: entry })),
         { title: 'Save the AIRK plan in which workspace folder?' }))?.folder;
     if (!folder) { return { saved: false, reason: 'No workspace folder was chosen.' }; }
     if (folder.uri.scheme !== 'file') { return { saved: false, reason: 'Guarded plan saving requires a local filesystem. Use Open as draft and the editor Save command for remote folders.' }; }
     const originalRoot = fs.realpathSync.native(folder.uri.fsPath);
     const rootIdentity = fs.statSync(originalRoot, { bigint: true });
     const defaultUri = vscode.Uri.joinPath(folder.uri, ...(options.directory ?? plannerDirectory()).split('/'), fileName);
-    const target = await vscode.window.showSaveDialog({ title: options.title, filters: options.filters, defaultUri });
+    const target = options.direct ? defaultUri : await vscode.window.showSaveDialog({ title: options.title, filters: options.filters, defaultUri });
     if (!target) { return { saved: false, reason: 'Save was canceled; nothing was written.' }; }
     if (!authorized()) { return { saved: false, reason: 'Workspace authorization changed; nothing was written.' }; }
     if (target.scheme !== folder.uri.scheme || target.authority !== folder.uri.authority) { return { saved: false, reason: 'Plans can only be saved inside the chosen workspace folder.' }; }
@@ -276,8 +284,11 @@ export async function savePlanInWorkspace(markdown: string, fileName: string, au
     };
     parents();
     const before = snapshot();
-    if (before !== undefined) {
-        const choice = await vscode.window.showWarningMessage(`Replace ${shown}?`, { modal: true, detail: 'The existing file will be overwritten with this plan.' }, 'Replace');
+    if (options.direct?.expectedHash && before?.split(':').pop() !== options.direct.expectedHash) {
+        return { saved: false, reason: 'The saved Studio file changed or was removed. Load it again or choose a new save name; nothing was written.' };
+    }
+    if (before !== undefined && !options.direct?.expectedHash) {
+        const choice = await vscode.window.showWarningMessage(`Replace ${shown}?`, { modal: true, detail: options.direct ? 'The existing file will be overwritten with this Studio draft.' : 'The existing file will be overwritten with this plan.' }, 'Replace');
         if (choice !== 'Replace') { return { saved: false, reason: 'The existing file was kept; nothing was written.' }; }
     }
     const bytes = new TextEncoder().encode(markdown);
@@ -301,6 +312,16 @@ export async function savePlanInWorkspace(markdown: string, fileName: string, au
     const hash = createHash('sha256').update(bytes).digest('hex');
     const readBack = createHash('sha256').update(await vscode.workspace.fs.readFile(target)).digest('hex');
     if (readBack !== hash) { return { saved: false, reason: 'The saved file does not match the plan that was written; check the file before handing it off.' }; }
-    await vscode.window.showTextDocument(target, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+    if (!options.direct) { await vscode.window.showTextDocument(target, { viewColumn: vscode.ViewColumn.Beside, preview: false }); }
     return { saved: true, path: shown, hash };
+}
+
+/** Explicit Studio Save targets only the selected project's fixed local library. */
+export async function saveStudioInWorkspace(document: StudioDocument, name: string, root: string, expectedHash: string | undefined, authorized: () => boolean): Promise<PlanSaveResult> {
+    if (!validateStudio(document) || !/^[a-z][a-z0-9-]{0,63}$/.test(name) || /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/.test(name)) { throw new Error('Choose a save name starting with a letter, using letters, numbers and hyphens (up to 64 characters).'); }
+    if (!authorized()) { return { saved: false, reason: 'Workspace authorization changed; nothing was written.' }; }
+    const saved = { ...document, strategy: { ...document.strategy, id: `user/${name}` } };
+    if (!validateStudio(saved)) { throw new Error('The saved Studio document exceeds its schema or size limits.'); }
+    return savePlanInWorkspace(JSON.stringify(saved, null, 2) + '\n', `${name}.studio.airk.json`, authorized,
+        { title: 'Save AIRK Studio draft', filters: STRATEGY_FILTERS, directory: '.airk/strategies', direct: { root, expectedHash } });
 }

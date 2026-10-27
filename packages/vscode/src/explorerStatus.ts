@@ -14,6 +14,12 @@ export function statusSummary(payload: Value, observedAt = Date.now()): StatusSu
     const indexState: IndexState = payload.index_state === 'available' ? 'available' : payload.index_state === 'unavailable' ? 'unavailable' : 'unknown';
     const publication = obj(payload.publication), semantic = obj(payload.semantic_readiness), freshness = obj(payload.freshness);
     const runtime = obj(payload.runtime), work = obj(payload.work), progress = obj(work.progress), indexError = obj(payload.index_error);
+    const runtimeVersions = ([['MCP frontend (airk)', 'mcp_frontend'], ['Index worker (airk)', 'index_worker']] as const).map(([label, key]): readonly [string, string] => {
+        const observed = obj(runtime[key]), process = obj(observed.process);
+        const version = typeof process.version === 'string' ? process.version.slice(0, 64) : 'not observed';
+        const basis = typeof observed.basis === 'string' ? observed.basis.slice(0, 80) : 'no process observation';
+        return [label, `${version} · ${basis}${count(process.process_id) !== undefined ? ` · PID ${process.process_id}` : ''}`];
+    });
     const summary: StatusSummary = {
         indexState,
         semantic: pick(semantic.state, SEMANTIC, 'unknown'),
@@ -29,6 +35,7 @@ export function statusSummary(payload: Value, observedAt = Date.now()): StatusSu
         ...(typeof payload.vectors_enabled === 'boolean' ? { vectorsEnabled: payload.vectors_enabled } : {}),
         ...(typeof payload.local_model_ready === 'boolean' ? { localModelReady: payload.local_model_ready } : {}),
         ...('versions_match' in runtime ? { versionsMatch: typeof runtime.versions_match === 'boolean' ? runtime.versions_match : null } : {}),
+        ...(runtime.mcp_frontend || runtime.index_worker ? { runtimeVersions } : {}),
         ...(typeof progress.phase === 'string' ? { workPhase: progress.phase.slice(0, 64) } : {}),
         ...(typeof work.project_paused === 'boolean' ? { workPaused: work.project_paused } : {}),
     };

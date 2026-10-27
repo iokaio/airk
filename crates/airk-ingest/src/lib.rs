@@ -2,7 +2,6 @@
 //! Native code/document extraction and UTF-8 fallback, with explicit exclusions.
 use airk_core::{Artifact, Chunk, DocumentLocation, EXTRACTOR_VERSION, Snapshot};
 use anyhow::{Context, Result, ensure};
-use ignore::WalkBuilder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 #[cfg(test)]
@@ -43,6 +42,7 @@ mod repository_syntax;
 mod scss;
 mod semantic_projection;
 mod source_read;
+pub mod source_scope;
 mod specialist_business;
 mod specialist_gpu;
 mod specialist_hardware;
@@ -1199,11 +1199,7 @@ fn discovery_selected(root: &Path, data_dir: &Path, selected: Option<Vec<String>
             .map(|path| root.join(path))
             .collect::<Vec<_>>()
     });
-    WalkBuilder::new(root)
-        .require_git(false)
-        .hidden(false)
-        .follow_links(false)
-        .add_custom_ignore_filename(".airkignore")
+    source_scope::builder(root)
         .sort_by_file_path(move |left, right| {
             let rank = |path: &Path| {
                 priority::agent_path_priority(

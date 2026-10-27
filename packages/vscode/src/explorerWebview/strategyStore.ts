@@ -2,7 +2,7 @@
 // Studio and Planner drafts shared by the Strategies tabs. They live in webview state, so
 // switching tabs or hiding the panel keeps them; nothing is written to the workspace from here.
 import { useEffect, useState } from 'preact/hooks';
-import type { Plan, PromptProfile, RunResult, Strategy } from '../explorerStrategies';
+import { STUDIO_SCHEMA, type StudioDocument, type Plan, type PromptProfile, type RunResult, type Strategy } from '../explorerStrategies';
 import { notify, savedState, saveState } from './api';
 
 export interface StudioDraft {
@@ -19,6 +19,8 @@ export interface StudioDraft {
     readonly promptStale?: boolean;
     /** Increments on every edit; agents name it as expected_target_revision. */
     readonly revision?: number;
+    readonly saveName?: string;
+    readonly saved?: { readonly name: string; readonly path: string; readonly hash: string; readonly content: string };
 }
 export interface PlannerDraft {
     readonly plan?: Plan;
@@ -49,10 +51,15 @@ export function selectDraftProject(project: string | undefined, epoch = 0): void
     const next = `${project ?? ''}:${epoch}`;
     if (selection === next) { return; }
     selection = next;
-    commit({ studio: { ...current.studio, run: undefined, prompt: current.studio.promptEdited ? current.studio.prompt : undefined,
+    commit({ studio: { ...current.studio, saved: undefined, run: undefined, prompt: current.studio.promptEdited ? current.studio.prompt : undefined,
         promptStale: current.studio.promptEdited }, planner: { ...current.planner, saved: undefined, revision: current.planner.revision + 1 } });
 }
 const inputs = (draft: StudioDraft) => JSON.stringify([draft.strategy, draft.params, draft.pathPrefix, draft.objective]);
+export function studioDocument(draft: StudioDraft): StudioDocument {
+    return { schema: STUDIO_SCHEMA, strategy: draft.strategy!, objective: draft.objective,
+        params: Object.fromEntries(draft.strategy!.params.map(param => [param.name, draft.params[param.name] ?? ''])),
+        pathPrefix: draft.pathPrefix, profile: draft.profile, ...(draft.promptEdited ? { editedPrompt: draft.prompt ?? '' } : {}) };
+}
 
 /** Tell the host the current draft revisions so agent drafts can detect a changed target. */
 export function reportRevisions(): void {

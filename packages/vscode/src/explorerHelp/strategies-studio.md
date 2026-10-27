@@ -22,7 +22,15 @@ Steps come from a closed operator catalog: AIRK retrieval tools, a saved-file ha
 6. Edit the prompt if needed, then **Copy prompt**. **Rebuild** asks before discarding edits.
 7. Or choose **Share snapshot with agent**, review the confirmation and give the ten-minute token to the agent for airk_explorer_handoff_get. The full snapshot is capped at 24 KiB; edits, binding changes and observed evidence changes revoke the token. Read Share a reviewed snapshot for the full contract.
 
-## Import and export
+## Save, import and export
+
+Choose a **Save name**, then **Save**. This writes the complete Studio inputs to `.airk/strategies/NAME.studio.airk.json` in the selected project's local workspace folder, without a folder picker. It includes the strategy, objective, parameter values, path scope, prompt profile and any manually edited prompt. The saved definition uses `user/NAME`; `airk.core/bug@1.0.0` is a built-in template identity, not an automatic save. Accepting an agent suggestion does not save a file.
+
+The saved/unsaved indicator tracks these inputs. Save again to update that file; change the name to save a copy. An existing name requires replacement confirmation the first time. External changes, unsaved editor edits, redirected paths and changed workspace authorization prevent overwriting. Guarded Save requires a local workspace filesystem on the extension host; remote providers can still use Export for definitions.
+
+Load a saved Studio document from **Browse saved strategies** or **Import…** to restore its inputs. Evidence runs and generated prompts are not saved; collect evidence again. A restored manually edited prompt is marked stale for review. Old strategy-definition files remain supported.
+
+## Definition export
 
 **Export…** saves the strategy as a .strategy.airk.json file through the save dialog. **Import…** validates a file exactly like a template before Studio shows it.
 
@@ -32,7 +40,7 @@ The import picker starts in .airk/strategies and can read another explicit file 
 
 The token count is an estimate. Review the prompt before sharing it: repositories can contain confidential code or instructions planted in source comments.
 
-Changing the strategy, objective, parameters or scope invalidates its run and generated prompt. A delayed result for an older draft or project is discarded. Edited prompts are retained with a stale warning and must be rebuilt before export. Evidence and schema budgets count serialized UTF-8 bytes, including metadata and escaping. Failed parallel steps settle their started reads before the run can finish.
+Changing the strategy, objective, parameters or scope invalidates its run and generated prompt. A delayed result for an older draft or project is discarded. Edited prompts are retained with a stale warning; review or rebuild them before handing them to an agent. Evidence and schema budgets count serialized UTF-8 bytes, including metadata and escaping. Failed parallel steps settle their started reads before the run can finish.
 
 ## Saved-strategy library
 

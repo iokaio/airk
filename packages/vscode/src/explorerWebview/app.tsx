@@ -14,6 +14,7 @@ import { reportRevisions, selectDraftProject } from './strategyStore';
 import { WorkspaceView } from './workspaces';
 import type { NavigationFilters } from '../explorerDrafts';
 import { friendlyError } from '../explorerErrors';
+import { acceptSearchSession, selectSearchProject } from './searchStore';
 
 interface Persisted { route?: string; lens?: string; themed?: boolean }
 
@@ -39,10 +40,12 @@ export function App() {
                 if (owner.current !== undefined && owner.current !== nextOwner) { setInspectRef(undefined); setPublications([]); setIncoming(undefined); setNavigation(undefined); }
                 owner.current = nextOwner;
                 selectDraftProject(message.state.selectedProject, message.state.selectionEpoch);
+                selectSearchProject(message.state.selectedProject, message.state.selectionEpoch);
                 setState(message.state);
                 const token = message.state.status?.publication;
                 if (token) { setPublications(prior => prior.some(entry => entry.token === token) ? prior : [{ token, observedAt: Date.now() }, ...prior].slice(0, 20)); }
             }
+            else if (message.type === 'search.session') { acceptSearchSession(message.session); }
             else if (message.type === 'navigate') { const next = parseRoute(message.route); if (next) { setRoute(next); } }
             else if (message.type === 'inbox') { setInbox(true); }
             else if (message.type === 'search') { setRoute({ workspace: 'search', tab: 'query' }); setIncoming(prior => ({ query: message.query, serial: (prior?.serial ?? 0) + 1 })); }

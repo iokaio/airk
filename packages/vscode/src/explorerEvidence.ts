@@ -17,9 +17,14 @@ export class EvidenceFailure extends Error {
     constructor(readonly error: ExplorerError) { super(error.message); }
 }
 export interface ToolResult { readonly payload: Record<string, unknown>; readonly publication?: string }
+/** A changed, present identity is retryable at report scope; missing identity is not. */
+export class PublicationChanged extends EvidenceFailure {
+    constructor() { super(explorerError('EVIDENCE_MISMATCH', 'The index changed during this report; refresh it.')); }
+}
 /** One report must never silently combine different publications. Missing identity fails closed. */
 export function samePublication(expected: string | undefined, result: ToolResult): string {
-    if (!result.publication || expected && result.publication !== expected) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'The index changed during this report; refresh it.')); }
+    if (!result.publication) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'AIRK returned no publication identity; this report cannot be verified.')); }
+    if (expected && result.publication !== expected) { throw new PublicationChanged(); }
     return result.publication;
 }
 export function absentFromIndex(payload: Record<string, unknown>): boolean {

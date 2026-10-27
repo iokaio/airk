@@ -8,7 +8,8 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import { FactHandles } from '../explorerFacts';
 import { RefRegistry } from '../explorerSearch';
-import { EvidenceClient } from '../explorerEvidence';
+import { EvidenceClient, EvidenceFailure } from '../explorerEvidence';
+import { explorerError } from '../explorerErrors';
 import { NativeServiceFixture } from './nativeServiceFixture';
 
 const uri = (fsPath: string) => ({ fsPath });
@@ -23,6 +24,103 @@ function load(repositories: unknown[], setting?: string) {
     try { return require('../explorerReview') as typeof import('../explorerReview'); } finally { loader._load = original; }
 }
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+
+test('Changes pages cover hundreds of files without duplicates and reject changed lists/publications', async () => {
+    const root = path.resolve('review-paged');
+    const repository = { rootUri: uri(root), state: { indexChanges: [], mergeChanges: [], workingTreeChanges:
+        Array.from({ length: 123 }, (_, at) => ({ uri: uri(path.join(root, `file-${String(at).padStart(3, '0')}.ts`)), status: 6 })) } };
+    const review = load([repository]); let calls = 0, publication = 'p1';
+    const context = { root, project: 'ab'.repeat(32), handles: new FactHandles(new RefRegistry()), session: { call: async () => {
+        calls++; return { publication, payload: { read: { status: 'unknown', reason: 'path is absent from the current index' } } };
+    } } as any };
+    const first = await review.reviewChanges(context); assert.equal(calls, 50); assert.equal(first.total, 123);
+    const second = await review.reviewChanges(context, { offset: 50, snapshot: first.snapshot, publication: first.publication });
+    const third = await review.reviewChanges(context, { offset: 100, snapshot: first.snapshot, publication: first.publication });
+    assert.deepEqual([first.files.length, second.files.length, third.files.length], [50, 50, 23]);
+    assert.equal(new Set([...first.files, ...second.files, ...third.files].map(file => file.path)).size, 123);
+    assert.equal(third.truncated, false); assert.equal(calls, 123);
+    const previous = await review.reviewChanges(context, { offset: 50, snapshot: first.snapshot, publication: 'p1' });
+    assert.deepEqual(previous.files, second.files);
+    publication = 'p2';
+    await assert.rejects(review.reviewChanges(context, { offset: 50, snapshot: first.snapshot, publication: 'p1' }), /index changed/);
+    const beforePrevious = calls;
+    await assert.rejects(review.reviewChanges(context, { offset: 0, snapshot: first.snapshot, publication: 'p1' }), /index changed/);
+    assert.equal(calls, beforePrevious + 1, 'returning to the first page retains the original publication without a futile report restart');
+    repository.state.workingTreeChanges.pop(); const before = calls;
+    await assert.rejects(review.reviewChanges(context, { offset: 50, snapshot: first.snapshot }), /Git change list changed/);
+    await assert.rejects(review.reviewChanges(context, { offset: 50 }), /Git change list changed/);
+    assert.equal(calls, before, 'invalid continuation does not read evidence');
+});
+
+test('Impact and Tests inventory reads honor native page bounds and follow cursors', async () => {
+    const root = path.resolve('review-inventory');
+    const review = load([{ rootUri: uri(root), state: { indexChanges: [], mergeChanges: [], workingTreeChanges: [{ uri: uri(path.join(root, 'src/main.ts')), status: 5 }] } }]);
+    const inventory: any[] = [];
+    const context = { root, project: 'ab'.repeat(32), handles: new FactHandles(new RefRegistry()), session: { call: async (tool: string, args: any) => {
+        if (tool === 'airk_list_files') {
+            assert.equal(args.limit, 100, 'the native maximum is 100 per page'); inventory.push(args);
+            return { publication: 'p', payload: args.cursor ? { paths: ['tests/last.test.ts'] } : { paths: Array.from({ length: 100 }, (_, at) => `src/${at}.ts`), cursor: 'next' } };
+        }
+        if (tool === 'airk_symbols') { return { publication: 'p', payload: { items: [{ kind: 'function', name: 'renew', citation: { path: 'src/main.ts', start_line: 1, end_line: 1, content_hash: hash('x') } }] } }; }
+        assert.equal(tool, 'airk_references'); return { publication: 'p', payload: { evidence: { hits: [] } } };
+    } } as any };
+    const impact = await review.reviewImpact(context), tests = await review.reviewTests(context);
+    assert.equal(inventory.length, 4); assert.equal(inventory[1].cursor, 'next'); assert.equal(inventory[3].cursor, 'next');
+    assert.ok(impact.notes.some(note => note.includes('tests/'))); assert.equal(tests.analysis, 'complete');
+});
+
+test('Tests restarts one changing report and preserves changed test files when indexed analysis fails', async () => {
+    const root = path.resolve('review-restart');
+    const review = load([{ rootUri: uri(root), state: { indexChanges: [], mergeChanges: [], workingTreeChanges:
+        ['src/main.ts', 'tests/changed.test.ts'].map(file => ({ uri: uri(path.join(root, file)), status: 5 })) } }]);
+    let attempt = 0;
+    const context = { root, project: 'ab'.repeat(32), handles: new FactHandles(new RefRegistry()), session: { call: async (tool: string, args: any) => {
+        if (tool === 'airk_symbols') {
+            if (args.path_prefix === 'src/main.ts') { attempt++; }
+            return { publication: attempt === 1 ? 'p1' : 'p2', payload: { items: args.path_prefix === 'src/main.ts'
+                ? [{ kind: 'function', name: 'renew', citation: { path: 'src/main.ts', start_line: 1, end_line: 1, content_hash: hash('x') } }] : [] } };
+        }
+        return { publication: 'p2', payload: { evidence: { hits: [{ citation: { path: 'tests/other.test.ts', start_line: 8, end_line: 8, content_hash: hash('test') }, text: 'renew()' }] } } };
+    } } as any };
+    const result = await review.reviewTests(context);
+    assert.equal(attempt, 2); assert.equal(result.publication, 'p2'); assert.ok(result.notes[0].includes('restarted'));
+    assert.ok(result.candidates.some(item => item.reason === 'changed_test_file')); assert.ok(result.candidates.some(item => item.reason === 'identifier_reference'));
+    let failures = 0;
+    context.session = { call: async () => { failures++; throw new Error('retained evidence failed authentication'); } } as any;
+    const failed = await review.reviewTests(context);
+    assert.equal(failures, 1, 'integrity errors are not replayed'); assert.equal(failed.analysis, 'unavailable'); assert.equal(failed.declarations, null);
+    assert.match(failed.analysisError!, /failed authentication/); assert.equal(failed.publication, undefined);
+    assert.deepEqual(failed.candidates.map(item => [item.path, item.reason]), [['tests/changed.test.ts', 'changed_test_file']]);
+    context.session = { call: async () => { failures++; return { payload: { items: [] } }; } } as any;
+    const missing = await review.reviewTests(context); assert.equal(failures, 2);
+    assert.equal(missing.analysis, 'unavailable'); assert.match(missing.analysisError!, /no publication identity/);
+});
+
+test('the report deadline stops further reads instead of starting another full attempt', async t => {
+    const root = path.resolve('review-deadline');
+    const review = load([{ rootUri: uri(root), state: { indexChanges: [], mergeChanges: [], workingTreeChanges:
+        ['src/main.ts', 'tests/main.test.ts'].map(file => ({ uri: uri(path.join(root, file)), status: 5 })) } }]);
+    let now = 0, calls = 0;
+    t.mock.method(performance, 'now', () => now);
+    const result = await review.reviewTests({ root, project: 'ab'.repeat(32), handles: new FactHandles(new RefRegistry()), session: { call: async (_tool: string, _args: unknown, options: any) => {
+        calls++; assert.ok(options.timeout <= 30000); now = 90001;
+        return { publication: 'p', payload: { items: [] } };
+    } } as any });
+    assert.equal(calls, 1); assert.equal(result.analysis, 'unavailable'); assert.match(result.analysisError!, /time budget/);
+    assert.equal(result.candidates[0].path, 'tests/main.test.ts');
+});
+
+test('Tests preserves trust and binding refusals instead of falling back to Git', async () => {
+    const root = path.resolve('review-refused');
+    const review = load([{ rootUri: uri(root), state: { indexChanges: [], mergeChanges: [], workingTreeChanges: [{ uri: uri(path.join(root, 'src/main.ts')), status: 5 }] } }]);
+    for (const code of ['WORKSPACE_UNTRUSTED', 'STALE_BINDING', 'NO_PROJECT', 'REQUEST_SUPERSEDED'] as const) {
+        let calls = 0;
+        const refusal = new EvidenceFailure(explorerError(code));
+        await assert.rejects(review.reviewTests({ root, project: 'ab'.repeat(32), handles: new FactHandles(new RefRegistry()),
+            session: { call: async () => { calls++; throw refusal; } } as any }), error => error === refusal);
+        assert.equal(calls, 1);
+    }
+});
 
 test('Review joins the editor\'s Git changes with indexed records and live hashes, inside the project root only', async t => {
     const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'airk-review-')));
@@ -47,7 +145,7 @@ test('Review joins the editor\'s Git changes with indexed records and live hashe
             return { publication: 'airk-r1:p:1', payload: args.path_prefix === 'src/session.ts'
                 ? { items: [{ kind: 'function', name: 'renew', citation: { path: 'src/session.ts', start_line: 1, end_line: 1, content_hash: hash('x') } }] } : { items: [] } };
         }
-        if (tool === 'airk_list_files') { return { publication: 'airk-r1:p:1', payload: { paths: ['test/session.test.ts'] } }; }
+        if (tool === 'airk_list_files') { assert.ok(args.limit >= 1 && args.limit <= 100); return { publication: 'airk-r1:p:1', payload: { paths: ['test/session.test.ts'] } }; }
         assert.equal(tool, 'airk_references');
         return { publication: 'airk-r1:p:1', payload: { evidence: { hits: [
             { citation: { path: 'src/auth.ts', start_line: 4, end_line: 4, content_hash: hash('a') }, text: 'renew()' },
@@ -148,8 +246,11 @@ test('Review preserves failed lookups and refuses mixed declarations/reference p
     await assert.rejects(review.reviewChanges({ ...base, session: { call: async () => { throw new Error('integrity failed'); } } as any }), /integrity/);
     const session = { call: async (tool: string) => tool === 'airk_list_files' ? { publication: 'p1', payload: { paths: ['test/a.test.ts'] } } : tool === 'airk_symbols' ? { publication: 'p1', payload: { items: [{ kind: 'function', name: 'changed', citation: { path: 'a.ts', start_line: 1, end_line: 1, content_hash: hash('a') } }] } }
         : { publication: 'p2', payload: { evidence: { hits: [] } } } } as any;
-    await assert.rejects(review.reviewImpact({ ...base, session }), /index changed/);
-    await assert.rejects(review.reviewTests({ ...base, session }), /index changed/);
+    await assert.rejects(review.reviewImpact({ ...base, session }), /index is still changing after a bounded report restart/);
+    const unavailable = await review.reviewTests({ ...base, session });
+    assert.equal(unavailable.analysis, 'unavailable'); assert.equal(unavailable.declarations, null);
+    assert.match(unavailable.analysisError!, /index is still changing after a bounded report restart/);
+    assert.deepEqual(unavailable.candidates, [], 'mixed indexed references are never shown');
 });
 
 test('without Git or a repository Review says so, and the test-path setting falls back when invalid', async () => {
