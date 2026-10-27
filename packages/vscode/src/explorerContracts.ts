@@ -287,6 +287,50 @@ export const ASSISTANCE_SERVER_NAME = 'airk-explorer';
 /** Assistance tools shipped in this version, in tools/list order. Draft tools arrive with the Suggestions Inbox. */
 export const ASSISTANCE_TOOLS = ['airk_explorer_help_search', 'airk_explorer_help_get', 'airk_explorer_ui_status'] as const;
 export const ASSISTANCE_HELP_URI = 'airk-explorer-help://';
+
+/**
+ * Written by each trusted Explorer window to <assistance dir>/windows/<session_id>.json
+ * (user-only). The Assistance server reads it at connect time; the credential never
+ * appears in agent configuration, process arguments or the environment.
+ */
+export const WINDOW_SCHEMA = 'airk-explorer-window/1';
+export const WINDOW_DESCRIPTOR_LIMIT = 16384;
+/** Largest single IPC line in either direction; drafts are at most 16 KiB. */
+export const ASSISTANCE_IPC_LIMIT = 65536;
+export interface WindowDescriptor {
+    readonly schema: typeof WINDOW_SCHEMA;
+    readonly session_id: string;
+    readonly endpoint: string;
+    readonly credential: string;
+    /** Canonical workspace folder paths; an agent attaches when its working directory is inside one. */
+    readonly roots: readonly string[];
+    readonly binding_fingerprint: string;
+    readonly extension_version: string;
+    readonly expires_unix_ms: number;
+}
+const WINDOW_KEYS = ['schema', 'session_id', 'endpoint', 'credential', 'roots', 'binding_fingerprint', 'extension_version', 'expires_unix_ms'];
+const PIPE = /^\\\\\.\\pipe\\airk-explorer-[0-9a-f]{32}$/;
+const SOCKET = /^\/(?:[^/\0]+\/)*airk-explorer\.sock$/;
+
+export function parseWindowDescriptor(value: unknown): WindowDescriptor | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) { return undefined; }
+    const entry = value as Record<string, unknown>;
+    if (Object.keys(entry).some(key => !WINDOW_KEYS.includes(key))) { return undefined; }
+    const hex = (text: unknown, length: number) => typeof text === 'string' && new RegExp(`^[0-9a-f]{${length}}$`).test(text);
+    const roots = entry.roots;
+    const valid = entry.schema === WINDOW_SCHEMA && hex(entry.session_id, 32) && hex(entry.credential, 64) && hex(entry.binding_fingerprint, 16)
+        && typeof entry.endpoint === 'string' && entry.endpoint.length <= 1024 && (PIPE.test(entry.endpoint) || (SOCKET.test(entry.endpoint) && !entry.endpoint.includes('/../')))
+        && Array.isArray(roots) && roots.length >= 1 && roots.length <= 32 && roots.every(root => typeof root === 'string' && root.length > 0 && root.length <= 4096)
+        && typeof entry.extension_version === 'string' && entry.extension_version.length <= 64
+        && typeof entry.expires_unix_ms === 'number' && Number.isSafeInteger(entry.expires_unix_ms);
+    return valid ? entry as unknown as WindowDescriptor : undefined;
+}
+
+/** One request per connection: the window credential and a typed request. */
+export interface AssistanceIpcRequest { readonly v: 1; readonly credential: string; readonly type: 'status' }
+export type AssistanceIpcReply =
+    | { readonly v: 1; readonly ok: true; readonly status: { readonly binding_fingerprint: string; readonly explorer_open: boolean } }
+    | { readonly v: 1; readonly ok: false; readonly code: 'STALE_BINDING' | 'SCHEMA_UNSUPPORTED' | 'INVALID_SCHEMA' };
 /** airk_help reply as shown in the Explorer. */
 export interface EngineHelpView { readonly topic: string; readonly title: string; readonly content: string; readonly version?: string; readonly topics: readonly { id: string; title: string }[]; readonly truncated: boolean }
 

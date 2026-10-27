@@ -15,6 +15,8 @@ export interface Attachment {
     readonly code?: ExplorerErrorCode;
     /** Opaque, path-free binding identity for detecting stale drafts. */
     readonly bindingFingerprint?: string;
+    /** Whether that window's Explorer panel is open; drafts wait in its Inbox either way. */
+    readonly explorerOpen?: boolean;
 }
 export type AttachmentProbe = () => Promise<Attachment>;
 
@@ -132,7 +134,7 @@ export class AssistanceTools {
         return { ok: true, value: {
             ...this.identity(), schema_versions: { ui_status: 1, help: 1, drafts: [] },
             ui: attachment.attached
-                ? { attached: true, binding_fingerprint: attachment.bindingFingerprint ?? null }
+                ? { attached: true, binding_fingerprint: attachment.bindingFingerprint ?? null, explorer_open: attachment.explorerOpen ?? false }
                 : { attached: false, code: attachment.code ?? 'UI_NOT_ATTACHED', message: EXPLORER_ERRORS[attachment.code ?? 'UI_NOT_ATTACHED'].message },
             routes: ROUTE_KEYS.map(route => ({ route, location: location(route), availability: FEATURES[route] })),
             tools: [...ASSISTANCE_TOOLS], help_uri_prefix: ASSISTANCE_HELP_URI,

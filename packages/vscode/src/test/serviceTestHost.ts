@@ -13,10 +13,12 @@ import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
 import * as cliInstall from '../cliInstall';
 
-export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean}={}){
+export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean}={}){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-service-'));
     const values=new Map<string,unknown>(),settings=new Map<string,unknown>(),commands=new Map<string,(...args:unknown[])=>Promise<unknown>>();
-    const writes:any[]=[],calls:string[]=[],warnings:string[]=[],clipboard:string[]=[],panels:any[]=[],events:any[]=[],notices:{message:string;actions:string[]}[]=[],progressRuns:{title:string;messages:string[]}[]=[];
+    const assistance=new Map<string,any>(),writes:any[]=[],calls:string[]=[],warnings:string[]=[],clipboard:string[]=[],panels:any[]=[],events:any[]=[],notices:{message:string;actions:string[]}[]=[],progressRuns:{title:string;messages:string[]}[]=[];
+    // Explorer Assistance listens on a real endpoint; only tests that exercise it turn it on.
+    settings.set('explorer.assistance.enabled',options.assistance??false);
     const storage={keys:()=>[...values.keys()],get:<T>(key:string,fallback?:T)=>(values.has(key)?values.get(key):fallback) as T|undefined,update:async(key:string,value:unknown)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}};
     const install=path.join(root,'installation'),control=path.join(install,'control'),data=path.join(root,'data');await fs.mkdir(data);
     const binding={installDir:install,controlDir:control,executable:path.join(install,'main'),launcher:path.join(install,'airk-launcher'),
@@ -40,7 +42,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     let foldersChanged:()=>Promise<void>;
     const stub:any={workspace:{isTrusted:options.trusted??true,workspaceFolders:folders,textDocuments:[],
         getWorkspaceFolder:(uri:any)=>folders.find(folder=>uri.fsPath===folder.uri.fsPath||uri.fsPath.startsWith(folder.uri.fsPath+path.sep)),
-        getConfiguration:()=>({inspect:(key:string)=>({globalValue:settings.get(key),workspaceValue:key==='storage.path'?path.join(root,'untrusted-storage'):'/workspace/untrusted'}),
+        getConfiguration:()=>({get:(key:string,fallback?:unknown)=>settings.has(key)?settings.get(key):fallback,inspect:(key:string)=>({globalValue:settings.get(key),workspaceValue:key==='storage.path'?path.join(root,'untrusted-storage'):'/workspace/untrusted'}),
             update:async(key:string,value:unknown)=>{settings.set(key,value);}}),
         onDidChangeWorkspaceFolders:(callback:()=>Promise<void>)=>{foldersChanged=callback;return disposable;},onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event,
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watcher is forbidden');}},
@@ -63,7 +65,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     },
     commands:{registerCommand:(name:string,action:(...args:unknown[])=>Promise<unknown>)=>{commands.set(name,action);return disposable;},
         executeCommand:async(name:string)=>calls.push(name),getCommands:async()=>['workbench.mcp.listServer']},
-    lm:{registerMcpServerDefinitionProvider:(_name:string,provider:unknown)=>{events.push(provider);return disposable;}},
+    lm:{registerMcpServerDefinitionProvider:(name:string,provider:unknown)=>{if(name==='airk.collections')events.push(provider);else assistance.set(name,provider);return disposable;}},
     env:{clipboard:{writeText:async(text:string)=>{clipboard.push(text);}}},StatusBarAlignment:{Left:1},ConfigurationTarget:{Global:1},ViewColumn:{Active:1,Beside:2},ProgressLocation:{Notification:15},
     EventEmitter:class{listeners:any[]=[];event=(listener:any)=>{this.listeners.push(listener);return disposable;};fire(){for(const listener of this.listeners)listener();}dispose(){}},
     TreeItem:class{constructor(public label:string){}},Uri:{file:(fsPath:string)=>({scheme:'file',fsPath}),joinPath:(base:any,...parts:string[])=>({scheme:'file',fsPath:path.join(base?.fsPath??'',...parts),toString(){return this.fsPath;}})},
@@ -120,7 +122,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     try{extension=require('../extension');const context:any={extensionPath:root,extension:{packageJSON:{version:options.upgrade?'1.4.1':'1.4.0'}},globalState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
-        return {root,folders,binding,registrations,values,settings,commands,writes,calls,warnings,clipboard,panels,state,stub,api,providers:events,notices,progressRuns,
+        return {root,folders,binding,registrations,values,settings,commands,writes,calls,warnings,clipboard,panels,state,stub,api,providers:events,assistance,notices,progressRuns,
             async refreshFolders(){await foldersChanged!();},
             async close(){extension.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});}};
     }catch(error){extension?.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});throw error;}

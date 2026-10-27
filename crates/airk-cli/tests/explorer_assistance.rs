@@ -101,7 +101,7 @@ fn the_forwarder_hands_stdio_to_the_bundled_server_and_returns_its_exit_code() -
         return Ok(());
     };
     let server = "const rl=require('node:readline').createInterface({input:process.stdin});\
-        rl.once('line',line=>{process.stdout.write(JSON.stringify({echo:line,cwd:process.cwd(),node_options:process.env.NODE_OPTIONS??null,electron:process.env.ELECTRON_RUN_AS_NODE??null})+'\\n');process.exit(7);});";
+        rl.once('line',line=>{process.stdout.write(JSON.stringify({echo:line,args:process.argv.slice(2),cwd:process.cwd(),node_options:process.env.NODE_OPTIONS??null,electron:process.env.ELECTRON_RUN_AS_NODE??null})+'\\n');process.exit(7);});";
     let fixture = fixture(&node, server)?;
     let home = fixture.directory.path().join("home");
     fs::create_dir_all(&home)?;
@@ -116,6 +116,11 @@ fn the_forwarder_hands_stdio_to_the_bundled_server_and_returns_its_exit_code() -
     );
     let reply: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(reply["echo"], "hello-explorer");
+    assert_eq!(reply["args"][0], "--assistance-dir");
+    assert_eq!(
+        fs::canonicalize(reply["args"][1].as_str().unwrap())?,
+        fs::canonicalize(fixture.descriptor.parent().unwrap())?
+    );
     assert_eq!(
         fs::canonicalize(reply["cwd"].as_str().unwrap())?,
         fs::canonicalize(fixture.directory.path())?
