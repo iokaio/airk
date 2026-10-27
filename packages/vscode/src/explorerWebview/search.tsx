@@ -22,7 +22,10 @@ export function SearchScreen(props: ScreenProps) {
     const [opened, setOpened] = useState<Record<string, OpenSourceResult | string>>({});
     const input = useRef<HTMLInputElement>(null);
     const vectorsOff = status?.vectorsEnabled === false || status?.semantic === 'disabled';
-    const vectorReason = vectorsOff ? 'Vector search is turned off for this project.' : status?.semantic === 'pending' ? 'Vectors are still pending; results may be empty or unavailable.' : '';
+    const vectorReason = vectorsOff ? 'Semantic search is turned off for this project. Enable vectors in Management › Indexing.'
+        : status?.semantic === 'pending' ? 'The semantic index is building; semantic results may be empty or unavailable until vectors are published.'
+        : status?.semantic === 'partial' ? 'Semantic coverage is partial. Search uses the vectors published so far.'
+        : status?.semantic === 'failed' ? 'Semantic indexing failed. Check Management › Indexing for the failure; semantic results may be unavailable or incomplete.' : '';
     const canSearch = props.state.connection === 'ready' || props.state.connection === 'degraded';
 
     const run = async (next: Form) => {
@@ -63,15 +66,15 @@ export function SearchScreen(props: ScreenProps) {
             <p class="muted">Search this project’s published index using the query and path scope below. The source file selected in the header does not limit this search. On a result, Inspect opens its indexed record and saved-file comparison in Evidence › Inspector; Open source opens its cited lines in the editor.</p>
             <form class="search-form" onSubmit={event => { event.preventDefault(); void run(form); }}>
                 <label class="grow">Query
-                    <input ref={input} value={form.query} maxLength={4096} required placeholder="Words that must all appear"
+                    <input ref={input} value={form.query} maxLength={4096} required placeholder={form.mode === 'lexical' ? 'Words that must all appear' : 'Describe what you want to find'}
                         onInput={event => field('query', (event.target as HTMLInputElement).value)} />
                 </label>
                 <label>Mode
                     <select value={form.mode} onChange={event => field('mode', (event.target as HTMLSelectElement).value as SearchMode)}>
                         <option value="policy">Collection policy</option>
                         <option value="lexical">Lexical (all words)</option>
-                        <option value="hybrid" disabled={vectorsOff}>Hybrid</option>
-                        <option value="vector" disabled={vectorsOff}>Vector</option>
+                        <option value="vector" disabled={vectorsOff}>Semantic (by meaning)</option>
+                        <option value="hybrid" disabled={vectorsOff}>Hybrid (lexical + semantic)</option>
                     </select>
                 </label>
                 <label>Path scope
@@ -88,6 +91,7 @@ export function SearchScreen(props: ScreenProps) {
                 <label class="check"><input type="checkbox" checked={form.fullChunks} onChange={event => field('fullChunks', (event.target as HTMLInputElement).checked)} /> Full chunks</label>
                 <button type="submit" disabled={busy || !canSearch}>{busy ? 'Searching…' : 'Search'}</button>
             </form>
+            {form.mode === 'vector' && <p class="muted">Describe a concept or behavior in natural language. Semantic search ranks indexed passages by embedding similarity; the exact query words need not appear.</p>}
             {vectorReason && <p class="muted">{vectorReason}</p>}
             <SaveRecipe form={form} />
             {!canSearch && <p class="callout">Search needs a connected AIRK service and a published index ({props.state.connection}).</p>}
@@ -96,7 +100,7 @@ export function SearchScreen(props: ScreenProps) {
                 <section aria-label="Search results">
                     <p class="result-meta">
                         <strong>{countLine(result.returned, result.limit, result.truncated)}</strong>
-                        {' · '}mode: {result.appliedMode}{' · '}publication <span title={result.publication}>{shortToken(result.publication)}</span>
+                        {' · '}mode: {result.appliedMode === 'vector' ? 'semantic' : result.appliedMode}{result.semantic && <> · semantic coverage: {result.semantic}</>}{' · '}publication <span title={result.publication}>{shortToken(result.publication)}</span>
                     </p>
                     {result.warnings.map(warning => <p key={warning} class="muted">{warning}</p>)}
                     {!result.hits.length && <p class="callout">No indexed evidence matched. That is not proof the text is absent from unindexed or changed files.</p>}

@@ -2,7 +2,11 @@
 
 <a id="airk-explorer-150"></a>
 
-## AIRK Explorer (1.5.2 development)
+## AIRK Explorer (1.5.4 development)
+
+Management › Projects and Indexing show **Unreadable directories** with bounded paths, error categories and observation time. The list can be incomplete because each root walk stops at its first failure. A later complete root traversal clears its failures automatically. Native logs record only project unavailable/recovered transitions; repeated retries do not add duplicate failure records.
+
+Search offers **Semantic (by meaning)**, **Lexical (all words)**, **Hybrid (lexical + semantic)** and **Collection policy**. Semantic queries describe a concept or behavior and use native vector retrieval; exact words need not appear. The form explains building, partial and failed coverage, and results show observed semantic readiness. Enable vectors in Management › Indexing to use semantic and hybrid modes. Saved recipes retain the native `vector` mode value.
 
 ### Help, About and local files
 

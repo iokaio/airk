@@ -10,6 +10,124 @@ fn nonce(value: u8) -> Incarnation {
 }
 
 #[test]
+fn traversal_diagnostics_log_only_transitions_survive_restart_and_clear_only_verified_roots()
+-> Result<()> {
+    use airk_core::service_watch::UnreadableDirectory;
+    let owner = tempfile::tempdir()?;
+    let mut registry = ServiceRegistry::open(owner.path(), nonce(1))?;
+    let registration =
+        ProjectRegistration::new("/original".into(), "/derived".into(), "fixture".into())?;
+    let project = registration.binding;
+    registry.register(&registration)?;
+    registry.configure_watch(project, true)?;
+    let mut lease = ProjectLease::acquire(owner.path(), project)?;
+    registry.admit_worker(&mut lease)?;
+    registry.record_watch_roots(&lease, &["/additional".into()])?;
+    let epoch = registry.watch(project)?.configuration_epoch;
+    let report = WatchTraversal {
+        unreadable: vec![UnreadableDirectory {
+            root: 0,
+            path: "/original/artifacts/unreadable".into(),
+            reason: "permission_denied".into(),
+        }],
+        incomplete_roots: vec![0],
+        truncated: false,
+    };
+    assert_eq!(
+        registry.record_watch_traversal(project, epoch, &report, 1000)?,
+        Some(true)
+    );
+    assert_eq!(
+        registry.record_watch_traversal(project, epoch, &report, 2000)?,
+        None
+    );
+    drop(registry);
+    let mut registry = ServiceRegistry::open(owner.path(), nonce(1))?;
+    registry.reset_native_watch_observations()?;
+    assert_eq!(
+        registry.record_watch_traversal(project, epoch, &report, 3000)?,
+        None
+    );
+    // A different failure/budget prevents finishing the root. Absence of this
+    // path from the latest walk is not evidence that its access recovered.
+    let incomplete = WatchTraversal {
+        incomplete_roots: vec![0],
+        ..Default::default()
+    };
+    assert_eq!(
+        registry.record_watch_traversal(project, epoch, &incomplete, 4000)?,
+        None
+    );
+    assert_eq!(
+        registry
+            .watch(project)?
+            .observation
+            .traversal
+            .unwrap()
+            .unreadable,
+        report.unreadable
+    );
+    // Root zero succeeds, although another root has an unrelated budget failure.
+    let recovered = WatchTraversal {
+        incomplete_roots: vec![1],
+        ..Default::default()
+    };
+    assert_eq!(
+        registry.record_watch_traversal(project, epoch, &recovered, 5000)?,
+        Some(false)
+    );
+    assert_eq!(
+        registry.record_watch_traversal(project, epoch, &recovered, 6000)?,
+        None
+    );
+    assert!(
+        registry
+            .watch(project)?
+            .observation
+            .traversal
+            .unwrap()
+            .unreadable
+            .is_empty()
+    );
+    let mut foreign = report.clone();
+    foreign.unreadable[0].path = "/other/private".into();
+    assert!(
+        registry
+            .record_watch_traversal(project, epoch, &foreign, 7000)
+            .is_err()
+    );
+    assert!(
+        registry
+            .record_watch_traversal(project, epoch + 1, &report, 7000)
+            .is_err()
+    );
+    assert_eq!(
+        registry.record_watch_traversal(project, epoch, &report, 8000)?,
+        Some(true)
+    );
+    let mut bounded = WatchTraversal {
+        incomplete_roots: vec![0],
+        ..Default::default()
+    };
+    for index in 0..20 {
+        bounded.push(UnreadableDirectory {
+            root: 0,
+            path: format!("/original/dir-{index}"),
+            reason: "io_error".into(),
+        });
+    }
+    bounded.validate()?;
+    assert_eq!(bounded.unreadable.len(), 8);
+    assert!(bounded.truncated);
+    registry.record_watch_roots(&lease, &[])?;
+    assert!(
+        registry.watch(project)?.observation.traversal.is_none(),
+        "old-root diagnostics cannot cross a configuration epoch"
+    );
+    Ok(())
+}
+
+#[test]
 fn source_event_receipts_survive_restart_and_fence_configuration_changes() -> Result<()> {
     let owner = tempfile::tempdir()?;
     let mut registry = ServiceRegistry::open(owner.path(), nonce(1))?;

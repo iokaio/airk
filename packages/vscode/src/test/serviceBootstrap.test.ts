@@ -151,6 +151,11 @@ async function transitionFixture(){
             case 'inspect-candidate':{const target=args[args.indexOf('--runtime-sha256')+1];return {runtime_sha256:target,metadata_only:true,selection_changed:false,executed:false,
                 approval:{version:candidateVersion,manifest_sha256:target,verification_basis:'trusted_distribution'}};}
             case 'stage':return {};
+            case 'abort-activation':{
+                assert.equal(args[args.indexOf('--expected-candidate')+1],pending?.candidate);
+                assert.equal(args[args.indexOf('--expected-active')+1],active);
+                pending=null;return {activation_aborted:true,payloads_preserved:true};
+            }
             case 'activate':{
                 const expected=args[args.indexOf('--expected-active')+1],target=args[args.indexOf('--runtime-sha256')+1];
                 if(active!==expected&&!(pending?.candidate===target&&record(pending.prior).active===expected))throw new ServiceError('runtime_selection_changed_since_review');
@@ -163,6 +168,24 @@ async function transitionFixture(){
     return {f,host,calls,install,binding:()=>host.binding(inspection(),install),setActive:(value:string)=>{active=value;},
         setPending:(value:RecordValue)=>{pending=value;},setCandidateVersion:(value:string)=>{candidateVersion=value;},setSelectedVersion:(value:string)=>{selectedVersion=value;}};
 }
+
+test('new installation resolves an exact older unfinished upgrade before bundled activation',async()=>{
+    const t=await transitionFixture();
+    try{
+        const binding=t.binding(),pending={candidate:'ef'.repeat(32),prior:{active:binding.runtimeSha256},
+            install:t.install,control:binding.controlDir,phase:'drain'};
+        assert.equal(await t.host.supersedePending(binding,undefined),false);
+        t.setPending(pending);
+        assert.equal(await t.host.supersedePending(binding,{pending_activation:pending}),true);
+        assert.equal(t.calls.at(-1)?.[1],'abort-activation');
+        const review=await t.host.reviewTransition(binding,'upgrade');
+        await t.host.transition(binding,review);assert.equal(t.binding().runtimeSha256,t.f.digest);
+        const before=t.calls.length;
+        assert.equal(await t.host.supersedePending(binding,{pending_activation:{...pending,candidate:t.f.digest}}),false);
+        assert.equal(await t.host.supersedePending(binding,{pending_activation:{...pending,phase:'probe'}}),false);
+        assert.equal(t.calls.length,before);
+    }finally{await t.f.cleanup();}
+});
 
 test('a selected different native version stays pinned until explicit review and cannot open a mismatched console',async()=>{
     const t=await transitionFixture();

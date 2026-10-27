@@ -14,6 +14,16 @@ use std::{
 #[test]
 fn inactive_cleanup_runs_without_query_admission_preserves_configuration_and_allows_fresh_registration()
 -> Result<()> {
+    cleanup_fixture(false)
+}
+
+#[test]
+fn deleted_source_can_be_unregistered_and_its_index_cleaned_without_recreating_the_source()
+-> Result<()> {
+    cleanup_fixture(true)
+}
+
+fn cleanup_fixture(missing_source: bool) -> Result<()> {
     let source = tempfile::tempdir()?;
     let data = tempfile::tempdir()?;
     fs::write(
@@ -103,7 +113,17 @@ fn inactive_cleanup_runs_without_query_admission_preserves_configuration_and_all
         .join("incarnations")
         .join(active["active"].as_str().unwrap());
     let policy = fs::read(old.join("vector-policy.json"))?;
+    // Move only this fixture's source aside to model a deleted registered root.
+    // Retain its bytes separately to prove neither retirement step recreates it.
+    let offline_owner = tempfile::tempdir()?;
+    let offline = offline_owner.path().join("source");
+    if missing_source {
+        fs::rename(source.path(), &offline)?;
+    }
     configure(airk_cli::service_configuration::Draft::Unregister)?;
+    if missing_source {
+        assert!(!source.path().exists());
+    }
     assert!(
         matches!(service.request(Method::Connect {project:service.project.binding}),Response::Failure {code} if code=="project_unregistered")
     );
@@ -130,6 +150,10 @@ fn inactive_cleanup_runs_without_query_admission_preserves_configuration_and_all
     assert!(report.complete);
     assert!(report.removed_known_files > 0);
     assert!(!old.try_exists()?);
+    if missing_source {
+        assert!(!source.path().exists());
+        fs::rename(&offline, source.path())?;
+    }
     assert_eq!(
         fs::read(source.path().join("original.rs"))?,
         b"pub fn icy_cleanup_fixture() {}\n"

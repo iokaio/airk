@@ -31,8 +31,13 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         : matchingWait ? waitLabel(waiting.reason) : 'No matching native wait observation';
     const semantic = obj(snapshot.semantic), discovery = obj(snapshot.discovery), configuration = obj(row.configuration);
     const result = state.configurationResults?.get(binding), resultValue = result && result.job === configuration.id ? result.value : undefined;
+    const traversal = obj(watch.traversal);
+    const unreadable = Array.isArray(traversal.unreadable) ? traversal.unreadable.slice(0, 8).map(obj) : undefined;
+    const traversalTime = typeof watch.traversal_observed_unix_ms === 'number' ? new Date(watch.traversal_observed_unix_ms) : undefined;
     return {
-        rows: rows([['Index data', registration.data_root], ['Project identity', binding], ['Source observation', watch.failure ?? watch.backend],
+        rows: rows([['Index data', registration.data_root], ['Project identity', binding], ['Source observation', watch.failure === 'root_unavailable'
+            ? 'Source watching is unavailable: a configured root or directory is missing, unreadable or redirected. Remove a deleted project from Management › Projects.'
+            : watch.failure ?? watch.backend],
             ['Pending source changes', typeof watch.requested_revision === 'number' && typeof watch.completed_revision === 'number' ? Math.max(0, watch.requested_revision - watch.completed_revision) : undefined],
             ['Last inspected revision', snapshot.publication], ['Source availability (cached)', snapshot.source_state], ['Discovery (cached)', discovery.state],
             ['Indexed files (cached)', snapshot.indexed_files], ['Semantic coverage (cached)', semantic.state], ['Completed / selected semantic artifacts',
@@ -48,6 +53,13 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
             ['Last real advance (ms ago at sample)', work.last_advance_age_ms], ['Unpaused time without progress (ms)', work.unpaused_idle_ms],
             ['Phase elapsed (ms)', work.phase_elapsed_ms], ['Last job failure code', obj(job.outcome).code]]),
         extra: {
+            ...(unreadable ? { watchDiagnostics: rows([
+                ['Last directory check', traversalTime && Number.isFinite(traversalTime.getTime()) ? traversalTime.toISOString() : undefined],
+                ['Unreadable directories', unreadable.length || traversal.truncated === true ? 'Observed failures; coverage is incomplete'
+                    : Array.isArray(traversal.incomplete_roots) && traversal.incomplete_roots.length ? 'No unreadable paths reported; traversal is incomplete' : 'None in the latest completed traversal'],
+                ...unreadable.map((entry, index): [string, unknown] => [`Directory ${index + 1} · ${scalar(entry.reason)}`, entry.path]),
+                ['Diagnostic list truncated', traversal.truncated],
+            ]) } : {}),
             selected: state.selected.has(binding),
             ...(typeof job.id === 'string' ? { jobId: job.id, jobState: String(job.state) } : {}),
             ...(typeof pending.id === 'string' && pending.id !== job.id ? { pendingJobId: pending.id } : {}),

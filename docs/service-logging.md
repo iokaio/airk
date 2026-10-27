@@ -1,5 +1,7 @@
 # Bounded service process diagnostics
 
+The 1.5.3 candidate adds project-level `source_traversal_unavailable` and `source_traversal_recovered` transitions. Repeated directory-plan retries do not append duplicate failures; the remembered availability state survives watcher/service restarts for the same root configuration. Current bounded path details appear in Management › Projects and Indexing, separately from this path-free log. An incomplete root walk cannot clear its earlier unreadable paths. See [source watching](service-source-watching.md).
+
 The default 1.4.0 native service records content-free lifecycle diagnostics independently of project indexes and the service registry. The service console exposes bounded diagnostics while connected or stopped; final qualification remains tracked in the completion checklist.
 
 The native CLI owns logging; core defines typed records and pages. A 64-entry background queue keeps diagnostic file writes off control/health handlers. Four JSONL files hold at most 1 MiB each in `logs-1.4` beneath the installation's pinned log directory. A root-bound ownership receipt and writer lock protect this separate ring. Unknown, oversized, redirected or hard-linked state disables writing and remains preserved. Logging failure does not disable health, retrieval or shutdown.

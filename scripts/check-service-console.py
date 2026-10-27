@@ -30,9 +30,10 @@ def main():
     environment = dict(os.environ, HTTP_PROXY="http://127.0.0.1:1", HTTPS_PROXY="http://127.0.0.1:1", ALL_PROXY="http://127.0.0.1:1")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-    def invoke(*arguments, body=None, rejected=False):
-        result = subprocess.run([str(binary), *map(str, arguments)], input=None if body is None else json.dumps(body),
-                                capture_output=True, encoding="utf-8", env=environment, timeout=180, creationflags=flags)
+    def invoke(*arguments, body=None, rejected=False, timeout=180):
+        encoded = body if isinstance(body, str) else None if body is None else json.dumps(body)
+        result = subprocess.run([str(binary), *map(str, arguments)], input=encoded,
+                                capture_output=True, encoding="utf-8", env=environment, timeout=timeout, creationflags=flags)
         if rejected:
             if result.returncode == 0:
                 raise RuntimeError("Expected an instance, stop-policy or key rejection")
@@ -54,8 +55,10 @@ def main():
         def runtime(action, *arguments, **kwargs):
             return invoke("runtime", action, "--install-dir", install, *arguments, **kwargs)
 
-        def rpc(method):
-            return invoke("service", "rpc", "--runtime-dir", control, "--stdin", body=method)
+        def rpc(method, *, deadline=None):
+            return pool.clients.metadata_rpc(lambda exact, until: invoke(
+                "service", "rpc", "--runtime-dir", control, "--stdin", body=exact,
+                timeout=pool.clients.remaining(until, 90)), method, deadline)
 
         def prepared(action, instance):
             epoch = rpc("request_epoch")
@@ -81,21 +84,21 @@ def main():
                 originals.append((document, document.read_bytes()))
                 registration = invoke("--root", source, "--data-dir", data, "--collection", f"console-fixture-{number}",
                                       "service", "register", "--runtime-dir", control)["project"]["registration"]
-                projects.append(registration["binding"])
+                projects.append(registration)
                 epoch = rpc("request_epoch")
-                request = {"enqueue": {"project": projects[-1], "kind": "index", "caller": uuid.uuid4().hex,
+                request = {"enqueue": {"project": projects[-1]["binding"], "kind": "index", "caller": uuid.uuid4().hex,
                                        "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex}}}
                 job = rpc(request)["job"]
                 deadline = time.monotonic() + 90
                 while True:
-                    current = rpc({"job": {"id": job["id"]}})["job"]
+                    current = rpc({"job": {"id": job["id"]}}, deadline=deadline)["job"]
                     if current["state"] == "succeeded":
                         break
                     if current["state"] in ("failed", "canceled") or time.monotonic() >= deadline:
                         raise RuntimeError("Original source job did not complete")
                     time.sleep(0.1)
                 jobs.append(current)
-                bridge = pool.Bridge(binary, control, projects[-1], environment)
+                bridge = pool.Bridge(binary, control, projects[-1]["binding"], environment, projects[-1]["collection"])
                 bridges.append(bridge)
                 bridge.search("lexical")
             print("Installed two-project direct evidence and independent source receipts passed.", flush=True)
@@ -159,7 +162,7 @@ def main():
             for project, job in zip(projects, jobs):
                 if rpc({"job": {"id": job["id"]}})["job"]["state"] != "succeeded":
                     raise RuntimeError("Lifecycle changed an existing source receipt")
-                bridge = pool.Bridge(binary, control, project, environment)
+                bridge = pool.Bridge(binary, control, project["binding"], environment, project["collection"])
                 bridges.append(bridge)
                 bridge.search("lexical")
             if any(document.read_bytes() != original for document, original in originals):

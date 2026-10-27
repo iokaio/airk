@@ -3,7 +3,7 @@
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service::{ProjectBinding, ProjectRegistration},
-    service_watch::{WatchBackend, WatchFailure},
+    service_watch::{WatchBackend, WatchFailure, WatchTraversal},
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -67,6 +67,8 @@ pub enum Reply {
         native_roots: u16,
         backend: WatchBackend,
         failure: Option<WatchFailure>,
+        #[serde(default)]
+        traversal: Option<WatchTraversal>,
     },
     Event {
         project: ProjectBinding,

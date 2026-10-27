@@ -83,6 +83,9 @@ pub(crate) fn progress_extracted() {
 pub(crate) fn progress_prepared(changes: u64) {
     observe(|progress, now| progress.prepared(changes, now));
 }
+pub(crate) fn progress_semantic_prepared() {
+    observe(|progress, now| progress.semantic_prepared(now));
+}
 pub(crate) fn progress_committed(changes: u64) {
     observe(|progress, now| progress.committed(changes, now));
 }

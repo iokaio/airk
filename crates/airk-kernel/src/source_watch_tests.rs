@@ -15,6 +15,64 @@ fn binding(source: &Path, data: &Path, collection: &str) -> Result<Binding> {
 }
 
 #[test]
+fn traversal_reports_a_disappeared_subdirectory_and_clears_on_the_next_successful_plan()
+-> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?;
+    let child = root.join("temporarily-missing");
+    let data = root.join("derived");
+    let project = binding(&root, &data, "diagnostics")?.registration.binding;
+    let mut plan = Plan {
+        tasks: VecDeque::new(),
+        walk: Some(Walk {
+            task: RootTask {
+                project,
+                index: 0,
+                root: root.clone(),
+                data: data.clone(),
+            },
+            pending: vec![(child.clone(), 1)],
+            queued_bytes: child.as_os_str().len(),
+            cursor: None,
+        }),
+        wanted: BTreeSet::new(),
+        path_bytes: 0,
+        usage: BTreeMap::new(),
+        failures: BTreeMap::from([(project, vec![None])]),
+        publishing: false,
+        published_after: None,
+    };
+    // A directory discovered by the parent disappears before its queued visit.
+    while !plan.step()? {}
+    assert_eq!(
+        plan.failures[&project],
+        vec![Some(WatchFailure::RootUnavailable)]
+    );
+    let report = &plan.usage[&project].traversal;
+    report.validate()?;
+    assert_eq!(report.unreadable[0].path, child.to_string_lossy());
+    assert_eq!(report.unreadable[0].reason, "not_found");
+    assert_eq!(
+        directory_error(&std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+        "permission_denied"
+    );
+    fs::create_dir(&child)?;
+    plan.usage.clear();
+    plan.failures.insert(project, vec![None]);
+    plan.tasks.push_back(RootTask {
+        project,
+        index: 0,
+        root,
+        data,
+    });
+    while !plan.step()? {}
+    assert_eq!(plan.failures[&project], vec![None]);
+    assert!(!plan.usage[&project].traversal.unavailable());
+    assert!(plan.wanted.contains(&child));
+    Ok(())
+}
+
+#[test]
 fn notice_rotation_and_acknowledgements_preserve_later_dirty_work() -> Result<()> {
     let owner = tempfile::tempdir()?;
     let mut watcher = SourceWatcher::new();

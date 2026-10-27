@@ -114,7 +114,10 @@ export function searchView(project: string, message: WebviewMessageOf<'search.ru
     const hits = hitViews(project, payload, publication, refs);
     const warnings = applied.ordering === 'index_identity'
         ? ['Lexical results are ordered by index identity, not relevance. All query words must appear.']
-        : applied.ordering === 'fused_rank' ? ['Vector and hybrid results are similarity candidates, not proof of meaning or relevance.'] : [];
+        : applied.ordering === 'fused_rank' ? ['Semantic and hybrid results are similarity candidates, not proof of meaning or relevance.'] : [];
+    if (applied.ordering === 'fused_rank' && applied.semantic && applied.semantic !== 'ready') {
+        warnings.push(`Semantic coverage is ${applied.semantic}; results may be incomplete or unavailable.`);
+    }
     if (hits.some(hit => hit.truncated)) { warnings.push('Some excerpts are truncated; expand a result to read more of the indexed lines.'); }
     return { query: message.query, appliedMode: applied.mode, ordering: applied.ordering, returned: hits.length, limit: message.limit,
         truncated: payload.truncated === true, ...(publication ? { publication } : {}), ...(applied.semantic ? { semantic: applied.semantic } : {}), hits, warnings };

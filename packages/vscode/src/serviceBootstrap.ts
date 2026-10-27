@@ -426,11 +426,24 @@ export class RuntimeHost {
             await this.invoke(bundle.main,['runtime','stage','--source',bundle.source,'--install-dir',binding.installDir,
                 '--approved-sha256',bundle.digest,'--verification-basis','trusted-distribution','--channel',this.options.channel],180000);
         }
-        progress?.('Activating runtime (drain ≤45s)…');
+        progress?.('Stopping previous AIRK processes and activating runtime…');
         const selected=await this.invoke(bundle.main,['runtime','activate','--install-dir',binding.installDir,
             '--runtime-sha256',review.target,'--expected-active',review.expectedActive],180000);
         if(selected.schema!==1||selected.active!==review.target)throw new ServiceError('crossed_runtime_activation_receipt',true);
         this.transitionReviews.delete(review);return selected;
+    }
+    async supersedePending(binding:RuntimeBinding,diagnosis:RecordValue|undefined):Promise<boolean>{
+        if(!diagnosis?.pending_activation)return false;
+        const saved=record(diagnosis?.pending_activation);
+        if(!saved.candidate)return false;
+        const bundle=await this.verified();
+        if(saved.candidate===bundle.digest||!['drain','launcher'].includes(String(saved.phase)))return false;
+        const review=await this.reviewTransition(binding,'resume');
+        if(!automaticUpgrade(review.version,this.version))return false;
+        const result=await this.invoke(bundle.main,['runtime','abort-activation','--install-dir',binding.installDir,
+            '--expected-candidate',review.target,'--expected-active',review.expectedActive],180000);
+        if(result.activation_aborted!==true||result.payloads_preserved!==true)throw new ServiceError('crossed_runtime_abort_receipt',true);
+        this.transitionReviews.delete(review);return true;
     }
     async lifecycle(binding:RuntimeBinding,intent:LifecycleIntent,force=false):Promise<RecordValue>{
         this.active();

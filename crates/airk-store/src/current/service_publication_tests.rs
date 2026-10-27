@@ -13,6 +13,87 @@ fn service_fixture() -> Result<Fixture> {
 }
 
 #[test]
+fn service_build_snapshot_outlives_query_deadline_only_under_its_writer() -> Result<()> {
+    let fixture = service_fixture()?;
+    let (_reservation, sealed) = fixture.sealed()?;
+    let writer = fixture.store.lock()?;
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let pending = current.prepare(
+        &fixture.head.token()?,
+        fixture.target(&sealed),
+        &sealed,
+        &[],
+        None,
+    )?;
+    current.mark_applying(&pending)?;
+    current.commit(&pending, pending.target.lexical_commit)?;
+    drop(current);
+
+    let mut query = fixture.store.current_read(&fixture.scope)?;
+    let mut build = fixture.store.current_build_read(&fixture.scope, &writer)?;
+    // Simulate a long semantic build without a two-minute test sleep.
+    for read in [&mut query, &mut build] {
+        std::sync::Arc::get_mut(read)
+            .unwrap()
+            .elapse_for_test(Duration::from_secs(121));
+    }
+    assert!(format!("{:#}", query.read(1).unwrap_err()).contains("snapshot expired"));
+    assert_eq!(build.read(1)?.bytes, vec![7; 16]);
+    assert_eq!(build.token()?, pending.target.token()?);
+
+    let reservation = fixture.quota.reserve(&fixture.scope.collection, 4 << 20)?;
+    let overlay = graph::GraphOverlay::new(
+        &reservation,
+        build.clone(),
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1 << 20,
+            ..Default::default()
+        },
+    )?;
+    let mut record = overlay.read(1)?;
+    record.bytes = vec![9; 16];
+    overlay.put(1, record)?;
+    let delta = overlay.seal()?;
+    drop(query);
+    let mut target = pending.target.clone();
+    target.sequence += 1;
+    target.graph_head = delta.descriptor().target.clone();
+    let mut current =
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?;
+    let next = current.prepare(&build.token()?, target, &delta, &[], None)?;
+    current.mark_applying(&next)?;
+    current.commit(&next, next.target.lexical_commit)?;
+    assert_eq!(
+        build.read(1)?.bytes,
+        vec![7; 16],
+        "build keeps the captured revision"
+    );
+    assert_eq!(
+        fixture.store.current_read(&fixture.scope)?.read(1)?.bytes,
+        vec![9; 16]
+    );
+    drop(current);
+    drop(writer);
+    assert!(format!("{:#}", build.read(1).unwrap_err()).contains("writer has been released"));
+    drop(build);
+
+    let foreign = service_fixture()?;
+    let foreign_writer = foreign.store.lock()?;
+    assert!(
+        fixture
+            .store
+            .current_build_read(&fixture.scope, &foreign_writer)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[test]
 fn service_large_publication_recovers_above_old_wal_limit_with_pinned_snapshot() -> Result<()> {
     let fixture = service_fixture()?;
     let old = fixture.store.current_read(&fixture.scope)?;

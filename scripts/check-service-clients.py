@@ -19,6 +19,11 @@ TOOLS = {"airk_" + name for name in (
     "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
     "list_files", "outline", "read_file", "references", "relationships", "search", "status", "symbols")}
 
+# Match service_management::execute_request's registry-contention contract.
+# RequestEpoch prunes receipts and is deliberately not a read-only observation.
+REGISTRY_READS = {"job", "configuration_result", "plan", "plan_items", "projects", "events",
+                  "maintenance", "watch", "progress", "inspection", "console", "inactive_console"}
+
 
 def tool_value(envelope):
     assert isinstance(envelope, dict) and isinstance(envelope.get("content"), list), envelope
@@ -73,6 +78,27 @@ def remaining(deadline, ceiling):
     if budget <= 0:
         raise ObservationTimeout("Native observation deadline exhausted")
     return budget
+
+
+def metadata_rpc(invoke, method, deadline=None, *, expected_failure=None):
+    """Replay only explicit contention on exact, read-only registry observations."""
+    deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 90)
+    exact = json.dumps(method)
+    name = next(iter(method)) if isinstance(method, dict) and len(method) == 1 else method
+    read_only = isinstance(name, str) and name in REGISTRY_READS
+    for attempt in range(41):
+        remaining(deadline, 90)
+        value = invoke(exact, deadline)
+        remaining(deadline, 90)
+        # A transport exception, mutation or unknown failure is never retried.
+        if (read_only and value == {"status": "failure", "code": "registry_busy"}
+                and attempt < 40 and time.monotonic() + 0.025 < deadline):
+            time.sleep(0.025)
+            continue
+        if (value.get("status") in ("failure", "incompatible")
+                and (expected_failure is None or value != {"status": "failure", "code": expected_failure})):
+            raise AssertionError(f"Native metadata refused: {value}")
+        return value
 
 
 def read_envelope(read, deadline, attempts=41, admission_only=False):
@@ -249,11 +275,11 @@ class Fixture:
         finally:
             self.log.close()
 
-    def rpc(self, method):
-        value = json.loads(self.run("service", "rpc", "--runtime-dir", self.control, "--stdin", input=json.dumps(method)).stdout)
-        if value.get("status") in ("failure", "incompatible"):
-            raise AssertionError(f"Native metadata refused: {value}")
-        return value
+    def rpc(self, method, *, deadline=None):
+        def invoke(exact, until):
+            return json.loads(self.run("service", "rpc", "--runtime-dir", self.control, "--stdin",
+                                       input=exact, timeout=remaining(until, 90)).stdout)
+        return metadata_rpc(invoke, method, deadline)
 
     def register(self, name, root, data):
         prepared = json.loads(self.run("--root", root, "--data-dir", data, "--collection", name,
@@ -341,7 +367,7 @@ class Fixture:
     def wait(self, receipt, expected="succeeded"):
         deadline = time.monotonic() + self.job_timeout
         while time.monotonic() < deadline:
-            job = self.rpc({"job": {"id": receipt["job"]["id"]}})["job"]
+            job = self.rpc({"job": {"id": receipt["job"]["id"]}}, deadline=deadline)["job"]
             if job["state"] in ("succeeded", "failed", "canceled"):
                 assert job["state"] == expected, job
                 return job

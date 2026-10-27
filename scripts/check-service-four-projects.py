@@ -40,11 +40,11 @@ def qualify(runtime, files):
             samples = []
             deadline = time.monotonic() + 600
             while True:
-                sample = fixture.rpc("resources")["observation"]
+                sample = fixture.rpc("resources", deadline=deadline)["observation"]
                 samples.append(sample)
                 assert sample["memory_reserved_bytes"] <= sample["memory_limit_bytes"], sample
                 assert sample["background_io_reserved_bytes_per_second"] <= 256 << 20, sample
-                states = [fixture.rpc({"job": {"id": receipt["job"]["id"]}})["job"] for receipt in receipts]
+                states = [fixture.rpc({"job": {"id": receipt["job"]["id"]}}, deadline=deadline)["job"] for receipt in receipts]
                 assert not any(job["state"] in ("failed", "canceled") for job in states), states
                 if all(job["state"] == "succeeded" for job in states):
                     break

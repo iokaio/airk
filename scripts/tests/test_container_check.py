@@ -62,6 +62,7 @@ class ContainerCheckTests(unittest.TestCase):
 
     def test_smoke_releases_container_before_deleting_owned_volume(self):
         status_calls = 0
+        metadata_calls = {}
         registered = False
         volume_removed = False
         token = "fixture-token"
@@ -131,8 +132,15 @@ class ContainerCheckTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, output, "")
 
         def completed_job(args, **kwargs):
-            self.assertEqual(json.loads(kwargs["input"])["job"]["id"][:8], "project-")
-            return subprocess.CompletedProcess(args, 0, json.dumps({"job": {"state": "succeeded"}}), "")
+            job_id = json.loads(kwargs["input"])["job"]["id"]
+            self.assertEqual(job_id[:8], "project-")
+            calls = metadata_calls.setdefault(job_id, [])
+            if calls:
+                self.assertEqual((args, kwargs["input"]), calls[0][:2])
+                self.assertLessEqual(kwargs["timeout"], calls[0][2])
+            calls.append((args, kwargs["input"], kwargs["timeout"]))
+            value = {"status": "failure", "code": "registry_busy"} if len(calls) == 1 else {"status": "job", "job": {"id": job_id, "state": "succeeded"}}
+            return subprocess.CompletedProcess(args, 0, json.dumps(value), "")
 
         with patch.object(smoke, "docker", side_effect=docker), \
                 patch.object(smoke.subprocess, "run", side_effect=completed_job), \
@@ -142,6 +150,8 @@ class ContainerCheckTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()):
             smoke.main()
         self.assertEqual(status_calls, 4)
+        self.assertTrue(metadata_calls)
+        self.assertTrue(all(len(calls) == 2 for calls in metadata_calls.values()))
         self.assertTrue(volume_removed)
         self.assertFalse(registered)
 

@@ -47,18 +47,6 @@ async function main(){
 exports.activate=()=>{let reloading=false;void (async()=>{
  const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);assert.ok(extension.extensionPath.startsWith(${JSON.stringify(extensions)}));
  const api=await extension.activate();let definitions=await api.getServerDefinitions();
- if(${!!previousVsix}&&extension.packageJSON.version===${JSON.stringify(version)}&&definitions.length===0){
-  const old=JSON.parse(await fs.readFile(${JSON.stringify(path.join(run,'baseline.json'))},'utf8'));
-  const spec={command:old.command,root:${JSON.stringify(canonical)},dataDir:old.args[8],collection:${JSON.stringify(collection)},name:'retained',service:{installDir:old.args[3],project:old.args[12]}};
-  const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,16,'upgrade-preflight');
-  const observed=JSON.parse(probe.status.content[0].text),before=JSON.parse((JSON.parse(await fs.readFile(${JSON.stringify(path.join(run,'baseline-status.json'))},'utf8')))[0].result.result.content[0].text);
-  assert.equal(observed.runtime.service.version,${JSON.stringify(previousVersion)});assert.equal(observed.runtime.service.instance,before.runtime.service.instance);
-  for(const name of ['activation.json','launcher-repair.json'])assert.equal(await fs.access(path.join(old.args[3],name)).then(()=>true,()=>false),false);
-  await vscode.commands.executeCommand('notifications.showList');
-  await fs.writeFile(${JSON.stringify(path.join(run,'update-waiting.json'))},JSON.stringify(observed));
-  const deadline=Date.now()+45000;while(!await fs.access(${JSON.stringify(path.join(run,'clients-reconnected.json'))}).then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Retained clients were not disconnected');await new Promise(resolve=>setTimeout(resolve,100));}
-  await vscode.commands.executeCommand('airk.retryUpdate');definitions=await api.getServerDefinitions();
- }
  assert.equal(definitions.length,1);
  const definition=definitions[0],files=${JSON.stringify(files)},name=${JSON.stringify(name)};
  if(${JSON.stringify(previousVersion)}&&!await fs.access(${JSON.stringify(path.join(run,'baseline.json'))}).then(()=>true,()=>false)){
@@ -75,7 +63,7 @@ exports.activate=()=>{let reloading=false;void (async()=>{
   const live=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,16,'upgrade-before-reconnect');
   const status=JSON.parse(live.status.content[0].text);assert.equal(status.runtime.service.version,${JSON.stringify(version)});
   await fs.writeFile(${JSON.stringify(path.join(run,'new-runtime-active.json'))},JSON.stringify(status));
-  const deadline=Date.now()+45000;while(!await fs.access(${JSON.stringify(path.join(run,'clients-reconnected.json'))}).then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Retained clients were not disconnected');await new Promise(resolve=>setTimeout(resolve,100));}
+  const deadline=Date.now()+45000;while(!await fs.access(${JSON.stringify(path.join(run,'clients-disconnected.json'))}).then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Installer did not terminate preceding clients');await new Promise(resolve=>setTimeout(resolve,100));}
  }
  const texts=await Promise.all(files.map(file=>fs.readFile(file,'utf8')));
  for(const text of texts){assert.ok(text.includes('airk-launcher'));assert.ok(text.includes('--service-project'));assert.ok(text.includes(${JSON.stringify(collection)}));}
@@ -128,20 +116,6 @@ exports.activate=()=>{let reloading=false;void (async()=>{
                     {windowsHide:true,env:{...env,ELECTRON_RUN_AS_NODE:'1'},timeout:150000,maxBuffer:1024*1024});
                 await fs.writeFile(path.join(run,'upgrade-install.log'),upgrade.stdout+upgrade.stderr);
                 await fs.writeFile(path.join(run,'upgrade-reload.json'),'{}');
-                await until(async()=>{
-                    const error=await fs.readFile(path.join(run,'error.json'),'utf8').catch(()=>undefined);if(error)throw new Error(error);
-                    return fs.access(path.join(run,'update-waiting.json')).then(()=>true,()=>false);
-                },'preflight preserves previous runtime with retained clients',120000);
-                const waitingUi=await editorUi(port);
-                try{
-                    const page=await until(async()=>{const value=await waitingUi.workbench('document.body.innerText');return value&&['AIRK update is waiting for connected tools','Retry Update','MCP Servers'].every(text=>value.value.includes(text))?value:undefined;},'visible disconnect and retry guidance',30000);
-                    await fs.writeFile(path.join(run,'preflight-notification.txt'),page.value);
-                    const screenshot=await page.client.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(run,'preflight-notification.png'),Buffer.from(screenshot.data,'base64'));
-                }finally{waitingUi.close();}
-                for(const client of retained){if(client.exitCode!==null)throw new Error('An external MCP client was terminated during installation');client.stdin.end();client.kill();}
-                await Promise.all(retained.map(client=>client.exitCode!==null?Promise.resolve():new Promise(resolve=>client.once('exit',resolve))));
-                await until(async()=>{try{const handle=await fs.open(baseline.command,'r+');await handle.close();return true;}catch{return false;}},'retained launcher handles released',15000);
-                await fs.writeFile(path.join(run,'clients-reconnected.json'),'{}');
                 const progressUi=await editorUi(port);
                 try{
                     const page=await until(async()=>{const value=await progressUi.workbench('document.body.innerText');return value&&value.value.includes(`AIRK ${version} setup`)?value:undefined;},'visible upgrade progress popup',30000);
@@ -149,6 +123,13 @@ exports.activate=()=>{let reloading=false;void (async()=>{
                     const screenshot=await page.client.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(run,'install-progress.png'),Buffer.from(screenshot.data,'base64'));
                     await fs.writeFile(path.join(run,'progress-verified.json'),'{}');
                 }finally{progressUi.close();}
+                await until(async()=>{
+                    const error=await fs.readFile(path.join(run,'error.json'),'utf8').catch(()=>undefined);if(error)throw new Error(error);
+                    return fs.access(path.join(run,'new-runtime-active.json')).then(()=>true,()=>false);
+                },'new runtime activated while previous clients were connected',120000);
+                await until(()=>retained.every(client=>client.exitCode!==null||client.signalCode!==null),'installer terminated preceding MCP clients',15000);
+                await fs.writeFile(path.join(run,'terminated-clients.json'),JSON.stringify(retained.map(client=>({pid:client.pid,exitCode:client.exitCode,signal:client.signalCode})),null,2));
+                await fs.writeFile(path.join(run,'clients-disconnected.json'),'{}');
             }
             await until(async()=>{
                 const error=await fs.readFile(path.join(run,'error.json'),'utf8').catch(()=>undefined);if(error)throw new Error(error);

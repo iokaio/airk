@@ -441,7 +441,7 @@ mod tests {
         drop(lease);
         let input = request(&mut registry, 1, LifecycleAction::Stop)?;
         let job = registry.enqueue(project.binding, input.caller, &input.key, JobKind::Index)?;
-        registry.connection.execute_batch("DROP TABLE service_lifecycle; DROP TABLE service_lifecycle_state; DROP TABLE service_configuration; ALTER TABLE projects DROP COLUMN cleanup_guard; ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=1;")?;
+        registry.connection.execute_batch("DROP TABLE service_lifecycle; DROP TABLE service_lifecycle_state; DROP TABLE service_configuration; DROP TABLE service_watch_traversal; ALTER TABLE projects DROP COLUMN cleanup_guard; ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=1;")?;
         drop(registry);
         let mut registry =
             ServiceRegistry::open(directory.path(), Incarnation::from_bytes([9; 16]))?;

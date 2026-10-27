@@ -41,10 +41,16 @@ pub struct CurrentRead {
     pub(super) lexical_path: std::path::PathBuf,
     pub(super) lexical_verified: std::sync::OnceLock<()>,
     deadline: Option<std::time::Instant>,
+    writer_active: Option<Arc<std::sync::atomic::AtomicBool>>,
     _gate: Gate,
 }
 
 impl CurrentRead {
+    #[cfg(test)]
+    pub(super) fn elapse_for_test(&mut self, elapsed: std::time::Duration) {
+        self.deadline = self.deadline.map(|deadline| deadline - elapsed);
+    }
+
     /// Re-resolve the authenticated pointer under this read gate before loading
     /// its retained body. Detached or superseded candidate pointers are rejected.
     pub fn occurrence_hit(
@@ -263,6 +269,12 @@ impl CurrentRead {
     }
     fn live(&self) -> Result<()> {
         ensure!(
+            self.writer_active
+                .as_ref()
+                .is_none_or(|active| active.load(std::sync::atomic::Ordering::Acquire)),
+            "current build snapshot writer has been released"
+        );
+        ensure!(
             self.deadline
                 .is_none_or(|deadline| std::time::Instant::now() < deadline),
             "current request snapshot expired; repeat against the current revision"
@@ -286,16 +298,35 @@ impl GraphRecordReader for CurrentRead {
 
 impl FileStore {
     pub fn current_read(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
-        super::admission::admit_open(|| self.current_read_once(scope).map_err(read_error))
+        super::admission::admit_open(|| self.current_read_once(scope, None).map_err(read_error))
     }
-    fn current_read_once(&self, scope: &CurrentScope) -> Result<Arc<CurrentRead>> {
+    /// A publication build pins its exact base while the matching collection writer
+    /// is held. Query deadlines do not limit inference/graph construction. This
+    /// snapshot cannot authorize reads after the writer is released; its gate and
+    /// SQL transaction still protect captured evidence until all clones drop.
+    pub fn current_build_read(
+        &self,
+        scope: &CurrentScope,
+        writer: &crate::WriterLock,
+    ) -> Result<Arc<CurrentRead>> {
+        super::gate::check_writer(self, writer)?;
+        super::admission::admit_open(|| {
+            self.current_read_once(scope, Some(writer.active.clone()))
+                .map_err(read_error)
+        })
+    }
+    fn current_read_once(
+        &self,
+        scope: &CurrentScope,
+        writer_active: Option<Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Result<Arc<CurrentRead>> {
         scope.validate()?;
         ensure!(
             self.collection_id()? == scope.collection,
             "foreign current collection path"
         );
         let gate = Gate::shared(self)?;
-        let deadline = super::wal::enabled(self.directory())
+        let deadline = (writer_active.is_none() && super::wal::enabled(self.directory()))
             .then(|| std::time::Instant::now() + std::time::Duration::from_secs(120));
         database::reject_legacy_collection(self.directory())?;
         self.ensure_index_ready()?;
@@ -349,6 +380,7 @@ impl FileStore {
             lexical_path: self.directory().join("current.sqlite3"),
             lexical_verified: std::sync::OnceLock::new(),
             deadline,
+            writer_active,
             _gate: gate,
         }))
     }

@@ -443,6 +443,7 @@ impl FileStore {
             _file: advisory,
             _lifecycle: lifecycle,
             object_captures: std::sync::atomic::AtomicUsize::new(0),
+            active: Arc::new(std::sync::atomic::AtomicBool::new(true)),
         };
         Ok(guard)
     }
@@ -491,6 +492,7 @@ pub struct WriterLock {
     _file: File,
     _lifecycle: Option<Arc<File>>,
     object_captures: std::sync::atomic::AtomicUsize,
+    active: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Keeps unpublished captured objects and prior scan reuse inputs alive across
@@ -700,6 +702,8 @@ pub fn remove_collection(data_root: &Path, id: &str) -> Result<CollectionUsage> 
 }
 impl Drop for WriterLock {
     fn drop(&mut self) {
+        self.active
+            .store(false, std::sync::atomic::Ordering::Release);
         let _ = fs::remove_file(&self.path);
         // A concurrent fork can temporarily inherit this open file description
         // until exec. Release logical ownership explicitly rather than letting

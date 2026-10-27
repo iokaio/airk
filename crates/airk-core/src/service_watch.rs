@@ -38,6 +38,73 @@ pub enum WatchFailure {
     MetadataUnavailable,
 }
 
+/// Bounded metadata only. A failed root walk stops at its first error, so this
+/// is an observed failure list, not an exhaustive filesystem inventory.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WatchTraversal {
+    pub unreadable: Vec<UnreadableDirectory>,
+    pub incomplete_roots: Vec<u16>,
+    pub truncated: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UnreadableDirectory {
+    pub root: u16,
+    pub path: String,
+    /// A bounded error category, never raw OS exception text.
+    pub reason: String,
+}
+
+impl WatchTraversal {
+    pub fn unavailable(&self) -> bool {
+        !self.unreadable.is_empty() || self.truncated
+    }
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.unreadable.len() <= 8
+                && self.incomplete_roots.len() <= 17
+                && self.incomplete_roots.iter().all(|root| *root < 17)
+                && self.unreadable.iter().all(|entry| entry.root < 17
+                    && self.incomplete_roots.contains(&entry.root)
+                    && !entry.path.is_empty()
+                    && entry.path.len() <= 4096
+                    && !entry.path.chars().any(char::is_control)
+                    && matches!(
+                        entry.reason.as_str(),
+                        "not_found" | "permission_denied" | "io_error" | "redirected"
+                    ))
+                && serde_json::to_vec(self)?.len() <= 8192,
+            "watch traversal diagnostics exceed bounds"
+        );
+        Ok(())
+    }
+    pub fn push(&mut self, entry: UnreadableDirectory) {
+        if let Some(old) = self
+            .unreadable
+            .iter_mut()
+            .find(|old| old.root == entry.root && old.path == entry.path)
+        {
+            if matches!(
+                entry.reason.as_str(),
+                "not_found" | "permission_denied" | "io_error" | "redirected"
+            ) {
+                old.reason = entry.reason;
+            }
+            return;
+        }
+        self.unreadable.push(entry);
+        // Leave space for the final incomplete-root list and changed categories.
+        if self.validate().is_err()
+            || serde_json::to_vec(self).is_ok_and(|bytes| bytes.len() > 7168)
+        {
+            self.unreadable.pop();
+            self.truncated = true;
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WatchObservation {
@@ -54,10 +121,24 @@ pub struct WatchObservation {
     pub failure: Option<WatchFailure>,
     pub observed_unix_ms: Option<u64>,
     pub last_reconciled_unix_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traversal: Option<WatchTraversal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traversal_observed_unix_ms: Option<u64>,
 }
 
 impl WatchObservation {
     pub fn validate(&self) -> Result<()> {
+        if let Some(traversal) = &self.traversal {
+            traversal.validate()?;
+            ensure!(
+                traversal
+                    .incomplete_roots
+                    .iter()
+                    .all(|root| *root < self.configured_roots),
+                "foreign watch diagnostic root"
+            );
+        }
         ensure!(
             self.completed_revision <= self.requested_revision
                 && self.configured_roots <= 17

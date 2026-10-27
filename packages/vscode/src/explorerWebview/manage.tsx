@@ -57,6 +57,13 @@ function Frame(props: { view?: ManagementView; trusted: boolean; actions: Return
 
 function Rows(props: { rows: readonly FactRow[] }) { return <Facts rows={props.rows.map(([name, value]) => [name, value])} />; }
 
+function WatchDiagnostics(props: { entry: ManagedProject }) {
+    return <details><summary>Unreadable directories</summary>
+        {props.entry.watchDiagnostics ? <Rows rows={props.entry.watchDiagnostics} /> : <p class="muted">Traversal diagnostics have not been observed.</p>}
+        <p class="muted">The watcher retries its directory plan about every 10 seconds. Each root walk stops at its first failure, so this is an observed list, not a complete inventory. Entries clear after that root is fully traversed. Logs record unavailable/recovered transitions without repeating the same failure on every retry. Indexing completion is separate.</p>
+    </details>;
+}
+
 function ProjectPicker(props: { view: ManagementView; value?: string; onChange(project: string): void }) {
     return (
         <select value={props.value ?? ''} aria-label="Project" onChange={event => props.onChange((event.target as HTMLSelectElement).value)}>
@@ -107,6 +114,7 @@ export function ProjectsScreen(props: ScreenProps) {
                                     <div><dt>Files <span class="muted">(cached)</span></dt><dd>{observed(project.indexedFiles)}</dd></div>
                                     <div><dt>Semantic <span class="muted">(cached)</span></dt><dd>{project.semantic ?? 'not observed'}</dd></div>
                                 </dl>
+                                <WatchDiagnostics entry={entry} />
                                 <div class="project-footer"><details><summary>Index details</summary><Facts rows={[
                                     ['Collection', project.collection], ['Publication (cached)', <code>{project.publication ?? 'not observed'}</code>],
                                     ['Inspected', ago(project.observedAt)],
@@ -114,6 +122,10 @@ export function ProjectsScreen(props: ScreenProps) {
                                 <div class="actions">{!view.inactive && <>
                                     {project.project !== props.state.selectedProject && <button type="button" class="ghost" disabled={!project.current} title="Evidence selection requires this project to be open in the workspace" onClick={() => { void request('project.select', { project: project.project }).catch(() => undefined); }}>Select</button>}
                                     <Act actions={actions} action="index" fields={{ project: project.project }} enabled={view.enabled.projectActions}>Index now</Act>
+                                    <Act actions={actions} action="unregisterProject" fields={{ project: project.project }} enabled={view.enabled.projectActions} ghost>Remove project…</Act>
+                                </>}{view.inactive && <>
+                                    <Act actions={actions} action="previewCleanup" fields={{ project: project.project }} enabled={view.enabled.projectActions}>Preview / resume index cleanup</Act>
+                                    <Act actions={actions} action="deleteDerived" fields={{ project: project.project }} enabled={view.enabled.projectActions && entry.canDeleteDerived}>Delete reviewed index state</Act>
                                 </>}</div></div>
                             </li>
                         );
@@ -213,6 +225,7 @@ function ProjectCards(props: { view: ManagementView; actions: ReturnType<typeof 
         <article class="card" key={entry.summary.project}>
             <h2 title={entry.summary.collection}>{entry.summary.name} <span class="muted">{entry.summary.root}</span></h2>
             {props.showRows && <Rows rows={entry.rows} />}
+            {props.showRows && <WatchDiagnostics entry={entry} />}
             {entry.uncertainConfiguration && <p class="callout">The configuration effect is uncertain. Inspect the current settings before requesting another change.</p>}
             <div class="actions">{props.children(entry)}</div>
         </article>
@@ -240,6 +253,7 @@ export function IndexingScreen(props: ScreenProps) {
                         <Act actions={actions} action="restartProject" fields={{ project }} enabled={on} ghost>Restart project worker</Act>
                         <Act actions={actions} action="modelSetup" fields={{ project }} enabled={on} ghost>Install bundled model</Act>
                         <Act actions={actions} action="configureProject" fields={{ project }} enabled={on}>Project settings…</Act>
+                        <Act actions={actions} action="unregisterProject" fields={{ project }} enabled={on} ghost>Remove project…</Act>
                         {entry.configurationResult && <Act actions={actions} action="copyConfiguration" fields={{ project }} ghost>Copy configuration result</Act>}
                     </>;
                 }}</ProjectCards>}
@@ -258,7 +272,7 @@ export function StorageScreen(props: ScreenProps) {
                     <Act actions={actions} action="inactiveProjects" enabled={view.enabled.projectActions} ghost>Show unregistered projects</Act>
                     <Act actions={actions} action="registeredProjects" enabled={view.enabled.projectActions} ghost>Show registered projects</Act>
                 </div>
-                <p class="muted">Quotas, extra source roots and unregistering a project are in each project's settings (Indexing › Project settings…).</p>
+                <p class="muted">Remove a project from Management › Projects, even if its source folder is gone. Then preview and delete its retained index here. Quotas and extra roots are in Indexing › Project settings….</p>
                 {view.inactive && <ProjectCards view={view} actions={actions}>{entry => <>
                     <Act actions={actions} action="previewCleanup" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions}>Preview / resume index cleanup</Act>
                     <Act actions={actions} action="deleteDerived" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions && entry.canDeleteDerived}>Delete reviewed index state</Act>

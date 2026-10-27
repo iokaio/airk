@@ -13,7 +13,7 @@ Management › Storage chooses the index storage folder for new registrations, l
 ## Steps
 
 1. **Choose index storage folder…** reviews a new storage binding; existing indexes stay where they are.
-2. **Show unregistered projects**, then **Preview / resume index cleanup** for one project.
+2. Remove an active project with **Management › Projects › Remove project…** first, even if its source folder is gone. Choose **Show unregistered projects**, then **Preview / resume index cleanup** for that project.
 3. **Delete reviewed index state** becomes available only after a successful preview, and asks again before deleting.
 
 ## Limits

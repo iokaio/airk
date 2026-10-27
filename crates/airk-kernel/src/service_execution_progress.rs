@@ -132,6 +132,10 @@ impl Tracker {
         self.snapshot.prepared_changes = self.snapshot.prepared_changes.saturating_add(changes);
         self.advance(now);
     }
+    pub(super) fn semantic_prepared(&mut self, now: Instant) {
+        // Real candidate work advances the watchdog without claiming publication.
+        self.advance(now);
+    }
     pub(super) fn committed(&mut self, changes: u64, now: Instant) {
         self.snapshot.committed_changes = self.snapshot.committed_changes.saturating_add(changes);
         self.snapshot.publications = self.snapshot.publications.saturating_add(1);

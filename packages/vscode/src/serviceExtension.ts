@@ -331,8 +331,15 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.installationFailed=false;
         try{
             this.reportInstall('Checking runtime files…');
-            const installed=await this.runtime().discover();this.trusted();
+            let installed=await this.runtime().discover();this.trusted();
             if(installed.inspection&&!serviceRuntimeOptions().managed){
+                const preceding=this.runtime().binding(installed.inspection,installed.installDir);
+                if(automaticUpgrade(preceding.version,this.context.extension.packageJSON.version as string)
+                    &&await this.runtime().supersedePending(preceding,installed.diagnosis)){
+                    this.reportInstall('Resolved previous unfinished upgrade…');
+                    installed=await this.runtime().discover();this.trusted();
+                }
+                if(!installed.inspection)throw new ServiceError('runtime_selection_changed_review_again');
                 const current=this.runtime().binding(installed.inspection,installed.installDir),target=this.context.extension.packageJSON.version as string;
                 if(automaticUpgrade(current.version,target)&&(current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
                     this.reportInstall(`Upgrading ${current.version} → ${target}…`);

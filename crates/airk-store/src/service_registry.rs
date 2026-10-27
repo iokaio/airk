@@ -72,6 +72,7 @@ pub struct ServiceRegistry {
     root: PathBuf,
     connection: Connection,
     registration_state: bool,
+    watch_traversal_state: bool,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -257,13 +258,14 @@ impl ServiceRegistry {
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && (2..=6).contains(&version),
+            application == APPLICATION && (2..=7).contains(&version),
             "unsupported saved service registry format"
         );
         let registry = Self {
             root,
             connection,
             registration_state: version >= 5,
+            watch_traversal_state: version >= 7,
         };
         ensure!(
             registry.incarnation()? == namespace,
@@ -332,7 +334,7 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=6).contains(&version),
+                    application == APPLICATION && (1..=7).contains(&version),
                     "unsupported service registry format"
                 );
                 schema_version = version;
@@ -414,6 +416,13 @@ impl ServiceRegistry {
                 ensure!(invalid == 0, "invalid derived cleanup barrier");
             }
         }
+        if schema_version >= 7 {
+            let exists: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='service_watch_traversal')", [], |row| row.get(0))?;
+            ensure!(
+                exists,
+                "initialized service registry table is missing: service_watch_traversal"
+            );
+        }
         connection.execute_batch(
             "PRAGMA page_size=4096; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;
             PRAGMA max_page_count=8192; PRAGMA cache_size=-8192; PRAGMA foreign_keys=ON;",
@@ -439,6 +448,7 @@ impl ServiceRegistry {
             root,
             connection,
             registration_state: false,
+            watch_traversal_state: false,
         };
         ensure!(
             registry.incarnation()? == owner.incarnation,
@@ -519,6 +529,30 @@ impl ServiceRegistry {
             transaction.pragma_update(None, "user_version", 6)?;
             transaction.commit()?;
         }
+        if schema_version < 7 {
+            let transaction = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            let existing: Option<String> = transaction.query_row(
+                "SELECT sql FROM sqlite_schema WHERE name='service_watch_traversal' AND type='table'",
+                [],
+                |row| row.get(0),
+            ).optional()?;
+            if let Some(sql) = existing {
+                // Fresh 1.5.3 installations created this exact additive table
+                // without advancing user_version. Preserve their observations.
+                ensure!(
+                    schema_version == 6
+                        && sql == watch::TRAVERSAL_SCHEMA.trim().trim_end_matches(';'),
+                    "unexpected traversal state in an earlier registry format"
+                );
+            } else {
+                transaction.execute_batch(watch::TRAVERSAL_SCHEMA)?;
+            }
+            transaction.pragma_update(None, "user_version", 7)?;
+            transaction.commit()?;
+        }
+        registry.watch_traversal_state = true;
         if !owner.ready {
             owner.complete(&registry.root)?;
         }
@@ -836,6 +870,88 @@ mod tests {
     use super::*;
 
     #[test]
+    fn traversal_migration_preserves_v6_registry_and_saved_reads() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registration = project("traversal-upgrade");
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        registry.register(&registration)?;
+        registry.pause(registration.binding, true)?;
+        let revision = registry.saved_request_epoch()?;
+        registry
+            .connection
+            .execute_batch("DROP TABLE service_watch_traversal; PRAGMA user_version=6;")?;
+        drop(registry);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        let saved = ServiceRegistry::open_saved(directory.path())?;
+        assert!(
+            saved
+                .watch(registration.binding)?
+                .observation
+                .traversal
+                .is_none()
+        );
+        assert!(saved.get(registration.binding)?.paused);
+        drop(saved);
+        assert_eq!(fs::read(&path)?, before);
+        let registry = ServiceRegistry::open(directory.path(), Incarnation::from_bytes([8; 16]))?;
+        assert_eq!(registry.saved_request_epoch()?, revision);
+        assert_eq!(registry.incarnation()?, namespace);
+        assert!(registry.get(registration.binding)?.paused);
+        assert!(
+            registry
+                .watch(registration.binding)?
+                .observation
+                .traversal
+                .is_none()
+        );
+        let version: i64 = registry
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))?;
+        assert_eq!(version, 7);
+        registry
+            .connection
+            .execute_batch("DROP TABLE service_watch_traversal")?;
+        drop(registry);
+        let damaged = fs::read(&path)?;
+        let error = ServiceRegistry::open(directory.path(), namespace)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("service_watch_traversal"));
+        assert_eq!(fs::read(path)?, damaged);
+        Ok(())
+    }
+
+    #[test]
+    fn fresh_153_additive_table_is_preserved_but_unknown_tables_are_refused() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([7; 16]);
+        let registry = ServiceRegistry::open(directory.path(), namespace)?;
+        registry.connection.pragma_update(None, "user_version", 6)?;
+        let expected: String = registry.connection.query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='service_watch_traversal'",
+            [],
+            |row| row.get(0),
+        )?;
+        drop(registry);
+        let registry = ServiceRegistry::open(directory.path(), namespace)?;
+        let actual: String = registry.connection.query_row(
+            "SELECT sql FROM sqlite_schema WHERE name='service_watch_traversal'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(actual, expected);
+        registry.connection.execute_batch("DROP TABLE service_watch_traversal; CREATE TABLE service_watch_traversal(unknown TEXT); PRAGMA user_version=6;")?;
+        drop(registry);
+        let path = directory.path().join("service-1.4.sqlite3");
+        let before = fs::read(&path)?;
+        assert!(ServiceRegistry::open(directory.path(), namespace).is_err());
+        assert_eq!(fs::read(path)?, before);
+        Ok(())
+    }
+
+    #[test]
     fn registration_state_migration_preserves_saved_v4_observation_and_existing_pause() -> Result<()>
     {
         let directory = tempfile::tempdir()?;
@@ -846,7 +962,7 @@ mod tests {
         registry.pause(registration.binding, true)?;
         registry
             .connection
-            .execute_batch("ALTER TABLE projects DROP COLUMN cleanup_guard; ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=4;")?;
+            .execute_batch("DROP TABLE service_watch_traversal; ALTER TABLE projects DROP COLUMN cleanup_guard; ALTER TABLE projects DROP COLUMN registered; PRAGMA user_version=4;")?;
         drop(registry);
         let path = directory.path().join("service-1.4.sqlite3");
         let before = fs::read(&path)?;
