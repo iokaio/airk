@@ -20,12 +20,21 @@ impl Channel {
             Self::Preview => "service-1.4-preview",
         }
     }
+    /// Version-free sibling of the install root for the universal launcher.
+    fn launcher_leaf(self) -> &'static str {
+        match self {
+            Self::Stable => "launcher",
+            Self::Preview => "launcher-preview",
+        }
+    }
 }
 
 #[derive(Serialize)]
 pub(crate) struct UserPaths {
     pub channel: Channel,
     pub install: PathBuf,
+    /// Unversioned directory of the universal launcher that agent configurations name.
+    pub launcher: PathBuf,
     pub configuration: PathBuf,
     pub data: PathBuf,
     pub state: PathBuf,
@@ -282,6 +291,12 @@ impl UserPaths {
         {
             Ok(Self {
                 channel,
+                launcher: checked(
+                    install
+                        .parent()
+                        .context("install root has no parent")?
+                        .join(channel.launcher_leaf()),
+                )?,
                 install: checked(install)?,
                 configuration: checked(configuration)?,
                 data: checked(data)?,

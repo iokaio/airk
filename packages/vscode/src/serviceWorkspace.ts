@@ -72,8 +72,9 @@ export class ServiceWorkspace {
                     // Missing sources retain their saved binding for read-only evidence.
                 }
                 this.active();if(seen.has(project.binding))continue;seen.add(project.binding);
-                specs.push({command:binding.launcher,root:project.root,dataDir:project.data_root,collection:project.collection,
-                    name:path.basename(opened),service:{installDir:binding.installDir,project:project.binding}});
+                // Agents get the version-free universal launcher when it forwards to this installation.
+                specs.push({command:binding.universalLauncher??binding.launcher,root:project.root,dataDir:project.data_root,collection:project.collection,
+                    name:path.basename(opened),service:{installDir:binding.installDir,project:project.binding,...(binding.universalLauncher?{universal:true}:{})}});
             }
         }
         return specs;

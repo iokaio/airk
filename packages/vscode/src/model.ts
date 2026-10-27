@@ -4,7 +4,8 @@ import * as path from 'node:path';
 import type { VectorStatus } from './vectorModel';
 
 export interface LaunchSpec { command: string; root: string; dataDir: string; collection: string; name: string;
-    service?: { installDir: string; project: string } }
+    /** `universal`: `command` is the version-free universal launcher, which finds the install root itself. */
+    service?: { installDir: string; project: string; universal?: boolean } }
 export interface Usage { collection: string; disk_bytes: number; indexed_files: number | null; generation: number | null; status: string }
 export interface IndexReport { generation: number; indexed: number; reused: number; removed: number; source_bytes?: number; skipped_truncated?: number;
     repaired_retained_artifacts?: number; retained_repair_retries?: number; skipped: { path: string; reason: string }[];
@@ -29,8 +30,8 @@ export function collectionId(canonicalRoot: string, platform = process.platform)
 export function launchArgs(spec: LaunchSpec, command = 'mcp'): string[] {
     if(spec.service){
         if(!path.isAbsolute(spec.service.installDir)||!/^[a-f0-9]{64}$/.test(spec.service.project))throw new Error('Invalid trusted service launch binding.');
-        return ['runtime','launch','--install-dir',spec.service.installDir,'--','--root',spec.root,'--data-dir',spec.dataDir,
-            '--collection',spec.collection,'--service-project',spec.service.project,command];
+        const scoped=['--root',spec.root,'--data-dir',spec.dataDir,'--collection',spec.collection,'--service-project',spec.service.project,command];
+        return spec.service.universal?scoped:['runtime','launch','--install-dir',spec.service.installDir,'--',...scoped];
     }
     return ['--root', spec.root, '--data-dir', spec.dataDir, '--collection', spec.collection, command];
 }
@@ -62,8 +63,9 @@ export function retrievalEntry(spec: LaunchSpec): ServerEntry {
  */
 export function assistanceEntry(spec: LaunchSpec, descriptor: string): ServerEntry | undefined {
     if (!spec.service || !path.isAbsolute(descriptor)) { return undefined; }
+    const forwarded = ['explorer-assistance', '--descriptor', descriptor];
     return { key: ASSISTANCE_KEY, command: spec.command, label: 'AIRK Explorer Assistance (help and UI status)',
-        args: ['runtime', 'launch', '--install-dir', spec.service.installDir, '--', 'explorer-assistance', '--descriptor', descriptor] };
+        args: spec.service.universal ? forwarded : ['runtime', 'launch', '--install-dir', spec.service.installDir, '--', ...forwarded] };
 }
 
 /** Serialize entries in the selected client's configuration format. */

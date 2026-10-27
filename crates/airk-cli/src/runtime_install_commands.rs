@@ -197,7 +197,24 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             serde_json::json!({"runtime_sha256":runtime_sha256,"executable":main,"approval":approval,"metadata_only":true,"selection_changed":false,"executed":false})
         }
         RuntimeCommand::Ensure { install_dir } => {
-            serde_json::to_value(ensure_running(install_dir).await?)?
+            let mut value = serde_json::to_value(ensure_running(install_dir).await?)?;
+            // Keep the version-free universal launcher pointing at this default installation.
+            // A failure is reported, never fatal: the per-installation launcher still works.
+            if managed::read(install_dir)?.is_none() && value.is_object() {
+                let published = install_lock(install_dir).and_then(|_lock| {
+                    let (_, channel) = layout::retained_parameters(install_dir)?;
+                    crate::universal_launcher::publish_for_default(install_dir, channel)
+                });
+                match published {
+                    Ok(path) => value["universal_launcher"] = serde_json::json!(path),
+                    Err(error) => {
+                        value["universal_launcher_error"] = serde_json::json!(
+                            error.to_string().chars().take(512).collect::<String>()
+                        )
+                    }
+                }
+            }
+            value
         }
         RuntimeCommand::Start { install_dir } => {
             serde_json::to_value(lifecycle::explicit_start(install_dir).await?)?
@@ -268,7 +285,15 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                         .and_then(|registry| registry.incarnation())
                 })
                 .transpose()?;
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?})
+            let universal_launcher = match layout::retained_parameters(install_dir) {
+                Ok((_, channel)) if policy.is_none() => {
+                    crate::universal_launcher::current_for(install_dir, channel)
+                        .ok()
+                        .flatten()
+                }
+                _ => None,
+            };
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?})
         }
         RuntimeCommand::Remove {
             install_dir,

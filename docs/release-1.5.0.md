@@ -40,6 +40,7 @@ How agents reach it:
 **Connect a Coding Agent** now configures and checks AIRK Retrieval and Explorer Assistance as two separately labeled connections.
 
 **Native.**
+- Version-free universal launcher with a pointer file, published by `runtime ensure` and reported by `runtime inspect` as `universal_launcher`.
 - New hidden subcommand `explorer-assistance --descriptor` ([service installation](service-installation.md)).
 - New `explorer` client family (`airk-explorer`) in usage reports.
 - No new MCP tools: AIRK Retrieval still exposes exactly sixteen.
@@ -65,7 +66,8 @@ How agents reach it:
 - **Upgrade.** Activation upgrades an installed 1.4.x runtime to the bundled 1.5.0 runtime automatically, as it did for 1.4 patches; downgrades still need an explicit, reviewed transition.
 - **Rolling back to 1.4.** A 1.5 extension refuses a reviewed rollback to a 1.4 runtime, because rollback and resume require the same major.minor. To return to 1.4, install the 1.4 extension.
 - **Usage after rollback.** The usage store records client families by name, and a 1.4.x runtime does not know the new `explorer` family. After Explorer use, a 1.4.x runtime may fail to read or may drop those usage records. This was not tested.
-- **Agent configurations.** Existing configurations keep working. The `airk_explorer` connection is added only when a user installs it from Connect a Coding Agent, and existing-entry migration still rewrites only `airk-<collection>` entries.
+- **Universal launcher.** Agent configurations no longer name the versioned install root. For the native default installation, `runtime ensure` publishes a version-free universal launcher (`…/AIRK/launcher/airk-launcher`) with an `airk-launcher.json` pointer to the current install root. It reads the pointer on every launch and hands off to that installation's own verified launcher, so a future installation only rewrites the pointer. See [service installation](service-installation.md).
+- **Agent configurations.** Existing configurations keep working. On Install or Repair CLI and trusted activation, recognized entries for this installation, including 1.4 per-installation launcher entries, are moved to the universal launcher, and so are `airk_explorer` entries this extension wrote. Unrecognized entries are left untouched. The `airk_explorer` connection is added only when a user installs it from Connect a Coding Agent.
 
 ## Design differences recorded during implementation
 

@@ -583,8 +583,16 @@ fn run_cli() -> Result<()> {
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn run() -> Result<()> {
     airk_mcp::help::install_cli_help(cli_help_catalog);
-    let cli = Cli::parse();
     let executable = std::env::current_exe()?;
+    // The universal launcher forwards before parsing, so arguments added by later
+    // versions reach the installation that understands them.
+    if airk_cli::universal_launcher::is_universal(&executable) {
+        return airk_cli::universal_launcher::run(
+            &executable.canonicalize()?,
+            std::env::args_os().skip(1).collect(),
+        );
+    }
+    let cli = Cli::parse();
     if !matches!(cli.command, Command::Runtime { .. })
         && executable.file_name()
             == Some(std::ffi::OsStr::new(if cfg!(windows) {

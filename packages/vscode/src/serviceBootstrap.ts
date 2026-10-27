@@ -31,6 +31,8 @@ export const nativeRunner: NativeRunner = async (command,args,timeout=60000,inpu
 export interface VerifiedBundle { main: string; helper: string; source: string; digest: string; version: string; platform: string }
 export interface RuntimeBinding {
     installDir: string; controlDir: string; executable: string; launcher: string | null;
+    /** Version-free launcher that currently forwards to this installation, when published. */
+    universalLauncher?: string | null;
     runtimeSha256: string; version: string; lifecycle: 'on-demand' | 'external' | 'user-on-demand';
     verificationBasis: string;
     payloadVerified?:boolean;
@@ -254,7 +256,8 @@ export class RuntimeHost {
         if(approval.manifest_sha256!==runtimeSha256){throw new ServiceError('runtime_selection_approval_mismatch');}
         if(!['trusted_distribution','organization_digest'].includes(String(approval.verification_basis))){throw new ServiceError('runtime_verification_policy_unavailable');}
         return {installDir:safePath(installDir),controlDir:safePath(inspection.control_dir),executable:safePath(inspection.executable),
-            launcher:inspection.launcher===null?null:safePath(inspection.launcher),runtimeSha256,version,
+            launcher:inspection.launcher===null?null:safePath(inspection.launcher),
+            universalLauncher:typeof inspection.universal_launcher==='string'?safePath(inspection.universal_launcher):null,runtimeSha256,version,
             lifecycle:managed?.lifecycle==='external'?'external':managed?'user-on-demand':'on-demand',
             verificationBasis:typeof approval.verification_basis==='string'?approval.verification_basis:'unknown',
             payloadVerified:inspection.payload_verified!==false&&inspection.metadata_only!==true};
