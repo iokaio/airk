@@ -4,6 +4,8 @@ A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflo
 
 The current package version is **1.5.4**; see [its release record](release-1.5.4.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
 
+Native smoke jobs, the container adapter, service-pool campaign and installed-console fixture share one metadata retry policy. It honors only the native actor's explicit `registry_busy` contract within finite attempt/time budgets; an accepted index/configuration job is polled by the same receipt, never resubmitted. Deliberate negative tests require an exact expected failure code and do not retry it. The document-table smoke retains its original source, coordinate, extraction, budget and usage assertions. See [the protocol](service-protocol.md) for retry exclusions.
+
 Native smoke and qualification tools distinguish a raw diagnostic status from an available publication. They share scoped, bounded observation helpers and preserve explicit failed readiness, typed read-retry limits and exact usage accounting; see the [MCP consumer contract](mcp.md). The mandatory 16-file/model service-client and document-table smokes remain routine on every native host. Local verification uses a freshly constructed matching release pair before a corrective push; hosted CI is not the primary debugging loop.
 
 Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).

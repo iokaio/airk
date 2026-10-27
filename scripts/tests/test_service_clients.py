@@ -17,6 +17,96 @@ SPEC.loader.exec_module(CLIENTS)
 
 
 class ServiceClientTests(unittest.TestCase):
+    def metadata_fixture(self):
+        fixture = self.fixture()
+        fixture.control = Path("fictional-control")
+        return fixture
+
+    def test_registry_contention_repeats_only_the_exact_read_with_remaining_budget(self):
+        fixture, clock = self.metadata_fixture(), [0.0]
+        method = {"job": {"id": "accepted-job"}}
+        replies = [{"status": "failure", "code": "registry_busy"},
+                   {"status": "job", "job": {"id": "accepted-job", "state": "succeeded"}}]
+        def run(*args, **kwargs):
+            clock[0] += 0.1
+            return subprocess.CompletedProcess(args, 0, json.dumps(replies.pop(0)), "")
+        with patch.object(fixture, "run", side_effect=run) as transport, \
+                patch.object(CLIENTS.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(CLIENTS.time, "sleep", side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+            self.assertEqual(fixture.rpc(method, deadline=1.0)["job"]["id"], "accepted-job")
+        self.assertEqual(transport.call_count, 2)
+        first, second = transport.call_args_list
+        self.assertEqual(first.args, second.args)
+        self.assertEqual(first.kwargs["input"], json.dumps(method))
+        self.assertEqual(first.kwargs["input"], second.kwargs["input"])
+        self.assertAlmostEqual(first.kwargs["timeout"], 1.0)
+        self.assertAlmostEqual(second.kwargs["timeout"], 0.875)
+
+    def test_metadata_mutations_unknown_failures_and_transport_errors_never_replay(self):
+        fixture = self.metadata_fixture()
+        busy = {"status": "failure", "code": "registry_busy"}
+        methods = ["request_epoch"] + [{name: {"id": "exact"}} for name in
+                   ("enqueue", "configure_project", "register", "reserve_project", "pause", "retry", "cancel", "unknown")]
+        for method, reply in [(method, busy) for method in methods] + [
+                ({"job": {"id": "exact"}}, {"status": "failure", "code": "invalid_registry_request"}),
+                ({"job": {"id": "exact"}}, {"status": "failure", "code": None}),
+                ({"job": {"id": "exact"}}, {**busy, "unexpected": True})]:
+            with self.subTest(method=method, reply=reply), patch.object(fixture, "run", return_value=
+                    subprocess.CompletedProcess([], 0, json.dumps(reply), "")) as transport:
+                with self.assertRaises(AssertionError):
+                    fixture.rpc(method)
+                transport.assert_called_once()
+        for error in (subprocess.TimeoutExpired("fictional-native", 1), subprocess.CalledProcessError(1, "fictional-native")):
+            with patch.object(fixture, "run", side_effect=error) as transport:
+                with self.assertRaises(type(error)):
+                    fixture.rpc({"job": {"id": "exact"}})
+                transport.assert_called_once()
+
+    def test_registry_read_contention_has_finite_attempt_and_wall_clock_budgets(self):
+        fixture, clock = self.metadata_fixture(), [0.0]
+        busy = subprocess.CompletedProcess([], 0, json.dumps({"status": "failure", "code": "registry_busy"}), "")
+        with patch.object(fixture, "run", return_value=busy) as transport, \
+                patch.object(CLIENTS.time, "monotonic", return_value=0), patch.object(CLIENTS.time, "sleep"):
+            with self.assertRaisesRegex(AssertionError, "registry_busy"):
+                fixture.rpc({"job": {"id": "exact"}}, deadline=1.0)
+            self.assertEqual(transport.call_count, 41)
+        def run(*args, **kwargs):
+            clock[0] += 0.1
+            return busy
+        with patch.object(fixture, "run", side_effect=run) as transport, \
+                patch.object(CLIENTS.time, "monotonic", side_effect=lambda: clock[0]):
+            with self.assertRaises(CLIENTS.ObservationTimeout):
+                fixture.rpc({"job": {"id": "exact"}}, deadline=0.1)
+            transport.assert_called_once()
+
+    def test_expected_native_refusal_is_observed_once_without_permitting_other_failures(self):
+        method = {"stop_embedding": {"worker": "foreign", "force": True}}
+        refused = {"status": "failure", "code": "embedding_worker_changed"}
+        with patch.object(CLIENTS.time, "sleep") as sleep:
+            transport = unittest.mock.Mock(return_value=refused)
+            self.assertEqual(CLIENTS.metadata_rpc(transport, method, expected_failure="embedding_worker_changed"), refused)
+            transport.assert_called_once()
+            self.assertEqual(json.loads(transport.call_args.args[0]), method)
+            transport.reset_mock(return_value=True)
+            transport.return_value = {"status": "failure", "code": "registry_response_unknown_retry_with_key"}
+            with self.assertRaisesRegex(AssertionError, "registry_response_unknown"):
+                CLIENTS.metadata_rpc(transport, method, expected_failure="embedding_worker_changed")
+            transport.assert_called_once()
+            sleep.assert_not_called()
+
+    def test_job_polling_keeps_one_deadline_and_the_original_accepted_receipt(self):
+        fixture, clock, deadlines = self.metadata_fixture(), [0.0], []
+        fixture.job_timeout = 0.5
+        def rpc(method, *, deadline=None):
+            self.assertEqual(method, {"job": {"id": "accepted-job"}})
+            deadlines.append(deadline)
+            return {"job": {"id": "accepted-job", "state": "running" if len(deadlines) == 1 else "succeeded"}}
+        with patch.object(fixture, "rpc", side_effect=rpc), \
+                patch.object(CLIENTS.time, "monotonic", side_effect=lambda: clock[0]), \
+                patch.object(CLIENTS.time, "sleep", side_effect=lambda delay: clock.__setitem__(0, clock[0] + delay)):
+            self.assertEqual(fixture.wait({"job": {"id": "accepted-job"}})["state"], "succeeded")
+        self.assertEqual(deadlines, [0.5, 0.5])
+
     def test_runtime_receipts_stay_outside_the_mac_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

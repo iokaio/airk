@@ -141,9 +141,11 @@ def main():
         job_id = accepted["job"]["id"]
         deadline = time.monotonic() + 180
         while time.monotonic() < deadline:
-            result = subprocess.run(["docker", "exec", "-i", name, "airk", "service", "rpc", "--runtime-dir", control, "--stdin"],
-                                    input=json.dumps({"job": {"id": job_id}}), text=True, capture_output=True, check=True, timeout=60)
-            job = json.loads(result.stdout)["job"]
+            def invoke(exact, until):
+                result = subprocess.run(["docker", "exec", "-i", name, "airk", "service", "rpc", "--runtime-dir", control, "--stdin"],
+                                        input=exact, text=True, capture_output=True, check=True, timeout=clients.remaining(until, 60))
+                return json.loads(result.stdout)
+            job = clients.metadata_rpc(invoke, {"job": {"id": job_id}}, deadline)["job"]
             if job["state"] == "succeeded":
                 return job
             assert job["state"] not in ("failed", "canceled"), job

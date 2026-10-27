@@ -109,9 +109,9 @@ def main():
                        HTTPS_PROXY="http://127.0.0.1:1", ALL_PROXY="http://127.0.0.1:1")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
-    def run(*arguments):
+    def run(*arguments, timeout=240):
         result = subprocess.run([str(binary), *map(str, arguments)], capture_output=True,
-                                env=environment, timeout=240, encoding="utf-8", creationflags=flags)
+                                env=environment, timeout=timeout, encoding="utf-8", creationflags=flags)
         if result.returncode:
             raise RuntimeError(result.stderr[-3000:])
         return json.loads(result.stdout)
@@ -125,10 +125,13 @@ def main():
                                    stderr=log, env=environment, creationflags=flags)
         bridges = []
 
-        def rpc(method):
+        def rpc(method, *, deadline=None, expected_failure=None):
             path = fixture / "request.json"
-            path.write_text(json.dumps(method), encoding="utf-8")
-            return run("service", "rpc", "--runtime-dir", runtime, "--request-file", path)
+            def invoke(exact, until):
+                path.write_text(exact, encoding="utf-8")
+                return run("service", "rpc", "--runtime-dir", runtime, "--request-file", path,
+                           timeout=clients.remaining(until, 90))
+            return clients.metadata_rpc(invoke, method, deadline, expected_failure=expected_failure)
 
         try:
             deadline = time.monotonic() + 90
@@ -171,7 +174,7 @@ def main():
                     raise RuntimeError(f"Model setup not accepted: {accepted}")
                 deadline = time.monotonic() + 180
                 while True:
-                    receipt = rpc({"job": {"id": accepted["job"]["id"]}})["job"]
+                    receipt = rpc({"job": {"id": accepted["job"]["id"]}}, deadline=deadline)["job"]
                     if receipt["state"] == "succeeded":
                         break
                     if receipt["state"] in ("failed", "canceled") or time.monotonic() >= deadline:
@@ -189,7 +192,7 @@ def main():
             deadline = time.monotonic() + 180
             while jobs:
                 for job in list(jobs):
-                    response = rpc({"job": {"id": job}})
+                    response = rpc({"job": {"id": job}}, deadline=deadline)
                     state = response.get("job", {}).get("state")
                     if state == "succeeded":
                         jobs.remove(job)
@@ -217,7 +220,7 @@ def main():
                 raise RuntimeError("Replacement rebuild was not accepted")
             deadline = time.monotonic() + 180
             while True:
-                receipt = rpc({"job": {"id": replacement["job"]["id"]}})["job"]
+                receipt = rpc({"job": {"id": replacement["job"]["id"]}}, deadline=deadline)["job"]
                 if receipt["state"] == "succeeded":
                     break
                 if receipt["state"] in ("failed", "canceled") or time.monotonic() >= deadline:
@@ -231,7 +234,7 @@ def main():
                 raise RuntimeError("Replacement stopped compatible loaded-session reuse")
             deadline = time.monotonic() + 90
             while True:
-                maintenance = rpc({"maintenance": {"project": projects[0]["binding"]}})
+                maintenance = rpc({"maintenance": {"project": projects[0]["binding"]}}, deadline=deadline)
                 if (maintenance.get("observation") or {}).get("pending_incarnations") == 0:
                     break
                 if time.monotonic() >= deadline:
@@ -258,13 +261,13 @@ def main():
                 if plan["phase"] != "planning" or time.monotonic() >= deadline:
                     raise RuntimeError(f"Vector regeneration preview failed: {plan}")
                 time.sleep(0.2)
-                plan = rpc({"plan": {"id": plan["id"]}})["plan"]
+                plan = rpc({"plan": {"id": plan["id"]}}, deadline=deadline)["plan"]
             page = rpc({"plan_items": {"id": plan["id"], "after": None, "limit": 32}})["page"]
             if page["after"] is not None or len(page["items"]) != 1 or page["items"][0]["action"] != "vectors":
                 raise RuntimeError(f"Vector regeneration preview selected unexpected work: {page}")
             rpc({"plan_execute": {"id": plan["id"], "preview": plan["preview_digest"], "allow_fallback": False}})
             while True:
-                plan = rpc({"plan": {"id": plan["id"]}})["plan"]
+                plan = rpc({"plan": {"id": plan["id"]}}, deadline=deadline)["plan"]
                 if plan["phase"] == "finished":
                     if plan["counts"]["succeeded"] != 1:
                         raise RuntimeError(f"Vector regeneration did not succeed: {plan}")
@@ -283,10 +286,10 @@ def main():
                 raise RuntimeError("Vector regeneration discarded the shared MiniLM session")
             print("Approved vector regeneration recomputed completed evidence while preserving lexical citations, index incarnation and one MiniLM load.", flush=True)
 
-            def event_tail(cursor=None):
+            def event_tail(cursor=None, deadline=None):
                 events = []
                 for _ in range(16):
-                    page = rpc({"events": {"project": projects[0]["binding"], "cursor": cursor, "limit": 32}})["page"]
+                    page = rpc({"events": {"project": projects[0]["binding"], "cursor": cursor, "limit": 32}}, deadline=deadline)["page"]
                     events.extend(page["events"])
                     if page["next"] is None:
                         return events, page["tail"]
@@ -300,7 +303,7 @@ def main():
             if any(identity is None for identity in worker_identities):
                 raise RuntimeError("Expected resident project worker identity before helper stop")
             observation = rpc("embedding_status")
-            rejected = rpc({"stop_embedding": {"worker": uuid.uuid4().hex, "force": True}})
+            rejected = rpc({"stop_embedding": {"worker": uuid.uuid4().hex, "force": True}}, expected_failure="embedding_worker_changed")
             if rejected.get("code") != "embedding_worker_changed":
                 raise RuntimeError(f"Foreign helper stop was not rejected: {rejected}")
             stopped = rpc({"stop_embedding": {"worker": observation["worker"], "force": True}})
@@ -322,7 +325,7 @@ def main():
                 raise RuntimeError("Post-failure source job was not accepted")
             deadline = time.monotonic() + 180
             while True:
-                receipt = rpc({"job": {"id": accepted["job"]["id"]}})["job"]
+                receipt = rpc({"job": {"id": accepted["job"]["id"]}}, deadline=deadline)["job"]
                 if receipt["state"] == "succeeded":
                     break
                 if receipt["state"] == "failed":
@@ -335,11 +338,11 @@ def main():
             # receipt proves failure even if its diagnostic publication was busy.
             deadline = time.monotonic() + 180
             while True:
-                events, event_cursor = event_tail(event_cursor)
+                events, event_cursor = event_tail(event_cursor, deadline)
                 failed = next((event for event in events if event["kind"] == "job_failed"
                                and event.get("job_kind") == "vectors"), None)
                 if failed is not None:
-                    failed_semantic = rpc({"job": {"id": failed["job"]}})["job"]
+                    failed_semantic = rpc({"job": {"id": failed["job"]}}, deadline=deadline)["job"]
                     if failed_semantic["state"] != "failed":
                         raise RuntimeError("Failed semantic event disagreed with its receipt")
                     break
@@ -381,7 +384,7 @@ def main():
                 raise RuntimeError(f"Semantic recovery was not accepted: {accepted}")
             deadline = time.monotonic() + 180
             while True:
-                receipt = rpc({"job": {"id": accepted["job"]["id"]}})["job"]
+                receipt = rpc({"job": {"id": accepted["job"]["id"]}}, deadline=deadline)["job"]
                 if receipt["state"] == "succeeded":
                     break
                 if receipt["state"] in ("failed", "canceled") or time.monotonic() >= deadline:
