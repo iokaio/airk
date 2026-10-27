@@ -26,7 +26,7 @@ test('service activation advertises reviewed bindings without indexing and prese
     context.mock.method(RuntimeHost.prototype,'ensure',async(explicit?:boolean)=>{ensures++;assert.notEqual(explicit,true);if(stopped)throw new ServiceError('service_explicitly_stopped');return binding;});
     const disposable={dispose(){}},event=()=>disposable;
     const stub:any={workspace:{isTrusted:true,workspaceFolders:[{name:'Fixture',uri:{scheme:'file',fsPath:source}}],
-        getConfiguration:()=>({inspect:(key:string)=>({globalValue:key==='mcp.responseMode'?'full':key==='cli.autoInstall'?false:undefined})}),
+        getConfiguration:()=>({get:(key:string,fallback?:unknown)=>key==='explorer.assistance.enabled'?false:fallback,inspect:(key:string)=>({globalValue:key==='mcp.responseMode'?'full':key==='cli.autoInstall'?false:undefined})}),
         onDidChangeWorkspaceFolders:event,onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event,
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watching is forbidden');}},
     window:{createOutputChannel:()=>({appendLine(){},show(){},dispose(){}}),createStatusBarItem:()=>({show(){},dispose(){}}),
@@ -34,7 +34,7 @@ test('service activation advertises reviewed bindings without indexing and prese
         showErrorMessage:async()=>undefined,showWarningMessage:async()=>undefined,
         createTerminal:(options:any)=>{terminals.push(options);return {show(){},dispose(){}};}},
     commands:{registerCommand:(name:string,action:()=>Promise<unknown>)=>{commands.set(name,action);return disposable;},executeCommand:async()=>{}},
-    lm:{registerMcpServerDefinitionProvider:(_name:string,value:any)=>{provider=value;return disposable;}},env:{},StatusBarAlignment:{Left:1},
+    lm:{registerMcpServerDefinitionProvider:(name:string,value:any)=>{if(name==='airk.collections')provider=value;return disposable;}},env:{},StatusBarAlignment:{Left:1},
     EventEmitter:class {event=event;fire(){}dispose(){}},TreeItem:class {},Uri:{file:(fsPath:string)=>({fsPath})},
     McpStdioServerDefinition:class {cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;

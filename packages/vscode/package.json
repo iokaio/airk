@@ -68,7 +68,8 @@
   ],
   "activationEvents": [
     "onStartupFinished",
-    "onMcpServerDefinitionProvider:airk.collections"
+    "onMcpServerDefinitionProvider:airk.collections",
+    "onMcpServerDefinitionProvider:airk.explorerAssistance"
   ],
   "capabilities": {
     "virtualWorkspaces": false,
@@ -82,6 +83,10 @@
       {
         "id": "airk.collections",
         "label": "AIRK workspace collections"
+      },
+      {
+        "id": "airk.explorerAssistance",
+        "label": "AIRK Explorer Assistance"
       }
     ],
     "viewsContainers": {
@@ -498,6 +503,11 @@
             "default": false,
             "scope": "machine",
             "markdownDescription": "Show the legacy **Service Console** view in the AIRK activity bar. Its controls now live in **AIRK Explorer › Management**; this view is kept for one release and will be removed."
+          },
+          "airk.explorer.assistance.enabled": {
+            "type": "boolean",
+            "default": true,
+            "markdownDescription": "Offer the AIRK Explorer Assistance MCP server (help and Explorer status for coding agents) and publish this trusted window's private attachment endpoint. Assistance never searches code, runs commands or writes files."
           }
         }
       },

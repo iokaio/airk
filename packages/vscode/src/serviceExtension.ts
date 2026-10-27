@@ -19,6 +19,8 @@ import { ExplorerSidebar } from './explorerSidebar';
 import type { ExplorerController, ExplorerHost } from './explorerController';
 import { migrateLocalAgents } from './agentMigration';
 import { readJsonConfig } from './agentConfig';
+import { AssistanceIpcHost } from './explorerAssistanceHost';
+import { assistanceDirectory, serverInvocation, writeLaunchDescriptor } from './explorerAssistanceLaunch';
 
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
@@ -26,6 +28,7 @@ function same(left:string,right:string):boolean {
 class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDataProvider<LaunchSpec> {
     readonly output=vscode.window.createOutputChannel('AIRK');
     readonly definitions=new vscode.EventEmitter<void>();
+    readonly assistanceDefinitions=new vscode.EventEmitter<void>();
     readonly treeChanges=new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData=this.treeChanges.event;
     readonly console:ServiceConsole;
@@ -45,6 +48,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private installationFailed=false;
     private installProgress?:vscode.Progress<{message?:string}>;
     private explorer?:Promise<ExplorerController>;
+    private explorerLoaded?:ExplorerController;
+    private assistanceHost?:AssistanceIpcHost;
+    private assistanceGeneration=0;
 
     private reportInstall(message:string):void{
         this.installProgress?.report({message});this.output.appendLine(message);
@@ -401,7 +407,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     explorerController():Promise<ExplorerController>{
         this.explorer??=import('./explorerController').then(({ExplorerController})=>{
             if(this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');
-            return new ExplorerController(this.explorerHost());
+            return this.explorerLoaded=new ExplorerController(this.explorerHost());
         });
         return this.explorer;
     }
@@ -416,8 +422,38 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             onDidChangeSpecs:this.treeChanges.event,control:this.console,log:line=>this.output.appendLine(line),
             setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}}};
     }
+    private assistanceEnabled():boolean{return vscode.workspace.isTrusted&&!this.disposed&&vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true);}
+    private assistanceFolders():vscode.WorkspaceFolder[]{return (vscode.workspace.workspaceFolders??[]).filter(folder=>folder.uri.scheme==='file'||folder.uri.scheme==='vscode-remote');}
+    /** Refresh the external launch descriptor and this window's attachment endpoint; untrusted windows publish neither. */
+    async startAssistance():Promise<void>{
+        const generation=++this.assistanceGeneration;
+        this.assistanceHost?.dispose();this.assistanceHost=undefined;
+        if(!this.assistanceEnabled())return;
+        const storage=this.context.globalStorageUri.fsPath,version=this.context.extension.packageJSON.version;
+        try{writeLaunchDescriptor(storage,this.context.extensionPath,version);}
+        catch(error){this.output.appendLine(`Explorer Assistance launch descriptor was not written: ${error instanceof Error?error.message:String(error)}`);}
+        try{
+            const host=await AssistanceIpcHost.start({directory:assistanceDirectory(storage),version,roots:this.assistanceFolders().map(folder=>folder.uri.fsPath),
+                explorerOpen:()=>this.explorerLoaded?.panelOpen??false});
+            if(generation!==this.assistanceGeneration||!this.assistanceEnabled()){host?.dispose();return;}
+            this.assistanceHost=host;
+        }catch(error){this.output.appendLine(`Explorer Assistance window endpoint is unavailable: ${error instanceof Error?error.message:String(error)}`);}
+    }
+    provideAssistanceDefinitions():vscode.McpStdioServerDefinition[]{
+        if(!this.assistanceEnabled())return [];
+        const invocation=serverInvocation(this.context.extensionPath,this.context.globalStorageUri.fsPath);
+        const definition=new vscode.McpStdioServerDefinition('AIRK Explorer Assistance',invocation.command,invocation.args,invocation.env,this.context.extension.packageJSON.version);
+        definition.cwd=this.assistanceFolders()[0]?.uri;
+        return [definition];
+    }
+    resolveAssistanceDefinition(definition:vscode.McpServerDefinition):vscode.McpServerDefinition{
+        if(!this.assistanceEnabled())throw new ServiceError('runtime_client_no_longer_authorized');
+        const invocation=serverInvocation(this.context.extensionPath,this.context.globalStorageUri.fsPath);
+        if(!(definition instanceof vscode.McpStdioServerDefinition)||definition.command!==invocation.command||JSON.stringify(definition.args)!==JSON.stringify(invocation.args))throw new ServiceError('workspace_registration_changed');
+        return definition;
+    }
     reset():void{this.generation++;this.host=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.console.reset();void this.refresh();}
-    dispose():void{if(this.disposed)return;this.disposed=true;this.generation++;void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
+    dispose():void{if(this.disposed)return;this.disposed=true;this.generation++;this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
 }
 
 let active:ServiceExtension|undefined;
@@ -467,10 +503,17 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     for(const [name,action] of Object.entries(commands))context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`,safe(action)));
     if(vscode.lm?.registerMcpServerDefinitionProvider)context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.collections',{
         onDidChangeMcpServerDefinitions:controller.definitions.event,provideMcpServerDefinitions:()=>controller.provideDefinitions(),resolveMcpServerDefinition:value=>controller.resolveDefinition(value)}));
-    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(()=>controller.automaticInstall().then(()=>controller.refresh())),vscode.workspace.onDidGrantWorkspaceTrust(()=>void controller.automaticInstall().then(()=>controller.refresh())),
+    if(vscode.lm?.registerMcpServerDefinitionProvider)context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.explorerAssistance',{
+        onDidChangeMcpServerDefinitions:controller.assistanceDefinitions.event,provideMcpServerDefinitions:()=>controller.provideAssistanceDefinitions(),
+        resolveMcpServerDefinition:value=>controller.resolveAssistanceDefinition(value)}));
+    const assistanceChanged=()=>{void controller.startAssistance();controller.assistanceDefinitions.fire();};
+    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(()=>{assistanceChanged();return controller.automaticInstall().then(()=>controller.refresh());}),
+        vscode.workspace.onDidGrantWorkspaceTrust(()=>{assistanceChanged();void controller.automaticInstall().then(()=>controller.refresh());}),
         vscode.window.onDidChangeActiveTextEditor(()=>void controller.console.controller.refresh()),vscode.workspace.onDidChangeConfiguration(event=>{
+            if(event.affectsConfiguration('airk.explorer.assistance'))assistanceChanged();
             if(event.affectsConfiguration('airk.service'))controller.reset();
             else if(event.affectsConfiguration('airk.mcp'))controller.registrationChanged();
         }));
+    void controller.startAssistance();
     await controller.automaticInstall();await controller.refresh();return {getServerDefinitions:()=>controller.provideDefinitions()};
 }

@@ -78,6 +78,9 @@ export class ExplorerController implements vscode.Disposable {
         void this.loadStatus();
     }
 
+    /** Whether the Explorer panel is open in this window (reported to Explorer Assistance). */
+    get panelOpen(): boolean { return this.panel.open; }
+
     /** Open Search with a query typed outside the panel; the webview runs it like any search. */
     search(query: string): void {
         this.open('#search/query');

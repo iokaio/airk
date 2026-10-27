@@ -46,6 +46,8 @@ pub struct Launch {
     pub runtime: PathBuf,
     pub server: PathBuf,
     pub electron: bool,
+    /// The descriptor's directory; the server reads per-window attachment descriptors below it.
+    pub assistance_dir: PathBuf,
 }
 
 fn regular_file(path: &Path, limit: u64, what: &str) -> Result<()> {
@@ -174,18 +176,22 @@ pub fn plan(descriptor: &Path) -> Result<Launch> {
             "explorer_assistance_runtime_unavailable: the runtime must be executable and not group or world writable"
         );
     }
+    let assistance_dir = fs::canonicalize(descriptor.parent().unwrap_or(descriptor))?;
     Ok(Launch {
         runtime,
         server,
         electron: value.runtime.electron,
+        assistance_dir,
     })
 }
 
-/// The exact process: runtime + server, inherited stdio and working directory, no Node options.
+/// The exact process: runtime + server + its state directory, inherited stdio and working directory, no Node options.
 pub fn command(launch: &Launch) -> Command {
     let mut command = Command::new(&launch.runtime);
     command
         .arg(&launch.server)
+        .arg("--assistance-dir")
+        .arg(&launch.assistance_dir)
         .env_remove("NODE_OPTIONS")
         .env_remove("NODE_PATH");
     if launch.electron {
@@ -278,8 +284,16 @@ mod tests {
         assert!(envs.contains(&("ELECTRON_RUN_AS_NODE".as_ref(), Some("1".as_ref()))));
         assert!(envs.contains(&("NODE_OPTIONS".as_ref(), None)));
         assert_eq!(
+            launch.assistance_dir,
+            fs::canonicalize(fixture.descriptor.parent().unwrap())?
+        );
+        assert_eq!(
             command.get_args().collect::<Vec<_>>(),
-            [launch.server.as_os_str()]
+            [
+                launch.server.as_os_str(),
+                "--assistance-dir".as_ref(),
+                launch.assistance_dir.as_os_str()
+            ]
         );
         Ok(())
     }
