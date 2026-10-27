@@ -7,7 +7,7 @@ import { serviceTestHost } from './serviceTestHost';
 import * as cliInstall from '../cliInstall';
 
 test('Install or Repair CLI migrates all three existing local agent connections through guarded editor saves',async context=>{
-    const f=await serviceTestHost(context);
+    const f=await serviceTestHost(context,{assistance:true});
     try{
         context.mock.method(cliInstall,'installLauncherCli',async()=>['Old CLI is locked; disconnect clients and retry cleanup.']);
         const project=[...f.registrations.values()][0],name=`airk-${project.collection}`;
@@ -26,7 +26,7 @@ test('Install or Repair CLI migrates all three existing local agent connections 
         };
         f.stub.workspace.applyEdit=async(edit:any)=>{const document=documents.get(edit.uri.fsPath);document.text=edit.after;document.version++;return true;};
         await f.commands.get('airk.installCli')!();
-        for(const file of files){const text=await fs.readFile(file,'utf8');assert.ok(text.includes(project.binding),f.calls.join('\n'));assert.ok(text.includes('runtime'));}
+        for(const file of files){const text=await fs.readFile(file,'utf8');assert.ok(text.includes(project.binding),f.calls.join('\n'));assert.ok(text.includes('runtime'));assert.ok(text.includes('airk_explorer')&&text.includes('explorer-assistance'),'installation backfills Assistance for this project');}
         assert.equal(JSON.parse(await fs.readFile(files[1],'utf8')).mcpServers[name].disabled,true);
         assert.equal(f.calls.filter(value=>value.startsWith('Updated ')).length,3);
         assert.ok(f.warnings.some(value=>value.includes('Old CLI is locked')));
@@ -116,6 +116,32 @@ test('agent setup uses the stable launcher, writes only on request and refuses s
         f.stub.workspace.workspaceFolders=[];await f.api.getServerDefinitions();await f.panels[0].send({action:'createCodex'});
         assert.match(f.panels[0].webview.html,/Workspace or storage changed/);assert.equal(await fs.readFile(destination,'utf8'),before);
         f.stub.workspace.isTrusted=false;const copied=f.clipboard.length;await f.panels[0].send({action:'copy'});assert.equal(f.clipboard.length,copied);
+    }finally{await f.close();}
+});
+
+test('Codex setup updates an existing project Retrieval connection with Assistance through guarded editor saves',async context=>{
+    const f=await serviceTestHost(context,{assistance:true});
+    try{
+        if(process.platform==='win32'){
+            for(const registration of f.registrations.values())registration.root=path.toNamespacedPath(registration.root);
+            await f.api.getServerDefinitions();
+        }
+        f.state.pick=items=>items.find(item=>item.client==='codex')??items[0];await f.commands.get('airk.setupAgent')!();
+        const panel=f.panels.find(panel=>panel.viewType==='airk.agentSetup')??f.panels[0];
+        await panel.send({action:'createCodex'});
+        const destination=path.join(f.folders[0].uri.fsPath,'.codex','config.toml');
+        const created=await fs.readFile(destination,'utf8');assert.ok(created.includes('airk_explorer'));
+        const retrievalOnly=created.slice(0,created.indexOf('[mcp_servers.airk_explorer]')).trimEnd()+'\n';await fs.writeFile(destination,retrievalOnly);
+        let saved=0;
+        const document={uri:{fsPath:destination},isDirty:false,version:1,text:retrievalOnly,getText(){return this.text;},positionAt:(offset:number)=>offset,
+            async save(){saved++;await fs.writeFile(destination,this.text);return true;}};
+        f.stub.workspace.openTextDocument=async()=>document;
+        f.stub.workspace.applyEdit=async(edit:any)=>{document.text=edit.after;document.version++;return true;};
+        await panel.send({action:'updateCodex'});
+        const updated=await fs.readFile(destination,'utf8');assert.ok(updated.includes('airk_explorer')&&updated.includes('explorer-assistance'),panel.webview.html);assert.equal(saved,1);
+        await panel.send({action:'updateCodex'});assert.equal(saved,1,'current connections require no repeat edit');
+        f.stub.workspace.textDocuments=[{uri:{fsPath:destination},isDirty:true}];await panel.send({action:'updateCodex'});
+        assert.match(panel.webview.html,/unsaved/i);assert.equal(saved,1);
     }finally{await f.close();}
 });
 

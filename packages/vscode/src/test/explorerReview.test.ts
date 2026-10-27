@@ -39,7 +39,7 @@ test('Review joins the editor\'s Git changes with indexed records and live hashe
         calls.push(`${tool} ${args.path ?? args.path_prefix ?? args.name}`);
         if (tool === 'airk_file_info') {
             const indexed: Record<string, string> = { 'src/session.ts': hash('export function renew() {}\n'), 'src/edited.ts': hash('original\n') };
-            return { publication: 'airk-r1:p:1', payload: indexed[args.path] ? { content_hash: indexed[args.path], language: 'typescript' } : {} };
+            return { publication: 'airk-r1:p:1', payload: indexed[args.path] ? { content_hash: indexed[args.path], language: 'typescript' } : { read: { status: 'unknown', reason: 'path is absent from the current index' } } };
         }
         if (tool === 'airk_symbols') {
             return { publication: 'airk-r1:p:1', payload: args.path_prefix === 'src/session.ts'
@@ -77,6 +77,17 @@ test('Git status numbers follow the vscode.git enum, including type changes and 
     const review = load([]);
     const kinds = [0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 12, 16, 17, 18].map(review.kind);
     assert.deepEqual(kinds, ['modified', 'added', 'deleted', 'renamed', 'modified', 'deleted', 'untracked', 'added', 'renamed', 'modified', 'conflicted', 'conflicted', 'conflicted', 'conflicted']);
+});
+
+test('Review preserves failed lookups and refuses mixed declarations/reference publications', async () => {
+    const root = path.resolve('review-root');
+    const review = load([{ rootUri: uri(root), state: { indexChanges: [], workingTreeChanges: [{ uri: uri(path.join(root, 'a.ts')), status: 5 }], mergeChanges: [] } }]);
+    const base = { handles: new FactHandles(new RefRegistry()), project: 'ab'.repeat(32), root };
+    await assert.rejects(review.reviewChanges({ ...base, session: { call: async () => { throw new Error('integrity failed'); } } as any }), /integrity/);
+    const session = { call: async (tool: string) => tool === 'airk_symbols' ? { publication: 'p1', payload: { items: [{ kind: 'function', name: 'changed', citation: { path: 'a.ts', start_line: 1, end_line: 1, content_hash: hash('a') } }] } }
+        : { publication: 'p2', payload: { evidence: { hits: [] } } } } as any;
+    await assert.rejects(review.reviewImpact({ ...base, session }), /index changed/);
+    await assert.rejects(review.reviewTests({ ...base, session }), /index changed/);
 });
 
 test('without Git or a repository Review says so, and the test-path setting falls back when invalid', async () => {

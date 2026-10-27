@@ -9,6 +9,8 @@ export const RUN_SCHEMA = 'airk.explorer.run/1';
 export const PLAN_SCHEMA = 'airk.explorer.plan/1';
 export const RECIPE_SCHEMA = 'airk.explorer.search-recipe/1';
 export const COMPILER_VERSION = 1;
+/** UTF-8 bytes of the serialized representation, shared by host and webview. */
+export const jsonBytes = (value: unknown): number => new TextEncoder().encode(JSON.stringify(value)).length;
 
 // ---- Closed operator catalog (design §7.7). No shell, write, network or recursion operators exist.
 type ArgSpec = { readonly kind: 'text'; readonly max: number } | { readonly kind: 'path' } | { readonly kind: 'int'; readonly min: number; readonly max: number }
@@ -109,7 +111,7 @@ export function safePrefix(value: string): boolean {
 export function validateStrategy(value: unknown): Check {
     const errors: string[] = [];
     if (!record(value)) { return { ok: false, errors: ['strategy must be an object'] }; }
-    if (JSON.stringify(value).length > STRATEGY_LIMIT_BYTES) { return { ok: false, errors: ['strategy exceeds 32 KiB'] }; }
+    if (jsonBytes(value) > STRATEGY_LIMIT_BYTES) { return { ok: false, errors: ['strategy exceeds 32 KiB'] }; }
     exact(value, ['schema', 'id', 'version', 'title', 'category', 'summary', 'params', 'steps', 'budgets', 'instructions', 'deliverables'],
         ['schema', 'id', 'version', 'title', 'category', 'summary', 'params', 'steps', 'budgets', 'instructions', 'deliverables'], 'strategy', errors);
     if (value.schema !== STRATEGY_SCHEMA) { errors.push('strategy: unsupported schema'); }
@@ -333,9 +335,9 @@ export function orderRecords(records: readonly LedgerRecord[]): LedgerRecord[] {
 /** Keep whole records until the byte budget is reached; report how many were left out. */
 export function clipRecords(records: readonly LedgerRecord[], budget: number): { kept: LedgerRecord[]; omitted: number } {
     const kept: LedgerRecord[] = [];
-    let used = 0;
+    let used = 2; // JSON array brackets; each subsequent record also needs a comma.
     for (const record of records) {
-        const size = record.text.length + record.path.length + 96;
+        const size = jsonBytes(record) + (kept.length ? 1 : 0);
         if (used + size > budget) { break; }
         kept.push(record); used += size;
     }
@@ -401,12 +403,13 @@ export interface Plan {
     readonly tasks: readonly PlanTask[];
 }
 export const PLAN_LIMIT_BYTES = 131072;
+export interface ImportedPlan { readonly plan: Plan; readonly format: 'json' | 'markdown'; readonly warnings: readonly string[] }
 const TASK_ID = /^T[1-9]\d{0,2}$/;
 
 export function validatePlan(value: unknown): { ok: true; plan: Plan } | { ok: false; errors: string[] } {
     const errors: string[] = [];
     if (!record(value)) { return { ok: false, errors: ['plan must be an object'] }; }
-    if (JSON.stringify(value).length > PLAN_LIMIT_BYTES) { return { ok: false, errors: ['plan exceeds 128 KiB'] }; }
+    if (jsonBytes(value) > PLAN_LIMIT_BYTES) { return { ok: false, errors: ['plan exceeds 128 KiB'] }; }
     exact(value, ['schema', 'title', 'objective', 'project', 'publication', 'tasks'], ['schema', 'title', 'objective', 'tasks'], 'plan', errors);
     if (value.schema !== PLAN_SCHEMA) { errors.push('plan: unsupported schema'); }
     if (!str(value.title, 160)) { errors.push('plan: invalid title'); }

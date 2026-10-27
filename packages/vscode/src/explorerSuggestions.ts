@@ -3,7 +3,7 @@
 // bounded by TTL, count, bytes and rate. Admission is not acceptance: nothing here applies,
 // runs or saves a draft; the user does that from the Inbox.
 import { randomBytes } from 'node:crypto';
-import { canonical, destinationOf, DRAFT_SCHEMA_VERSION, DraftKind, ProposalReceipt, ProposalStatus, validateDraft, ValidDraft } from './explorerDrafts';
+import { canonical, destinationOf, DRAFT_SCHEMA_VERSION, DraftKind, ProposalOutcome, ProposalReceipt, ProposalStatus, validateDraft, ValidDraft } from './explorerDrafts';
 import type { ExplorerErrorCode } from './explorerErrors';
 import type { SuggestionCard, SuggestionsView } from './explorerContracts';
 
@@ -11,6 +11,7 @@ export const SUGGESTION_LIMITS = { pending: 50, bytes: 262144, perMinute: 30, re
 
 export interface DraftClient { readonly name: string; readonly version: string }
 export interface Suggestion {
+    readonly binding: string;
     readonly id: string;
     readonly kind: DraftKind;
     readonly draft: ValidDraft;
@@ -23,6 +24,8 @@ export interface Suggestion {
     readonly warnings: readonly string[];
     readonly targetRevision?: number;
     status: ProposalStatus;
+    appliedRevision?: number;
+    reason?: string;
 }
 export type Submission = { ok: true; receipt: ProposalReceipt } | { ok: false; code: ExplorerErrorCode; message: string };
 
@@ -66,10 +69,26 @@ export class SuggestionStore {
 
     private receipt(item: Suggestion): ProposalReceipt {
         return { schema_version: DRAFT_SCHEMA_VERSION, proposal_id: item.id, proposal_type: item.kind, status: item.status, destination: destinationOf(item.draft.body),
-            workspace_binding: this.context.binding(), ...(item.targetRevision !== undefined ? { target_draft_revision: item.targetRevision } : {}),
+            workspace_binding: item.binding, ...(item.targetRevision !== undefined ? { target_draft_revision: item.targetRevision } : {}),
             accepted: false, applied: item.status === 'applied', executed: false, received_at: new Date(item.receivedAt).toISOString(),
             expires_at: new Date(item.expiresAt).toISOString(), warnings: item.warnings };
     }
+
+    /** Dry-run admission checks. No Inbox, idempotency, TTL or rate state is changed. */
+    validate(kind: DraftKind, input: unknown): Record<string, unknown> {
+        const checked = validateDraft(kind, input);
+        if (!checked.ok) { return { valid: false, code: checked.code, errors: checked.errors.map(message => ({ field: message.split(':')[0], message })) }; }
+        const draft = checked.draft, current = this.targetRevision(kind);
+        if (draft.expectedBinding && draft.expectedBinding !== this.context.binding()) { return { valid: false, code: 'STALE_BINDING', errors: [{ field: 'workspace_binding', message: 'The workspace binding changed.' }] }; }
+        if (draft.expectedTargetRevision !== undefined && draft.expectedTargetRevision !== current) { return { valid: false, code: 'PROPOSAL_CONFLICT', errors: [{ field: 'expected_target_revision', message: 'The target revision changed or is not available.' }], current_target_revision: current ?? null }; }
+        const item = this.items.get(this.keys.get(draft.idempotencyKey) ?? '');
+        if (item && (item.binding !== this.context.binding() || item.kind !== kind || item.bodyHash !== canonical(input))) { return { valid: false, code: 'PROPOSAL_CONFLICT', errors: [{ field: 'idempotency_key', message: 'This key already identifies another body or binding.' }] }; }
+        return { valid: true, destination: destinationOf(draft.body), workspace_binding: this.context.binding(), current_target_revision: current ?? null,
+            evidence_matches_observed_publication: draft.evidence && this.context.publication() ? draft.evidence.publication === this.context.publication() : null,
+            admitted: false, executed: false };
+    }
+
+    private targetRevision(kind: DraftKind): number | undefined { return kind === 'strategy' ? this.context.revisions().studio : kind === 'plan' ? this.context.revisions().planner : undefined; }
 
     submit(kind: DraftKind, input: unknown, client: DraftClient): Submission {
         this.sweep();
@@ -84,11 +103,12 @@ export class SuggestionStore {
         const existing = this.keys.get(draft.idempotencyKey);
         if (existing) {
             const item = this.items.get(existing)!;
+            if (item.binding !== this.context.binding()) { return { ok: false, code: 'STALE_BINDING', message: 'The proposal belongs to the previous window binding; prepare a new proposal.' }; }
             if (item.kind === kind && item.bodyHash === bodyHash) { return { ok: true, receipt: this.receipt(item) }; }
             return { ok: false, code: 'PROPOSAL_CONFLICT', message: 'This idempotency key was already used with a different draft.' };
         }
-        const target = kind === 'search' ? undefined : this.context.revisions()[kind === 'strategy' ? 'studio' : 'planner'];
-        if (draft.expectedTargetRevision !== undefined && target !== undefined && draft.expectedTargetRevision !== target) {
+        const target = this.targetRevision(kind);
+        if (draft.expectedTargetRevision !== undefined && draft.expectedTargetRevision !== target) {
             return { ok: false, code: 'PROPOSAL_CONFLICT', message: `The target draft is at revision ${target}, not ${draft.expectedTargetRevision}.` };
         }
         while (this.recent.length && this.recent[0] <= now - 60_000) { this.recent.shift(); }
@@ -106,7 +126,7 @@ export class SuggestionStore {
         if (draft.body.kind === 'search' && draft.body.search.mode !== 'lexical' && draft.body.search.mode !== 'policy') {
             warnings.push('Vector and hybrid modes depend on the project\'s vector settings; the Explorer reports the mode it applies.');
         }
-        const item: Suggestion = { id: `ex-prop-${randomBytes(8).toString('hex')}`, kind, draft, client: { name: client.name.slice(0, 64) || 'unknown client', version: client.version.slice(0, 32) },
+        const item: Suggestion = { binding: this.context.binding(), id: `ex-prop-${randomBytes(8).toString('hex')}`, kind, draft, client: { name: client.name.slice(0, 64) || 'unknown client', version: client.version.slice(0, 32) },
             receivedAt: now, expiresAt: now + this.context.ttlMs(), size, bodyHash, warnings, ...(target !== undefined ? { targetRevision: target } : {}), status: 'pending_review' };
         this.items.set(item.id, item); this.keys.set(draft.idempotencyKey, item.id);
         this.changed();
@@ -114,11 +134,23 @@ export class SuggestionStore {
     }
 
     /** Status without the body, for airk_explorer_proposal_status. */
-    status(id: string): Pick<ProposalReceipt, 'proposal_id' | 'status' | 'destination' | 'applied' | 'executed' | 'expires_at'> | undefined {
+    status(id: string): ProposalOutcome | undefined {
         this.sweep();
         const item = this.items.get(id);
-        return item && { proposal_id: item.id, status: item.status, destination: destinationOf(item.draft.body), applied: item.status === 'applied', executed: false,
+        if (!item) { return undefined; }
+        const stale = item.binding !== this.context.binding(), status = stale && ['pending_review', 'deferred'].includes(item.status) ? 'conflicted' : item.status;
+        const current = this.targetRevision(item.kind);
+        return { proposal_id: item.id, status, destination: destinationOf(item.draft.body), applied: status === 'applied', executed: false,
+            reason: stale ? 'binding_changed' : item.reason ?? ({ pending_review: 'awaiting_user_review', deferred: 'deferred_by_user', applied: item.appliedRevision !== undefined ? 'applied_to_draft' : 'accepted_for_application', rejected: 'rejected_by_user', expired: 'ttl_expired', conflicted: 'target_changed' }[status]),
+            ...(item.targetRevision !== undefined ? { target_draft_revision: item.targetRevision } : {}),
+            ...(current !== undefined ? { current_target_revision: current } : {}), ...(item.appliedRevision !== undefined ? { applied_target_revision: item.appliedRevision } : {}),
             expires_at: new Date(item.expiresAt).toISOString() };
+    }
+
+    acknowledge(id: string, revision: number): boolean {
+        const item = this.get(id);
+        if (!item || item.binding !== this.context.binding() || item.status !== 'applied' || this.targetRevision(item.kind) !== revision) { return false; }
+        item.appliedRevision = revision; this.changed(); return true;
     }
 
     list(): readonly Suggestion[] {
@@ -131,7 +163,7 @@ export class SuggestionStore {
     resolve(id: string, status: 'applied' | 'rejected' | 'deferred' | 'conflicted'): Suggestion | undefined {
         this.sweep();
         const item = this.items.get(id);
-        if (!item || (item.status !== 'pending_review' && item.status !== 'deferred')) { return undefined; }
+        if (!item || item.binding !== this.context.binding() || (item.status !== 'pending_review' && item.status !== 'deferred' && !(item.status === 'applied' && status === 'conflicted'))) { return undefined; }
         item.status = status;
         this.changed();
         return item;
@@ -155,6 +187,7 @@ function summary(item: Suggestion): string {
     if (body.kind === 'strategy') { return `${body.strategy.id}@${body.strategy.version} · ${body.strategy.steps.length} steps`; }
     if (body.kind === 'plan') { return `${body.plan.tasks.length} task(s)${body.pathHint ? ` · suggested path ${body.pathHint}` : ''}`; }
     if (body.kind === 'review') { return `Review › ${body.scope}${body.names.length ? ` · ${body.names.slice(0, 5).join(', ')}` : ''}`; }
+    if (body.kind === 'navigation') { return `Open ${body.route}${Object.keys(body.filters).length ? ` · ${JSON.stringify(body.filters).slice(0, 200)}` : ''}`; }
     return `Guidance: ${body.intent}`;
 }
 

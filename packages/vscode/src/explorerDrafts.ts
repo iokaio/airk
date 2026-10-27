@@ -5,15 +5,18 @@
 import {
     CORE_PACK, DEFAULT_BUDGETS, Plan, PLAN_SCHEMA, PlanTask, safePrefix, Strategy, STRATEGY_SCHEMA, StrategyParam, StrategyStep, validatePlan, validateStrategy,
 } from './explorerStrategies';
+import { ROUTE_KEYS } from './explorerRoutes';
+import { FEATURES } from './explorerFeatures';
 
 export const DRAFT_SCHEMA_VERSION = '1.0';
 export const DRAFT_LIMIT_BYTES = 16384;
 export const DRAFT_TOOLS = ['airk_explorer_suggest_search', 'airk_explorer_suggest_strategy', 'airk_explorer_suggest_plan', 'airk_explorer_suggest_review',
-    'airk_explorer_suggest_management'] as const;
-export type DraftKind = 'search' | 'strategy' | 'plan' | 'review' | 'management';
+    'airk_explorer_suggest_management', 'airk_explorer_suggest_navigation'] as const;
+export const DRAFT_KINDS = ['search', 'strategy', 'plan', 'review', 'management', 'navigation'] as const;
+export type DraftKind = typeof DRAFT_KINDS[number];
 /** Default destination per kind; review and management drafts name a more specific screen. */
 export const DESTINATIONS: Readonly<Record<DraftKind, string>> = { search: 'search/query', strategy: 'strategies/studio', plan: 'strategies/planner', review: 'review/changes',
-    management: 'manage/projects' };
+    management: 'manage/projects', navigation: 'overview' };
 export const REVIEW_SCOPES = ['changes', 'impact', 'tests'] as const;
 
 /**
@@ -36,8 +39,10 @@ export type ManagementIntent = keyof typeof MANAGEMENT_INTENTS;
 
 /** Where a draft would go in the Explorer. */
 export function destinationOf(body: DraftBody): string {
-    return body.kind === 'review' ? `review/${body.scope}` : body.kind === 'management' ? MANAGEMENT_INTENTS[body.intent].route : DESTINATIONS[body.kind];
+    return body.kind === 'navigation' ? body.route : body.kind === 'review' ? `review/${body.scope}` : body.kind === 'management' ? MANAGEMENT_INTENTS[body.intent].route : DESTINATIONS[body.kind];
 }
+export interface NavigationFilters { readonly name?: string; readonly path_prefix?: string; readonly kind?: string; readonly text?: string; readonly since?: string }
+export const navigationFilters = (props: { navigation?: { route: string; filters: NavigationFilters } }, route: string): NavigationFilters => props.navigation?.route === route ? props.navigation.filters : {};
 export type ProposalStatus = 'pending_review' | 'applied' | 'rejected' | 'deferred' | 'expired' | 'conflicted';
 
 export interface SearchDraft { readonly query: string; readonly mode: 'policy' | 'lexical' | 'vector' | 'hybrid'; readonly pathPrefix?: string; readonly limit: number; readonly maxBytes: number; readonly fullChunks: boolean }
@@ -48,7 +53,8 @@ export type DraftBody =
     | { readonly kind: 'strategy'; readonly strategy: Strategy; readonly objective: string; readonly params: Readonly<Record<string, string>>; readonly pathPrefix?: string }
     | { readonly kind: 'plan'; readonly plan: Plan; readonly pathHint?: string }
     | { readonly kind: 'review'; readonly scope: typeof REVIEW_SCOPES[number]; readonly names: readonly string[]; readonly note?: string }
-    | { readonly kind: 'management'; readonly intent: ManagementIntent; readonly reason?: string };
+    | { readonly kind: 'management'; readonly intent: ManagementIntent; readonly reason?: string }
+    | { readonly kind: 'navigation'; readonly route: string; readonly filters: NavigationFilters; readonly note?: string };
 export interface ValidDraft {
     readonly idempotencyKey: string;
     readonly title: string;
@@ -74,6 +80,18 @@ export interface ProposalReceipt {
     readonly received_at: string;
     readonly expires_at: string;
     readonly warnings: readonly string[];
+}
+export interface ProposalOutcome {
+    readonly proposal_id: string;
+    readonly status: ProposalStatus;
+    readonly destination: string;
+    readonly applied: boolean;
+    readonly executed: false;
+    readonly expires_at: string;
+    readonly reason: string;
+    readonly target_draft_revision?: number;
+    readonly current_target_revision?: number;
+    readonly applied_target_revision?: number;
 }
 
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -194,6 +212,27 @@ function managementBody(value: Record<string, unknown>, errors: string[]): Draft
     return { kind: 'management', intent: value.intent as ManagementIntent, ...(value.reason ? { reason: String(value.reason) } : {}) };
 }
 
+/** Navigation fills supported forms; it never submits them or accepts arbitrary route parameters. */
+function navigationBody(value: Record<string, unknown>, errors: string[]): DraftBody | undefined {
+    if (typeof value.route !== 'string' || !ROUTE_KEYS.includes(value.route) || FEATURES[value.route] !== 'implemented') {
+        errors.push('route must name an implemented Explorer route'); return undefined;
+    }
+    const allowed: Record<string, readonly string[]> = { 'code/symbols': ['name', 'path_prefix'], 'code/references': ['name', 'path_prefix'],
+        'docs/facts': ['name', 'path_prefix', 'kind'], 'evidence/checker': ['text'], 'evidence/changes': ['since'] };
+    const filters = value.filters ?? {};
+    if (!record(filters)) { errors.push('filters must be an object'); return undefined; }
+    keys(filters, allowed[value.route] ?? [], [], 'filters', errors);
+    for (const [key, entry] of Object.entries(filters)) {
+        const max = key === 'text' ? 8000 : key === 'path_prefix' ? 1024 : 256;
+        if (!text(entry, max)) { errors.push(`filters.${key}: invalid text`); }
+        if (key === 'path_prefix' && (typeof entry !== 'string' || !safePrefix(entry))) { errors.push('filters.path_prefix: relative literal prefix required'); }
+        if (key === 'since' && (typeof entry !== 'string' || !/^airk-r1:[0-9A-Za-z:_-]+$/.test(entry))) { errors.push('filters.since: publication token required'); }
+        if (key === 'kind' && !['any', 'requirement', 'decision', 'design', 'architecture', 'feature', 'acceptance', 'date', 'section', 'table_row', 'table_cell'].includes(String(entry))) { errors.push('filters.kind: unsupported document kind'); }
+    }
+    if (value.note !== undefined && !text(value.note, 1000)) { errors.push('note must be 1–1000 characters'); }
+    return { kind: 'navigation', route: value.route, filters: filters as NavigationFilters, ...(value.note ? { note: String(value.note) } : {}) };
+}
+
 /** Strict validation of one draft call. Unknown fields, action fields, deep nesting and oversize bodies are refused. */
 export function validateDraft(kind: DraftKind, input: unknown): DraftCheck {
     if (!record(input)) { return { ok: false, code: 'INVALID_SCHEMA', errors: ['arguments must be an object'] }; }
@@ -206,7 +245,8 @@ export function validateDraft(kind: DraftKind, input: unknown): DraftCheck {
     if (input.schema_version !== DRAFT_SCHEMA_VERSION) { return { ok: false, code: 'SCHEMA_UNSUPPORTED', errors: [`schema_version must be "${DRAFT_SCHEMA_VERSION}"`] }; }
     const errors: string[] = [];
     const specific = { search: ['draft', 'intent'], strategy: ['template_id', 'objective', 'parameters', 'path_prefix', 'steps', 'evidence_budget_bytes'], plan: ['objective', 'tasks', 'path_hint'],
-        review: ['scope', 'names', 'note'], management: ['intent', 'mode', 'reason'] }[kind];
+        review: ['scope', 'names', 'note'], management: ['intent', 'mode', 'reason'], navigation: ['route', 'filters', 'note'] }[kind];
+    if (!specific) { return { ok: false, code: 'INVALID_SCHEMA', errors: ['unknown draft kind'] }; }
     if (kind === 'management' && input.mode !== undefined && input.mode !== 'show_guidance') {
         return { ok: false, code: 'POLICY_DENIED', errors: ['management drafts only show guidance (mode "show_guidance"); they never run an operation'] };
     }
@@ -219,7 +259,7 @@ export function validateDraft(kind: DraftKind, input: unknown): DraftCheck {
     if (errors.length) { return { ok: false, code: 'INVALID_SCHEMA', errors: errors.slice(0, 20) }; }
     const title = String(input.title);
     const body = kind === 'search' ? searchBody(input, errors) : kind === 'strategy' ? strategyBody(input, title, errors) : kind === 'plan' ? planBody(input, title, errors)
-        : kind === 'review' ? reviewBody(input, errors) : managementBody(input, errors);
+        : kind === 'review' ? reviewBody(input, errors) : kind === 'navigation' ? navigationBody(input, errors) : managementBody(input, errors);
     if (!body || errors.length) { return { ok: false, code: 'INVALID_SCHEMA', errors: errors.slice(0, 20) }; }
     return { ok: true, draft: { idempotencyKey: String(input.idempotency_key), title, body,
         ...(input.expected_target_revision !== undefined ? { expectedTargetRevision: input.expected_target_revision as number } : {}),

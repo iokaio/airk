@@ -17,6 +17,15 @@ export class EvidenceFailure extends Error {
     constructor(readonly error: ExplorerError) { super(error.message); }
 }
 export interface ToolResult { readonly payload: Record<string, unknown>; readonly publication?: string }
+/** One report must never silently combine different publications. Missing identity fails closed. */
+export function samePublication(expected: string | undefined, result: ToolResult): string {
+    if (!result.publication || expected && result.publication !== expected) { throw new EvidenceFailure(explorerError('EVIDENCE_MISMATCH', 'The index changed during this report; refresh it.')); }
+    return result.publication;
+}
+export function absentFromIndex(payload: Record<string, unknown>): boolean {
+    const read = payload.read as Record<string, unknown> | undefined;
+    return read?.status === 'removed_from_index' || read?.status === 'unknown' && read?.reason === 'path is absent from the current index';
+}
 export interface CallOptions {
     /** UI deadline. The native call may still finish; its late reply is discarded. */
     readonly timeout?: number;
@@ -49,7 +58,8 @@ export function readRetryDelay(envelope: unknown): number | undefined {
 }
 
 function publicationOf(payload: Record<string, unknown>): string | undefined {
-    const publication = payload.publication;
+    const read = payload.read as Record<string, unknown> | undefined;
+    const publication = payload.publication ?? read?.current_publication ?? read?.publication;
     if (typeof publication === 'string') { return publication; }
     if (publication && typeof publication === 'object' && typeof (publication as Record<string, unknown>).token === 'string') {
         return (publication as Record<string, unknown>).token as string;
@@ -58,12 +68,16 @@ function publicationOf(payload: Record<string, unknown>): string | undefined {
 }
 
 function toolFailure(text: string): EvidenceFailure {
+    if (/current revision expired|known_hash does not match/.test(text)) { return new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
     if (/workspace is not indexed|index_unavailable|no readable publication/i.test(text)) { return new EvidenceFailure(explorerError('INDEX_UNAVAILABLE')); }
     let detail = text;
     try {
         const parsed = JSON.parse(text);
         const error = parsed?.error ?? parsed;
-        if (error && typeof error === 'object' && typeof error.message === 'string') { detail = error.message; }
+        if (error && typeof error === 'object' && typeof error.message === 'string') {
+            detail = error.message;
+            if (typeof error.code === 'string') { return new EvidenceFailure(explorerError(error.code, detail)); }
+        }
     } catch { /* Plain-text tool errors are reported as written. */ }
     return new EvidenceFailure(explorerError('TOOL_ERROR', detail));
 }
@@ -108,6 +122,7 @@ export class EvidenceClient {
                     }
                 }
             }
+            if (this.queue.length >= 64) { reject(new EvidenceFailure(explorerError('RATE_LIMITED', 'The evidence request queue is full.'))); return; }
             this.queue.push(task); this.pump();
         });
     }
@@ -138,6 +153,7 @@ export class EvidenceClient {
             try {
                 envelope = await session.request('tools/call', { name: task.tool, arguments: task.args }, task.options.timeout ?? this.options.timeout ?? 15000);
             } catch (error) {
+                if (error instanceof McpSessionError && error.code === 'overloaded') { throw new EvidenceFailure(explorerError('RATE_LIMITED')); }
                 if (error instanceof McpSessionError && error.code === 'timeout') { throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT')); }
                 if (error instanceof McpSessionError && error.code === 'rpc') { throw new EvidenceFailure(explorerError('TOOL_ERROR', error.message)); }
                 throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', error instanceof Error ? error.message : String(error)));

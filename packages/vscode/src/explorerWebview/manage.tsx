@@ -104,7 +104,7 @@ export function ProjectsScreen(props: ScreenProps) {
                                 <td title={project.publication}>{shortToken(project.publication)}</td><td>{observed(project.indexedFiles)}</td>
                                 <td>{project.semantic ?? 'not observed'}</td><td>{ago(project.observedAt)}</td>
                                 <td class="actions">{!view.inactive && <>
-                                    {project.project !== props.state.selectedProject && <button type="button" class="ghost" onClick={() => { void request('project.select', { project: project.project }).catch(() => undefined); }}>Select</button>}
+                                    {project.project !== props.state.selectedProject && <button type="button" class="ghost" disabled={!project.current} title="Evidence selection requires this project to be open in the workspace" onClick={() => { void request('project.select', { project: project.project }).catch(() => undefined); }}>Select</button>}
                                     <Act actions={actions} action="index" fields={{ project: project.project }} enabled={view.enabled.projectActions}>Index now</Act>
                                 </>}</td>
                             </tr>
@@ -215,6 +215,9 @@ export function IndexingScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Per-project indexing controls. Project settings open the native settings picker (vectors, detail, models, extraction policy, scan limits and more).">
+            <div class="callout"><p>Choose evidence detail, vectors and extraction settings for your purpose and source formats before changing this project.</p>
+                <button class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'indexing-choices' })}>Indexing choices explained</button>
+                <button class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'document-types' })}>Document types and OCR</button></div>
             {view && <>
                 <div class="actions"><button type="button" class="ghost" onClick={() => { void actions.command('airk.indexMode'); }}>Choose default automatic watching…</button></div>
                 <Paging view={view} actions={actions} />

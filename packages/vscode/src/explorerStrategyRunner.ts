@@ -99,8 +99,17 @@ export async function runStrategy(request: RunRequest, deps: RunDependencies): P
     };
     const pool = async <T>(items: T[], work: (item: T) => Promise<void>) => {
         let next = 0;
-        const worker = async () => { while (next < items.length) { await work(items[next++]); } };
+        let failed = false;
+        const errors: { index: number; error: unknown }[] = [];
+        const worker = async () => {
+            while (!failed && next < items.length) {
+                const index = next++;
+                try { await work(items[index]); }
+                catch (error) { failed = true; errors.push({ index, error }); }
+            }
+        };
         await Promise.all(Array.from({ length: Math.min(budgets.concurrency, 3, items.length) }, worker));
+        if (errors.length) { throw errors.sort((a, b) => a.index - b.index)[0].error; }
     };
     const source = async (path: string) => {
         if (!sources.has(path)) {

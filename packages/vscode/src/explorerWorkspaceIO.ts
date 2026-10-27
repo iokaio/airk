@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from 'node:crypto';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { LiveCheck, OpenSourceResult } from './explorerContracts';
 import { caseFold, inside, liveCheck, sourceFile } from './explorerSource';
 import { explorerError } from './explorerErrors';
 import { EvidenceFailure } from './explorerEvidence';
-import { safePrefix, Strategy, STRATEGY_LIMIT_BYTES, validateStrategy } from './explorerStrategies';
+import { PLAN_LIMIT_BYTES, safePrefix, Strategy, STRATEGY_LIMIT_BYTES, validateStrategy } from './explorerStrategies';
+import { ImportedPlan, parsePlanFile } from './explorerPlanFiles';
 
 const MESSAGES: Record<LiveCheck, string> = {
     matches_index: 'The saved file matches the indexed bytes.',
@@ -60,16 +62,44 @@ export async function exportStrategy(strategy: Strategy): Promise<{ saved: boole
 
 /** Import one strategy file; it is validated exactly like a template before Studio sees it. */
 export async function importStrategy(): Promise<Strategy | undefined> {
-    const [source] = await vscode.window.showOpenDialog({ title: 'Import AIRK strategy', canSelectMany: false, filters: STRATEGY_FILTERS }) ?? [];
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const [source] = await vscode.window.showOpenDialog({ title: 'Import AIRK strategy', canSelectMany: false, filters: STRATEGY_FILTERS,
+        ...(folder ? { defaultUri: vscode.Uri.joinPath(folder, '.airk', 'strategies') } : {}) }) ?? [];
     if (!source) { return undefined; }
-    const stat = await vscode.workspace.fs.stat(source);
-    if (stat.size > STRATEGY_LIMIT_BYTES * 2) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', 'The strategy file is larger than 64 KiB.')); }
     let value: unknown;
-    try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await vscode.workspace.fs.readFile(source))); }
+    try { value = JSON.parse(await readImport(source, STRATEGY_LIMIT_BYTES * 2)); }
     catch { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', 'The strategy file is not valid JSON.')); }
     const checked = validateStrategy(value);
     if (!checked.ok) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', checked.errors.slice(0, 5).join('; '))); }
     return checked.strategy;
+}
+
+/** Read only the explicitly selected file, with a real byte ceiling for local files. */
+async function readImport(source: vscode.Uri, limit: number): Promise<string> {
+    let bytes: Uint8Array;
+    if (source.scheme === 'file') {
+        const handle = fs.openSync(source.fsPath, 'r');
+        try {
+            if (!fs.fstatSync(handle).isFile()) { throw new Error('Choose a regular file.'); }
+            const buffer = Buffer.alloc(limit + 1); let used = 0, read = 0;
+            do { read = fs.readSync(handle, buffer, used, buffer.length - used, null); used += read; } while (read && used < buffer.length);
+            if (used > limit) { throw new Error(`The selected file exceeds ${limit} bytes.`); }
+            bytes = buffer.subarray(0, used);
+        } finally { fs.closeSync(handle); }
+    } else {
+        if ((await vscode.workspace.fs.stat(source)).size > limit) { throw new Error(`The selected file exceeds ${limit} bytes.`); }
+        bytes = await vscode.workspace.fs.readFile(source);
+        if (bytes.byteLength > limit) { throw new Error(`The selected file exceeds ${limit} bytes.`); }
+    }
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+}
+
+export async function importPlan(): Promise<ImportedPlan | undefined> {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+    const [source] = await vscode.window.showOpenDialog({ title: 'Load AIRK plan', canSelectMany: false, filters: { 'AIRK plans': ['md', 'json'] },
+        ...(folder ? { defaultUri: vscode.Uri.joinPath(folder, ...plannerDirectory().split('/')) } : {}) }) ?? [];
+    try { return source ? parsePlanFile(await readImport(source, PLAN_LIMIT_BYTES * 2)) : undefined; }
+    catch (error) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', `The plan could not be loaded. ${error instanceof Error ? error.message : String(error)}`)); }
 }
 
 /** Open rendered Markdown as an untitled document: opened, never saved. */
@@ -92,15 +122,20 @@ export function plannerDirectory(): string {
  * stay inside the chosen folder, an unsaved open copy is never overwritten, an existing file is
  * replaced only after confirmation, and the written bytes are read back and compared.
  */
-export async function savePlanInWorkspace(markdown: string, fileName: string): Promise<PlanSaveResult> {
+export async function savePlanInWorkspace(markdown: string, fileName: string, authorized: () => boolean = () => vscode.workspace.isTrusted !== false,
+    options: { title: string; filters: Record<string, string[]> } = { title: 'Save AIRK plan', filters: { Markdown: ['md'] } }): Promise<PlanSaveResult> {
     const folders = (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file' || folder.uri.scheme === 'vscode-remote');
     if (!folders.length) { return { saved: false, reason: 'Open a workspace folder to save plans in it.' }; }
     const folder = folders.length === 1 ? folders[0] : (await vscode.window.showQuickPick(folders.map(entry => ({ label: entry.name, description: entry.uri.fsPath, folder: entry })),
         { title: 'Save the AIRK plan in which workspace folder?' }))?.folder;
     if (!folder) { return { saved: false, reason: 'No workspace folder was chosen.' }; }
+    if (folder.uri.scheme !== 'file') { return { saved: false, reason: 'Guarded plan saving requires a local filesystem. Use Open as draft and the editor Save command for remote folders.' }; }
+    const originalRoot = fs.realpathSync.native(folder.uri.fsPath);
+    const rootIdentity = fs.statSync(originalRoot, { bigint: true });
     const defaultUri = vscode.Uri.joinPath(folder.uri, ...plannerDirectory().split('/'), fileName);
-    const target = await vscode.window.showSaveDialog({ title: 'Save AIRK plan', defaultUri, filters: { Markdown: ['md'] } });
+    const target = await vscode.window.showSaveDialog({ ...options, defaultUri });
     if (!target) { return { saved: false, reason: 'Save was canceled; nothing was written.' }; }
+    if (!authorized()) { return { saved: false, reason: 'Workspace authorization changed; nothing was written.' }; }
     if (target.scheme !== folder.uri.scheme || target.authority !== folder.uri.authority) { return { saved: false, reason: 'Plans can only be saved inside the chosen workspace folder.' }; }
     const fold = (value: string) => target.scheme === 'file' && process.platform === 'win32' ? value.toLowerCase() : value;
     const relative = path.posix.relative(fold(folder.uri.path), fold(target.path));
@@ -109,15 +144,53 @@ export async function savePlanInWorkspace(markdown: string, fileName: string): P
     const shown = target.path.slice(folder.uri.path.replace(/\/$/, '').length + 1);
     const open = vscode.workspace.textDocuments.find(document => document.uri.toString() === target.toString());
     if (open?.isDirty) { return { saved: false, reason: 'That file has unsaved edits in the editor; save or close it first. Nothing was written.' }; }
-    let exists = false;
-    try { exists = (await vscode.workspace.fs.stat(target)).type === vscode.FileType.File; } catch { exists = false; }
-    if (exists) {
+    // Capture the exact destination before confirmation. Only ENOENT means absent.
+    const snapshot = () => {
+        try {
+            const stat = fs.lstatSync(target.fsPath, { bigint: true });
+            if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n) { throw new Error('Linked or non-file plan targets are not supported.'); }
+            if (stat.size > 1048576n) { throw new Error('The existing plan target is larger than the guarded save limit (1 MiB).'); }
+            return `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}:${createHash('sha256').update(fs.readFileSync(target.fsPath)).digest('hex')}`;
+        } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return undefined; } throw error; }
+    };
+    // Reject redirected ancestors, including Windows junctions, before any creation/read/write.
+    const parents = () => {
+        const base = fs.realpathSync.native(folder.uri.fsPath), identity = fs.statSync(base, { bigint: true });
+        if (caseFold(base) !== caseFold(originalRoot) || identity.dev !== rootIdentity.dev || identity.ino !== rootIdentity.ino) { throw new Error('The workspace root changed during review; nothing was written.'); }
+        let current = folder.uri.fsPath;
+        for (const part of path.relative(current, path.dirname(target.fsPath)).split(path.sep).filter(Boolean)) {
+            current = path.join(current, part);
+            try {
+                const stat = fs.lstatSync(current, { bigint: true });
+                if (!stat.isDirectory() || stat.isSymbolicLink() || !inside(base, fs.realpathSync.native(current))) { throw new Error('The plan directory is redirected outside the workspace or is not a directory.'); }
+            } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; } }
+        }
+        return base;
+    };
+    parents();
+    const before = snapshot();
+    if (before !== undefined) {
         const choice = await vscode.window.showWarningMessage(`Replace ${shown}?`, { modal: true, detail: 'The existing file will be overwritten with this plan.' }, 'Replace');
         if (choice !== 'Replace') { return { saved: false, reason: 'The existing file was kept; nothing was written.' }; }
     }
     const bytes = new TextEncoder().encode(markdown);
-    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(target, '..'));
-    await vscode.workspace.fs.writeFile(target, bytes);
+    // No await between the final editor/authorization checks and the guarded write.
+    if (!authorized() || !(vscode.workspace.workspaceFolders ?? []).some(entry => entry.uri.toString() === folder.uri.toString())) { return { saved: false, reason: 'Workspace authorization changed; nothing was written.' }; }
+    if (vscode.workspace.textDocuments.some(document => caseFold(document.uri.toString()) === caseFold(target.toString()) && document.isDirty)) { return { saved: false, reason: 'That file has unsaved edits; nothing was written.' }; }
+    parents();
+    if (snapshot() !== before) { return { saved: false, reason: 'The plan target changed during review; nothing was written.' }; }
+    fs.mkdirSync(path.dirname(target.fsPath), { recursive: true });
+    parents();
+    const handle = fs.openSync(target.fsPath, before === undefined ? 'wx' : fs.constants.O_RDWR | (fs.constants.O_NOFOLLOW ?? 0));
+    try {
+        const stat = fs.fstatSync(handle, { bigint: true });
+        const current = fs.lstatSync(target.fsPath, { bigint: true });
+        parents();
+        if (!stat.isFile() || stat.nlink !== 1n || stat.dev !== current.dev || stat.ino !== current.ino || current.isSymbolicLink() || snapshot() !== before && before !== undefined) { throw new Error('The plan target changed before writing.'); }
+        fs.writeFileSync(handle, bytes);
+        fs.ftruncateSync(handle, bytes.length);
+        fs.fsyncSync(handle);
+    } finally { fs.closeSync(handle); }
     const hash = createHash('sha256').update(bytes).digest('hex');
     const readBack = createHash('sha256').update(await vscode.workspace.fs.readFile(target)).digest('hex');
     if (readBack !== hash) { return { saved: false, reason: 'The saved file does not match the plan that was written; check the file before handing it off.' }; }

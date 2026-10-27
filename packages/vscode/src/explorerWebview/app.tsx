@@ -5,12 +5,14 @@ import { RECIPE_SCHEMA, type SearchRecipe } from '../explorerStrategies';
 import { formatRoute, parseRoute, Route, ROUTE_KEYS, WORKSPACES } from '../explorerRoutes';
 import { headline } from '../explorerStatus';
 import { notify, onHost, ready, request, savedState, saveState } from './api';
-import { Facts } from './components';
+import { Facts, useDialogFocus } from './components';
 import { ago, observed, shortToken } from './format';
 import { Inbox } from './inbox';
 import { Overview } from './overview';
-import { reportRevisions } from './strategyStore';
+import { reportRevisions, selectDraftProject } from './strategyStore';
 import { WorkspaceView } from './workspaces';
+import type { NavigationFilters } from '../explorerDrafts';
+import { friendlyError } from '../explorerErrors';
 
 interface Persisted { route?: string; lens?: string }
 
@@ -22,12 +24,18 @@ export function App() {
     const [pill, setPill] = useState(false);
     const [incoming, setIncoming] = useState<{ query: string; serial: number; recipe?: SearchRecipe; run?: boolean }>();
     const [inbox, setInbox] = useState(false);
+    const [navigation, setNavigation] = useState<{ route: string; filters: NavigationFilters; serial: number }>();
     const [inspectRef, setInspectRef] = useState<string>();
     const [publications, setPublications] = useState<{ token: string; observedAt: number }[]>([]);
+    const owner = useRef<string>();
 
     useEffect(() => {
         const stop = onHost(message => {
             if (message.type === 'state') {
+                const nextOwner = `${message.state.selectedProject}:${message.state.selectionEpoch}`;
+                if (owner.current !== undefined && owner.current !== nextOwner) { setInspectRef(undefined); setPublications([]); setIncoming(undefined); setNavigation(undefined); }
+                owner.current = nextOwner;
+                selectDraftProject(message.state.selectedProject, message.state.selectionEpoch);
                 setState(message.state);
                 const token = message.state.status?.publication;
                 if (token) { setPublications(prior => prior.some(entry => entry.token === token) ? prior : [{ token, observedAt: Date.now() }, ...prior].slice(0, 20)); }
@@ -50,7 +58,8 @@ export function App() {
 
     const go = (next: Route) => { setRoute(next); setPalette(false); notify('nav.go', { route: formatRoute(next) }); };
 
-    if (!state) { return <main class="airk-explorer loading"><p>Connecting to the AIRK extension host…</p></main>; }
+    if (!state) { return <main class="airk-explorer loading"><p>Connecting to the AIRK extension host…</p><button type="button" onClick={ready}>Retry connection</button>
+        <p class="muted">If it remains unavailable, close and reopen Explorer after the extension host restarts.</p></main>; }
     const project = state.projects.find(entry => entry.project === state.selectedProject);
     const status = headline(state.connection, state.status, state.projects.length);
     return (
@@ -65,10 +74,12 @@ export function App() {
                 <button type="button" class={state.suggestions?.open ? '' : 'ghost'} aria-expanded={inbox} onClick={() => setInbox(open => !open)}
                     title="Drafts proposed by coding agents">Suggestions <span aria-live="polite">{state.suggestions?.open ?? 0}</span></button>
                 <button type="button" class="ghost" onClick={() => go({ workspace: 'help' })}>Help</button>
+                <button type="button" class="ghost" onClick={() => go({ workspace: 'help', focus: 'about-airk' })}>About</button>
             </header>
             {pill && <StatusPopover state={state} project={project} onClose={() => setPill(false)} />}
-            {state.notice && <p class="notice" role="alert">{state.notice.message}</p>}
+            {state.notice && <div class="notice" role="alert"><p>{friendlyError(state.notice)}</p><button class="ghost" onClick={() => go({ workspace: 'help', focus: 'recovering-errors' })}>Recovery help</button></div>}
             {inbox && <Inbox view={state.suggestions} close={() => setInbox(false)}
+                applyNavigation={body => { const next = parseRoute(body.route); if (next) { setNavigation(prior => ({ route: body.route, filters: body.filters, serial: (prior?.serial ?? 0) + 1 })); go(next); } }}
                 applySearch={search => {
                     const recipe: SearchRecipe = { schema: RECIPE_SCHEMA, name: 'agent draft', query: search.query, mode: search.mode, ...(search.pathPrefix ? { pathPrefix: search.pathPrefix } : {}),
                         limit: search.limit, maxBytes: search.maxBytes, fullChunks: search.fullChunks };
@@ -80,7 +91,7 @@ export function App() {
                 <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>
                     {route.workspace === 'overview'
                         ? <Overview state={state} project={project} go={go} />
-                        : <WorkspaceView route={route} state={state} go={go} incoming={incoming} inspectRef={inspectRef} publications={publications}
+                        : <WorkspaceView route={route} state={state} go={go} incoming={incoming} navigation={navigation} inspectRef={inspectRef} publications={publications}
                             inspect={ref => { setInspectRef(ref); go({ workspace: 'evidence', tab: 'inspector' }); }}
                             runRecipe={recipe => { setIncoming(prior => ({ query: recipe.query, recipe, serial: (prior?.serial ?? 0) + 1 })); go({ workspace: 'search', tab: 'query' }); }} />}
                 </main>
@@ -99,16 +110,17 @@ function ProjectPicker(props: { projects: readonly ProjectSummary[]; selected?: 
                 const project = (event.target as HTMLSelectElement).value;
                 if (/^[0-9a-f]{64}$/.test(project)) { void request('project.select', { project }).catch(() => undefined); }
             }}>
-                {props.projects.map(entry => <option key={entry.project} value={entry.project} title={entry.collection}>{entry.name}{entry.current ? ' (open)' : ''}</option>)}
+                {props.projects.map(entry => <option key={entry.project} value={entry.project} disabled={!entry.current} title={entry.current ? entry.collection : 'Open this project in the workspace to select its evidence'}>{entry.name}{entry.current ? ' (open)' : ' (open workspace to select)'}</option>)}
             </select>
         </label>
     );
 }
 
 function StatusPopover(props: { state: ExplorerViewState; project?: ProjectSummary; onClose(): void }) {
+    const dialog = useDialogFocus(props.onClose);
     const { state, project } = props, status = state.status;
     return (
-        <section class="popover" role="dialog" aria-label="AIRK status">
+        <section ref={dialog} class="popover" role="dialog" aria-modal="true" aria-label="AIRK status">
             <Facts rows={[
                 ['Service connection', state.connection],
                 ['Project', project ? `${project.collection} (${project.root || project.name})` : 'none selected'],
@@ -154,6 +166,7 @@ function Rail(props: { route: Route; state: ExplorerViewState; go(route: Route):
 }
 
 function Palette(props: { state: ExplorerViewState; go(route: Route): void; close(): void }) {
+    const dialog = useDialogFocus(props.close);
     const [query, setQuery] = useState('');
     const [index, setIndex] = useState(0);
     const input = useRef<HTMLInputElement>(null);
@@ -167,17 +180,17 @@ function Palette(props: { state: ExplorerViewState; go(route: Route): void; clos
     const choose = (position: number) => { const entry = entries[position]; if (entry) { props.go(entry.route); } };
     return (
         <div class="scrim" onClick={props.close}>
-            <section class="palette" role="dialog" aria-label="Go to screen" onClick={event => event.stopPropagation()}>
-                <input ref={input} value={query} aria-label="Screen name" placeholder="Type a screen name"
+            <section ref={dialog} class="palette" role="dialog" aria-modal="true" aria-label="Go to screen" onClick={event => event.stopPropagation()}>
+                <input ref={input} value={query} role="combobox" aria-expanded="true" aria-controls="screen-options" aria-activedescendant={entries[index] ? `screen-option-${index}` : undefined} aria-label="Screen name" placeholder="Type a screen name"
                     onInput={event => { setQuery((event.target as HTMLInputElement).value); setIndex(0); }}
                     onKeyDown={event => {
                         if (event.key === 'ArrowDown') { event.preventDefault(); setIndex(value => Math.min(value + 1, entries.length - 1)); }
                         if (event.key === 'ArrowUp') { event.preventDefault(); setIndex(value => Math.max(value - 1, 0)); }
                         if (event.key === 'Enter') { event.preventDefault(); choose(index); }
                     }} />
-                <ul role="listbox">
+                <ul id="screen-options" role="listbox">
                     {entries.map((entry, position) => (
-                        <li key={entry.key} role="option" aria-selected={position === index} class={position === index ? 'active' : ''} onClick={() => choose(position)}>
+                        <li key={entry.key} id={`screen-option-${position}`} role="option" aria-selected={position === index} class={position === index ? 'active' : ''} onClick={() => choose(position)}>
                             {entry.label}{entry.availability !== 'implemented' && <span class="tag">{entry.availability}</span>}
                         </li>
                     ))}

@@ -38,6 +38,16 @@ test('the session identifies as the Explorer and returns parsed payloads with pu
     assert.equal(client.project, project);
 });
 
+test('the evidence queue refuses overload without growing unbounded or losing accepted calls', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { client } = harness(async () => { await gate; return text({ ok: true }); });
+    const pending = Array.from({ length: 67 }, () => client.call('airk_status', {}));
+    const done = Promise.all(pending);
+    await assert.rejects(client.call('airk_status', {}), failure('RATE_LIMITED'));
+    release(); assert.equal((await done).length, 67); client.dispose();
+});
+
 test('only explicit native retry hints repeat the same read; tool errors are classified', async () => {
     let attempts = 0;
     const { client } = harness(async tool => {
@@ -52,7 +62,7 @@ test('only explicit native retry hints repeat the same read; tool errors are cla
     assert.deepEqual((await client.call('airk_search', { query: 'x' })).payload, { hits: [1] });
     assert.equal(attempts, 2);
     await assert.rejects(client.call('airk_outline', { path: 'a' }), failure('INDEX_UNAVAILABLE'));
-    await assert.rejects(client.call('airk_read_file', { path: '/abs' }), (error: unknown) => failure('TOOL_ERROR')(error) && /path must be relative/.test((error as Error).message));
+    await assert.rejects(client.call('airk_read_file', { path: '/abs' }), (error: unknown) => failure('invalid_argument')(error) && /path must be relative/.test((error as Error).message));
     await assert.rejects(client.call('shell_exec' as NativeTool, {}), failure('INVALID_MESSAGE'));
 });
 

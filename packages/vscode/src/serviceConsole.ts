@@ -178,8 +178,13 @@ export class ServiceConsole implements vscode.Disposable {
             return enabled?{operation,enabled:enabled.value}:undefined;
         }
         if(operation==='detail'){
-            const level=await vscode.window.showQuickPick(['essential','agent_lean','balanced','detailed'],{title:'AIRK evidence detail'});
-            return level?{operation,level}:undefined;
+            const level=await vscode.window.showQuickPick([
+                {label:'Agent Lean',level:'agent_lean',description:'Selected code and document facts; default for new collections'},
+                {label:'Search Only',level:'essential',description:'Text and citations; omits rich structured facts'},
+                {label:'Rich Structure',level:'balanced',description:'Broader supported structure and declaration continuity; more retained data'},
+                {label:'Detailed',level:'detailed',description:'Advanced supported evidence and document-unit continuity; highest detail'},
+            ],{title:'AIRK evidence detail',placeHolder:'Choose for your purpose and source formats; vectors are configured separately'});
+            return level?{operation,level:level.level}:undefined;
         }
         if(operation==='usage'){
             const mode=await vscode.window.showQuickPick([

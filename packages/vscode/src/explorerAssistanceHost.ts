@@ -7,8 +7,8 @@ import * as fs from 'node:fs';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ASSISTANCE_IPC_LIMIT, type AssistanceIpcReply, parseWindowDescriptor, WINDOW_DESCRIPTOR_LIMIT, WINDOW_SCHEMA, type WindowDescriptor } from './explorerContracts';
-import type { DraftKind } from './explorerDrafts';
+import { ASSISTANCE_IPC_LIMIT, type AssistanceIpcReply, type AssistanceWindowStatus, type ExplorerHandoff, parseWindowDescriptor, WINDOW_DESCRIPTOR_LIMIT, WINDOW_SCHEMA, type WindowDescriptor } from './explorerContracts';
+import { DRAFT_KINDS, type DraftKind } from './explorerDrafts';
 import type { DraftClient, Submission, SuggestionStore } from './explorerSuggestions';
 
 export const DESCRIPTOR_TTL_MS = 30 * 60_000;
@@ -21,7 +21,11 @@ export interface AssistanceHostPort {
     readonly version: string;
     /** Workspace folder paths of this window; canonicalized before they are published. */
     readonly roots: readonly string[];
+    authorized?(): boolean;
     explorerOpen(): boolean;
+    uiStatus?(): Pick<AssistanceWindowStatus, 'active_route' | 'binding_generation' | 'blockers'>;
+    validate?(kind: DraftKind, draft: unknown): Record<string, unknown>;
+    handoff?(token: string): ExplorerHandoff | undefined;
     targetRevisions?(): { readonly studio?: number; readonly planner?: number };
     /** Admit a draft to this window's Suggestions Inbox. Absent when drafts are not offered. */
     suggest?(kind: DraftKind, draft: unknown, client: DraftClient): Submission;
@@ -139,14 +143,23 @@ export class AssistanceIpcHost {
         // A wrong credential gets no reply at all: the endpoint does not confirm that it is an Explorer window.
         if (offered.length !== expected.length || !timingSafeEqual(offered, expected) || this.disposed) { return undefined; }
         if (request.v !== 1) { return { v: 1, ok: false, code: 'SCHEMA_UNSUPPORTED' }; }
+        if (this.port.authorized?.() === false) { return { v: 1, ok: false, code: 'WORKSPACE_UNTRUSTED' }; }
         const fields = (...allowed: string[]) => Object.keys(request).every(key => ['v', 'credential', 'type', ...allowed].includes(key));
         switch (request.type) {
             case 'status':
                 if (!fields()) { break; }
-                return { v: 1, ok: true, status: { binding_fingerprint: this.fingerprint, explorer_open: this.port.explorerOpen(), target_revisions: this.port.targetRevisions?.() ?? {} } };
+                return { v: 1, ok: true, status: { binding_fingerprint: this.bindingFingerprint, explorer_open: this.port.explorerOpen(), target_revisions: this.port.targetRevisions?.() ?? {}, ...this.port.uiStatus?.() } };
+            case 'validate':
+                if (!fields('kind', 'draft') || !DRAFT_KINDS.includes(request.kind as DraftKind)) { break; }
+                return this.port.validate ? { v: 1, ok: true, validation: this.port.validate(request.kind as DraftKind, request.draft) } : { v: 1, ok: false, code: 'CAPABILITY_DISABLED' };
+            case 'handoff_get': {
+                if (!fields('token') || typeof request.token !== 'string' || !/^ex-share-[0-9a-f]{64}$/.test(request.token)) { break; }
+                const handoff = this.port.handoff?.(request.token);
+                return handoff ? { v: 1, ok: true, handoff } : { v: 1, ok: false, code: 'PROPOSAL_EXPIRED', message: 'Handoff is unknown, expired or its draft/binding changed; ask the user to share again.' };
+            }
             case 'suggest': {
                 const client = request.client as Record<string, unknown> | undefined;
-                if (!fields('kind', 'draft', 'client') || !['search', 'strategy', 'plan', 'review', 'management'].includes(request.kind as string) || !client || typeof client.name !== 'string' || typeof client.version !== 'string') { break; }
+                if (!fields('kind', 'draft', 'client') || !DRAFT_KINDS.includes(request.kind as DraftKind) || !client || typeof client.name !== 'string' || typeof client.version !== 'string') { break; }
                 if (!this.port.suggest) { return { v: 1, ok: false, code: 'CAPABILITY_DISABLED' }; }
                 // The host validates the draft again; the server's validation is only a fast first check.
                 const result = this.port.suggest(request.kind as DraftKind, request.draft, { name: client.name, version: client.version });
@@ -161,7 +174,10 @@ export class AssistanceIpcHost {
         return { v: 1, ok: false, code: 'INVALID_SCHEMA' };
     }
 
-    get bindingFingerprint(): string { return this.fingerprint; }
+    get bindingFingerprint(): string {
+        const generation = this.port.uiStatus?.().binding_generation;
+        return generation === undefined ? this.fingerprint : createHash('sha256').update(`${this.fingerprint}:${generation}`).digest('hex').slice(0, 16);
+    }
 
     /** Stop listening and withdraw the descriptor synchronously, so it is gone before the host exits. */
     dispose(): void {

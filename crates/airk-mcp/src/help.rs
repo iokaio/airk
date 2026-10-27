@@ -217,6 +217,31 @@ mod tests {
         );
     }
     #[test]
+    fn role_and_purpose_guidance_distinguishes_evidence_from_execution() {
+        let roles = answer(args(json!({"topic":"roles","max_bytes":32768}))).unwrap();
+        let text = roles["content"].as_str().unwrap();
+        for role in ["Developer", "Tester", "Architect", "Writer"] {
+            assert!(text.contains(role));
+        }
+        let choices = answer(args(json!({"topic":"indexing-choices","max_bytes":32768}))).unwrap();
+        let text = choices["content"].as_str().unwrap();
+        for choice in [
+            "essential",
+            "agent_lean",
+            "balanced",
+            "detailed",
+            "independent",
+            "OCR",
+        ] {
+            assert!(text.contains(choice));
+        }
+        let explorer = answer(args(json!({"topic":"explorer","max_bytes":32768}))).unwrap();
+        let text = explorer["content"].as_str().unwrap();
+        assert!(text.contains("14 Explorer Assistance tools"));
+        assert!(text.contains("offline"));
+        assert!(text.contains("Applied to a draft is not executed"));
+    }
+    #[test]
     fn tool_help_uses_live_schema_and_rejects_unknown_or_unsafe_selectors() {
         let value = answer(args(json!({"tool":"airk_status"}))).unwrap();
         assert!(

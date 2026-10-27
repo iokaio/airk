@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
+import { migrateAgentConfig } from './agentMigration';
+import { launchDescriptorPath } from './explorerAssistanceLaunch';
 import { Client, LaunchSpec, McpVerification, ServerEntry, serializeServers } from './model';
 import { installJsonConfig, isJsonClient, jsonConfigPath, readJsonConfig, reviewLegacyJsonConfig, replaceReviewedLegacyJsonConfig } from './agentConfig';
 import { agentChoices, assistancePrompt, codexConfigPath, connectionAction, createCodexConfig, renderConnectionGuide, verificationPrompt } from './agentConnections';
@@ -98,6 +101,27 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                     configDocument(destination);
                     await createCodexConfig(spec, entries);
                     status = 'Codex project configuration created. Restart Codex and verify its tools below. Agent connection has not been verified.';
+                } else if (action === 'updateCodex') {
+                    if (vscode.env.remoteName || !spec.service) { throw new Error('Review existing Codex connections on the host running this agent.'); }
+                    const assistance = entries.find(entry => entry.key === 'airk_explorer');
+                    if (!assistance) { throw new Error('Explorer Assistance is disabled.'); }
+                    const descriptor = assistance.args[assistance.args.indexOf('--descriptor') + 1];
+                    if (!descriptor || path.basename(descriptor) !== path.basename(launchDescriptorPath(''))) { throw new Error('Unsupported Explorer Assistance launch descriptor.'); }
+                    // Native Windows registrations may use the extended path
+                    // namespace. Match the canonical filesystem spelling used
+                    // by the create flow and editor-document guards.
+                    const canonicalRoot = await fs.realpath(spec.root);
+                    const destination = codexConfigPath({ ...spec, root: canonicalRoot }), directory = path.dirname(destination);
+                    configDocument(destination);
+                    const info = await fs.lstat(directory);
+                    if (!info.isDirectory() || info.isSymbolicLink() || await fs.realpath(directory) !== directory) { throw new Error('Redirected Codex configuration directory; review manually.'); }
+                    const before = await readJsonConfig(destination);
+                    if (before === undefined) { throw new Error('Create a new Codex project configuration first.'); }
+                    const after = migrateAgentConfig('codex', spec, path.dirname(path.dirname(descriptor)), before);
+                    if (!after.includes('[mcp_servers.airk_explorer]') && !after.includes('[mcp_servers."airk_explorer"]')) { throw new Error('No recognized AIRK Retrieval entry for this project; merge both displayed entries manually.'); }
+                    checkCurrent();
+                    if (after !== before) { await saveConfiguration(destination, before, after); }
+                    status = 'Codex project AIRK connections updated. Existing policies were preserved. Restart Codex and check both connections below.';
                 } else if (action === 'installJson' && isJsonClient(client)) {
                     if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running this agent.'); }
                     const checkInstall = () => { checkCurrent(); configDocument(jsonConfigPath(client, spec)); };

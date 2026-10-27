@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
-import { useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import type { CitationCheckView } from '../explorerContracts';
-import { effectiveState, handoffPrompt, Plan, PLAN_SCHEMA, PlanTask, renderPlan, StoredTaskState, TASK_STATES, TaskState, validatePlan } from '../explorerStrategies';
+import { compilePrompt, effectiveState, handoffPrompt, Plan, PLAN_SCHEMA, PlanTask, renderPlan, StoredTaskState, TASK_STATES, TaskState, validatePlan } from '../explorerStrategies';
 import { request } from './api';
-import { PlannerDraft, StudioDraft, usePlanner, useStudio } from './strategyStore';
+import { currentSelection, plannerDraft, PlannerDraft, StudioDraft, usePlanner, useStudio } from './strategyStore';
 import type { ScreenProps } from './workspaces';
+import { dialogFocus, ShareSnapshot } from './components';
+import type { ImportedPlan } from '../explorerStrategies';
 
 const message = (failure: unknown) => failure instanceof Error ? failure.message : String(failure);
 const LABELS: Record<TaskState, string> = { draft: 'Draft', ready: 'Ready', exported: 'Exported', review: 'Review', needs_work: 'Needs work', completed: 'Completed', blocked: 'Blocked', stale: 'Stale' };
@@ -17,10 +19,13 @@ const fileName = (title: string) => `${title.toLowerCase().replace(/[^a-z0-9]+/g
 /** A Studio snapshot as a task: its compiled prompt becomes the instructions and its run the evidence. */
 export function taskFromStudio(plan: Plan, studio: StudioDraft): PlanTask {
     const run = studio.run?.manifest;
-    const prompt = (studio.prompt ?? '').slice(0, 8000);
+    const prompt = studioPrompt(studio);
+    if (studio.promptStale || prompt.length > 8000) { throw new Error('Studio snapshot is stale or exceeds 8,000 characters. Rebuild or explicitly reduce its evidence before adding it to Planner.'); }
     return { id: nextId(plan), title: studio.strategy!.title.slice(0, 160), instructions: prompt || studio.objective, dependsOn: [], state: 'draft',
         ...(run && run.publication !== 'unknown' ? { evidence: { template: run.template, publication: run.publication, digest: run.evidenceDigest, outcome: run.outcome } } : {}) };
 }
+export const studioPrompt = (studio: StudioDraft) => studio.prompt ?? (studio.strategy ? compilePrompt({ strategy: studio.strategy, objective: studio.objective, profile: studio.profile, run: studio.run }) : '');
+export const canAddStudio = (studio: StudioDraft) => !!studio.strategy && !studio.promptStale && studioPrompt(studio).length <= 8000;
 
 export function PlannerScreen(props: ScreenProps) {
     const [draft, setDraft] = usePlanner();
@@ -31,9 +36,14 @@ export function PlannerScreen(props: ScreenProps) {
     const [handoffTask, setHandoffTask] = useState<string>();
     const [confirmComplete, setConfirmComplete] = useState<string>();
     const [confirmDiscard, setConfirmDiscard] = useState(false);
+    const [pendingLoad, setPendingLoad] = useState<{ imported: ImportedPlan; revision: number; owner: string | undefined }>();
+    const root = useRef<HTMLDivElement>(null);
+    useEffect(() => dialogFocus(root.current?.querySelector<HTMLElement>('[role="alertdialog"]') ?? null,
+        () => { setPendingLoad(undefined); setConfirmComplete(undefined); setConfirmDiscard(false); }), [pendingLoad, confirmComplete, confirmDiscard]);
     const [report, setReport] = useState('');
     const [check, setCheck] = useState<CitationCheckView>();
     const plan = draft.plan;
+    const projectMismatch = !!plan?.project && plan.project !== props.state.selectedProject;
     const publication = props.state.status?.publication;
     const checked = useMemo(() => plan ? validatePlan(plan) : undefined, [plan]);
     const markdown = useMemo(() => plan && checked?.ok ? renderPlan(plan, { workspace: 'workspace', extensionVersion: props.state.extensionVersion, ...(publication ? { currentPublication: publication } : {}) }) : '', [plan, checked, publication]);
@@ -42,20 +52,40 @@ export function PlannerScreen(props: ScreenProps) {
     const edit = (update: (plan: Plan) => Plan) => setDraft(prior => ({ ...prior, plan: update(prior.plan!), revision: prior.revision + 1 }));
     const editTask = (id: string, update: (task: PlanTask) => PlanTask) => edit(current => ({ ...current, tasks: current.tasks.map(task => task.id === id ? update(task) : task) }));
     const setState = (id: string, state: StoredTaskState) => editTask(id, task => ({ ...task, state }));
+    const applyLoaded = (pending: { imported: ImportedPlan; revision: number; owner: string | undefined }) => {
+        setPendingLoad(undefined);
+        if (plannerDraft().revision !== pending.revision || currentSelection() !== pending.owner) { setError('The draft or project changed while loading; your work was kept. Choose Load plan again.'); return; }
+        setDraft(prior => ({ plan: pending.imported.plan, revision: prior.revision + 1 })); setCheck(undefined); setHandoffTask(undefined);
+        setNotice(`Loaded ${pending.imported.format} plan. ${pending.imported.warnings.join(' ')}`);
+    };
+    const loadPlan = async () => {
+        setBusy(true); setError(undefined);
+        const revision = plannerDraft().revision, owner = currentSelection();
+        try {
+            const imported = await request<ImportedPlan | null>('planner.import', {});
+            if (!imported) { return; }
+            if (plannerDraft().revision !== revision || currentSelection() !== owner) { setError('The draft or project changed while the file picker was open; your work was kept.'); return; }
+            const pending = { imported, revision, owner };
+            if (plannerDraft().plan) { setPendingLoad(pending); } else { applyLoaded(pending); }
+        } catch (failure) { setError(message(failure)); } finally { setBusy(false); }
+    };
 
     if (!plan) {
         return (
-            <div class="strategies">
+            <div class="strategies" ref={root}>
                 <article class="card">
                     <h2>No plan yet</h2>
                     <p>A plan combines Studio snapshots and manual tasks into one Markdown file that a coding agent can follow, one task at a time.</p>
                     <div class="actions">
                         <button onClick={() => setDraft(prior => ({ ...prior, plan: emptyPlan(studio.objective, props.state.selectedProject), revision: prior.revision + 1 }))}>New plan</button>
-                        {studio.strategy && <button class="ghost" onClick={() => setDraft(prior => {
+                        <button class="ghost" disabled={busy} onClick={() => void loadPlan()}>Load plan…</button>
+                        {studio.strategy && <button disabled={!canAddStudio(studio)} title="Snapshots must fit 8,000 characters without truncation" class="ghost" onClick={() => setDraft(prior => {
                             const base = emptyPlan(studio.objective, props.state.selectedProject);
                             return { ...prior, plan: { ...base, title: studio.strategy!.title, tasks: [taskFromStudio(base, studio)] }, revision: prior.revision + 1 };
                         })}>Start from the Studio strategy</button>}
                     </div>
+                    <p class="muted">Load validated plan JSON or AIRK-saved Markdown from <code>.airk/plans</code> or another file you choose.</p>
+                    {error && <p class="callout" role="alert">{error}</p>}
                 </article>
             </div>
         );
@@ -75,11 +105,13 @@ export function PlannerScreen(props: ScreenProps) {
     };
     const copyHandoff = async (id: string) => {
         try {
+            const target = plan.tasks.find(task => task.id === id);
+            if (!target || projectMismatch || ['blocked', 'stale'].includes(effectiveState(plan, target, publication))) { throw new Error('The task is blocked, stale or belongs to another project. Refresh its evidence before handoff.'); }
             await request('clipboard.write', { text: handoffPrompt(saved!.path, plan, id) });
             const task = plan.tasks.find(entry => entry.id === id);
             // Copying hands the task off; it never completes it.
             if (task && (task.state === 'draft' || task.state === 'ready')) {
-                setDraft(prior => ({ ...prior, plan: { ...prior.plan!, tasks: prior.plan!.tasks.map(entry => entry.id === id ? { ...entry, state: 'exported' } : entry) } }));
+                setDraft(prior => ({ ...prior, revision: prior.revision + 1, plan: { ...prior.plan!, tasks: prior.plan!.tasks.map(entry => entry.id === id ? { ...entry, state: 'exported' } : entry) } }));
             }
             setNotice(`Handoff prompt for ${id} copied. The saved file is unchanged until you save again.`);
         } catch (failure) { setError(message(failure)); }
@@ -91,16 +123,20 @@ export function PlannerScreen(props: ScreenProps) {
     const counts = check ? check.citations.reduce<Record<string, number>>((all, item) => ({ ...all, [item.status]: (all[item.status] ?? 0) + 1 }), {}) : {};
 
     return (
-        <div class="strategies planner">
+        <div class="strategies planner" ref={root}>
+            {projectMismatch && <p class="callout">This plan belongs to another project. Select its project before saving or handing it off.</p>}
             <section class="card">
                 <label>Title<input value={plan.title} maxLength={160} onInput={event => edit(current => ({ ...current, title: (event.target as HTMLInputElement).value }))} /></label>
                 <label>Objective<textarea rows={3} maxLength={4000} value={plan.objective} onInput={event => edit(current => ({ ...current, objective: (event.target as HTMLTextAreaElement).value }))} /></label>
                 <div class="actions">
+                    <button class="ghost" disabled={busy} onClick={() => void loadPlan()}>Load plan…</button>
                     <button class="ghost" disabled={plan.tasks.length >= 40} onClick={() => edit(current => ({ ...current, tasks: [...current.tasks, { id: nextId(current), title: 'New task', instructions: '', dependsOn: [], state: 'draft' }] }))}>Add task</button>
-                    <button class="ghost" disabled={!studio.strategy || plan.tasks.length >= 40} title={studio.strategy ? `Add ${studio.strategy.title}` : 'Load a strategy in Studio first'}
+                    <button class="ghost" disabled={!canAddStudio(studio) || plan.tasks.length >= 40} title="Rebuild stale prompts or reduce evidence to fit 8,000 characters; prompts are never truncated"
                         onClick={() => edit(current => ({ ...current, tasks: [...current.tasks, taskFromStudio(current, studio)] }))}>Add Studio snapshot</button>
                     <button class="ghost" onClick={() => setConfirmDiscard(true)}>Discard plan</button>
                 </div>
+                {pendingLoad && <div class="callout" role="alertdialog" aria-label="Replace plan with loaded file"><p>Replace the current Planner draft with {pendingLoad.imported.plan.title}? Saved files are unchanged.</p>
+                    <button onClick={() => applyLoaded(pendingLoad)}>Replace Planner draft</button><button class="ghost" onClick={() => setPendingLoad(undefined)}>Keep current plan</button></div>}
                 {confirmDiscard && (
                     <div class="callout" role="alertdialog" aria-label="Discard plan">
                         <p>Discard this plan from the Explorer? A file you already saved is not changed.</p>
@@ -154,8 +190,12 @@ export function PlannerScreen(props: ScreenProps) {
                 <h3>Save</h3>
                 <p class="muted">Save in workspace opens the save dialog in the <code>airk.explorer.planner.directory</code> folder (default <code>.airk/plans</code>). The handoff prompt is offered only after the saved file is confirmed.</p>
                 <div class="actions">
-                    <button disabled={busy || !checked?.ok || !plan.tasks.length} onClick={() => void save()}>{busy ? 'Saving…' : 'Save in workspace…'}</button>
+                    <button disabled={busy || projectMismatch || !checked?.ok || !plan.tasks.length} onClick={() => void save()}>{busy ? 'Saving…' : 'Save in workspace…'}</button>
                     <button class="ghost" disabled={!checked?.ok} onClick={async () => { try { await request('planner.openDraft', { plan: plan as unknown as Record<string, unknown> }); setNotice('Opened as an untitled draft; it is not saved.'); } catch (failure) { setError(message(failure)); } }}>Open as draft</button>
+                    <button class="ghost" disabled={busy || projectMismatch || !checked?.ok} onClick={async () => { setError(undefined); try {
+                        const reply = await request<{ saved: boolean; reason?: string }>('planner.exportJSON', { plan: plan as unknown as Record<string, unknown>, revision: draft.revision, fileName: fileName(plan.title).replace(/\.md$/, '.plan.airk.json') });
+                        setNotice(reply.saved ? 'Plan JSON exported with complete states and evidence metadata. Load it to resume; save Markdown for a file-based agent handoff.' : reply.reason);
+                    } catch (failure) { setError(message(failure)); } }}>Export plan JSON…</button>
                 </div>
                 {saved ? <p class="muted" role="status">Saved as <code>{saved.path}</code> (sha256 {saved.hash.slice(0, 12)}).</p>
                     : draft.saved ? <p class="muted">The plan changed since it was saved as <code>{draft.saved.path}</code>; save again before handing it off.</p> : null}
@@ -163,18 +203,21 @@ export function PlannerScreen(props: ScreenProps) {
                 {error && <p class="callout" role="alert">{error}</p>}
                 <details><summary>Markdown preview</summary><pre class="log">{markdown}</pre></details>
             </section>
-            {saved && (
+            {saved && !projectMismatch && (
                 <section class="card">
                     <h3>Handoff</h3>
                     <div class="search-form">
                         <label>Task
                             <select value={handoffTask ?? ''} onChange={event => setHandoffTask((event.target as HTMLSelectElement).value || undefined)}>
                                 <option value="">Choose a task</option>
-                                {plan.tasks.map(task => <option key={task.id} value={task.id} disabled={effectiveState(plan, task, publication) === 'blocked'}>{task.id}. {task.title}</option>)}
+                                {plan.tasks.map(task => <option key={task.id} value={task.id} disabled={['blocked', 'stale'].includes(effectiveState(plan, task, publication))}>{task.id}. {task.title}</option>)}
                             </select>
                         </label>
                     </div>
-                    {handoffTask && <><pre class="log">{handoffPrompt(saved.path, plan, handoffTask)}</pre><button onClick={() => void copyHandoff(handoffTask)}>Copy handoff prompt</button></>}
+                    {handoffTask && <><pre class="log">{handoffPrompt(saved.path, plan, handoffTask)}</pre><button onClick={() => void copyHandoff(handoffTask)}>Copy handoff prompt</button>
+                        <ShareSnapshot kind="planner" revision={draft.revision} disabled={projectMismatch || !plan.tasks.some(task => task.id === handoffTask && !['blocked', 'stale'].includes(effectiveState(plan, task, publication)))}
+                            content={`${handoffPrompt(saved.path, plan, handoffTask)}\n\n${plan.tasks.find(task => task.id === handoffTask)?.instructions ?? ''}`}
+                            publication={plan.tasks.find(task => task.id === handoffTask)?.evidence?.publication} /></>}
                 </section>
             )}
             <section class="card">

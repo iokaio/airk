@@ -66,7 +66,13 @@ test('a real universal launcher reads its pointer on every launch and forwards t
         pointer(spec.service!.installDir);
         assert.equal((await probeMcp(universalCall)).tools.length, 16, 'the next launch follows the rewritten pointer');
     } finally {
-        fs.rmSync(directory, { recursive: true, force: true });
-        await fixture.dispose();
+        // Closing a probe signals its child asynchronously. Windows may still
+        // hold the copied executable briefly; always drain the owned fixture,
+        // even when removing that executable fails.
+        try {
+            await fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+        } finally {
+            await fixture.dispose();
+        }
     }
 });

@@ -30,6 +30,7 @@ export const EXPLORER_ERRORS = {
     INDEX_UNAVAILABLE: { plane: 'host', message: 'The selected project has no readable publication yet.' },
     REQUEST_SUPERSEDED: { plane: 'host', message: 'A newer request replaced this one.' },
     REQUEST_TIMEOUT: { plane: 'host', message: 'AIRK did not answer before the Explorer deadline.' },
+    REQUEST_OUTCOME_UNKNOWN: { plane: 'webview', message: 'The Explorer stopped waiting before the action was acknowledged. Its outcome is unknown.' },
     TOOL_ERROR: { plane: 'service', message: 'The AIRK tool reported an error.' },
     UNKNOWN_REFERENCE: { plane: 'host', message: 'The referenced result is no longer available; run the query again.' },
     // Webview message validation.
@@ -39,6 +40,32 @@ export const EXPLORER_ERRORS = {
 export type ExplorerErrorCode = keyof typeof EXPLORER_ERRORS;
 
 export interface ExplorerError { readonly code: ExplorerErrorCode | string; readonly message: string }
+
+/** User guidance preserves the original code for diagnostics and never replays work. */
+export function friendlyError(error: ExplorerError): string {
+    const recovery: Partial<Record<ExplorerErrorCode, string>> = {
+        SERVICE_UNAVAILABLE: 'Open Management > Service and choose Connect / reconnect. Use Start service only when you intend to start it.',
+        HOST_UNAVAILABLE: 'Try reconnecting, or close and reopen Explorer if the extension host restarted.',
+        WORKSPACE_UNTRUSTED: 'Review VS Code workspace trust, then reopen the intended project when you are ready.',
+        NO_PROJECT: 'Open Management > Projects to review a registration for this workspace.',
+        INDEX_UNAVAILABLE: 'Check Management > Activity for pending work and indexing failures before trying the query again.',
+        STALE_BINDING: 'Refresh status, confirm the selected project and review the current draft before retrying.',
+        EVIDENCE_MISMATCH: 'Run the search or evidence strategy again against the current publication before reusing its results.',
+        UNKNOWN_REFERENCE: 'Run the originating query again to obtain a current citation.',
+        PROPOSAL_CONFLICT: 'Review the current draft. Ask the agent for a fresh proposal instead of overwriting your work.',
+        PROPOSAL_EXPIRED: 'Ask the agent to prepare a fresh proposal or explicitly share a new snapshot.',
+        REQUEST_TIMEOUT: 'You can retry the read or narrow its scope. Check Activity if native work is still running.',
+        REQUEST_OUTCOME_UNKNOWN: 'Check Activity, proposal status or the saved file before retrying; do not assume the action had no effect.',
+        EMBEDDING_UNAVAILABLE: 'Use lexical search now, or review vector search and model setup in Management > Indexing.',
+        RATE_LIMITED: 'Wait for pending requests to finish, or review and discard unneeded Inbox suggestions.',
+        INVALID_SCHEMA: 'Correct the indicated field or choose a valid AIRK file, then try again.',
+        SERVICE_INCOMPATIBLE: 'Review the runtime version in Management > Service and use Install or Repair CLI when appropriate.',
+    };
+    const nativeUnknown = /outcome_unknown|acknowledg/.test(error.code);
+    const nativeUnavailable = /service_unavailable|transport_closed|connect_failed/.test(error.code);
+    const hint = recovery[error.code as ExplorerErrorCode] ?? (nativeUnknown ? recovery.REQUEST_OUTCOME_UNKNOWN : nativeUnavailable ? recovery.SERVICE_UNAVAILABLE : undefined);
+    return hint ? `${error.message} ${hint}` : error.message;
+}
 
 export function isExplorerErrorCode(value: unknown): value is ExplorerErrorCode {
     return typeof value === 'string' && Object.hasOwn(EXPLORER_ERRORS, value);

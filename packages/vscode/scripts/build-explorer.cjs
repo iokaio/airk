@@ -33,6 +33,22 @@ function engineTopics() {
     return new Set(ids);
 }
 
+/** The native static guidance is also shipped offline in the UI/Assistance catalog.
+ * Command help and tool schemas still come from the running native binary.
+ * Check the complete catalog shape so an unsupported Rust literal fails the build.
+ */
+function engineGuides() {
+    const source = fs.readFileSync(path.resolve(root, '..', '..', 'crates', 'airk-mcp', 'src', 'help', 'topics.rs'), 'utf8');
+    const blocks = [...source.matchAll(/Topic\s*\{\s*id:\s*("(?:[^"\\]|\\.)*"),\s*title:\s*("(?:[^"\\]|\\.)*"),\s*text:\s*(r#"[\s\S]*?"#|"(?:[^"\\]|\\.)*"),?\s*\}/g)];
+    const guides = blocks.map(match => {
+        const id = JSON.parse(match[1]), title = JSON.parse(match[2]), text = match[3].startsWith('r#"') ? match[3].slice(3, -2) : JSON.parse(match[3]);
+        return { id: `engine.${id}`, title: `Engine: ${title}`, area: 'engine', aliases: [id, ...id.split('-')], applicability: 'implemented', relatedAirkHelp: [id],
+            source: 'crates/airk-mcp/src/help/topics.rs', body: `# ${title}\n\n${text.split('\n').join('\n\n')}` };
+    });
+    if (guides.length !== engineTopics().size || new Set(guides.map(topic => topic.id)).size !== guides.length) { throw new Error('Native engine help contains an unsupported or duplicate topic; update the catalog parser.'); }
+    return guides;
+}
+
 /** Compile src/explorerHelp/*.md into one validated, version-matched catalog. */
 function helpCatalog(directory = path.join(root, 'src', 'explorerHelp')) {
     const { ROUTE_KEYS } = require(path.join(root, 'out', 'explorerRoutes.js'));
@@ -64,7 +80,9 @@ function helpCatalog(directory = path.join(root, 'src', 'explorerHelp')) {
             aliases: list(fields.aliases), relatedAirkHelp: related, source: `packages/vscode/src/explorerHelp/${file}`, body });
     }
     const manifest = JSON.parse(read('package.json'));
-    return { catalogVersion: 1, extensionVersion: manifest.version, topics };
+    const guides = engineGuides();
+    if (guides.some(guide => topics.some(topic => topic.id === guide.id))) { throw new Error('Explorer help cannot shadow an engine topic.'); }
+    return { catalogVersion: 1, extensionVersion: manifest.version, topics: [...topics, ...guides] };
 }
 
 function helpPlugin(catalog) {

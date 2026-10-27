@@ -21,10 +21,16 @@ const LENSES: Record<string, string[]> = {
     architect: ['investigate', 'explore', 'review', 'prepare', 'handoff', 'maintain'],
     writer: ['explore', 'prepare', 'handoff', 'review', 'investigate', 'maintain'],
 };
+const ROLE_HINTS: Record<string, string> = {
+    developer: 'Start with Agent Lean for code navigation and bug/API work; use Rich Structure when broader structural facts or continuity are needed.',
+    tester: 'Keep requirements and acceptance documents alongside code and tests. Agent Lean is a starting point; richer document/table evidence may need Rich Structure.',
+    architect: 'Compare design decisions with written imports and candidate relationships. Use Rich Structure when lean evidence is insufficient; inspect every boundary claim.',
+    writer: 'Use Search Only for text-only lookup. Choose Agent Lean or richer detail when you need requirement, heading, table or decision facts.',
+};
 
 export function Overview(props: { state: ExplorerViewState; project?: ProjectSummary; go(route: Route): void }) {
     const { state, project } = props, status = state.status;
-    const [lens, setLens] = useState<string>((savedState<{ lens?: string }>()?.lens) ?? 'developer');
+    const [lens, setLens] = useState<string>(() => { const value = savedState<{ lens?: unknown }>()?.lens; return typeof value === 'string' && Object.hasOwn(LENSES, value) ? value : 'developer'; });
     const order = LENSES[lens] ?? LENSES.developer;
     const first = !state.trusted ? 'Trust this workspace in VS Code before AIRK can connect or read evidence.'
         : !state.projects.length ? 'No AIRK project is registered for this window yet. Registration and indexing start automatically for trusted folders, or use Management.'
@@ -72,6 +78,14 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
                     <option value="architect">Architect</option><option value="writer">Writer</option>
                 </select></label>
             </div>
+            <article class="card">
+                <h2>{lens[0].toUpperCase() + lens.slice(1)} guidance</h2>
+                <p>{ROLE_HINTS[lens] ?? ROLE_HINTS.developer}</p>
+                <p class="muted">A lens reorders journeys; it does not change indexing settings.</p>
+                <div class="actions"><button class="ghost" onClick={() => props.go({ workspace: 'help', focus: `role-${lens}` })}>Role workflow help</button>
+                    <button class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'indexing-choices' })}>Choose indexing by purpose</button>
+                    <button class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'document-types' })}>Document type guidance</button></div>
+            </article>
             <div class="cards three">
                 {order.map(id => JOURNEYS.find(entry => entry.id === id)!).map(journey => (
                     <button type="button" key={journey.id} class="card journey" onClick={() => props.go(journey.route)}>

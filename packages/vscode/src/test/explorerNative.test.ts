@@ -12,6 +12,7 @@ import { record } from '../serviceClient';
 import { CORE_PACK } from '../explorerStrategies';
 import { runStrategy } from '../explorerStrategyRunner';
 import { NativeServiceFixture } from './nativeServiceFixture';
+import { checkCitations } from '../explorerInspect';
 
 test('the Explorer evidence session reads one pinned publication through the verified launcher', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
     const fixture = await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
@@ -37,6 +38,11 @@ test('the Explorer evidence session reads one pinned publication through the ver
         assert.match(String(hits[0].citation.content_hash), /^[0-9a-f]{64}$/);
         const passage = await client.call('airk_read_file', { path: 'session.ts', start_line: 1, end_line: 1 }, { timeout: 60000 });
         assert.equal(passage.publication, token);
+        const bounded = await client.call('airk_context', { path: 'session.ts', line: 1, before: 5, after: 5, revision: token, known_hash: hits[0].citation.content_hash });
+        assert.equal(bounded.publication, token, 'EOF context keeps the original publication');
+        assert.ok((bounded.payload.hits as any[]).length > 0);
+        const missing = await checkCitations(client, new RefRegistry(), spec.service!.project, 'absent.ts:1', () => false);
+        assert.equal(missing.citations[0].status, 'not_found', 'only the native explicit absence is an absence claim');
         await assert.rejects(client.call('airk_read_file', { path: '../outside.ts', start_line: 1, end_line: 1 }, { timeout: 60000 }));
         const help = await client.call('airk_help', { topic: 'search', max_bytes: 8192 }, { timeout: 60000 });
         assert.equal(help.payload.topic, 'search');
@@ -48,6 +54,8 @@ test('the Explorer evidence session reads one pinned publication through the ver
         assert.equal(await liveCheck(file, String(hits[0].citation.content_hash), false), 'matches_index');
         await fs.appendFile(file, '// edited\n');
         assert.equal(await liveCheck(file, String(hits[0].citation.content_hash), false), 'changed_since_index');
+        await fixture.job(spec); await fixture.publishedStatus(spec);
+        await assert.rejects(client.call('airk_context', { path: 'session.ts', line: 1, before: 5, after: 5, revision: token, known_hash: hits[0].citation.content_hash }), /citation|index|revision/i);
     } finally {
         client?.dispose();
         await fixture.dispose();

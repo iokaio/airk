@@ -22,6 +22,9 @@ The Overview shows the selected project and its published index. The status pill
 1. Pick a project in the header if more than one is registered.
 2. Choose **Refresh status** to read published status again.
 3. Use a journey card to go to Search, Code, Review, Strategies or Management.
+4. Choose a Developer, Tester, Architect or Writer lens. It only reorders journeys. **Role workflow help**, **Choose indexing by purpose** and **Document type guidance** explain which evidence and indexing choices suit the task.
+
+Every workspace offers **Help for this screen**. The header's **Help** searches bundled Explorer and engine guidance offline; **About** opens project background, public links and the Ioka Discord community invitation.
 
 ## Limits
 

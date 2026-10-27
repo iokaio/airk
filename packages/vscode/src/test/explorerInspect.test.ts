@@ -10,6 +10,7 @@ import { explorerError } from '../explorerErrors';
 import { EvidenceFailure } from '../explorerEvidence';
 import { changesSince, checkCitations, inspect } from '../explorerInspect';
 import { RefRegistry } from '../explorerSearch';
+import { FactHandles } from '../explorerFacts';
 
 const project = 'ab'.repeat(32);
 const sha = (text: string) => createHash('sha256').update(Buffer.from(text)).digest('hex');
@@ -43,7 +44,7 @@ test('checking citations reports real statuses from the index and the saved file
         const calls: string[] = [];
         const session = { call: async (tool: string, args: any) => {
             assert.equal(tool, 'airk_file_info'); calls.push(args.path);
-            if (!info[args.path]) { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'path is not in the published index')); }
+            if (!info[args.path]) { return { payload: { read: { status: 'unknown', reason: 'path is absent from the current index' } }, publication: 'airk-r1:p' }; }
             return { payload: info[args.path], publication: 'airk-r1:p' };
         } } as any;
         const refs = new RefRegistry();
@@ -86,4 +87,29 @@ test('changes map subjects, causes and coverage, and report expired cursors expl
         (error: unknown) => error instanceof EvidenceFailure && error.error.code === 'EVIDENCE_MISMATCH');
     assert.equal(parseWebviewMessage({ v: 1, type: 'evidence.changes', requestId: 'c', since: 'not-a-token', limit: 5 }), undefined);
     assert.ok(parseWebviewMessage({ v: 1, type: 'evidence.changes', requestId: 'c', since: 'airk-r1:abc:3:def', limit: 5 }));
+});
+
+test('Checker never converts tool failures to absence and rejects mixed publications', async () => {
+    const failure = { call: async () => { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'integrity failure')); } } as any;
+    await assert.rejects(checkCitations(failure, new RefRegistry(), project, 'a.ts:1', () => false), /integrity failure/);
+    let count = 0;
+    const mixed = { call: async () => ({ publication: `p${++count}`, payload: { content_hash: sha('a'), indexed_lines: 1 } }) } as any;
+    await assert.rejects(checkCitations(mixed, new RefRegistry(), project, 'a.ts:1 b.ts:1', () => false), /index changed/);
+});
+
+test('Changes pages retain their exact baseline and reject a republished continuation', async () => {
+    const handles = new FactHandles(new RefRegistry());
+    const calls: any[] = [];
+    let publication = 'p';
+    const session = { call: async (_tool: string, args: any) => {
+        calls.push(args);
+        return { publication, payload: { status: 'ready', changes: [], cursor: args.cursor ? null : 'native-cursor' } };
+    } } as any;
+    const first = await changesSince(session, 'old', 10, handles, project);
+    assert.ok(first.more);
+    const next = await changesSince(session, '', 1, handles, project, first.more);
+    assert.equal(next.more, undefined); assert.equal(next.since, 'old');
+    assert.deepEqual(calls[1], { since: 'old', limit: 10, max_bytes: 32768, cursor: 'native-cursor' });
+    publication = 'new';
+    await assert.rejects(changesSince(session, '', 1, handles, project, first.more), /index changed/);
 });

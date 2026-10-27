@@ -20,4 +20,6 @@ function workingDirectory(): string {
 const index = new HelpIndex(catalog);
 const tools = new AssistanceTools(index, windowChannel(option('--assistance-dir'), workingDirectory()));
 const server = new AssistanceServer(index, tools, catalog.extensionVersion);
-void serve(server, process.stdin, text => { process.stdout.write(text); }).then(() => { process.exitCode = 0; });
+void serve(server, process.stdin, text => new Promise<void>((resolve, reject) => {
+    process.stdout.write(text, error => error ? reject(error) : resolve());
+})).then(() => { process.stdin.destroy(); process.exitCode = 0; });

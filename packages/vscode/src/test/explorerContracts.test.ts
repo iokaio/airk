@@ -60,12 +60,22 @@ test('webview messages require the exact declared fields', () => {
     assert.equal(parseWebviewMessage({ v: 1, type: 'code.relationships', requestId: 'c', symbol: 's1', direction: 'sideways', hops: 1, limit: 5 }), undefined);
     assert.equal(parseWebviewMessage({ v: 1, type: 'code.relationships', requestId: 'c', symbol: 's1', direction: 'incoming', hops: 4, limit: 5 }), undefined);
     assert.ok(parseWebviewMessage({ v: 1, type: 'code.outline', requestId: 'o' }));
-    for (const fields of Object.values(WEBVIEW_MESSAGES)) {
+    for (const [type, fields] of Object.entries(WEBVIEW_MESSAGES)) {
         for (const [name, spec] of Object.entries(fields as Record<string, { kind: string }>)) {
             // A path- or command-like field is acceptable only as a fixed allowlist (enum) or the relative path scope.
-            assert.ok(!/path$|command|args|body/i.test(name) || name === 'pathPrefix' || spec.kind === 'enum', `message field ${name} could carry a path or command`);
+            const helpSelector = type === 'help.engine' && name === 'command' && spec.kind === 'string';
+            assert.ok(!/path$|command|args|body/i.test(name) || name === 'pathPrefix' || spec.kind === 'enum' || helpSelector, `message field ${name} could carry a path or command`);
         }
     }
+});
+
+test('live help accepts bounded read-only selectors and About accepts fixed destinations only', () => {
+    const help = { v: 1, type: 'help.engine', requestId: 'h' };
+    assert.ok(parseWebviewMessage({ ...help, command: 'collections extraction detail', startLine: 2 }));
+    assert.ok(parseWebviewMessage({ ...help, tool: 'airk_code_facts' }));
+    for (const command of ['runtime; whoami', '$(whoami)', '../private', 'runtime --execute', 'C:/private']) { assert.equal(parseWebviewMessage({ ...help, command }), undefined); }
+    for (const destination of ['website', 'repository', 'discord', 'issues', 'contribute']) { assert.ok(parseWebviewMessage({ v: 1, type: 'help.openExternal', requestId: 'l', destination })); }
+    for (const destination of ['https://example.invalid', 'command:workbench.action.reloadWindow', 'file:///private']) { assert.equal(parseWebviewMessage({ v: 1, type: 'help.openExternal', requestId: 'l', destination }), undefined); }
 });
 
 test('Management actions are exactly the console allowlist, and commands are fixed AIRK commands', () => {

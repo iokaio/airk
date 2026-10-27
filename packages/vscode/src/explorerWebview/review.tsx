@@ -5,13 +5,13 @@ import { shortToken } from './format';
 import type { ScreenProps } from './workspaces';
 
 // Shapes returned by the host's review module (explorerReview.ts); rendered as text only.
-interface ChangedFile { path: string; change: string; staged: boolean; indexed: boolean; live: string; language?: string }
+interface ChangedFile { path: string; change: string; staged: boolean; workingTree?: boolean; originalPath?: string; indexed: boolean; live: string; language?: string }
 interface Changes { git: 'available' | 'unavailable' | 'no_repository'; files: ChangedFile[]; truncated: boolean; publication?: string; notes: string[] }
 interface ImpactItem { name: string; kind: string; path: string; line?: number; references: number; referenceFiles: string[]; testReferences: number; truncated: boolean }
 interface Impact { items: ImpactItem[]; files: number; truncated: boolean; publication?: string; notes: string[] }
 interface Tests { candidates: { path: string; line: number; mentions: string; text: string }[]; declarations: number; pattern: string; truncated: boolean; notes: string[] }
 
-const LIVE: Record<string, string> = { matches_index: 'matches index', changed_since_index: 'changed since index', not_saved: 'unsaved edits', missing: 'missing', unchecked: 'not indexed', deleted: 'deleted', outside_workspace: 'outside workspace' };
+const LIVE: Record<string, string> = { matches_index: 'matches index', changed_since_index: 'changed since index', not_saved: 'unsaved edits', missing: 'missing', unchecked: 'comparison unavailable', deleted: 'deleted', outside_workspace: 'outside workspace' };
 
 function useReview<T>(type: 'review.changes' | 'review.impact' | 'review.tests', connected: boolean): { data?: T; error?: string; busy: boolean; load(): void } {
     const [data, setData] = useState<T>();
@@ -50,7 +50,7 @@ export function ReviewChangesScreen(props: ScreenProps) {
                     <div class="table-wrap"><table class="grid">
                         <thead><tr><th>Path</th><th>Change</th><th>Indexed</th><th>Saved bytes</th></tr></thead>
                         <tbody>{data.files.map(file => (
-                            <tr key={file.path}><td><code>{file.path}</code></td><td>{file.change}{file.staged ? ' (staged)' : ''}</td><td>{file.indexed ? file.language ?? 'yes' : 'no'}</td>
+                            <tr key={file.path}><td><code>{file.path}</code></td><td>{file.change}{file.staged ? ' (staged)' : ''}{file.workingTree ? ' (working tree)' : ''}{file.originalPath ? ` from ${file.originalPath}` : ''}</td><td>{file.indexed ? file.language ?? 'yes' : 'no'}</td>
                                 <td>{LIVE[file.live] ?? file.live}</td></tr>
                         ))}</tbody>
                     </table></div>

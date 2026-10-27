@@ -6,6 +6,7 @@ import { Facts } from './components';
 import { OpenButton, useAsync } from './facts';
 import { ago, observed, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
+import { navigationFilters } from '../explorerDrafts';
 
 const LIVE_CLASS: Record<string, string> = { matches_index: 'ok', changed_since_index: 'warn', not_saved: 'warn', missing: 'error', unchecked: 'info', outside_workspace: 'info' };
 
@@ -46,7 +47,7 @@ export function InspectorScreen(props: ScreenProps) {
 const STATUS_CLASS: Record<string, string> = { valid: 'ok', changed_since_index: 'warn', not_saved: 'warn', line_out_of_range: 'error', not_found: 'error', missing: 'error', outside_collection: 'error', unchecked: 'warn' };
 
 export function CheckerScreen(props: ScreenProps) {
-    const [text, setText] = useState('');
+    const [text, setText] = useState(navigationFilters(props, 'evidence/checker').text ?? '');
     const view = useAsync<CitationCheckView>();
     return (
         <div>
@@ -82,7 +83,7 @@ export function CheckerScreen(props: ScreenProps) {
 }
 
 export function ChangesScreen(props: ScreenProps) {
-    const [since, setSince] = useState(props.publications[1]?.token ?? '');
+    const [since, setSince] = useState(navigationFilters(props, 'evidence/changes').since ?? props.publications[1]?.token ?? '');
     const view = useAsync<ChangesView>();
     const valid = /^airk-r1:[0-9A-Za-z:_-]+$/.test(since) && since.length <= 256;
     return (
@@ -104,12 +105,16 @@ export function ChangesScreen(props: ScreenProps) {
                 <section>
                     <p class="result-meta"><strong>{view.value.items.length} changes{view.value.truncated ? ' · more may exist' : ''}</strong> · baseline {view.value.baseline.replaceAll('_', ' ')}
                         {' · '}now <span title={view.value.publication}>{shortToken(view.value.publication)}</span></p>
-                    {!view.value.items.length && <p class="callout">No indexed change was observed between these publications.</p>}
+                    {!view.value.items.length && <p class="callout">{view.value.baseline === 'verified' ? 'No indexed change was observed in this bounded comparison; inspect coverage before relying on it.' : 'The baseline is unavailable or unverified. An empty response does not establish that nothing changed.'}</p>}
                     <ul class="hits">{view.value.items.map((item, index) => (
                         <li key={index} class="hit card"><code class="path">{item.path ?? `(${item.subject})`}</code> <span class="tag">{item.subject}</span>
                             {item.causes.map(cause => <span class="tag" key={cause}>{cause.replaceAll('_', ' ')}</span>)}
                             {item.dimensions.length > 0 && <p class="muted">changed: {item.dimensions.join(', ')}</p>}</li>
                     ))}</ul>
+                    {view.value.more && <button disabled={view.busy} onClick={() => {
+                        const prior = view.value!;
+                        void view.run(async () => { const next = await request<ChangesView>('evidence.changesMore', { more: prior.more! }); return { ...next, items: [...prior.items, ...next.items] }; });
+                    }}>Load more changes</button>}
                     {view.value.coverage.length > 0 && <details><summary>Coverage</summary><ul>{view.value.coverage.map(line => <li key={line}>{line}</li>)}</ul></details>}
                 </section>
             )}

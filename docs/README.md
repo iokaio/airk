@@ -1,8 +1,10 @@
 # AIRK documentation
 
+The 1.5.0 local Explorer candidate includes fourteen Assistance tools, paired project setup, a unified offline Help search, four role guides, purpose/format-based indexing guidance and About/community links. See [the extension guide](vscode-extension.md), [implementation receipts](explorer/code-review-action-plan.md), [role guidance](../packages/vscode/src/explorerHelp/role-developer.md), [indexing choices](../packages/vscode/src/explorerHelp/indexing-choices.md) and [document types](../packages/vscode/src/explorerHelp/document-types.md). These articles and the native engine guidance are also available directly in Explorer Help and through Assistance help tools.
+
 The [1.4.4 release-tool repair](release-workflow.md#pinned-144-release-tool-repair) corrects macOS bundle verification and reuses the original artifacts verified by the successful routine CI run without rebuilding or relabeling native binaries. The original source commit and reviewed tooling commit are recorded separately.
 
-The current 1.4.4 follow-up corrects Unix cleanup ordering for naturally exited children while retaining exact child and descendant-exit proof. Routine CI keeps correctness/build/package checks, uses lightweight default features for focused Windows/macOS regressions, and bounds independent native fixture concurrency. Long workload and performance campaigns are available through explicit [CI qualification](ci-and-builds.md).
+The historical 1.4.4 follow-up corrects Unix cleanup ordering for naturally exited children while retaining exact child and descendant-exit proof. Routine CI keeps correctness/build/package checks, uses lightweight default features for focused Windows/macOS regressions, and bounds independent native fixture concurrency. Long workload and performance campaigns are available through explicit [CI qualification](ci-and-builds.md).
 
 1.4.4 also creates staged Windows runtime directories with explicit current-user ownership and owner-only access, including nested payload directories, so elevated installations satisfy the same strict ownership checks. Installed macOS runtime validation, self-test and retirement read the complete app payload from its outer root. Cold service starts coordinate registration-metadata setup before source watching.
 
@@ -160,3 +162,5 @@ Installed namespace binding now independently pins the completed registry identi
 Saved bootstrap snapshots now read completed registry metadata without executing a damaged selected payload or migrating/pruning the registry. The console retains bounded cached project pages and logs while disconnected, labels sampled work explicitly, and can submit a saved-instance Stop through the independently verified bundled main executable. Native Stop rechecks the actual service identity; Restart/Start still require a verified complete payload. See [down-service behavior](service-console.md#down-service-and-damaged-payload-observation).
 
 Development payload repair now requires an exact native preview and stopped owners, preserves the complete damaged slot, resumes interrupted copies and returns an idempotent completion receipt. The trusted console uses the matching approved offline bundle; Start remains explicit and uninstall retains the damaged originals. See [payload repair](service-installation.md#explicit-payload-repair).
+
+The [Explorer code review and implementation follow-up](explorer/code-review-action-plan.md) records the chronological branch audit, corrective work, local validation and remaining qualification.

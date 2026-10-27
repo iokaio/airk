@@ -2,6 +2,8 @@
 import { JSX } from 'preact';
 import { ExplorerViewState } from '../explorerContracts';
 import type { SearchRecipe } from '../explorerStrategies';
+import type { NavigationFilters } from '../explorerDrafts';
+import catalog from 'airk-explorer-help';
 import { Route, routeKey, WORKSPACES } from '../explorerRoutes';
 import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
@@ -18,6 +20,7 @@ export interface ScreenProps {
     state: ExplorerViewState;
     go(route: Route): void;
     incoming?: { query: string; serial: number; recipe?: SearchRecipe; run?: boolean };
+    navigation?: { route: string; filters: NavigationFilters; serial: number };
     /** Open Search with a saved recipe's arguments and run it. */
     runRecipe(recipe: SearchRecipe): void;
     /** Open Evidence › Inspector for a host-issued citation handle. */
@@ -63,13 +66,20 @@ export function WorkspaceView(props: ScreenProps) {
     return (
         <section class="workspace">
             <h1>{workspace.title}</h1>
+            {key !== 'help' && <button type="button" class="ghost" onClick={() => { const topic = catalog.topics.find(entry => entry.route === key); props.go({ workspace: 'help', ...(topic ? { focus: topic.id.replaceAll('.', '-') } : {}) }); }}>Help for this screen</button>}
             {workspace.tabs.length > 0 && (
                 <div class="tabs" role="tablist" aria-label={`${workspace.title} views`}>
                     {workspace.tabs.map(tab => {
                         const selected = tab.id === props.route.tab;
                         const available = props.state.features[`${workspace.id}/${tab.id}`];
                         return (
-                            <button type="button" role="tab" key={tab.id} aria-selected={selected} class={selected ? 'selected' : ''}
+                            <button type="button" role="tab" key={tab.id} id={`tab-${workspace.id}-${tab.id}`} aria-controls={`panel-${workspace.id}`} tabIndex={selected ? 0 : -1} aria-selected={selected} class={selected ? 'selected' : ''}
+                                onKeyDown={event => {
+                                    const at = workspace.tabs.findIndex(entry => entry.id === tab.id);
+                                    const next = event.key === 'ArrowRight' ? (at + 1) % workspace.tabs.length : event.key === 'ArrowLeft' ? (at + workspace.tabs.length - 1) % workspace.tabs.length
+                                        : event.key === 'Home' ? 0 : event.key === 'End' ? workspace.tabs.length - 1 : undefined;
+                                    if (next !== undefined) { event.preventDefault(); props.go({ workspace: workspace.id, tab: workspace.tabs[next].id }); document.getElementById(`tab-${workspace.id}-${workspace.tabs[next].id}`)?.focus(); }
+                                }}
                                 onClick={() => props.go({ workspace: workspace.id, tab: tab.id })}>
                                 {tab.title}{available !== 'implemented' && <span class="tag">preview</span>}
                             </button>
@@ -77,7 +87,7 @@ export function WorkspaceView(props: ScreenProps) {
                     })}
                 </div>
             )}
-            <div role="tabpanel">{Screen ? <Screen {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />}</div>
+            <div role="tabpanel" id={`panel-${workspace.id}`} aria-labelledby={props.route.tab ? `tab-${workspace.id}-${props.route.tab}` : undefined}>{Screen ? <Screen key={`${key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />}</div>
         </section>
     );
 }

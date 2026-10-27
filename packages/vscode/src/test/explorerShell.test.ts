@@ -4,6 +4,7 @@ import Module from 'node:module';
 import { test } from 'node:test';
 import type { ExplorerViewState } from '../explorerContracts';
 import { FEATURES } from '../explorerFeatures';
+import { HandoffStore } from '../explorerHandoffs';
 
 // Minimal vscode stub: panels record HTML/messages and expose their message handler.
 const disposable = { dispose() {} };
@@ -13,6 +14,7 @@ const vscodeStub = {
     ViewColumn: { Active: 1 },
     EventEmitter: class { event = () => disposable; fire() {} dispose() {} },
     window: {
+        showWarningMessage: async (): Promise<string | undefined> => undefined,
         createWebviewPanel: (_type: string, _title: string, _column: unknown, options: any) => {
             let receive: (value: unknown) => void = () => undefined;
             let closed: () => void = () => undefined;
@@ -38,7 +40,22 @@ const { renderSidebar, sidebarContent, sidebarMessage } = require('../explorerSi
 const { SuggestionStore } = require('../explorerSuggestions') as typeof import('../explorerSuggestions');
 
 const project = 'ab'.repeat(32);
-function controller(trusted = true, stored = new Map<string, unknown>()) {
+test('sharing requires explicit confirmation and rechecks the draft revision after the modal', async t => {
+    let revision = 2, approved = false, changeDuringDialog = false;
+    const handoffs = new HandoffStore({ authorized: () => true, binding: () => 'ab'.repeat(8), revisions: () => ({ studio: revision }), publication: () => undefined });
+    const { explorer } = controller(true, new Map(), handoffs);
+    t.mock.method(vscodeStub.window, 'showWarningMessage', async () => { if (changeDuringDialog) { revision++; } return approved ? 'Share snapshot' : undefined; });
+    const request = { v: 1, requestId: 'share', type: 'handoff.share', kind: 'studio', revision: 2, content: 'Complete reviewed instructions' };
+    try {
+        assert.deepEqual(await (explorer as any).dispatch(request), { shared: false });
+        approved = true; const shared = await (explorer as any).dispatch(request);
+        assert.equal(handoffs.get(shared.token)?.content, request.content);
+        changeDuringDialog = true;
+        await assert.rejects((explorer as any).dispatch(request), /draft, authorization or evidence changed/);
+        assert.equal(handoffs.get(shared.token), undefined);
+    } finally { explorer.dispose(); }
+});
+function controller(trusted = true, stored = new Map<string, unknown>(), handoffs?: HandoffStore) {
     const suggestions = new SuggestionStore({ binding: () => 'ab12ab12ab12ab12', revisions: () => ({}), publication: () => undefined, ttlMs: () => 3600_000 });
     const statusBar: string[] = [];
     const runs: unknown[] = [];
@@ -51,7 +68,7 @@ function controller(trusted = true, stored = new Map<string, unknown>()) {
         activeProject: () => project, onDidChangeSpecs: () => disposable, log: () => undefined,
         setStatusBar: (text: string) => { statusBar.push(text); },
         workspaceState: { get: <T>(key: string, fallback?: T) => (stored.has(key) ? stored.get(key) : fallback) as T, update: async (key: string, value: unknown) => { stored.set(key, value); } },
-        suggestions,
+        suggestions, handoffs,
         control: { controller: { state: consoleState }, run: async (action: string, fields?: unknown) => { runs.push([action, fields]); },
             retain: () => disposable, onDidChangeState: () => disposable },
     };
@@ -71,6 +88,50 @@ function controller(trusted = true, stored = new Map<string, unknown>()) {
     return { explorer: new TestController(host as any), statusBar, runs, suggestions };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+
+test('status selection generations load the new project after a pending old request settles', async () => {
+    const instance = Object.create(ExplorerController.prototype) as any;
+    let release!: (value: any) => void;
+    const calls: string[] = [];
+    Object.assign(instance, { selected: 'A', selectionEpoch: 1, host: { trusted: () => true }, publish() {},
+        session() { const selected = this.selected; return { call: () => {
+            calls.push(selected);
+            return selected === 'A' ? new Promise(resolve => { release = resolve; }) : Promise.resolve({ payload: { index_state: 'available', publication: { token: 'B' } } });
+        } }; } });
+    const old = instance.loadStatus();
+    instance.selected = 'B'; instance.selectionEpoch++;
+    void instance.loadStatus();
+    release({ payload: { index_state: 'available', publication: { token: 'A' } } });
+    await old; await flush();
+    assert.deepEqual(calls, ['A', 'B']); assert.equal(instance.statusFor, 'B'); assert.equal(instance.status.publication, 'B');
+});
+
+test('Expand uses exact hash/revision and bounded context rather than a range beyond EOF', async () => {
+    const instance = Object.create(ExplorerController.prototype) as any;
+    const calls: any[] = [];
+    Object.assign(instance, { requireProject: () => project, refs: { get: () => ({ path: 'a.ts', startLine: 1, endLine: 1, contentHash: 'ab'.repeat(32), publication: 'p' }), add: () => 'h2' },
+        session: () => ({ call: async (tool: string, args: any) => {
+            calls.push({ tool, args });
+            return { publication: 'p', payload: tool === 'airk_file_info' ? { line_basis: 'source' } : { hits: [{ citation: { path: 'a.ts', start_line: 1, end_line: 1, content_hash: 'ab'.repeat(32) }, text: 'one line' }] } };
+        } }) });
+    const result = await instance.dispatch({ type: 'evidence.expand', ref: 'h1', before: 5, after: 5 });
+    assert.equal(result.text, 'one line');
+    assert.equal(calls[1].tool, 'airk_context');
+    assert.equal(calls[1].args.revision, 'p'); assert.equal(calls[1].args.known_hash, 'ab'.repeat(32));
+    assert.equal(calls[1].args.end_line, undefined);
+});
+
+test('live help selectors and continuation call only airk_help and preserve its page metadata', async () => {
+    const instance = Object.create(ExplorerController.prototype) as any, calls: any[] = [];
+    Object.assign(instance, { requireProject: () => project, session: () => ({ call: async (tool: string, args: any) => {
+        calls.push({ tool, args }); return { payload: { topic: 'tools', title: 'Tool reference', content: 'schema page', tool: 'airk_code_facts', version: '1.5.0', start_line: 8, next_line: 20, truncated: true } };
+    } }) });
+    const reply = await instance.dispatch({ type: 'help.engine', tool: 'airk_code_facts', startLine: 8 });
+    assert.deepEqual(calls, [{ tool: 'airk_help', args: { tool: 'airk_code_facts', start_line: 8, max_bytes: 16384 } }]);
+    assert.equal(reply.startLine, 8); assert.equal(reply.nextLine, 20); assert.equal(reply.tool, 'airk_code_facts');
+    await assert.rejects(instance.dispatch({ type: 'help.engine', tool: 'airk_search', command: 'runtime' }), /Choose one help selector/);
+    assert.equal(calls.length, 1, 'conflicting selectors reach no native operation');
+});
 
 test('the panel shell uses a nonce CSP, no command URIs and only the out/ bundles', () => {
     const html = explorerHtml({ cspSource: 'vscode-resource:', asWebviewUri: (uri: any) => uri }, { path: '/ext' } as any, 'n0nce');
@@ -114,9 +175,9 @@ test('the controller publishes state, loads published status and rejects invalid
     assert.equal(results.o1.ok, false); assert.equal(results.o1.error.code, 'UNKNOWN_REFERENCE');
     assert.equal(results.s2.ok, false); assert.equal(results.s2.error.code, 'INVALID_MESSAGE');
     assert.equal(results.m1.ok, true, JSON.stringify(results.m1));
-    assert.equal(results.m2, undefined, 'unknown console actions are dropped by the message validator');
+    assert.equal(results.m2.error.code, 'INVALID_MESSAGE', 'unknown console actions are refused without dispatch');
     assert.deepEqual(runs, [['index', { project }]], 'index runs only through the shared console for a project on its page');
-    assert.equal(results.x1, undefined, 'unrecognized messages are dropped before the controller');
+    assert.equal(results.x1.error.code, 'INVALID_MESSAGE', 'unrecognized messages receive a bounded refusal before dispatch');
     explorer.dispose();
     assert.equal(panel.disposed, true);
 });
@@ -197,7 +258,8 @@ test('the Inbox reaches the webview as summaries; review, resolve and discard go
     };
     const detail = await reply('g1', { type: 'suggestions.get', id: admitted.receipt.proposal_id });
     assert.equal(detail.data.body.search.query, 'renew <script>');
-    assert.equal((await reply('r1', { type: 'suggestions.resolve', id: admitted.receipt.proposal_id, status: 'executed' })), undefined, 'unknown statuses are not even parsed');
+    assert.equal((await reply('r1', { type: 'suggestions.resolve', id: admitted.receipt.proposal_id, status: 'executed' })).error.code, 'INVALID_MESSAGE', 'unknown statuses are refused without changing the proposal');
+    assert.equal(suggestions.status(admitted.receipt.proposal_id)?.status, 'pending_review');
     assert.equal((await reply('r2', { type: 'suggestions.resolve', id: admitted.receipt.proposal_id, status: 'deferred' })).ok, true);
     assert.equal(suggestions.status(admitted.receipt.proposal_id)?.status, 'deferred');
     assert.deepEqual((await reply('d1', { type: 'suggestions.discardAll' })).data, { discarded: 1 });
