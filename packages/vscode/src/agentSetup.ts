@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import { Client, LaunchSpec, ServerEntry, serializeServers } from './model';
+import { Client, LaunchSpec, McpVerification, ServerEntry, serializeServers } from './model';
 import { installJsonConfig, isJsonClient, jsonConfigPath, readJsonConfig, reviewLegacyJsonConfig, replaceReviewedLegacyJsonConfig } from './agentConfig';
 import { agentChoices, assistancePrompt, codexConfigPath, connectionAction, createCodexConfig, renderConnectionGuide, verificationPrompt } from './agentConnections';
-import { McpVerification } from './sidebar';
 
 export interface AgentSetupHost {
     trusted(): void;

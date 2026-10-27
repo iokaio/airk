@@ -2,14 +2,19 @@
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { ConsoleHost, ServiceConsoleController } from '../serviceConsoleController';
-import { consoleAction, diagnosticPreview, renderConsole, ServiceConsoleState } from '../serviceConsoleView';
+import { consoleAction, diagnosticPreview, ServiceConsoleState } from '../serviceConsoleView';
+import { managementView } from '../explorerManagement';
+
+/** What Explorer Management shows for a console state (the Service Console view was removed in 1.5.0). */
+const shown = (state: ServiceConsoleState): string => JSON.stringify(managementView(state));
 import { RecordValue, ServiceClient, ServiceError } from '../serviceClient';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
 test('console workspace registration uses a trusted host action and highlights only native project bindings',async()=>{
     const f=fixture();let registrations=0;
     f.host.registerWorkspace=async()=>{registrations++;};f.host.currentProjects=()=>new Set([project]);
-    await f.controller.refresh();assert.match(renderConsole(f.controller.state),/Review workspace registration/);
-    assert.match(renderConsole(f.controller.state),/Open workspace/);
+    await f.controller.refresh();const registration=managementView(f.controller.state);
+    assert.equal(registration.enabled.registerWorkspace,true,'Management offers workspace registration');
+    assert.ok(registration.projects.some(entry=>entry.summary.current),'the open workspace project is marked current');
     const forged={type:'service',revision:f.controller.state.revision,action:'registerWorkspace',root:'/untrusted'};
     await f.controller.action(forged);assert.equal(registrations,0);
     await f.action('registerWorkspace');assert.equal(registrations,1);
@@ -81,26 +86,26 @@ test('console binds sampled wait reasons and queued cancellation to observed job
     const f=fixture();await f.controller.refresh();const state=f.controller.state,row=state.page!.projects[0],worker=(state.workers!.observations as RecordValue[])[0];
     row.pending_job={id:job,project,kind:'index',state:'pending'};
     worker.waiting={job,reason:'extraction_capacity',age_ms:125};
-    assert.match(renderConsole(state),/Waiting for extraction capacity/);
-    assert.match(renderConsole(state),/Cancel queued job/);
+    assert.match(shown(state),/Waiting for extraction capacity/);
+    assert.equal(managementView(state).projects[0].pendingJobId,job,'Management offers cancellation for the observed queued job');
     const action={type:'service',revision:state.revision,action:'cancelJob',id:job};
     assert.ok(consoleAction(action,state));
     assert.equal(consoleAction({...action,id:'ff'.repeat(32)},state),undefined);
     assert.equal(consoleAction({...action,action:'retryJob'},state),undefined);
     worker.waiting={job:'ff'.repeat(32),reason:'reader_lease',age_ms:999};
-    assert.doesNotMatch(renderConsole(state),/Waiting for active readers/);
+    assert.doesNotMatch(shown(state),/Waiting for active readers/);
     row.pending_paused=true;
-    assert.match(renderConsole(state),/Queued work is paused by project policy/);
+    assert.match(shown(state),/Queued work is paused by project policy/);
     row.pending_paused=false;
     const identity={service:instance,worker:namespace,project,fencing_generation:3};
     worker.identity=identity;
     worker.waiting={job,reason:'reader_lease',age_ms:50};
     row.pending_job=null;row.progress={worker:identity,current_fencing_generation:3,job:{id:job,state:'running'},progress:{phase:'semantic'}};
-    assert.match(renderConsole(state),/Waiting for active readers/);
+    assert.match(shown(state),/Waiting for active readers/);
     (row.progress as RecordValue).current_fencing_generation=4;
-    assert.doesNotMatch(renderConsole(state),/Waiting for active readers/);
+    assert.doesNotMatch(shown(state),/Waiting for active readers/);
     worker.waiting={job,reason:'<script>bad</script>',age_ms:50};
-    assert.doesNotMatch(renderConsole(state),/<script>bad/);
+    assert.doesNotMatch(shown(state),/<script>bad/);
     f.controller.dispose();
 });
 
@@ -165,7 +170,7 @@ test('legacy startup controls require a separate reviewed scope and approval, pr
         await f.controller.refresh();
         assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'removeLegacyStartup'},f.controller.state),undefined);
         await f.action('reviewLegacyStartup');assert.equal(removed,0);assert.ok(f.controller.state.legacyReview);
-        assert.match(renderConsole(f.controller.state),/Legacy startup review/);
+        assert.equal(managementView(f.controller.state).legacy?.reviewed,true);
         await f.action('removeLegacyStartup');assert.match(confirmed,/Source: \/old-source/);assert.match(confirmed,/project settings and old indexes stay in place/);
         assert.equal(removed,approval==='approve'?1:0);
         f.setTrusted(true);await f.action('legacyStartupReceipts');
@@ -257,8 +262,9 @@ test('disconnected snapshots retain bounded configuration results and Copy uses 
     await f.controller.refresh();assert.equal(f.controller.state.connected,false);
     assert.deepEqual(f.controller.state.configurationResults?.get(project)?.value,result);
     await f.action('copyConfiguration',{project});assert.equal(f.copied[0],JSON.stringify(result,null,2));
-    assert.match(renderConsole(f.controller.state),/Last configuration result \(cached\)/);
-    assert.match(renderConsole(f.controller.state),/Some configuration results were omitted/);
+    const cached=managementView(f.controller.state);
+    assert.equal(cached.projects[0].configurationResult,true,'the cached configuration result stays available');
+    assert.equal(cached.configurationResultsOmitted,true);
     const report=JSON.parse(diagnosticPreview(f.controller.state,false));
     assert.equal(report.configurationResultsOmitted,true);
     assert.equal(report.projects[0].configuration.id,job);
@@ -282,12 +288,11 @@ test('trust loss refuses native actions while reports remain previewable and red
     await f.action('copyReport');assert.equal(f.copied.length,1);assert.equal(f.sent.length,before);
     f.controller.dispose();
 });
-test('rendering escapes project content, isolates script execution and disables external lifecycle actions',async()=>{
+test('an external service manager disables lifecycle actions and the full report keeps paths only on request',async()=>{
     const f=fixture();await f.controller.refresh();f.controller.state.lifecycle='external';
-    const html=renderConsole(f.controller.state);
-    assert.match(html,/default-src 'none'/);assert.doesNotMatch(html,/<script>name<\/script>/);
-    assert.match(html,/&lt;script&gt;name&lt;\/script&gt;/);
-    assert.match(html,/data-action="stop"[^>]*disabled/);assert.match(html,/external service manager/);
+    const view=managementView(f.controller.state);
+    assert.deepEqual([view.enabled.start,view.enabled.stop,view.enabled.restart],[false,false,false]);
+    assert.equal(view.lifecycle,'external');
     const text=diagnosticPreview(f.controller.state,true);assert.match(text,/sensitive/);assert.match(text,/secret-user/);
     assert.ok(Buffer.byteLength(text)<=65536);f.controller.dispose();
 });
@@ -325,7 +330,7 @@ test('damaged payload uses cached pages and persists an instance-fenced Stop wit
     };
     await f.controller.refresh();assert.equal(f.controller.state.connected,false);
     assert.equal(f.controller.state.page?.projects[0].project&&((f.controller.state.page.projects[0].project as RecordValue).registration as RecordValue).binding,project);
-    assert.doesNotMatch(renderConsole(f.controller.state),/data-action="stop"[^>]*disabled/);
+    assert.equal(managementView(f.controller.state).enabled.stop,true,'a recorded instance can still be stopped from cached state');
     await f.action('nextPage');assert.deepEqual(requests.at(-1),{after:project,revision:3});
     assert.equal(((f.controller.state.page!.projects[0].project as RecordValue).registration as RecordValue).binding,second);
     await f.action('stop');assert.equal(f.controller.state.pending.length,0);assert.equal(f.controller.state.message,undefined);
@@ -338,7 +343,7 @@ test('a failed health check changes previously live resource and work observatio
     f.host.runtime.client=()=>new ServiceClient({dispose(){},request:async()=>{throw new ServiceError('service_down');}});
     await f.action('connect');assert.equal(f.controller.state.connected,false);
     assert.equal(f.controller.state.resources.state,'cached');assert.equal(f.controller.state.model.state,'cached');
-    const html=renderConsole(f.controller.state);assert.match(html,/Cached sample/);assert.doesNotMatch(html,/Current generation/);
+    const html=shown(f.controller.state);assert.match(html,/Cached sample/);assert.doesNotMatch(html,/Current generation/);
     f.controller.dispose();
 });
 
@@ -376,7 +381,7 @@ test('a different native version keeps installer observations without executing 
     await f.controller.refresh();assert.equal(f.controller.state.connected,false);
     assert.match(f.controller.state.message!,/pin is preserved/);
     assert.equal(f.controller.state.bootstrap.value?.selectedVersion,'1.4.1');
-    assert.match(renderConsole(f.controller.state),/Review bundled runtime upgrade/);
+    assert.equal(managementView(f.controller.state).enabled.upgradeRuntime,true,'Management offers the bundled runtime upgrade review');
     assert.equal(f.sent.length,0);f.controller.dispose();
 });
 
@@ -390,7 +395,7 @@ test('trust loss during activation confirmation prevents mutation and unknown ac
     f.host.runtime.discover=async()=>observation;
     await f.action('rollbackRuntime');assert.equal(applied,1);
     assert.equal(f.controller.state.message,'native_activation_unknown');
-    assert.match(renderConsole(f.controller.state),/Review saved runtime activation/);
+    assert.equal(managementView(f.controller.state).enabled.resumeActivation,true,'Management offers the saved activation review');
     assert.equal(JSON.parse(diagnosticPreview(f.controller.state,false)).runtimeActivation.phase,'probe');
     f.controller.dispose();
 });

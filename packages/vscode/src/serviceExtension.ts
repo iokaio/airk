@@ -4,14 +4,13 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
-import { assistanceEntry, collectionId, launchArgs, LaunchSpec, retrievalEntry, ServerEntry } from './model';
+import { assistanceEntry, collectionId, launchArgs, LaunchSpec, McpVerification, retrievalEntry, ServerEntry } from './model';
 import { probeAssistance, probeMcp, runText } from './native';
 import { RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError } from './serviceClient';
 import { IntentJournal } from './serviceIntents';
 import { ServiceWorkspace } from './serviceWorkspace';
-import { McpVerification } from './sidebar';
 import { installLauncherCli } from './cliInstall';
 import { openUsagePanel } from './usagePanel';
 import { COMMAND_ROUTES } from './explorerCommands';
@@ -490,7 +489,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
         open:()=>{void explorerOpen().catch(error=>controller.output.appendLine(String(error)));},
         search:query=>{void controller.explorerController().then(explorer=>explorer.search(query),error=>controller.output.appendLine(String(error)));},
     });
-    context.subscriptions.push(vscode.window.registerWebviewViewProvider('airk.service',controller.console),sidebar,
+    context.subscriptions.push(sidebar,
         vscode.window.registerWebviewViewProvider('airk.dashboard',sidebar),
         vscode.window.createTreeView('airk.collectionsView',{treeDataProvider:controller}));
     const safe=(action:(...args:unknown[])=>unknown|Promise<unknown>)=>async(...args:unknown[])=>{try{return await action(...args);}catch(error){controller.output.appendLine(String(error));

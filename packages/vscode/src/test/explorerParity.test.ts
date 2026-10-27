@@ -23,15 +23,14 @@ test('every former Service Console command opens an implemented Explorer screen'
     }
 });
 
-test('no extension path forces focus onto the hidden Service Console view', () => {
-    for (const file of ['serviceExtension.ts', 'explorerController.ts', 'explorerSidebar.ts']) {
-        assert.doesNotMatch(source(file), /console\.command\(|airk\.service\.focus/, file);
+test('the Service Console view is gone: no view, setting, focus command or HTML renderer remains', () => {
+    for (const file of ['serviceExtension.ts', 'serviceConsole.ts', 'explorerController.ts', 'explorerSidebar.ts']) {
+        assert.doesNotMatch(source(file), /console\.command\(|airk\.service\.focus|registerWebviewViewProvider\('airk\.service'/, file);
     }
-    assert.doesNotMatch(source('serviceConsole.ts').split('async command(')[0], /airk\.service\.focus/, 'only the legacy command() helper may focus the old view');
-    const view = manifest.contributes.views.airk.find((entry: { id: string }) => entry.id === 'airk.service');
-    assert.equal(view.when, 'config.airk.explorer.showServiceConsole');
-    const setting = (Array.isArray(manifest.contributes.configuration) ? manifest.contributes.configuration[0] : manifest.contributes.configuration).properties['airk.explorer.showServiceConsole'];
-    assert.equal(setting.default, false);
+    assert.doesNotMatch(source('serviceConsoleView.ts'), /renderConsole|consoleContent|<button/);
+    assert.equal(manifest.contributes.views.airk.find((entry: { id: string }) => entry.id === 'airk.service'), undefined);
+    const properties = (Array.isArray(manifest.contributes.configuration) ? manifest.contributes.configuration[0] : manifest.contributes.configuration).properties;
+    assert.equal(properties['airk.explorer.showServiceConsole'], undefined);
 });
 
 test('commands that keep their own flow still exist alongside the routed ones', () => {
