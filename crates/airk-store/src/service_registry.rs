@@ -21,6 +21,20 @@ const APPLICATION: i64 = 0x41535256;
 const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_PROJECTS: usize = 1024;
 
+/// Only callers that have established a read-only operation may retry this failure.
+/// Corruption, I/O, validation and missing records remain ordinary failures.
+pub fn is_read_contention(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<rusqlite::Error>()
+        .and_then(rusqlite::Error::sqlite_error)
+        .is_some_and(|error| {
+            matches!(
+                error.code,
+                rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+            )
+        })
+}
+
 #[path = "service_jobs.rs"]
 mod jobs;
 #[path = "service_progress.rs"]

@@ -35,6 +35,52 @@ impl Drop for Management {
     }
 }
 
+fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> ControlResponse {
+    // A failed observation has no effects to replay. RequestEpoch prunes receipts,
+    // and all mutations remain outside this whitelist, even when receipt-keyed.
+    let read_only = matches!(
+        method,
+        ControlMethod::Job { .. }
+            | ControlMethod::ConfigurationResult { .. }
+            | ControlMethod::Plan { .. }
+            | ControlMethod::PlanItems { .. }
+            | ControlMethod::Projects { .. }
+            | ControlMethod::Events { .. }
+            | ControlMethod::Maintenance { .. }
+            | ControlMethod::Watch { .. }
+            | ControlMethod::Progress { .. }
+            | ControlMethod::Inspection { .. }
+            | ControlMethod::Console { .. }
+            | ControlMethod::InactiveConsole { .. }
+    );
+    execute(registry, method).unwrap_or_else(|error| {
+        let code = if read_only && airk_store::service::registry::is_read_contention(&error) {
+            "registry_busy".into()
+        } else {
+            error
+                .downcast_ref::<JobError>()
+                .map(|code| format!("{code:?}"))
+                .or_else(|| {
+                    error
+                        .downcast_ref::<airk_core::service_events::EventError>()
+                        .map(ToString::to_string)
+                })
+                .or_else(|| {
+                    error
+                        .downcast_ref::<airk_core::service_maintenance::PlanError>()
+                        .map(ToString::to_string)
+                })
+                .or_else(|| {
+                    (error.is::<airk_store::service::data_scope::ForeignDataRoot>()
+                        || error.is::<airk_store::service::data_scope::UnboundDataRoot>())
+                    .then(|| "data_root_scope_conflict".into())
+                })
+                .unwrap_or_else(|| "invalid_registry_request".into())
+        };
+        ControlResponse::Failure { code }
+    })
+}
+
 fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<ControlResponse> {
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -368,12 +414,16 @@ impl Management {
         let thread = std::thread::Builder::new()
             .name("airk-registry".into())
             .spawn(move || {
-                let _ownership=ownership;
-                let mut registry = ServiceRegistry::open(&root, instance).and_then(|mut registry|{
-                    registry.record_service_instance(&_ownership,instance)?;
-                    crate::runtime_install::record_registry_root(&_ownership,registry.incarnation()?)?;
-                    Ok(registry)
-                });
+                let _ownership = ownership;
+                let mut registry =
+                    ServiceRegistry::open(&root, instance).and_then(|mut registry| {
+                        registry.record_service_instance(&_ownership, instance)?;
+                        crate::runtime_install::record_registry_root(
+                            &_ownership,
+                            registry.incarnation()?,
+                        )?;
+                        Ok(registry)
+                    });
                 let _ = ready.send(());
                 source.changed();
                 let mut next_tick = std::time::Instant::now();
@@ -432,28 +482,7 @@ impl Management {
                             }
                         }
                         method => match registry.as_mut() {
-                            Ok(registry) => execute(registry, method).unwrap_or_else(|error| {
-                                let code = error
-                                    .downcast_ref::<JobError>()
-                                    .map(|code| format!("{code:?}"))
-                                    .or_else(|| {
-                                        error
-                                            .downcast_ref::<airk_core::service_events::EventError>()
-                                            .map(ToString::to_string)
-                                    })
-                                    .or_else(|| {
-                                        error
-                                        .downcast_ref::<airk_core::service_maintenance::PlanError>()
-                                        .map(ToString::to_string)
-                                    })
-                                    .or_else(|| {
-                                        (error.is::<airk_store::service::data_scope::ForeignDataRoot>()
-                                            || error.is::<airk_store::service::data_scope::UnboundDataRoot>())
-                                            .then(|| "data_root_scope_conflict".into())
-                                    })
-                                    .unwrap_or_else(|| "invalid_registry_request".into());
-                                ControlResponse::Failure { code }
-                            }),
+                            Ok(registry) => execute_request(registry, method),
                             Err(_) => ControlResponse::Failure {
                                 code: "registry_unavailable".into(),
                             },
@@ -518,6 +547,83 @@ mod tests {
         service::ProjectRegistration,
         service_console::{MAX_PAGE_BYTES, ObservationKind},
     };
+    #[test]
+    fn registry_read_contention_preserves_receipts_and_other_failures() -> Result<()> {
+        use airk_core::service::{JobKind, RequestKey};
+        for code in [
+            rusqlite::ffi::SQLITE_CORRUPT,
+            rusqlite::ffi::SQLITE_IOERR,
+            rusqlite::ffi::SQLITE_CONSTRAINT,
+        ] {
+            let error =
+                rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None).into();
+            assert!(!airk_store::service::registry::is_read_contention(&error));
+        }
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        crate::local_ipc::prepare_root(&root)?;
+        let caller = Incarnation::from_bytes([92; 16]);
+        let mut registry = ServiceRegistry::open(&root, caller)?;
+        let project = ProjectRegistration::new(
+            owner.path().join("source").to_str().unwrap().into(),
+            owner.path().join("data").to_str().unwrap().into(),
+            "read-contention".into(),
+        )?;
+        registry.register(&project)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        let job = registry.enqueue(
+            project.binding,
+            caller,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce: caller,
+            },
+            JobKind::Inspect,
+        )?;
+        let sql = rusqlite::Connection::open(root.join("service-1.4.sqlite3"))?;
+        sql.execute_batch("BEGIN EXCLUSIVE")?;
+        let error = execute(&mut registry, ControlMethod::Job { id: job.id })
+            .err()
+            .expect("held registry must block a read");
+        assert!(airk_store::service::registry::is_read_contention(&error));
+        assert!(
+            matches!(execute_request(&mut registry, ControlMethod::Job { id: job.id }),
+            ControlResponse::Failure { code } if code == "registry_busy")
+        );
+        // A mutation must not acquire the read-only retry contract.
+        assert!(
+            matches!(execute_request(&mut registry, ControlMethod::Pause { project: project.binding, paused: true }),
+            ControlResponse::Failure { code } if code == "invalid_registry_request")
+        );
+        assert!(
+            matches!(execute_request(&mut registry, ControlMethod::RequestEpoch),
+            ControlResponse::Failure { code } if code == "invalid_registry_request")
+        );
+        sql.execute_batch("ROLLBACK")?;
+        assert_eq!(registry.saved_request_epoch()?, (namespace, epoch));
+        let ControlResponse::Job { job: observed } =
+            execute_request(&mut registry, ControlMethod::Job { id: job.id })
+        else {
+            panic!("same receipt unavailable after releasing the registry")
+        };
+        assert_eq!(observed.id, job.id);
+        assert_eq!(observed.attempts, 0);
+        assert!(!registry.get(project.binding)?.paused);
+        // Incoherent stored state is still a failure, never retried as contention.
+        sql.execute(
+            "UPDATE service_jobs SET state='succeeded' WHERE id=?1",
+            [job.id.to_string()],
+        )?;
+        assert!(
+            matches!(execute_request(&mut registry, ControlMethod::Job { id: job.id }),
+            ControlResponse::Failure { code } if code == "invalid_registry_request")
+        );
+        assert!(!owner.path().join("source").exists());
+        assert!(!owner.path().join("data").exists());
+        Ok(())
+    }
+
     #[test]
     fn timed_out_metadata_keeps_ownership_and_exact_key_before_and_after_commit() -> Result<()> {
         use airk_core::service::{JobKind, RequestKey};

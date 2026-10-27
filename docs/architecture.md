@@ -14,6 +14,8 @@ Extension CLI installation removes obsolete terminal executable copies at its ow
 
 Trusted extension activation now installs the approved runtime and terminal forwarding command and sets up new workspace folders automatically. Existing 1.4 project/storage/watching selections remain native and are preserved on compatible runtime updates. Runtime activation and any schema migrations stay in the native adapter; the dashboard renders metadata and does not open indexes.
 
+Store classifies registry storage contention; the CLI applies the existing registry_busy response only to an explicit whitelist of read-only observations. Mutation and receipt recovery contracts remain unchanged, including RequestEpoch receipt pruning.
+
 Current 1.5.2 service lifecycle: the public CLI and extension are service clients. Only native worker roles open project Kernels/stores; the broker remains metadata-only and retrieval/inference use direct scoped transports. Source and lockfile versions are synchronized. Container/package cutover and Windows/Linux qualification receipts refer to the historical 1.4.0 candidate. The 1.4.1 installer/version evidence remains historical. Version 1.4.2 changes machine-scaled resource admission, protects query headroom, caps shared source pacing and expands bounded watcher traversal; validation is recorded in [its release notes](release-1.4.2.md). Native Mac and the broader installed-platform/security matrix remain unqualified; see [the qualification record](service-cutover-qualification.md).
 
 
