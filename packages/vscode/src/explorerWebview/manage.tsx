@@ -218,6 +218,7 @@ export function IndexingScreen(props: ScreenProps) {
             {view && <>
                 <div class="actions"><button type="button" class="ghost" onClick={() => { void actions.command('airk.indexMode'); }}>Choose default automatic watching…</button></div>
                 <Paging view={view} actions={actions} />
+                {view.configurationResultsOmitted && <p class="muted">Some configuration results were omitted from this bounded snapshot. Reconnect to retrieve an individual result.</p>}
                 {view.inactive ? <p class="callout">Unregistered projects are listed in Storage.</p> : <ProjectCards view={view} actions={actions} showRows>{entry => {
                     const project = entry.summary.project, on = view.enabled.projectActions;
                     return <>

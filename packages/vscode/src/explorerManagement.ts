@@ -144,6 +144,7 @@ export function managementView(state: ServiceConsoleState): ManagementView {
             const event = obj(value); return `${scalar(event.kind)} · ${scalar(event.instance)} · ${scalar(event.project)} · ${scalar(event.observed_unix_ms)}`;
         }),
         historyOmitted: state.historyOmitted,
+        configurationResultsOmitted: state.configurationResultsOmitted === true,
         ...(state.legacyAvailable ? { legacy: {
             rows: legacyReview ? rows([['Captured review', new Date(legacyReview.checkedAt).toISOString()], ['Saved removal phase', legacyReview.phase], ['Old source', target.root],
                 ['Old index data', target.data_dir], ['Old collection', target.collection], ['Configured executable', target.executable], ['OS registration', spec.id],

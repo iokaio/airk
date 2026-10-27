@@ -106,13 +106,6 @@
           "type": "webview"
         },
         {
-          "id": "airk.service",
-          "name": "Service Console",
-          "type": "webview",
-          "visibility": "collapsed",
-          "when": "config.airk.explorer.showServiceConsole"
-        },
-        {
           "id": "airk.collectionsView",
           "name": "Workspace Projects",
           "visibility": "collapsed"
@@ -503,12 +496,6 @@
             "default": "",
             "markdownDescription": "Optional absolute writable state directory for the organization runtime. Workspace values are ignored.",
             "scope": "machine"
-          },
-          "airk.explorer.showServiceConsole": {
-            "type": "boolean",
-            "default": false,
-            "scope": "machine",
-            "markdownDescription": "Show the legacy **Service Console** view in the AIRK activity bar. Its controls now live in **AIRK Explorer › Management**; this view is kept for one release and will be removed."
           },
           "airk.explorer.assistance.enabled": {
             "type": "boolean",

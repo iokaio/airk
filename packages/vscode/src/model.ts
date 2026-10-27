@@ -13,6 +13,11 @@ export interface IndexReport { generation: number; indexed: number; reused: numb
     indexed_vectors?: number; semantic_readiness?: VectorStatus['semantic_readiness']; discovery_readiness?: VectorStatus['discovery_readiness'];
     maintenance_error?: string | null }
 export type IndexMode = 'manual' | 'onSave' | 'debounced' | 'idle';
+/** Result of the extension's own MCP handshake check for one collection (not proof that an agent connected). */
+export interface McpVerification {
+    phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
+    indexState?: 'not_indexed' | 'unavailable' | 'published';
+}
 export const clients = ['vscode', 'claude', 'codex', 'cursor', 'gemini', 'antigravity', 'cline', 'roo', 'junie', 'copilot-cli', 'opencode', 'opencode-v2', 'kilo', 'amazon-q', 'windsurf'] as const;
 export type Client = typeof clients[number];
 

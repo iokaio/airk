@@ -267,6 +267,8 @@ export interface ManagementView {
     readonly events: readonly string[];
     readonly processEvents: readonly string[];
     readonly historyOmitted: boolean;
+    /** The bounded snapshot left out some project configuration results. */
+    readonly configurationResultsOmitted: boolean;
     readonly legacy?: { readonly rows: readonly FactRow[]; readonly canRemove: boolean; readonly reviewed: boolean; readonly receipts: readonly { id: string; phase: string; service: string }[] };
     readonly preview?: string;
     readonly includePaths: boolean;

@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import { BootstrapObservation, LegacyStartupTarget, nativeRunner, RuntimeHost, RuntimeOptions } from './serviceBootstrap';
 import { RecordValue, ServiceError, record } from './serviceClient';
 import { ServiceConsoleController } from './serviceConsoleController';
-import { consoleContent, renderConsole, ServiceConsoleState } from './serviceConsoleView';
+import { ServiceConsoleState } from './serviceConsoleView';
 export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'|'lifecycle'|'abandonLifecycle'> & Partial<Pick<RuntimeHost,'reviewLegacyStartup'|'loadLegacyStartup'|'legacyStartupReceipts'|'removeLegacyStartup'>>;
 
 /** Machine/user settings only. A repository cannot nominate an executable or approval. */
@@ -26,18 +26,21 @@ export function serviceRuntimeOptions():RuntimeOptions {
     }
     return options;
 }
-export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposable {
+/**
+ * Hosts the shared service console controller for AIRK Explorer › Management. The separate
+ * Service Console webview view was removed in 1.5.0; nothing here renders HTML.
+ */
+export class ServiceConsole implements vscode.Disposable {
     controller:ServiceConsoleController;
-    private view?:vscode.WebviewView;
     private timer?:NodeJS.Timeout;
     private disposed=false;
     private failures=0;
     private readonly output=vscode.window.createOutputChannel('AIRK Service');
     private readonly listeners:vscode.Disposable[]=[];
     private readonly stateChanged=new vscode.EventEmitter<ServiceConsoleState>();
-    /** Fired for every published controller state, whichever view (if any) is showing it. */
+    /** Fired for every published controller state. */
     readonly onDidChangeState=this.stateChanged.event;
-    /** Non-view consumers (the AIRK Explorer) that need observations to keep refreshing. */
+    /** Consumers (the AIRK Explorer) that need observations to keep refreshing. */
     private consumers=0;
     constructor(private readonly context:vscode.ExtensionContext,readonly runtime:ConsoleRuntime,
         private readonly workspace?:{register():Promise<void>;currentProjects():ReadonlySet<string>}){
@@ -74,25 +77,16 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
         this.controller.dispose();this.controller=this.createController();
         if(this.observed()){void this.controller.refresh();this.schedule();}
     }
-    private observed():boolean{return !this.disposed&&(this.view?.visible===true||this.consumers>0);}
+    private observed():boolean{return !this.disposed&&this.consumers>0;}
     /** Keep polling while a consumer is visible; disposing the handle releases it once. */
     retain():vscode.Disposable{
-        this.consumers++;if(this.consumers===1&&!this.view?.visible){void this.controller.refresh();this.schedule();}
+        this.consumers++;if(this.consumers===1){void this.controller.refresh();this.schedule();}
         let released=false;
         return {dispose:()=>{if(released)return;released=true;this.consumers--;if(!this.observed())clearTimeout(this.timer);}};
-    }
-    resolveWebviewView(view:vscode.WebviewView):void{
-        this.view=view;view.webview.options={enableScripts:true,localResourceRoots:[]};
-        view.webview.html=renderConsole(this.controller.state);
-        this.listeners.push(view.webview.onDidReceiveMessage(message=>{void this.controller.action(message);}),
-            view.onDidChangeVisibility(()=>{if(view.visible){void this.controller.refresh();this.schedule();}else if(!this.observed())clearTimeout(this.timer);}),
-            view.onDidDispose(()=>{this.view=undefined;clearTimeout(this.timer);}));
-        if(view.visible){void this.controller.refresh();this.schedule();}
     }
     private changed(state:ServiceConsoleState):void{
         if(this.disposed)return;
         this.stateChanged.fire(state);
-        if(this.view)void this.view.webview.postMessage({type:'render',revision:state.revision,html:consoleContent(state)});
     }
     private schedule():void{
         clearTimeout(this.timer);if(!this.observed())return;
@@ -100,10 +94,6 @@ export class ServiceConsole implements vscode.WebviewViewProvider,vscode.Disposa
         this.timer=setTimeout(()=>{
             void this.controller.refresh().finally(()=>this.schedule());
         },this.failures?Math.min(30000,1000*2**this.failures):5000);
-    }
-    async command(action:string):Promise<void>{
-        await vscode.commands.executeCommand('airk.service.focus');
-        await this.run(action,action==='previewReport'?{includePaths:false}:{});
     }
     /**
      * Run one allowlisted console action without moving focus. Fields go through the
