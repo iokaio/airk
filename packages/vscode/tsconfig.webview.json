@@ -29,6 +29,7 @@
     "src/explorerRoutes.ts",
     "src/explorerFeatures.ts",
     "src/explorerErrors.ts",
-    "src/explorerStatus.ts"
+    "src/explorerStatus.ts",
+    "src/explorerStrategies.ts"
   ]
 }
