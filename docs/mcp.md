@@ -6,6 +6,8 @@ Each launch fixes root, data directory and collection. Tools cannot change that 
 
 Multiple agents can launch independent stdio connections against the same root/data-directory/collection and query one shared disk index concurrently. No agent owns the collection. Reads continue during indexing and later requests reopen the published generation; compare exact publication tokens when combining results from multiple calls. A numerical generation alone does not establish identity. See [shared-collection behavior](collections.md#multiple-agents-sharing-one-collection).
 
+The VS Code extension also ships a separate MCP server, **AIRK Explorer Assistance** (`airk-explorer`), with `airk_explorer_*` help and UI-status tools. It is not part of this native server: the retrieval inventory below stays at sixteen tools, and Assistance never calls them. See [the extension guide](vscode-extension.md) and [agent setup](agent-integration.md#two-connection-types-150).
+
 ## Implemented tools
 
 `airk_help` is the sixteenth read-only tool. With no arguments it returns an overview and 35-topic catalog covering CLI/MCP usage, indexing/jobs, health, freshness, models, resources, storage, installation/retirement, troubleshooting, privacy and interpretation limits. `topic` selects bundled version-matched guidance; `command` selects exact public command help generated from the native executable's parser; `tool` selects a current MCP description/schema. It executes no command and reads no sources/indexes. The stdio frontend serves help without querying a project worker, and `airk tools call airk_help` works without a workspace registration or running service.

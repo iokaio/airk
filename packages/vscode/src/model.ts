@@ -42,26 +42,52 @@ export function eligibleEvent(file: string, root: string, dataDir: string): bool
     });
 }
 
-export function configFor(client: Client, spec: LaunchSpec): string {
-    const key = 'airk-' + spec.collection;
-    const args = launchArgs(spec);
+/** One MCP server an agent configuration carries; keys of the two AIRK connection types can never collide. */
+export interface ServerEntry { readonly key: string; readonly command: string; readonly args: readonly string[]; readonly label: string }
+export const ASSISTANCE_KEY = 'airk_explorer';
+
+/** AIRK Retrieval: the native read-only evidence tools for one collection. */
+export function retrievalEntry(spec: LaunchSpec): ServerEntry {
+    return { key: 'airk-' + spec.collection, command: spec.command, args: launchArgs(spec), label: 'AIRK Retrieval (evidence)' };
+}
+
+/**
+ * AIRK Explorer Assistance for external agents: the stable launcher forwards to the runtime's
+ * descriptor-checked `explorer-assistance` subcommand, which starts the extension's bundled server.
+ */
+export function assistanceEntry(spec: LaunchSpec, descriptor: string): ServerEntry | undefined {
+    if (!spec.service || !path.isAbsolute(descriptor)) { return undefined; }
+    return { key: ASSISTANCE_KEY, command: spec.command, label: 'AIRK Explorer Assistance (help and UI status)',
+        args: ['runtime', 'launch', '--install-dir', spec.service.installDir, '--', 'explorer-assistance', '--descriptor', descriptor] };
+}
+
+/** Serialize entries in the selected client's configuration format. */
+export function serializeServers(client: Client, entries: readonly ServerEntry[]): string {
     if (client === 'amazon-q' || client === 'windsurf') {
         // Connection details only: these clients' agent/version-specific schemas differ.
-        return JSON.stringify({ transport: 'stdio', command: spec.command, args }, null, 2) + '\n';
+        const details = (entry: ServerEntry) => ({ transport: 'stdio', command: entry.command, args: entry.args });
+        return JSON.stringify(entries.length === 1 ? details(entries[0]) : Object.fromEntries(entries.map(entry => [entry.key, details(entry)])), null, 2) + '\n';
     }
     if (client === 'codex') {
-        return `[mcp_servers.${key}]\ncommand = ${JSON.stringify(spec.command)}\nargs = ${JSON.stringify(args)}\n`;
+        return entries.map(entry => `[mcp_servers.${entry.key}]\ncommand = ${JSON.stringify(entry.command)}\nargs = ${JSON.stringify(entry.args)}\n`).join('\n');
     }
-    const server: Record<string, unknown> = { command: spec.command, args };
-    let config: unknown;
-    if (client === 'vscode') { config = { servers: { [key]: { type: 'stdio', ...server } } }; }
-    else if (client === 'opencode' || client === 'opencode-v2' || client === 'kilo') {
-        const entry = { type: 'local', command: [spec.command, ...args] };
-        config = client === 'opencode-v2' ? { mcp: { servers: { [key]: entry } } } : { mcp: { [key]: entry } };
-    } else {
-        if (client === 'cursor') { server.type = 'stdio'; }
-        if (client === 'copilot-cli') { server.type = 'local'; server.tools = ['*']; }
-        config = { mcpServers: { [key]: server } };
+    const servers: Record<string, unknown> = {};
+    for (const entry of entries) {
+        const server: Record<string, unknown> = { command: entry.command, args: entry.args };
+        if (client === 'vscode') { servers[entry.key] = { type: 'stdio', ...server }; }
+        else if (client === 'opencode' || client === 'opencode-v2' || client === 'kilo') { servers[entry.key] = { type: 'local', command: [entry.command, ...entry.args] }; }
+        else {
+            if (client === 'cursor') { server.type = 'stdio'; }
+            if (client === 'copilot-cli') { server.type = 'local'; server.tools = ['*']; }
+            servers[entry.key] = server;
+        }
     }
+    const config = client === 'vscode' ? { servers } : client === 'opencode-v2' ? { mcp: { servers } }
+        : client === 'opencode' || client === 'kilo' ? { mcp: servers } : { mcpServers: servers };
     return JSON.stringify(config, null, 2) + '\n';
+}
+
+/** The retrieval connection alone, as earlier releases configured it. */
+export function configFor(client: Client, spec: LaunchSpec): string {
+    return serializeServers(client, [retrievalEntry(spec)]);
 }

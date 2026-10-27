@@ -4,7 +4,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { McpSessionError, McpStdioSession } from './mcpStdioSession';
-import { LaunchSpec, launchArgs } from './model';
+import { ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from './explorerContracts';
+import { LaunchSpec, launchArgs, ServerEntry } from './model';
 
 export interface IndexProgress {
     collection: string; phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
@@ -242,6 +243,26 @@ export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 1
         return { tools, status };
     } catch (error) {
         if (error instanceof McpSessionError && error.code === 'timeout') { throw new Error('AIRK MCP probe timed out.'); }
+        throw error;
+    } finally { session?.close(); }
+}
+
+/** Start Explorer Assistance exactly as an agent entry would and check its tool inventory and bundled help. */
+export async function probeAssistance(entry: ServerEntry, cwd: string, clientVersion = 'development'): Promise<{ tools: string[]; version: string }> {
+    const deadline = Date.now() + 30000;
+    const remaining = () => Math.max(1, deadline - Date.now());
+    let session: McpStdioSession | undefined;
+    try {
+        const opened = await McpStdioSession.open({ command: entry.command, args: [...entry.args], cwd, clientName: 'airk-extension-check', clientVersion }, remaining());
+        session = opened.session;
+        if (opened.initialize?.serverInfo?.name !== ASSISTANCE_SERVER_NAME) { throw new Error('The server is not AIRK Explorer Assistance.'); }
+        const tools: string[] = (await session.request('tools/list', {}, remaining())).tools.map((tool: { name: string }) => tool.name);
+        if (JSON.stringify(tools) !== JSON.stringify(ASSISTANCE_TOOLS)) { throw new Error(`Explorer Assistance tool inventory differs: ${tools.join(', ').slice(0, 300)}`); }
+        const help = await session.request('tools/call', { name: 'airk_explorer_help_search', arguments: { query: 'search', limit: 1 } }, remaining());
+        if (help.isError || !help.structuredContent?.results?.length) { throw new Error('Explorer Assistance help did not answer.'); }
+        return { tools, version: String(opened.initialize.serverInfo.version ?? '') };
+    } catch (error) {
+        if (error instanceof McpSessionError && error.code === 'timeout') { throw new Error('Explorer Assistance check timed out.'); }
         throw error;
     } finally { session?.close(); }
 }

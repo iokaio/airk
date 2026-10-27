@@ -4,8 +4,8 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
-import { collectionId, launchArgs, LaunchSpec } from './model';
-import { probeMcp, runText } from './native';
+import { assistanceEntry, collectionId, launchArgs, LaunchSpec, retrievalEntry, ServerEntry } from './model';
+import { probeAssistance, probeMcp, runText } from './native';
 import { RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError } from './serviceClient';
@@ -20,7 +20,7 @@ import type { ExplorerController, ExplorerHost } from './explorerController';
 import { migrateLocalAgents } from './agentMigration';
 import { readJsonConfig } from './agentConfig';
 import { AssistanceIpcHost } from './explorerAssistanceHost';
-import { assistanceDirectory, serverInvocation, writeLaunchDescriptor } from './explorerAssistanceLaunch';
+import { assistanceDirectory, launchDescriptorPath, serverInvocation, writeLaunchDescriptor } from './explorerAssistanceLaunch';
 
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
@@ -438,6 +438,20 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(generation!==this.assistanceGeneration||!this.assistanceEnabled()){host?.dispose();return;}
             this.assistanceHost=host;
         }catch(error){this.output.appendLine(`Explorer Assistance window endpoint is unavailable: ${error instanceof Error?error.message:String(error)}`);}
+    }
+    connectionEntries(spec:LaunchSpec):ServerEntry[]{
+        const assistance=vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true)
+            ?assistanceEntry(spec,launchDescriptorPath(this.context.globalStorageUri.fsPath)):undefined;
+        return assistance?[retrievalEntry(spec),assistance]:[retrievalEntry(spec)];
+    }
+    async verifyAssistance(spec:LaunchSpec):Promise<string[]>{
+        this.trusted();
+        const entry=this.connectionEntries(spec).find(value=>value.key!==retrievalEntry(spec).key);
+        if(!entry)throw new Error('Explorer Assistance needs a registered native service binding and airk.explorer.assistance.enabled.');
+        writeLaunchDescriptor(this.context.globalStorageUri.fsPath,this.context.extensionPath,this.context.extension.packageJSON.version);
+        const result=await probeAssistance(entry,spec.root,this.context.extension.packageJSON.version);this.trusted();
+        if(result.version!==this.context.extension.packageJSON.version)throw new Error(`Explorer Assistance ${result.version} does not match this extension.`);
+        return result.tools;
     }
     provideAssistanceDefinitions():vscode.McpStdioServerDefinition[]{
         if(!this.assistanceEnabled())return [];
