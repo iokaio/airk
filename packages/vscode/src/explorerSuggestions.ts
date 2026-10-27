@@ -5,6 +5,7 @@
 import { randomBytes } from 'node:crypto';
 import { canonical, DESTINATIONS, DRAFT_SCHEMA_VERSION, DraftKind, ProposalReceipt, ProposalStatus, validateDraft, ValidDraft } from './explorerDrafts';
 import type { ExplorerErrorCode } from './explorerErrors';
+import type { SuggestionCard, SuggestionsView } from './explorerContracts';
 
 export const SUGGESTION_LIMITS = { pending: 50, bytes: 262144, perMinute: 30, retained: 200 } as const;
 
@@ -145,4 +146,30 @@ export class SuggestionStore {
     }
 
     openCount(): number { return this.list().filter(item => item.status === 'pending_review' || item.status === 'deferred').length; }
+}
+
+const VISIBLE_CARDS = 20;
+function summary(item: Suggestion): string {
+    const body = item.draft.body;
+    if (body.kind === 'search') { return `"${body.search.query.slice(0, 120)}" · ${body.search.mode}${body.search.pathPrefix ? ` · ${body.search.pathPrefix}` : ''}`; }
+    if (body.kind === 'strategy') { return `${body.strategy.id}@${body.strategy.version} · ${body.strategy.steps.length} steps`; }
+    return `${body.plan.tasks.length} task(s)${body.pathHint ? ` · suggested path ${body.pathHint}` : ''}`;
+}
+
+/**
+ * Inbox cards: open drafts first, newest first. Open drafts with the same destination and title
+ * collapse into one card with a count, and at most 20 cards are shown, so a looping agent cannot
+ * bury other proposals.
+ */
+export function suggestionsView(items: readonly Suggestion[]): SuggestionsView {
+    const open = items.filter(item => item.status === 'pending_review' || item.status === 'deferred');
+    const groups = new Map<string, Suggestion[]>();
+    for (const item of open) { const key = `${item.kind}\u0000${item.draft.title}`; groups.set(key, [...(groups.get(key) ?? []), item]); }
+    const cards: SuggestionCard[] = [...groups.values()].map(group => card(group[0], group.length));
+    for (const item of items.filter(entry => !open.includes(entry))) { cards.push(card(item, 1)); }
+    return { open: open.length, cards: cards.slice(0, VISIBLE_CARDS), hidden: Math.max(0, cards.length - VISIBLE_CARDS) };
+}
+function card(item: Suggestion, duplicates: number): SuggestionCard {
+    return { id: item.id, kind: item.kind, title: item.draft.title, client: item.client.name, receivedAt: item.receivedAt, expiresAt: item.expiresAt,
+        status: item.status, destination: DESTINATIONS[item.kind], warnings: item.warnings, duplicates, summary: summary(item) };
 }

@@ -16,7 +16,7 @@ export interface ScreenProps {
     route: Route;
     state: ExplorerViewState;
     go(route: Route): void;
-    incoming?: { query: string; serial: number; recipe?: SearchRecipe };
+    incoming?: { query: string; serial: number; recipe?: SearchRecipe; run?: boolean };
     /** Open Search with a saved recipe's arguments and run it. */
     runRecipe(recipe: SearchRecipe): void;
     /** Open Evidence › Inspector for a host-issued citation handle. */

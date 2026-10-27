@@ -239,6 +239,12 @@
         "enablement": "isWorkspaceTrusted"
       },
       {
+        "command": "airk.explorer.showSuggestions",
+        "title": "Show Agent Suggestions",
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted"
+      },
+      {
         "command": "airk.installCli",
         "title": "Install or Repair CLI",
         "category": "AIRK"

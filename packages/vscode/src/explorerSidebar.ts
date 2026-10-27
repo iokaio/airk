@@ -47,6 +47,7 @@ export function sidebarContent(state: ExplorerViewState | undefined, folders: nu
 <form id="search" role="search"><label for="query">Search indexed evidence</label><input id="query" name="query" maxlength="4096" placeholder="Words that must all appear" required>
 <button type="submit">Search</button></form>
 <button type="button" class="primary" data-action="open">Open AIRK Explorer</button>
+${state.suggestions?.open ? `<p role="status"><a href="command:airk.explorer.showSuggestions">${state.suggestions.open} agent suggestion${state.suggestions.open === 1 ? '' : 's'} waiting for review</a></p>` : ''}
 ${state.notice ? `<p class="note" role="alert">${esc(state.notice.message)}</p>` : ''}
 <p><a href="command:airk.setupAgent">Connect a coding agent</a> · <a href="command:airk.collections">Management</a></p>`;
 }

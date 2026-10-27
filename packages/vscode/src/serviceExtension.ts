@@ -425,7 +425,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 return root?this.specs.find(spec=>same(spec.root,root.canonical))?.service?.project:undefined;
             },
             onDidChangeSpecs:this.treeChanges.event,control:this.console,log:line=>this.output.appendLine(line),
-            setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}},workspaceState:this.context.workspaceState};
+            setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}},workspaceState:this.context.workspaceState,suggestions:this.suggestions};
     }
     private assistanceEnabled():boolean{return vscode.workspace.isTrusted&&!this.disposed&&vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true);}
     private assistanceFolders():vscode.WorkspaceFolder[]{return (vscode.workspace.workspaceFolders??[]).filter(folder=>folder.uri.scheme==='file'||folder.uri.scheme==='vscode-remote');}
@@ -484,7 +484,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     const controller=new ServiceExtension(context);active=controller;context.subscriptions.push(controller);
     const explorerOpen=(route?:unknown)=>controller.explorerController().then(explorer=>explorer.open(typeof route==='string'?route:undefined));
     const sidebar=new ExplorerSidebar({
-        commandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode','airk.manageVscodeMcp','airk.explorer.open','airk.collections'],
+        commandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode','airk.manageVscodeMcp','airk.explorer.open','airk.collections','airk.explorer.showSuggestions'],
         folders:()=>(vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme)).length,
         attach:async listener=>(await controller.explorerController()).onSnapshot(listener),
         open:()=>{void explorerOpen().catch(error=>controller.output.appendLine(String(error)));},
@@ -517,6 +517,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.openTools=()=>controller.openTools();
     commands.usage=()=>controller.usage();
     commands['explorer.open']=route=>explorerOpen(route);
+    commands['explorer.showSuggestions']=async()=>(await controller.explorerController()).showInbox();
     commands['explorer.search']=async query=>{
         const text=typeof query==='string'?query:await vscode.window.showInputBox({title:'AIRK: Search indexed evidence',prompt:'All words must appear (lexical) unless the project uses vector or hybrid search.'});
         if(text?.trim())(await controller.explorerController()).search(text);

@@ -17,6 +17,7 @@ import { displayPath } from './explorerSource';
 import { exportStrategy, importStrategy, liveAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
 import { renderPlan, SearchRecipe, validatePlan, validateRecipe, validateStrategy } from './explorerStrategies';
 import { runStrategy } from './explorerStrategyRunner';
+import { SuggestionStore, suggestionsView } from './explorerSuggestions';
 import { LaunchSpec } from './model';
 
 /** The narrow surface of the service extension that the Explorer may use. */
@@ -33,6 +34,8 @@ export interface ExplorerHost {
     setStatusBar(text: string, tooltip: string): void;
     /** Per-workspace storage for search recipes. */
     readonly workspaceState: Pick<vscode.Memento, 'get' | 'update'>;
+    /** This window's agent drafts (Suggestions Inbox). */
+    readonly suggestions: SuggestionStore;
 }
 
 const RECIPES_KEY = 'airk.explorer.searchRecipes';
@@ -71,7 +74,7 @@ export class ExplorerController implements vscode.Disposable {
             visible: visible => this.visibility(visible),
             rejected: () => host.log('AIRK Explorer ignored an unrecognized webview message.'),
         });
-        this.listeners.push(this.control.onDidChange(() => this.observedControl()), host.onDidChangeSpecs(() => this.specsChanged()));
+        this.listeners.push(this.control.onDidChange(() => this.observedControl()), host.onDidChangeSpecs(() => this.specsChanged()), host.suggestions.onDidChange(() => this.publish()));
         this.selectDefault();
         this.publish();
     }
@@ -89,6 +92,12 @@ export class ExplorerController implements vscode.Disposable {
     draftRevisions: { studio?: number; planner?: number } = {};
     /** Publication of the selected project's last status, if observed. */
     get publication(): string | undefined { return this.status?.publication; }
+
+    /** Open the Explorer with the Suggestions Inbox showing. */
+    showInbox(): void {
+        this.panel.reveal();
+        this.panel.post({ v: MESSAGE_VERSION, type: 'inbox' });
+    }
 
     /** Whether the Explorer panel is open in this window (reported to Explorer Assistance). */
     get panelOpen(): boolean { return this.panel.open; }
@@ -120,6 +129,7 @@ export class ExplorerController implements vscode.Disposable {
             ...(this.control.message() ? { controlMessage: this.control.message()!.slice(0, 600) } : {}),
             ...(this.control.morePages() ? { moreProjects: true } : {}),
             ...(this.managementOpen && this.host.trusted() ? { management: managementView(this.control.state) } : {}),
+            ...(this.host.trusted() ? { suggestions: suggestionsView(this.host.suggestions.list()) } : {}),
         };
     }
 
@@ -360,6 +370,22 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'strategy.import': return (await importStrategy()) ?? null;
             case 'clipboard.write': await vscode.env.clipboard.writeText((message as WebviewMessageOf<'clipboard.write'>).text); return;
+            case 'suggestions.get': {
+                const item = this.host.trusted() ? this.host.suggestions.get((message as WebviewMessageOf<'suggestions.get'>).id) : undefined;
+                if (!item) { throw new EvidenceFailure(explorerError('PROPOSAL_EXPIRED', 'This suggestion is no longer available.')); }
+                return { id: item.id, title: item.draft.title, status: item.status, client: item.client.name, warnings: item.warnings,
+                    ...(item.targetRevision !== undefined ? { targetRevision: item.targetRevision } : {}), ...(item.draft.evidence ? { evidence: item.draft.evidence } : {}), body: item.draft.body };
+            }
+            case 'suggestions.resolve': {
+                const typed = message as WebviewMessageOf<'suggestions.resolve'>;
+                if (!this.host.suggestions.resolve(typed.id, typed.status)) { throw new EvidenceFailure(explorerError('PROPOSAL_EXPIRED', 'This suggestion was already resolved or has expired.')); }
+                return;
+            }
+            case 'suggestions.discardAll': return { discarded: this.host.suggestions.discardAll() };
+            case 'suggestions.revisions': {
+                const typed = message as WebviewMessageOf<'suggestions.revisions'>;
+                this.draftRevisions = { studio: typed.studio, planner: typed.planner }; return;
+            }
             case 'recipes.list': return this.recipes();
             case 'recipes.save': {
                 const recipe = validateRecipe((message as WebviewMessageOf<'recipes.save'>).recipe);

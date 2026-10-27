@@ -181,3 +181,13 @@ export function canonical(value: unknown): string {
     if (record(value)) { return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}`; }
     return JSON.stringify(value) ?? 'null';
 }
+
+/**
+ * Append suggested tasks after an existing plan, renumbering their ids (and dependencies on each
+ * other) past the highest existing id, so applying a draft never overwrites the user's tasks.
+ */
+export function appendTasks(plan: Plan, tasks: readonly PlanTask[]): Plan {
+    let next = Math.max(0, ...plan.tasks.map(task => Number(task.id.slice(1))));
+    const renamed = new Map(tasks.map(task => [task.id, `T${++next}`]));
+    return { ...plan, tasks: [...plan.tasks, ...tasks.map(task => ({ ...task, id: renamed.get(task.id)!, dependsOn: task.dependsOn.map(dep => renamed.get(dep) ?? dep) }))].slice(0, 40) };
+}

@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ExplorerViewState, ProjectSummary } from '../explorerContracts';
-import type { SearchRecipe } from '../explorerStrategies';
+import { RECIPE_SCHEMA, type SearchRecipe } from '../explorerStrategies';
 import { formatRoute, parseRoute, Route, ROUTE_KEYS, WORKSPACES } from '../explorerRoutes';
 import { headline } from '../explorerStatus';
 import { notify, onHost, ready, request, savedState, saveState } from './api';
 import { Facts } from './components';
 import { ago, observed, shortToken } from './format';
+import { Inbox } from './inbox';
 import { Overview } from './overview';
+import { reportRevisions } from './strategyStore';
 import { WorkspaceView } from './workspaces';
 
 interface Persisted { route?: string; lens?: string }
@@ -18,7 +20,8 @@ export function App() {
     const [route, setRoute] = useState<Route>(parseRoute(persisted.route ?? '#overview') ?? { workspace: 'overview' });
     const [palette, setPalette] = useState(false);
     const [pill, setPill] = useState(false);
-    const [incoming, setIncoming] = useState<{ query: string; serial: number; recipe?: SearchRecipe }>();
+    const [incoming, setIncoming] = useState<{ query: string; serial: number; recipe?: SearchRecipe; run?: boolean }>();
+    const [inbox, setInbox] = useState(false);
     const [inspectRef, setInspectRef] = useState<string>();
     const [publications, setPublications] = useState<{ token: string; observedAt: number }[]>([]);
 
@@ -30,9 +33,11 @@ export function App() {
                 if (token) { setPublications(prior => prior.some(entry => entry.token === token) ? prior : [{ token, observedAt: Date.now() }, ...prior].slice(0, 20)); }
             }
             else if (message.type === 'navigate') { const next = parseRoute(message.route); if (next) { setRoute(next); } }
+            else if (message.type === 'inbox') { setInbox(true); }
             else if (message.type === 'search') { setRoute({ workspace: 'search', tab: 'query' }); setIncoming(prior => ({ query: message.query, serial: (prior?.serial ?? 0) + 1 })); }
         });
         ready();
+        reportRevisions();
         const keys = (event: KeyboardEvent) => {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setPalette(open => !open); }
             if (event.key === 'Escape') { setPalette(false); setPill(false); }
@@ -57,10 +62,19 @@ export function App() {
                     title="Service, published index, source work and semantic coverage">{status.word}</button>
                 <span class="spacer" />
                 <button type="button" class="ghost" onClick={() => setPalette(true)} title="Go to a screen (Ctrl/⌘+K)">Go to… <kbd>Ctrl K</kbd></button>
+                <button type="button" class={state.suggestions?.open ? '' : 'ghost'} aria-expanded={inbox} onClick={() => setInbox(open => !open)}
+                    title="Drafts proposed by coding agents">Suggestions <span aria-live="polite">{state.suggestions?.open ?? 0}</span></button>
                 <button type="button" class="ghost" onClick={() => go({ workspace: 'help' })}>Help</button>
             </header>
             {pill && <StatusPopover state={state} project={project} onClose={() => setPill(false)} />}
             {state.notice && <p class="notice" role="alert">{state.notice.message}</p>}
+            {inbox && <Inbox view={state.suggestions} close={() => setInbox(false)}
+                applySearch={search => {
+                    const recipe: SearchRecipe = { schema: RECIPE_SCHEMA, name: 'agent draft', query: search.query, mode: search.mode, ...(search.pathPrefix ? { pathPrefix: search.pathPrefix } : {}),
+                        limit: search.limit, maxBytes: search.maxBytes, fullChunks: search.fullChunks };
+                    setIncoming(prior => ({ query: search.query, recipe, run: false, serial: (prior?.serial ?? 0) + 1 })); go({ workspace: 'search', tab: 'query' });
+                }}
+                goStudio={() => go({ workspace: 'strategies', tab: 'studio' })} goPlanner={() => go({ workspace: 'strategies', tab: 'planner' })} />}
             <div class="frame">
                 <Rail route={route} state={state} go={go} />
                 <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>

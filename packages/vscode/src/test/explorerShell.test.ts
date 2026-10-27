@@ -35,9 +35,11 @@ const load = (Module as any)._load;
 const { ExplorerController } = require('../explorerController') as typeof import('../explorerController');
 const { explorerHtml } = require('../explorerPanel') as typeof import('../explorerPanel');
 const { renderSidebar, sidebarContent, sidebarMessage } = require('../explorerSidebar') as typeof import('../explorerSidebar');
+const { SuggestionStore } = require('../explorerSuggestions') as typeof import('../explorerSuggestions');
 
 const project = 'ab'.repeat(32);
 function controller(trusted = true, stored = new Map<string, unknown>()) {
+    const suggestions = new SuggestionStore({ binding: () => 'ab12ab12ab12ab12', revisions: () => ({}), publication: () => undefined, ttlMs: () => 3600_000 });
     const statusBar: string[] = [];
     const runs: unknown[] = [];
     const consoleState: any = { trusted, connected: true, busy: false, health: { state: 'live', checkedAt: 1, value: { observation: { policy: { accepting: true } } } },
@@ -49,6 +51,7 @@ function controller(trusted = true, stored = new Map<string, unknown>()) {
         activeProject: () => project, onDidChangeSpecs: () => disposable, log: () => undefined,
         setStatusBar: (text: string) => { statusBar.push(text); },
         workspaceState: { get: <T>(key: string, fallback?: T) => (stored.has(key) ? stored.get(key) : fallback) as T, update: async (key: string, value: unknown) => { stored.set(key, value); } },
+        suggestions,
         control: { controller: { state: consoleState }, run: async (action: string, fields?: unknown) => { runs.push([action, fields]); },
             retain: () => disposable, onDidChangeState: () => disposable },
     };
@@ -65,7 +68,7 @@ function controller(trusted = true, stored = new Map<string, unknown>()) {
             }, dispose() {} };
         }
     }
-    return { explorer: new TestController(host as any), statusBar, runs };
+    return { explorer: new TestController(host as any), statusBar, runs, suggestions };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
 
@@ -172,5 +175,36 @@ test('search recipes are validated, kept per workspace, replaced by name and cap
     assert.deepEqual((await reply('d1', { type: 'recipes.delete', name: 'b' })).data.map((entry: any) => entry.name), ['a']);
     for (let index = 0; index < 49; index++) { await reply(`f${index}`, { type: 'recipes.save', recipe: recipe(`r${String(index).padStart(2, '0')}`) }); }
     assert.match((await reply('over', { type: 'recipes.save', recipe: recipe('one-too-many') })).error.message, /At most 50 recipes/);
+    explorer.dispose();
+});
+
+test('the Inbox reaches the webview as summaries; review, resolve and discard go through typed messages', async () => {
+    const { explorer, suggestions } = controller();
+    explorer.open('#overview');
+    const panel = panels.at(-1);
+    panel.send({ v: 1, type: 'ready', requestId: 'ready' });
+    await flush();
+    const admitted = suggestions.submit('search', { schema_version: '1.0', idempotency_key: 'k', title: 'Find renewals', draft: { query: 'renew <script>' } }, { name: 'agent', version: '1' });
+    assert.ok(admitted.ok);
+    await flush();
+    const state = panel.posted.filter((message: any) => message.type === 'state').at(-1).state as ExplorerViewState;
+    assert.equal(state.suggestions?.open, 1);
+    assert.equal((state.suggestions?.cards[0] as any).body, undefined, 'state carries no draft bodies');
+    const reply = async (id: string, message: Record<string, unknown>) => {
+        panel.send({ v: 1, requestId: id, ...message });
+        await flush();
+        return panel.posted.find((entry: any) => entry.type === 'result' && entry.requestId === id);
+    };
+    const detail = await reply('g1', { type: 'suggestions.get', id: admitted.receipt.proposal_id });
+    assert.equal(detail.data.body.search.query, 'renew <script>');
+    assert.equal((await reply('r1', { type: 'suggestions.resolve', id: admitted.receipt.proposal_id, status: 'executed' })), undefined, 'unknown statuses are not even parsed');
+    assert.equal((await reply('r2', { type: 'suggestions.resolve', id: admitted.receipt.proposal_id, status: 'deferred' })).ok, true);
+    assert.equal(suggestions.status(admitted.receipt.proposal_id)?.status, 'deferred');
+    assert.deepEqual((await reply('d1', { type: 'suggestions.discardAll' })).data, { discarded: 1 });
+    assert.equal((await reply('r3', { type: 'suggestions.resolve', id: admitted.receipt.proposal_id, status: 'applied' })).error.code, 'PROPOSAL_EXPIRED', 'a rejected draft cannot be applied');
+    await reply('v1', { type: 'suggestions.revisions', studio: 3, planner: 7 });
+    assert.deepEqual(explorer.draftRevisions, { studio: 3, planner: 7 });
+    explorer.showInbox();
+    assert.ok(panel.posted.some((message: any) => message.type === 'inbox'));
     explorer.dispose();
 });
