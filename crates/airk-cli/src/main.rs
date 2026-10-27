@@ -102,6 +102,13 @@ enum Command {
     },
     /// Read-only service adapter for ModelCatalog.
     ModelCatalog,
+    /// Start the VS Code extension's Explorer Assistance MCP server (help and UI drafts only).
+    #[command(hide = true)]
+    ExplorerAssistance {
+        /// The extension-written launch descriptor (…/explorer-assistance/launch-1.json).
+        #[arg(long)]
+        descriptor: PathBuf,
+    },
     /// List, inspect or call the same read-only MCP tools.
     Tools {
         #[command(subcommand)]
@@ -596,6 +603,10 @@ async fn run() -> Result<()> {
     }
     match &cli.command {
         Command::Runtime { action } => return airk_cli::runtime_install::run(action).await,
+        // Hands stdio to the extension's server; prints nothing and never contacts the service.
+        Command::ExplorerAssistance { descriptor } => {
+            return airk_cli::explorer_assistance::run(descriptor);
+        }
         Command::ProjectWorker => return airk_cli::project_worker::run().await,
         Command::DerivedWorker => return airk_cli::derived_worker::run(),
         Command::SourceWorker => return airk_cli::source_worker::run(),

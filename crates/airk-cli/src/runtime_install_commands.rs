@@ -125,14 +125,14 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                     .arg("foreground")
                     .arg("--install-dir")
                     .arg(install_dir);
-                return forward(command);
+                return crate::native_process::forward_stdio(command);
             }
             let mut command = Command::new(executable);
             command
                 .arg("serve")
                 .arg("--runtime-dir")
                 .arg(layout::control(install_dir)?);
-            return forward(command);
+            return crate::native_process::forward_stdio(command);
         }
         RuntimeCommand::Stage {
             source,
@@ -426,7 +426,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             );
             command.arg("--service-install-dir").arg(install_dir);
             command.args(args);
-            return forward(command);
+            return crate::native_process::forward_stdio(command);
         }
         RuntimeCommand::SelfTest => {
             let main = std::env::current_exe()?;
@@ -440,19 +440,4 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
     };
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
-}
-
-fn forward(mut command: Command) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        Err(command.exec().into())
-    }
-    #[cfg(not(unix))]
-    {
-        let mut child = crate::native_process::spawn(&mut command)?;
-        let _containment = crate::child_job::ChildJob::attach(&mut child)?;
-        let status = child.wait()?;
-        std::process::exit(status.code().unwrap_or(1));
-    }
 }

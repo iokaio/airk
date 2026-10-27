@@ -188,7 +188,7 @@ jobs:
         if: ${{ matrix.os != 'ubuntu-24.04' && !inputs.qualification }}
         env:
           AIRK_PROCESS_DIAGNOSTICS: '1'
-        run: python scripts/ci-metrics.py run --name platform-regressions -- cargo nextest run --profile ci --test-threads 2 -p airk-cli --lib --test native_read_retry --test legacy_native --test pdf_worker --test unix_guardian --locked --target ${{ matrix.target }}
+        run: python scripts/ci-metrics.py run --name platform-regressions -- cargo nextest run --profile ci --test-threads 2 -p airk-cli --lib --test native_read_retry --test legacy_native --test pdf_worker --test unix_guardian --test explorer_assistance --locked --target ${{ matrix.target }}
       - name: Clippy for this native platform
         if: ${{ matrix.os == 'ubuntu-24.04' || inputs.qualification }}
         run: python scripts/ci-metrics.py run --name clippy -- cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
