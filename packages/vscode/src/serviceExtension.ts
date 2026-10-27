@@ -247,7 +247,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();const binding=await this.runtime().ensure();this.trusted();
         if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
         this.reportInstall('Installing the terminal command…');
-        const errors=await installLauncherCli(binding.launcher,this.context);this.trusted();
+        const errors=await installLauncherCli(binding.universalLauncher??binding.launcher,this.context);this.trusted();
         this.reportInstall('Updating agent connections…');
         await this.migrateAgentConnections(binding);this.trusted();
         for(const error of errors){this.installationWarnings=true;this.output.appendLine(error);void vscode.window.showWarningMessage(error);}
