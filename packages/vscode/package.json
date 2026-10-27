@@ -527,6 +527,12 @@
             "minimum": 1,
             "maximum": 168,
             "markdownDescription": "Hours an agent draft stays in the Explorer Suggestions Inbox before it expires. Drafts are kept in memory for this window only."
+          },
+          "airk.explorer.review.testPathPattern": {
+            "type": "string",
+            "default": "(^|/)(tests?|__tests__|specs?)/|[._-](test|spec)\\.[A-Za-z0-9]+$|_test\\.[A-Za-z0-9]+$",
+            "scope": "resource",
+            "markdownDescription": "Regular expression for collection-relative paths that Review › Tests and Review › Impact treat as test files. Matches are candidates; tests are never executed."
           }
         }
       },
