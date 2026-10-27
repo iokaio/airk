@@ -89,6 +89,11 @@ test('a window attaches only for working directories inside its folders, and det
     assert.equal((await uiStatus(workspace, directory)).ui.explorer_open, false);
     assert.deepEqual((await uiStatus(elsewhere, directory)).ui.code, 'UI_NOT_ATTACHED');
 
+    // A crashed window leaves a descriptor whose endpoint no longer answers; it must not make the live window ambiguous.
+    const stale = { ...descriptor, session_id: 'f'.repeat(32), endpoint: process.platform === 'win32' ? `\\\\.\\pipe\\airk-explorer-${'e'.repeat(32)}` : '/tmp/airk-explorer-gone/airk-explorer.sock' };
+    fs.writeFileSync(path.join(windowsDirectory(directory), `${'f'.repeat(32)}.json`), JSON.stringify(stale));
+    assert.equal((await uiStatus(workspace, directory)).ui.attached, true, 'only windows that answer count');
+    fs.rmSync(path.join(windowsDirectory(directory), `${'f'.repeat(32)}.json`));
     const second = await AssistanceIpcHost.start({ directory, version: '1.5.0', roots: [workspace], explorerOpen: () => true });
     assert.equal((await uiStatus(workspace, directory)).ui.code, 'AMBIGUOUS_TARGET', 'two windows on one folder never guess');
     second!.dispose();

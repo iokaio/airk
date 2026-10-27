@@ -281,7 +281,7 @@
       {
         "command": "airk.menu",
         "category": "AIRK",
-        "title": "Open Service Console"
+        "title": "Open Explorer Overview"
       },
       {
         "command": "airk.index",

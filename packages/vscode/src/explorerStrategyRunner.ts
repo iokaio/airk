@@ -63,6 +63,7 @@ export async function runStrategy(request: RunRequest, deps: RunDependencies): P
         if (now() > deadline) { reasons.push(`time budget of ${budgets.seconds} s reached`); throw new Stop(); }
         calls++;
         const result = await deps.session.call(tool, args, { timeout: Math.max(1000, Math.min(30000, deadline - now())) });
+        if (tool !== 'airk_status' && !publication) { reasons.push('evidence was requested before the publication was pinned'); throw new Stop(); }
         if (publication && result.publication && result.publication !== publication) {
             // Fail closed: evidence from two publications is never combined.
             reasons.push(`the index was republished during the run (${result.publication})`); throw new Stop();

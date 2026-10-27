@@ -73,6 +73,12 @@ test('Review joins the editor\'s Git changes with indexed records and live hashe
     assert.match(tests.notes[0], /not executed, and this is not coverage/);
 });
 
+test('Git status numbers follow the vscode.git enum, including type changes and merge states', () => {
+    const review = load([]);
+    const kinds = [0, 1, 2, 3, 5, 6, 7, 9, 10, 11, 12, 16, 17, 18].map(review.kind);
+    assert.deepEqual(kinds, ['modified', 'added', 'deleted', 'renamed', 'modified', 'deleted', 'untracked', 'added', 'renamed', 'modified', 'conflicted', 'conflicted', 'conflicted', 'conflicted']);
+});
+
 test('without Git or a repository Review says so, and the test-path setting falls back when invalid', async () => {
     const none = load([]);
     const context = { session: { call: async () => { throw new Error('no AIRK call expected'); } } as any, handles: new FactHandles(new RefRegistry()), project: 'ab'.repeat(32), root: os.tmpdir() };

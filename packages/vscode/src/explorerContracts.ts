@@ -188,7 +188,7 @@ export interface InspectView {
     readonly sourceRoot?: string;
 }
 
-export type CitationStatus = 'valid' | 'changed_since_index' | 'not_saved' | 'missing' | 'not_found' | 'line_out_of_range' | 'outside_collection';
+export type CitationStatus = 'valid' | 'changed_since_index' | 'not_saved' | 'missing' | 'not_found' | 'line_out_of_range' | 'outside_collection' | 'unchecked';
 export interface CitationResult {
     readonly text: string;
     readonly path: string;

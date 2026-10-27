@@ -54,6 +54,7 @@ test('validation refuses unknown fields and operators, forward edges, cycles, ba
         ['budget', value => { value.budgets.calls = 10000; }, /calls must be/],
         ['schema', value => { value.schema = 'airk.explorer.strategy/2'; }, /unsupported schema/],
         ['duplicate step', value => { value.steps[2].id = 'search'; }, /duplicate id/],
+        ['status not first', value => { value.steps.push(value.steps.shift()); }, /first step must be airk\.status/],
     ];
     for (const [name, mutate, expected] of cases) {
         const value = bug();

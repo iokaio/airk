@@ -89,15 +89,17 @@ export class ExplorerSidebar implements vscode.WebviewViewProvider, vscode.Dispo
         this.view = view;
         view.webview.options = { enableScripts: true, enableCommandUris: [...this.options.commandUris], localResourceRoots: [] };
         view.webview.html = renderSidebar(this.state, this.options.folders(), randomBytes(24).toString('base64url'));
-        this.listeners.push(
-            view.webview.onDidReceiveMessage(value => {
-                const message = sidebarMessage(value);
-                if (message?.action === 'open') { this.options.open(); }
-                else if (message?.action === 'search') { this.options.search(message.query); }
-            }),
-            view.onDidDispose(() => { if (this.view === view) { this.view = undefined; } }),
-        );
-        void this.options.attach(state => this.update(state)).then(listener => this.listeners.push(listener));
+        // Listeners belong to this resolved view; VS Code resolves the view again after it is disposed.
+        const owned: vscode.Disposable[] = [];
+        const release = () => { for (const listener of owned.splice(0)) { listener.dispose(); this.listeners.splice(this.listeners.indexOf(listener) >>> 0, 1); } };
+        const own = (listener: vscode.Disposable) => { owned.push(listener); this.listeners.push(listener); };
+        own(view.webview.onDidReceiveMessage(value => {
+            const message = sidebarMessage(value);
+            if (message?.action === 'open') { this.options.open(); }
+            else if (message?.action === 'search') { this.options.search(message.query); }
+        }));
+        own(view.onDidDispose(() => { if (this.view === view) { this.view = undefined; } release(); }));
+        void this.options.attach(state => this.update(state)).then(listener => { if (this.view === view) { own(listener); } else { listener.dispose(); } });
     }
 
     private update(state: ExplorerViewState): void {

@@ -133,9 +133,17 @@ test('appending suggested tasks renumbers them after the existing plan and keeps
     const existing: Plan = { schema: PLAN_SCHEMA, title: 'Mine', objective: '', tasks: [{ id: 'T1', title: 'a', instructions: '', dependsOn: [], state: 'completed' },
         { id: 'T2', title: 'b', instructions: '', dependsOn: ['T1'], state: 'ready' }] };
     const suggested = [{ id: 'T1', title: 'x', instructions: '', dependsOn: [], state: 'draft' as const }, { id: 'T2', title: 'y', instructions: '', dependsOn: ['T1'], state: 'draft' as const }];
-    const merged = appendTasks(existing, suggested);
+    const merged = appendTasks(existing, suggested)!;
     assert.deepEqual(merged.tasks.map(task => [task.id, task.title, task.dependsOn]), [['T1', 'a', []], ['T2', 'b', ['T1']], ['T3', 'x', []], ['T4', 'y', ['T3']]]);
     assert.ok(validatePlan(merged).ok);
+    const full: Plan = { ...existing, tasks: Array.from({ length: 39 }, (_, index) => ({ id: `T${index + 1}`, title: 't', instructions: '', dependsOn: [], state: 'draft' as const })) };
+    assert.equal(appendTasks(full, suggested), undefined, 'appending never silently drops tasks past 40');
+});
+
+test('strategy drafts may only carry the parameters their steps use', () => {
+    const base = { schema_version: '1.0', idempotency_key: 'p', title: 't', template_id: 'airk.core/bug' };
+    assert.ok(validateDraft('strategy', { ...base, parameters: { query: 'q', symbol: 's' } }).ok);
+    assert.match(JSON.stringify(validateDraft('strategy', { ...base, parameters: { query: 'q', extra: 'x' } })), /extra are not used/);
 });
 
 test('review and management drafts only open a screen; management never runs an operation (AT-12)', () => {

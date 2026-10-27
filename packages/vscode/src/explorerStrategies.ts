@@ -171,6 +171,10 @@ export function validateStrategy(value: unknown): Check {
             if (typeof id === 'string') { seen.set(id, { op: raw.op as OperatorId }); }
         });
     }
+    // The runner pins one publication from the first status call; nothing may run before it.
+    if (Array.isArray(value.steps) && value.steps.length && (!record(value.steps[0]) || value.steps[0].op !== 'airk.status')) {
+        errors.push('steps[0]: the first step must be airk.status, which pins the publication');
+    }
     if (!record(value.budgets)) { errors.push('strategy: budgets must be an object'); }
     else {
         exact(value.budgets, Object.keys(BUDGET_LIMITS), Object.keys(BUDGET_LIMITS), 'budgets', errors);

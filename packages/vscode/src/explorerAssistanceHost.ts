@@ -50,7 +50,14 @@ export function sweepExpired(directory: string, now = Date.now()): void {
         try {
             if (fs.statSync(file).size > WINDOW_DESCRIPTOR_LIMIT) { fs.rmSync(file, { force: true }); continue; }
             const descriptor = parseWindowDescriptor(JSON.parse(fs.readFileSync(file, 'utf8')));
-            if (!descriptor || descriptor.expires_unix_ms < now) { fs.rmSync(file, { force: true }); }
+            if (!descriptor || descriptor.expires_unix_ms < now) {
+                fs.rmSync(file, { force: true });
+                // A crashed window's private socket directory goes with its descriptor.
+                const socketDirectory = descriptor && !descriptor.endpoint.startsWith('\\\\') ? path.dirname(descriptor.endpoint) : undefined;
+                if (socketDirectory && path.dirname(socketDirectory) === os.tmpdir() && path.basename(socketDirectory).startsWith('airk-explorer-')) {
+                    fs.rmSync(socketDirectory, { recursive: true, force: true });
+                }
+            }
         } catch { fs.rmSync(file, { force: true }); }
     }
 }
@@ -104,8 +111,10 @@ export class AssistanceIpcHost {
     /** New credential and expiry; a server holding the old credential must reread the descriptor. */
     rotate(): void {
         if (this.disposed) { return; }
+        const previous = this.credential;
         this.credential = randomBytes(32).toString('hex');
-        try { this.publish(); } catch { /* the next rotation retries; requests with the old credential fail closed */ }
+        // Keep answering the published credential if the new descriptor could not be written.
+        try { this.publish(); } catch { this.credential = previous; }
     }
 
     private accept(socket: net.Socket): void {
