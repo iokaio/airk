@@ -5,6 +5,23 @@ use std::{
     process::{Child, Command},
 };
 
+/// Replace this process with `command` (Unix) or run it with inherited stdio inside a
+/// kill-on-close job and exit with its code (Windows). Callers must not write to stdout first.
+pub(crate) fn forward_stdio(mut command: Command) -> anyhow::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        Err(command.exec().into())
+    }
+    #[cfg(not(unix))]
+    {
+        let mut child = spawn(&mut command)?;
+        let _containment = crate::child_job::ChildJob::attach(&mut child)?;
+        let status = child.wait()?;
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
 pub(crate) fn spawn(command: &mut Command) -> io::Result<Child> {
     #[cfg(unix)]
     airk_process::child_group::require_waitable_children()?;
