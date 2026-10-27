@@ -38,7 +38,9 @@ export function SearchScreen(props: ScreenProps) {
         const recipe = props.incoming?.recipe;
         if (recipe) {
             const next: Form = { query: recipe.query, mode: recipe.mode, pathPrefix: recipe.pathPrefix ?? '', limit: recipe.limit, maxBytes: recipe.maxBytes, fullChunks: recipe.fullChunks };
-            setForm(next); void run(next);
+            setForm(next);
+            // An applied agent draft only fills the form; the user decides whether to run it.
+            if (props.incoming?.run !== false) { void run(next); }
         } else if (props.incoming?.query) { const next = { ...form, query: props.incoming.query }; setForm(next); void run(next); }
         else { input.current?.focus(); }
     }, [props.incoming?.serial]);

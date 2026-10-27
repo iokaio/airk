@@ -74,7 +74,26 @@ export interface ExplorerViewState {
     readonly moreProjects?: boolean;
     /** Present while a Management tab is open; built from the shared console state. */
     readonly management?: ManagementView;
+    /** Agent drafts waiting in this window's Suggestions Inbox (summaries only; bodies are fetched on review). */
+    readonly suggestions?: SuggestionsView;
 }
+
+/** One Inbox card. Duplicates by destination and title collapse into one card with a count. */
+export interface SuggestionCard {
+    readonly id: string;
+    readonly kind: 'search' | 'strategy' | 'plan';
+    readonly title: string;
+    /** Self-reported by the agent; never authenticated. */
+    readonly client: string;
+    readonly receivedAt: number;
+    readonly expiresAt: number;
+    readonly status: 'pending_review' | 'applied' | 'rejected' | 'deferred' | 'expired' | 'conflicted';
+    readonly destination: string;
+    readonly warnings: readonly string[];
+    readonly duplicates: number;
+    readonly summary: string;
+}
+export interface SuggestionsView { readonly open: number; readonly cards: readonly SuggestionCard[]; readonly hidden: number }
 
 /** One search hit. `ref` is an opaque host-issued handle; the webview never sends paths back. */
 export interface HitView {
@@ -435,6 +454,10 @@ export const WEBVIEW_MESSAGES = {
     'planner.saveInWorkspace': { plan: { kind: 'json', max: 131072 }, revision: { kind: 'int', min: 0, max: 1_000_000_000 },
         fileName: { kind: 'string', min: 4, max: 120, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,115}\.md$/ } },
     'recipes.list': {},
+    'suggestions.get': { id: { kind: 'string', min: 24, max: 24, pattern: /^ex-prop-[0-9a-f]{16}$/ } },
+    'suggestions.resolve': { id: { kind: 'string', min: 24, max: 24, pattern: /^ex-prop-[0-9a-f]{16}$/ }, status: { kind: 'enum', values: ['applied', 'rejected', 'deferred', 'conflicted'] } },
+    'suggestions.discardAll': {},
+    'suggestions.revisions': { studio: { kind: 'int', min: 0, max: 1_000_000_000 }, planner: { kind: 'int', min: 0, max: 1_000_000_000 } },
     'recipes.save': { recipe: { kind: 'json', max: 8192 } },
     'recipes.delete': { name: { kind: 'string', min: 1, max: 80 } },
 } as const satisfies Record<string, Record<string, FieldSpec>>;
@@ -486,5 +509,7 @@ export type HostMessage =
     | { v: 1; type: 'navigate'; route: string }
     /** A query entered outside the panel (sidebar quick search or a command); the webview runs it. */
     | { v: 1; type: 'search'; query: string }
+    /** Open the Suggestions Inbox (AIRK: Show Agent Suggestions). */
+    | { v: 1; type: 'inbox' }
     | { v: 1; type: 'result'; requestId: string; ok: true; data: unknown }
     | { v: 1; type: 'result'; requestId: string; ok: false; error: ExplorerError };

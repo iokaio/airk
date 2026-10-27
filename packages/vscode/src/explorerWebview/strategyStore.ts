@@ -3,7 +3,7 @@
 // switching tabs or hiding the panel keeps them; nothing is written to the workspace from here.
 import { useEffect, useState } from 'preact/hooks';
 import type { Plan, PromptProfile, RunResult, Strategy } from '../explorerStrategies';
-import { savedState, saveState } from './api';
+import { notify, savedState, saveState } from './api';
 
 export interface StudioDraft {
     readonly strategy?: Strategy;
@@ -16,6 +16,8 @@ export interface StudioDraft {
     readonly run?: RunResult;
     readonly prompt?: string;
     readonly promptEdited: boolean;
+    /** Increments on every edit; agents name it as expected_target_revision. */
+    readonly revision?: number;
 }
 export interface PlannerDraft {
     readonly plan?: Plan;
@@ -29,8 +31,16 @@ const EMPTY: Stored = { studio: { params: {}, pathPrefix: '', objective: '', pro
 let current: Stored = { ...EMPTY, ...(savedState<{ strategies?: Stored }>()?.strategies ?? {}) };
 const listeners = new Set<() => void>();
 
+/** Tell the host the current draft revisions so agent drafts can detect a changed target. */
+export function reportRevisions(): void {
+    notify('suggestions.revisions', { studio: current.studio.revision ?? 0, planner: current.planner.revision });
+}
+
 function commit(next: Stored): void {
+    const changed = next.studio !== current.studio || next.planner.revision !== current.planner.revision;
+    if (next.studio !== current.studio) { next = { ...next, studio: { ...next.studio, revision: (current.studio.revision ?? 0) + 1 } }; }
     current = next;
+    if (changed) { reportRevisions(); }
     saveState({ ...savedState<object>(), strategies: current });
     for (const listener of listeners) { listener(); }
 }

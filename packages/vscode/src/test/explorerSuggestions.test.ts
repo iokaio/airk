@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { validateDraft } from '../explorerDrafts';
-import { SUGGESTION_LIMITS, SuggestionStore } from '../explorerSuggestions';
+import { appendTasks, validateDraft } from '../explorerDrafts';
+import { Plan, PLAN_SCHEMA, validatePlan } from '../explorerStrategies';
+import { SUGGESTION_LIMITS, SuggestionStore, suggestionsView } from '../explorerSuggestions';
 
 const CLIENT = { name: 'claude-code', version: '2.0' };
 function store(options: { binding?: string; revisions?: { studio?: number; planner?: number }; publication?: string } = {}) {
@@ -109,4 +110,28 @@ test('rate, count and byte limits bound the Inbox; Discard all rejects every ope
     assert.equal(inbox.discardAll(), SUGGESTION_LIMITS.pending);
     assert.equal(inbox.openCount(), 0);
     assert.equal(inbox.resolve(first.id, 'applied'), undefined, 'rejected drafts stay rejected');
+});
+
+test('Inbox cards collapse duplicates and cap what is shown, so a looping agent cannot bury other drafts', () => {
+    const { store: inbox, advance } = store();
+    for (let index = 0; index < 21; index++) { inbox.submit('search', search(`other-${index}`, { title: `Other ${index}` }), CLIENT); advance(3000); }
+    for (let index = 0; index < 25; index++) { inbox.submit('search', search(`loop-${index}`, { draft: { query: `q${index}` } }), CLIENT); advance(3000); }
+    const view = suggestionsView(inbox.list());
+    assert.equal(view.open, 46);
+    const loop = view.cards.find(card => card.title === 'Find session refresh')!;
+    assert.equal(loop.duplicates, 25, 'one card for 25 drafts with the same destination and title');
+    assert.equal(view.cards.length, 20);
+    assert.equal(view.hidden, 2);
+    assert.equal(loop.client, 'claude-code');
+    assert.match(loop.summary, /^"q\d+" · lexical$/);
+    assert.equal(view.cards[0], loop, 'the newest group comes first');
+});
+
+test('appending suggested tasks renumbers them after the existing plan and keeps their dependencies', () => {
+    const existing: Plan = { schema: PLAN_SCHEMA, title: 'Mine', objective: '', tasks: [{ id: 'T1', title: 'a', instructions: '', dependsOn: [], state: 'completed' },
+        { id: 'T2', title: 'b', instructions: '', dependsOn: ['T1'], state: 'ready' }] };
+    const suggested = [{ id: 'T1', title: 'x', instructions: '', dependsOn: [], state: 'draft' as const }, { id: 'T2', title: 'y', instructions: '', dependsOn: ['T1'], state: 'draft' as const }];
+    const merged = appendTasks(existing, suggested);
+    assert.deepEqual(merged.tasks.map(task => [task.id, task.title, task.dependsOn]), [['T1', 'a', []], ['T2', 'b', ['T1']], ['T3', 'x', []], ['T4', 'y', ['T3']]]);
+    assert.ok(validatePlan(merged).ok);
 });
