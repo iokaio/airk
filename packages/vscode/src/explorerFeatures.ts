@@ -9,7 +9,7 @@ import { ROUTE_KEYS } from './explorerRoutes';
 export type Availability = 'implemented' | 'prototype_only' | 'unsupported' | 'disabled';
 
 /** Change an entry only in the commit that ships the route, together with its help topic. */
-const IMPLEMENTED: ReadonlySet<string> = new Set<string>(['overview', 'search/query', 'manage/projects', 'manage/activity', 'manage/repair', 'manage/indexing', 'manage/storage', 'manage/service', 'manage/agents', 'manage/usage', 'manage/logs', 'code/symbols', 'code/references', 'code/outline', 'docs/facts', 'evidence/inspector', 'evidence/checker', 'evidence/changes', 'strategies/library', 'strategies/studio', 'strategies/planner', 'help']);
+const IMPLEMENTED: ReadonlySet<string> = new Set<string>(['overview', 'search/query', 'search/recipes', 'manage/projects', 'manage/activity', 'manage/repair', 'manage/indexing', 'manage/storage', 'manage/service', 'manage/agents', 'manage/usage', 'manage/logs', 'code/symbols', 'code/references', 'code/outline', 'docs/facts', 'evidence/inspector', 'evidence/checker', 'evidence/changes', 'strategies/library', 'strategies/studio', 'strategies/planner', 'help']);
 
 export const FEATURES: Readonly<Record<string, Availability>> = Object.freeze(Object.fromEntries(
     ROUTE_KEYS.map((key): [string, Availability] => [key, IMPLEMENTED.has(key) ? 'implemented' : 'prototype_only'])));

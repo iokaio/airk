@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
 import { JSX } from 'preact';
 import { ExplorerViewState } from '../explorerContracts';
+import type { SearchRecipe } from '../explorerStrategies';
 import { Route, routeKey, WORKSPACES } from '../explorerRoutes';
 import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
 import { ChangesScreen, CheckerScreen, InspectorScreen } from './evidence';
 import { HelpScreen } from './help';
 import { ActivityScreen, AgentsScreen, IndexingScreen, LogsScreen, ProjectsScreen, RepairScreen, ServiceScreen, StorageScreen, UsageScreen } from './manage';
-import { SearchScreen } from './search';
+import { RecipesScreen, SearchScreen } from './search';
 import { PlannerScreen } from './planner';
 import { LibraryScreen, StudioScreen } from './strategies';
 
@@ -15,7 +16,9 @@ export interface ScreenProps {
     route: Route;
     state: ExplorerViewState;
     go(route: Route): void;
-    incoming?: { query: string; serial: number };
+    incoming?: { query: string; serial: number; recipe?: SearchRecipe };
+    /** Open Search with a saved recipe's arguments and run it. */
+    runRecipe(recipe: SearchRecipe): void;
     /** Open Evidence › Inspector for a host-issued citation handle. */
     inspect(ref: string): void;
     inspectRef?: string;
@@ -26,6 +29,7 @@ export interface ScreenProps {
 /** Screens backed by real AIRK operations, keyed by route. Everything else is labeled, never simulated. */
 export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
     'search/query': SearchScreen,
+    'search/recipes': RecipesScreen,
     'manage/projects': ProjectsScreen,
     'manage/activity': ActivityScreen,
     'manage/repair': RepairScreen,

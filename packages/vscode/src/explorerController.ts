@@ -15,7 +15,7 @@ import { passageView, RefRegistry, searchArgs, searchView } from './explorerSear
 import { headline, statusSummary } from './explorerStatus';
 import { displayPath } from './explorerSource';
 import { exportStrategy, importStrategy, liveAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
-import { renderPlan, validatePlan, validateStrategy } from './explorerStrategies';
+import { renderPlan, SearchRecipe, validatePlan, validateRecipe, validateStrategy } from './explorerStrategies';
 import { runStrategy } from './explorerStrategyRunner';
 import { LaunchSpec } from './model';
 
@@ -31,7 +31,12 @@ export interface ExplorerHost {
     readonly control: ControlSource;
     log(line: string): void;
     setStatusBar(text: string, tooltip: string): void;
+    /** Per-workspace storage for search recipes. */
+    readonly workspaceState: Pick<vscode.Memento, 'get' | 'update'>;
 }
+
+const RECIPES_KEY = 'airk.explorer.searchRecipes';
+const RECIPE_LIMIT = 50;
 
 export interface ExplorerSnapshotListener { (state: ExplorerViewState): void }
 
@@ -350,6 +355,20 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'strategy.import': return (await importStrategy()) ?? null;
             case 'clipboard.write': await vscode.env.clipboard.writeText((message as WebviewMessageOf<'clipboard.write'>).text); return;
+            case 'recipes.list': return this.recipes();
+            case 'recipes.save': {
+                const recipe = validateRecipe((message as WebviewMessageOf<'recipes.save'>).recipe);
+                if (!recipe) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', 'The recipe has unknown fields or invalid values.')); }
+                const others = this.recipes().filter(entry => entry.name !== recipe.name);
+                if (others.length >= RECIPE_LIMIT) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', `At most ${RECIPE_LIMIT} recipes are kept; delete one first.`)); }
+                await this.host.workspaceState.update(RECIPES_KEY, [...others, recipe].sort((a, b) => a.name.localeCompare(b.name)));
+                return this.recipes();
+            }
+            case 'recipes.delete': {
+                const name = (message as WebviewMessageOf<'recipes.delete'>).name;
+                await this.host.workspaceState.update(RECIPES_KEY, this.recipes().filter(entry => entry.name !== name));
+                return this.recipes();
+            }
             case 'planner.openDraft': return openPlanDraft(this.planMarkdown((message as WebviewMessageOf<'planner.openDraft'>).plan));
             case 'planner.saveInWorkspace': {
                 const typed = message as WebviewMessageOf<'planner.saveInWorkspace'>;
@@ -359,6 +378,12 @@ export class ExplorerController implements vscode.Disposable {
             }
             default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${(message as WebviewMessage).type} is not available in this build.`));
         }
+    }
+
+    /** Stored recipes, revalidated on every read so a damaged entry is dropped rather than run. */
+    private recipes(): SearchRecipe[] {
+        const stored = this.host.workspaceState.get<unknown[]>(RECIPES_KEY, []);
+        return (Array.isArray(stored) ? stored : []).flatMap(entry => { const recipe = validateRecipe(entry); return recipe ? [recipe] : []; }).slice(0, RECIPE_LIMIT);
     }
 
     /** Plans are rendered on the host from a validated plan, never from webview-supplied Markdown. */

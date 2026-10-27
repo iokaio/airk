@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { ExplorerViewState, ProjectSummary } from '../explorerContracts';
+import type { SearchRecipe } from '../explorerStrategies';
 import { formatRoute, parseRoute, Route, ROUTE_KEYS, WORKSPACES } from '../explorerRoutes';
 import { headline } from '../explorerStatus';
 import { notify, onHost, ready, request, savedState, saveState } from './api';
@@ -17,7 +18,7 @@ export function App() {
     const [route, setRoute] = useState<Route>(parseRoute(persisted.route ?? '#overview') ?? { workspace: 'overview' });
     const [palette, setPalette] = useState(false);
     const [pill, setPill] = useState(false);
-    const [incoming, setIncoming] = useState<{ query: string; serial: number }>();
+    const [incoming, setIncoming] = useState<{ query: string; serial: number; recipe?: SearchRecipe }>();
     const [inspectRef, setInspectRef] = useState<string>();
     const [publications, setPublications] = useState<{ token: string; observedAt: number }[]>([]);
 
@@ -66,7 +67,8 @@ export function App() {
                     {route.workspace === 'overview'
                         ? <Overview state={state} project={project} go={go} />
                         : <WorkspaceView route={route} state={state} go={go} incoming={incoming} inspectRef={inspectRef} publications={publications}
-                            inspect={ref => { setInspectRef(ref); go({ workspace: 'evidence', tab: 'inspector' }); }} />}
+                            inspect={ref => { setInspectRef(ref); go({ workspace: 'evidence', tab: 'inspector' }); }}
+                            runRecipe={recipe => { setIncoming(prior => ({ query: recipe.query, recipe, serial: (prior?.serial ?? 0) + 1 })); go({ workspace: 'search', tab: 'query' }); }} />}
                 </main>
             </div>
             {palette && <Palette state={state} go={go} close={() => setPalette(false)} />}
