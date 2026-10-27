@@ -37,7 +37,7 @@ const { explorerHtml } = require('../explorerPanel') as typeof import('../explor
 const { renderSidebar, sidebarContent, sidebarMessage } = require('../explorerSidebar') as typeof import('../explorerSidebar');
 
 const project = 'ab'.repeat(32);
-function controller(trusted = true) {
+function controller(trusted = true, stored = new Map<string, unknown>()) {
     const statusBar: string[] = [];
     const runs: unknown[] = [];
     const consoleState: any = { trusted, connected: true, busy: false, health: { state: 'live', checkedAt: 1, value: { observation: { policy: { accepting: true } } } },
@@ -48,6 +48,7 @@ function controller(trusted = true) {
         specs: () => [{ command: '/launcher', root: '/src/demo', dataDir: '/data', collection: 'demo', name: 'demo', service: { installDir: '/install', project } }],
         activeProject: () => project, onDidChangeSpecs: () => disposable, log: () => undefined,
         setStatusBar: (text: string) => { statusBar.push(text); },
+        workspaceState: { get: <T>(key: string, fallback?: T) => (stored.has(key) ? stored.get(key) : fallback) as T, update: async (key: string, value: unknown) => { stored.set(key, value); } },
         control: { controller: { state: consoleState }, run: async (action: string, fields?: unknown) => { runs.push([action, fields]); },
             retain: () => disposable, onDidChangeState: () => disposable },
     };
@@ -147,4 +148,29 @@ test('the sidebar accepts only open and bounded search, escapes values and falls
     const page = renderSidebar(state, 1, 'abc');
     assert.match(page, /script-src 'nonce-abc'/);
     assert.doesNotMatch(page, /unsafe-inline/);
+});
+
+test('search recipes are validated, kept per workspace, replaced by name and capped', async () => {
+    const stored = new Map<string, unknown>([['airk.explorer.searchRecipes', [{ schema: 'airk.explorer.search-recipe/1', name: 'damaged', query: 'x', mode: 'shell', limit: 1, maxBytes: 1024, fullChunks: false }]]]);
+    const { explorer } = controller(true, stored);
+    explorer.open('#search/recipes');
+    const panel = panels.at(-1);
+    panel.send({ v: 1, type: 'ready', requestId: 'ready' });
+    await flush();
+    const reply = async (id: string, message: Record<string, unknown>) => {
+        panel.send({ v: 1, requestId: id, ...message });
+        await flush();
+        return panel.posted.find((entry: any) => entry.type === 'result' && entry.requestId === id);
+    };
+    const recipe = (name: string, extra: Record<string, unknown> = {}) => ({ schema: 'airk.explorer.search-recipe/1', name, query: 'renew', mode: 'lexical', limit: 20, maxBytes: 16384, fullChunks: false, ...extra });
+    assert.deepEqual((await reply('l1', { type: 'recipes.list' })).data, [], 'a damaged stored recipe is dropped, never run');
+    assert.deepEqual((await reply('s1', { type: 'recipes.save', recipe: recipe('b') })).data.map((entry: any) => entry.name), ['b']);
+    assert.deepEqual((await reply('s2', { type: 'recipes.save', recipe: recipe('a', { pathPrefix: 'src/' }) })).data.map((entry: any) => entry.name), ['a', 'b']);
+    assert.equal((await reply('s3', { type: 'recipes.save', recipe: recipe('a', { query: 'changed' }) })).data.find((entry: any) => entry.name === 'a').query, 'changed');
+    assert.equal((await reply('s4', { type: 'recipes.save', recipe: recipe('c', { pathPrefix: '../outside' }) })).error.code, 'INVALID_SCHEMA');
+    assert.equal((await reply('s5', { type: 'recipes.save', recipe: recipe('c', { command: 'x' }) })).error.code, 'INVALID_SCHEMA');
+    assert.deepEqual((await reply('d1', { type: 'recipes.delete', name: 'b' })).data.map((entry: any) => entry.name), ['a']);
+    for (let index = 0; index < 49; index++) { await reply(`f${index}`, { type: 'recipes.save', recipe: recipe(`r${String(index).padStart(2, '0')}`) }); }
+    assert.match((await reply('over', { type: 'recipes.save', recipe: recipe('one-too-many') })).error.message, /At most 50 recipes/);
+    explorer.dispose();
 });

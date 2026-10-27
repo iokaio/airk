@@ -420,7 +420,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 return root?this.specs.find(spec=>same(spec.root,root.canonical))?.service?.project:undefined;
             },
             onDidChangeSpecs:this.treeChanges.event,control:this.console,log:line=>this.output.appendLine(line),
-            setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}}};
+            setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}},workspaceState:this.context.workspaceState};
     }
     private assistanceEnabled():boolean{return vscode.workspace.isTrusted&&!this.disposed&&vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true);}
     private assistanceFolders():vscode.WorkspaceFolder[]{return (vscode.workspace.workspaceFolders??[]).filter(folder=>folder.uri.scheme==='file'||folder.uri.scheme==='vscode-remote');}

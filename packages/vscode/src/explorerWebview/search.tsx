@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { OpenSourceResult, PassageView, SearchMode, SearchResultView } from '../explorerContracts';
+import { RECIPE_SCHEMA, SearchRecipe } from '../explorerStrategies';
 import { HostFailure, request } from './api';
 import { countLine, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
@@ -34,7 +35,11 @@ export function SearchScreen(props: ScreenProps) {
     };
 
     useEffect(() => {
-        if (props.incoming?.query) { const next = { ...form, query: props.incoming.query }; setForm(next); void run(next); }
+        const recipe = props.incoming?.recipe;
+        if (recipe) {
+            const next: Form = { query: recipe.query, mode: recipe.mode, pathPrefix: recipe.pathPrefix ?? '', limit: recipe.limit, maxBytes: recipe.maxBytes, fullChunks: recipe.fullChunks };
+            setForm(next); void run(next);
+        } else if (props.incoming?.query) { const next = { ...form, query: props.incoming.query }; setForm(next); void run(next); }
         else { input.current?.focus(); }
     }, [props.incoming?.serial]);
 
@@ -78,6 +83,7 @@ export function SearchScreen(props: ScreenProps) {
                 <button type="submit" disabled={busy || !canSearch}>{busy ? 'Searching…' : 'Search'}</button>
             </form>
             {vectorReason && <p class="muted">{vectorReason}</p>}
+            <SaveRecipe form={form} />
             {!canSearch && <p class="callout">Search needs a connected AIRK service and a published index ({props.state.connection}).</p>}
             {error && <p class="callout" role="alert">{error}</p>}
             {result && (
@@ -114,6 +120,55 @@ export function SearchScreen(props: ScreenProps) {
                     </ol>
                     <p class="muted">A matched phrase is not a verified implementation. Open the source to investigate.</p>
                 </section>
+            )}
+        </div>
+    );
+}
+
+const recipeOf = (name: string, form: Form): SearchRecipe => ({ schema: RECIPE_SCHEMA, name: name.trim(), query: form.query, mode: form.mode,
+    ...(form.pathPrefix.trim() ? { pathPrefix: form.pathPrefix.trim() } : {}), limit: form.limit, maxBytes: form.maxBytes, fullChunks: form.fullChunks });
+
+/** Save the current form as a named recipe in this workspace. Saving never runs anything. */
+function SaveRecipe(props: { form: Form }) {
+    const [name, setName] = useState('');
+    const [status, setStatus] = useState<string>();
+    const save = async () => {
+        try { await request<SearchRecipe[]>('recipes.save', { recipe: recipeOf(name, props.form) as unknown as Record<string, unknown> }); setStatus(`Saved recipe "${name.trim()}".`); setName(''); }
+        catch (failure) { setStatus(failure instanceof Error ? failure.message : String(failure)); }
+    };
+    return (
+        <form class="search-form recipe-save" onSubmit={event => { event.preventDefault(); void save(); }}>
+            <label>Save as recipe<input value={name} maxLength={80} placeholder="Recipe name" onInput={event => setName((event.target as HTMLInputElement).value)} /></label>
+            <button type="submit" class="ghost" disabled={!name.trim() || !props.form.query.trim()}>Save recipe</button>
+            {status && <span class="muted" role="status">{status}</span>}
+        </form>
+    );
+}
+
+/** Search › Recipes: saved argument sets for this workspace (airk.explorer.search-recipe/1). */
+export function RecipesScreen(props: ScreenProps) {
+    const [recipes, setRecipes] = useState<SearchRecipe[]>();
+    const [error, setError] = useState<string>();
+    useEffect(() => { request<SearchRecipe[]>('recipes.list', {}).then(setRecipes, failure => setError(failure instanceof Error ? failure.message : String(failure))); }, []);
+    const remove = async (name: string) => {
+        try { setRecipes(await request<SearchRecipe[]>('recipes.delete', { name })); } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    };
+    if (error) { return <p class="callout" role="alert">{error}</p>; }
+    if (!recipes) { return <p class="muted">Loading recipes…</p>; }
+    return (
+        <div class="recipes">
+            <p class="muted">Recipes are saved Search arguments for this workspace. Running one fills the Search form and runs it; recipes never change the index.</p>
+            {!recipes.length ? <p class="muted">No recipes yet. Use <strong>Save as recipe</strong> on Search › Query.</p> : (
+                <div class="table-wrap"><table class="grid">
+                    <thead><tr><th>Name</th><th>Query</th><th>Mode</th><th>Path scope</th><th>Limit</th><th></th></tr></thead>
+                    <tbody>{recipes.map(recipe => (
+                        <tr key={recipe.name}>
+                            <td>{recipe.name}</td><td><code>{recipe.query}</code></td><td>{recipe.mode === 'policy' ? 'collection policy' : recipe.mode}</td>
+                            <td>{recipe.pathPrefix ?? '(all)'}</td><td>{recipe.limit}</td>
+                            <td class="actions"><button onClick={() => props.runRecipe(recipe)}>Run</button> <button class="ghost" onClick={() => void remove(recipe.name)}>Delete</button></td>
+                        </tr>
+                    ))}</tbody>
+                </table></div>
             )}
         </div>
     );
