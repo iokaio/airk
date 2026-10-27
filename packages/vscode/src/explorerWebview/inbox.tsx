@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'preact/hooks';
 import type { SuggestionCard, SuggestionsView } from '../explorerContracts';
-import { appendTasks, type DraftBody, type DraftEvidence } from '../explorerDrafts';
+import { appendTasks, type DraftBody, type DraftEvidence, MANAGEMENT_INTENTS } from '../explorerDrafts';
+import { parseRoute, type Route } from '../explorerRoutes';
 import { request } from './api';
 import { ago, shortToken } from './format';
 import { studioHasWork, usePlanner, useStudio } from './strategyStore';
@@ -18,6 +19,8 @@ export interface InboxProps {
     applySearch(search: Extract<DraftBody, { kind: 'search' }>['search']): void;
     goStudio(): void;
     goPlanner(): void;
+    /** Open a screen for review or management guidance; nothing on it runs by itself. */
+    go(route: Route): void;
 }
 
 export function Inbox(props: InboxProps) {
@@ -45,6 +48,10 @@ export function Inbox(props: InboxProps) {
         if (!detail) { return; }
         const body = detail.body;
         if (body.kind === 'search') { props.applySearch(body.search); await resolve(id, 'applied'); return; }
+        if (body.kind === 'review' || body.kind === 'management') {
+            const route = parseRoute(body.kind === 'review' ? `#review/${body.scope}` : `#${MANAGEMENT_INTENTS[body.intent].route}`);
+            await resolve(id, 'applied'); if (route) { props.go(route); } return;
+        }
         const current = body.kind === 'strategy' ? studio.revision ?? 0 : planner.revision;
         const reasons = [...(detail.targetRevision !== undefined && detail.targetRevision !== current ? [`The ${body.kind === 'strategy' ? 'Studio' : 'Planner'} draft changed since this suggestion was made (revision ${detail.targetRevision} → ${current}).`] : []),
             ...(body.kind === 'strategy' && studioHasWork(studio) ? ['Studio has unsaved work.'] : []), ...(body.kind === 'plan' && planner.plan ? ['The Planner already has a plan.'] : [])];
@@ -117,7 +124,7 @@ export function Inbox(props: InboxProps) {
                                 {open && (
                                     <div class="actions">
                                         {!detail && <button class="ghost" onClick={() => void review(card.id)}>Review</button>}
-                                        <button onClick={() => void apply(card.id)}>Apply to draft</button>
+                                        <button onClick={() => void apply(card.id)}>{card.kind === 'review' || card.kind === 'management' ? 'Open screen' : 'Apply to draft'}</button>
                                         {card.status !== 'deferred' && <button class="ghost" onClick={() => void resolve(card.id, 'deferred')}>Defer</button>}
                                         <button class="ghost" onClick={() => void resolve(card.id, 'rejected')}>Reject</button>
                                     </div>
@@ -141,6 +148,12 @@ function Review(props: { detail: Detail }) {
             {body.kind === 'strategy' && <>
                 <p>{body.strategy.title} <code>{body.strategy.id}</code>{body.objective ? <> · {body.objective}</> : null}</p>
                 <ol class="steps">{body.strategy.steps.map(step => <li key={step.id}><code>{step.op}</code> {step.id}{step.input ? ` ← ${step.input}` : ''}</li>)}</ol>
+            </>}
+            {body.kind === 'review' && <p>Open Review › {body.scope}{body.names.length ? <> and look at <code>{body.names.join(', ')}</code></> : null}.{body.note ? <><br />Agent note: {body.note}</> : null}</p>}
+            {body.kind === 'management' && <>
+                <p>{MANAGEMENT_INTENTS[body.intent].guidance}</p>
+                {body.reason && <p class="muted">Agent's reason: {body.reason}</p>}
+                <p class="muted">Opening the screen runs nothing; every action there asks for your confirmation.</p>
             </>}
             {body.kind === 'plan' && <ol class="steps">{body.plan.tasks.map(task => <li key={task.id}>{task.id}. {task.title}{task.dependsOn.length ? ` (after ${task.dependsOn.join(', ')})` : ''}</li>)}</ol>}
             {evidence && <p class="muted">Cites {evidence.citations.length} location(s) at publication <code title={evidence.publication}>{shortToken(evidence.publication)}</code>. Citations are checked when you run or inspect them, not trusted.</p>}

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { test } from 'node:test';
-import { appendTasks, validateDraft } from '../explorerDrafts';
+import { appendTasks, MANAGEMENT_INTENTS, validateDraft } from '../explorerDrafts';
 import { Plan, PLAN_SCHEMA, validatePlan } from '../explorerStrategies';
 import { SUGGESTION_LIMITS, SuggestionStore, suggestionsView } from '../explorerSuggestions';
 
@@ -134,4 +136,44 @@ test('appending suggested tasks renumbers them after the existing plan and keeps
     const merged = appendTasks(existing, suggested);
     assert.deepEqual(merged.tasks.map(task => [task.id, task.title, task.dependsOn]), [['T1', 'a', []], ['T2', 'b', ['T1']], ['T3', 'x', []], ['T4', 'y', ['T3']]]);
     assert.ok(validatePlan(merged).ok);
+});
+
+test('review and management drafts only open a screen; management never runs an operation (AT-12)', () => {
+    const { store: inbox } = store();
+    const review = inbox.submit('review', { schema_version: '1.0', idempotency_key: 'rv', title: 'Check impact', scope: 'impact', names: ['renew'], note: 'Renewal changed.' }, CLIENT);
+    assert.ok(review.ok && review.receipt.destination === 'review/impact');
+    const guidance = inbox.submit('management', { schema_version: '1.0', idempotency_key: 'mg', title: 'Verify retained data', intent: 'recovery.verify_retained_data', mode: 'show_guidance' }, CLIENT);
+    assert.ok(guidance.ok && guidance.receipt.destination === 'manage/repair' && guidance.receipt.executed === false);
+    for (const [input, code] of [
+        [{ intent: 'recovery.verify_retained_data', mode: 'run_now' }, 'POLICY_DENIED'],
+        [{ intent: 'recovery.rebuild' }, 'INVALID_SCHEMA'],
+        [{ intent: 'storage.remove_project' }, 'INVALID_SCHEMA'],
+        [{ intent: 'service.review', command: 'airk.repair' }, 'POLICY_DENIED'],
+        [{ intent: 'service.review', execute: true }, 'POLICY_DENIED'],
+    ] as const) {
+        const result = validateDraft('management', { schema_version: '1.0', idempotency_key: 'x', title: 't', ...input });
+        assert.equal(result.ok ? 'ok' : result.code, code, JSON.stringify(input));
+    }
+    for (const intent of Object.values(MANAGEMENT_INTENTS)) {
+        assert.match(intent.route, /^manage\/[a-z]+$/);
+        assert.doesNotMatch(intent.guidance, /\b(automatically|will run|runs now)\b/i);
+    }
+    assert.equal(validateDraft('review', { schema_version: '1.0', idempotency_key: 'r', title: 't', scope: 'run_tests' }).ok, false);
+});
+
+test('no draft path can reach a management action, a command or the shared console', () => {
+    const root = path.resolve(__dirname, '..', '..', 'src');
+    const files = ['explorerDrafts.ts', 'explorerSuggestions.ts', 'explorerAssistanceHost.ts', 'explorerWebview/inbox.tsx',
+        ...fs.readdirSync(path.join(root, 'explorerAssistance')).map(name => `explorerAssistance/${name}`)];
+    for (const file of files) {
+        const text = fs.readFileSync(path.join(root, file), 'utf8');
+        // The window endpoint writes only its own user-only descriptor; nothing else here may write files.
+        for (const forbidden of [/manage\.(action|command)/, /executeCommand/, /\bcontrol\.run\b/, /child_process/, ...(file === 'explorerAssistanceHost.ts' ? [] : [/writeFile/])]) {
+            assert.doesNotMatch(text, forbidden, `${file} must not reference ${forbidden}`);
+        }
+    }
+    const controller = fs.readFileSync(path.join(root, 'explorerController.ts'), 'utf8');
+    const handlers = controller.slice(controller.indexOf("case 'suggestions.get'"), controller.indexOf("case 'review.changes'"));
+    assert.ok(handlers.length > 100, 'suggestion handlers found');
+    assert.doesNotMatch(handlers, /control\.run|executeCommand|manage\.action/, 'resolving a suggestion only records the decision');
 });

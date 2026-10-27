@@ -3,7 +3,7 @@
 // draft tools reach one trusted Explorer window over its private endpoint. No tool reads source,
 // calls AIRK Retrieval, runs commands, changes settings or writes files: drafts wait for the user.
 import { ASSISTANCE_HELP_URI, ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from '../explorerContracts';
-import { DESTINATIONS, DRAFT_LIMIT_BYTES, DRAFT_SCHEMA_VERSION, DraftKind, validateDraft } from '../explorerDrafts';
+import { DESTINATIONS, DRAFT_LIMIT_BYTES, DRAFT_SCHEMA_VERSION, DraftKind, MANAGEMENT_INTENTS, REVIEW_SCOPES, validateDraft } from '../explorerDrafts';
 import { EXPLORER_ERRORS, type ExplorerErrorCode } from '../explorerErrors';
 import { FEATURES } from '../explorerFeatures';
 import { ROUTE_KEYS } from '../explorerRoutes';
@@ -83,6 +83,17 @@ export function toolDefinitions(index: HelpIndex): object[] {
                     task_id: { type: 'string', pattern: '^T[1-9][0-9]{0,2}$' }, title: { type: 'string', maxLength: 160 }, instructions: { type: 'string', maxLength: 6000 },
                     depends_on: { type: 'array', items: { type: 'string' }, maxItems: 20 }, acceptance: { type: 'string', maxLength: 1000 } } } } } }, annotations: DRAFT,
         },
+        airk_explorer_suggest_review: {
+            description: `Propose opening Review › Changes, Impact or Tests, optionally naming declarations to look at and a short note for the user. Review only reads Git and the index; it never runs tests.${DRAFT_NOTE}`,
+            inputSchema: { type: 'object', additionalProperties: false, required: ['schema_version', 'idempotency_key', 'title'], properties: { ...ENVELOPE,
+                scope: { type: 'string', enum: REVIEW_SCOPES, default: 'changes' }, names: { type: 'array', maxItems: 20, items: { type: 'string', pattern: '^[A-Za-z_$][\\w$]{0,127}$' } },
+                note: { type: 'string', maxLength: 2000 } } }, annotations: DRAFT,
+        },
+        airk_explorer_suggest_management: {
+            description: `Propose management guidance: open one Management screen with fixed guidance for a known intent. It never starts, approves or runs indexing, repair, verification, rebuild, removal or service actions; the user decides on that screen.${DRAFT_NOTE}`,
+            inputSchema: { type: 'object', additionalProperties: false, required: ['schema_version', 'idempotency_key', 'title', 'intent'], properties: { ...ENVELOPE,
+                intent: { type: 'string', enum: Object.keys(MANAGEMENT_INTENTS) }, mode: { type: 'string', const: 'show_guidance' }, reason: { type: 'string', maxLength: 1000 } } }, annotations: DRAFT,
+        },
         airk_explorer_proposal_status: {
             description: 'Read the status of a proposal you submitted: pending_review, applied, rejected, deferred, expired or conflicted. Returns no body.',
             inputSchema: { type: 'object', additionalProperties: false, required: ['proposal_id'], properties: { proposal_id: { type: 'string', pattern: '^ex-prop-[0-9a-f]{16}$' } } },
@@ -113,7 +124,8 @@ function parse(args: unknown, fields: Record<string, Field>, required: readonly 
 }
 
 const bytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), 'utf8');
-const DRAFT_KINDS: Record<string, DraftKind> = { airk_explorer_suggest_search: 'search', airk_explorer_suggest_strategy: 'strategy', airk_explorer_suggest_plan: 'plan' };
+const DRAFT_KINDS: Record<string, DraftKind> = { airk_explorer_suggest_search: 'search', airk_explorer_suggest_strategy: 'strategy', airk_explorer_suggest_plan: 'plan',
+    airk_explorer_suggest_review: 'review', airk_explorer_suggest_management: 'management' };
 
 export class AssistanceTools {
     constructor(private readonly index: HelpIndex, private readonly window: WindowChannel) {}
