@@ -2,7 +2,8 @@
 // Pure, versioned contracts between the extension host and the AIRK Explorer webview.
 // No Node, vscode or host imports: the webview bundle and the host share this file.
 import type { Availability } from './explorerFeatures';
-import type { ExplorerError } from './explorerErrors';
+import type { DraftKind, ProposalReceipt } from './explorerDrafts';
+import type { ExplorerError, ExplorerErrorCode } from './explorerErrors';
 
 export const MESSAGE_VERSION = 1;
 
@@ -285,7 +286,8 @@ export interface HelpCatalog { readonly catalogVersion: 1; readonly extensionVer
 /** The extension-owned Explorer Assistance MCP server. It never calls AIRK Retrieval or the service. */
 export const ASSISTANCE_SERVER_NAME = 'airk-explorer';
 /** Assistance tools shipped in this version, in tools/list order. Draft tools arrive with the Suggestions Inbox. */
-export const ASSISTANCE_TOOLS = ['airk_explorer_help_search', 'airk_explorer_help_get', 'airk_explorer_ui_status'] as const;
+export const ASSISTANCE_TOOLS = ['airk_explorer_help_search', 'airk_explorer_help_get', 'airk_explorer_ui_status', 'airk_explorer_suggest_search',
+    'airk_explorer_suggest_strategy', 'airk_explorer_suggest_plan', 'airk_explorer_proposal_status'] as const;
 export const ASSISTANCE_HELP_URI = 'airk-explorer-help://';
 
 /**
@@ -327,10 +329,21 @@ export function parseWindowDescriptor(value: unknown): WindowDescriptor | undefi
 }
 
 /** One request per connection: the window credential and a typed request. */
-export interface AssistanceIpcRequest { readonly v: 1; readonly credential: string; readonly type: 'status' }
+export type AssistanceIpcRequest = { readonly v: 1; readonly credential: string } & (
+    | { readonly type: 'status' }
+    | { readonly type: 'suggest'; readonly kind: DraftKind; readonly draft: unknown; readonly client: { readonly name: string; readonly version: string } }
+    | { readonly type: 'proposal_status'; readonly proposal_id: string });
+export interface AssistanceWindowStatus {
+    readonly binding_fingerprint: string;
+    readonly explorer_open: boolean;
+    /** Current Studio and Planner draft revisions, for expected_target_revision. */
+    readonly target_revisions: { readonly studio?: number; readonly planner?: number };
+}
 export type AssistanceIpcReply =
-    | { readonly v: 1; readonly ok: true; readonly status: { readonly binding_fingerprint: string; readonly explorer_open: boolean } }
-    | { readonly v: 1; readonly ok: false; readonly code: 'STALE_BINDING' | 'SCHEMA_UNSUPPORTED' | 'INVALID_SCHEMA' };
+    | { readonly v: 1; readonly ok: true; readonly status: AssistanceWindowStatus }
+    | { readonly v: 1; readonly ok: true; readonly receipt: ProposalReceipt }
+    | { readonly v: 1; readonly ok: true; readonly proposal: Pick<ProposalReceipt, 'proposal_id' | 'status' | 'destination' | 'applied' | 'executed' | 'expires_at'> }
+    | { readonly v: 1; readonly ok: false; readonly code: ExplorerErrorCode; readonly message?: string };
 /** airk_help reply as shown in the Explorer. */
 export interface EngineHelpView { readonly topic: string; readonly title: string; readonly content: string; readonly version?: string; readonly topics: readonly { id: string; title: string }[]; readonly truncated: boolean }
 

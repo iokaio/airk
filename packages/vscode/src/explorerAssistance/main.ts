@@ -4,7 +4,7 @@
 // Arguments: [--assistance-dir <dir>], the directory holding per-window descriptors.
 import catalog from 'airk-explorer-help';
 import { realpathSync } from 'node:fs';
-import { attachmentProbe } from './attach';
+import { windowChannel } from './attach';
 import { HelpIndex } from './help';
 import { AssistanceServer, serve } from './server';
 import { AssistanceTools } from './tools';
@@ -18,6 +18,6 @@ function workingDirectory(): string {
 }
 
 const index = new HelpIndex(catalog);
-const tools = new AssistanceTools(index, attachmentProbe(option('--assistance-dir'), workingDirectory()));
+const tools = new AssistanceTools(index, windowChannel(option('--assistance-dir'), workingDirectory()));
 const server = new AssistanceServer(index, tools, catalog.extensionVersion);
 void serve(server, process.stdin, text => { process.stdout.write(text); }).then(() => { process.exitCode = 0; });

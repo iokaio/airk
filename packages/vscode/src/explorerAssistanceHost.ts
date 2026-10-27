@@ -8,6 +8,8 @@ import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ASSISTANCE_IPC_LIMIT, type AssistanceIpcReply, parseWindowDescriptor, WINDOW_DESCRIPTOR_LIMIT, WINDOW_SCHEMA, type WindowDescriptor } from './explorerContracts';
+import type { DraftKind } from './explorerDrafts';
+import type { DraftClient, Submission, SuggestionStore } from './explorerSuggestions';
 
 export const DESCRIPTOR_TTL_MS = 30 * 60_000;
 export const ROTATE_MS = 10 * 60_000;
@@ -20,6 +22,10 @@ export interface AssistanceHostPort {
     /** Workspace folder paths of this window; canonicalized before they are published. */
     readonly roots: readonly string[];
     explorerOpen(): boolean;
+    targetRevisions?(): { readonly studio?: number; readonly planner?: number };
+    /** Admit a draft to this window's Suggestions Inbox. Absent when drafts are not offered. */
+    suggest?(kind: DraftKind, draft: unknown, client: DraftClient): Submission;
+    proposalStatus?(id: string): ReturnType<SuggestionStore['status']>;
 }
 
 export const windowsDirectory = (directory: string) => path.join(directory, 'windows');
@@ -124,9 +130,29 @@ export class AssistanceIpcHost {
         // A wrong credential gets no reply at all: the endpoint does not confirm that it is an Explorer window.
         if (offered.length !== expected.length || !timingSafeEqual(offered, expected) || this.disposed) { return undefined; }
         if (request.v !== 1) { return { v: 1, ok: false, code: 'SCHEMA_UNSUPPORTED' }; }
-        if (request.type !== 'status' || Object.keys(request).some(key => !['v', 'credential', 'type'].includes(key))) { return { v: 1, ok: false, code: 'INVALID_SCHEMA' }; }
-        return { v: 1, ok: true, status: { binding_fingerprint: this.fingerprint, explorer_open: this.port.explorerOpen() } };
+        const fields = (...allowed: string[]) => Object.keys(request).every(key => ['v', 'credential', 'type', ...allowed].includes(key));
+        switch (request.type) {
+            case 'status':
+                if (!fields()) { break; }
+                return { v: 1, ok: true, status: { binding_fingerprint: this.fingerprint, explorer_open: this.port.explorerOpen(), target_revisions: this.port.targetRevisions?.() ?? {} } };
+            case 'suggest': {
+                const client = request.client as Record<string, unknown> | undefined;
+                if (!fields('kind', 'draft', 'client') || !['search', 'strategy', 'plan'].includes(request.kind as string) || !client || typeof client.name !== 'string' || typeof client.version !== 'string') { break; }
+                if (!this.port.suggest) { return { v: 1, ok: false, code: 'CAPABILITY_DISABLED' }; }
+                // The host validates the draft again; the server's validation is only a fast first check.
+                const result = this.port.suggest(request.kind as DraftKind, request.draft, { name: client.name, version: client.version });
+                return result.ok ? { v: 1, ok: true, receipt: result.receipt } : { v: 1, ok: false, code: result.code, message: result.message.slice(0, 2000) };
+            }
+            case 'proposal_status': {
+                if (!fields('proposal_id') || typeof request.proposal_id !== 'string' || !/^ex-prop-[0-9a-f]{16}$/.test(request.proposal_id)) { break; }
+                const proposal = this.port.proposalStatus?.(request.proposal_id);
+                return proposal ? { v: 1, ok: true, proposal } : { v: 1, ok: false, code: 'PROPOSAL_EXPIRED', message: 'No proposal with that id is held by this window.' };
+            }
+        }
+        return { v: 1, ok: false, code: 'INVALID_SCHEMA' };
     }
+
+    get bindingFingerprint(): string { return this.fingerprint; }
 
     /** Stop listening and withdraw the descriptor synchronously, so it is gone before the host exits. */
     dispose(): void {

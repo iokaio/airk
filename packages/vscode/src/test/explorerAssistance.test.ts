@@ -62,6 +62,8 @@ test('the server answers help offline with no process, socket or file effects', 
         call(5, 'airk_explorer_ui_status'),
         rpc(6, 'resources/list'),
         rpc(7, 'resources/read', { uri: 'airk-explorer-help://management.repair' }),
+        call(8, 'airk_explorer_suggest_search', { schema_version: '1.0', idempotency_key: 'k1', title: 'Find renewals', draft: { query: 'renew' } }),
+        call(9, 'airk_explorer_proposal_status', { proposal_id: 'ex-prop-0123456789abcdef' }),
     ]);
     assert.equal(stderr, '', 'no blocked call was attempted');
     assert.equal(code, 0);
@@ -73,7 +75,10 @@ test('the server answers help offline with no process, socket or file effects', 
     const tools = byId(responses, 1).result.tools;
     assert.deepEqual(tools.map((tool: { name: string }) => tool.name), [...ASSISTANCE_TOOLS], 'exactly the shipped Explorer tools; no airk_* retrieval tools');
     for (const tool of tools) {
-        assert.equal(tool.annotations.readOnlyHint, true);
+        const draft = tool.name.startsWith('airk_explorer_suggest_');
+        assert.equal(tool.annotations.readOnlyHint, !draft, tool.name);
+        assert.equal(tool.annotations.destructiveHint, false, `${tool.name} never destroys anything`);
+        assert.equal(tool.annotations.openWorldHint, false);
         assert.equal(tool.inputSchema.additionalProperties, false);
     }
 
@@ -100,6 +105,9 @@ test('the server answers help offline with no process, socket or file effects', 
     const resources = byId(responses, 6).result.resources;
     assert.ok(resources.some((resource: { uri: string }) => resource.uri === 'airk-explorer-help://management.repair'));
     assert.match(byId(responses, 7).result.contents[0].text, /^# Diagnose and repair/);
+    for (const id of [8, 9]) {
+        assert.equal(structured(responses, id).error.code, 'UI_NOT_ATTACHED', 'drafts without an attached window fail closed and touch nothing');
+    }
 });
 
 test('unshipped screens are labeled and invalid requests are refused, never coerced', { timeout: 30000 }, async () => {
@@ -112,16 +120,18 @@ test('unshipped screens are labeled and invalid requests are refused, never coer
         call(4, 'airk_explorer_help_search', { query: 'search', limit: 50 }),
         call(5, 'airk_explorer_help_get', { topic_id: 'no.such.topic' }),
         call(6, 'airk_explorer_help_search', { query: 'search index project management', limit: 20, max_bytes: 512 }),
-        call(7, 'airk_explorer_suggest_plan', {}),
+        call(7, 'airk_explorer_open_view', {}),
         rpc(8, 'resources/read', { uri: 'file:///etc/passwd' }),
         call(9, 'airk_explorer_help_search', { query: planned ?? 'studio', limit: 20 }),
         'not json',
         'x'.repeat(1_100_000),
         rpc(10, 'ping'),
+        call(11, 'airk_explorer_suggest_plan', { schema_version: '1.0', idempotency_key: 'p', title: 'Plan', tasks: [{ task_id: 'T1', title: 'a' }], save: true }),
+        call(12, 'airk_explorer_suggest_strategy', { schema_version: '1.0', idempotency_key: 's', title: 'S', steps: [{ id: 'x', op: 'host.exec', args: {} }] }),
     ]);
     assert.equal(stderr, '');
     assert.equal(byId(responses, 1).error!.code, -32002, 'nothing but ping before initialize');
-    for (const [id, code] of [[2, 'INVALID_SCHEMA'], [3, 'INVALID_SCHEMA'], [4, 'INVALID_SCHEMA'], [5, 'HELP_TOPIC_UNKNOWN'], [7, 'CAPABILITY_DISABLED']] as const) {
+    for (const [id, code] of [[2, 'INVALID_SCHEMA'], [3, 'INVALID_SCHEMA'], [4, 'INVALID_SCHEMA'], [5, 'HELP_TOPIC_UNKNOWN'], [7, 'CAPABILITY_DISABLED'], [11, 'POLICY_DENIED'], [12, 'INVALID_SCHEMA']] as const) {
         const result = byId(responses, id).result;
         assert.equal(result.isError, true, `request ${id}`);
         assert.equal(result.structuredContent.error.code, code, `request ${id}`);

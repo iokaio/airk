@@ -514,6 +514,13 @@
             "default": ".airk/plans",
             "scope": "resource",
             "markdownDescription": "Workspace-relative folder that the Planner's save dialog opens in. The dialog always lets you choose another location inside the workspace. `.airk` is excluded from native indexing, so saved plans do not become evidence."
+          },
+          "airk.explorer.suggestions.ttlHours": {
+            "type": "integer",
+            "default": 24,
+            "minimum": 1,
+            "maximum": 168,
+            "markdownDescription": "Hours an agent draft stays in the Explorer Suggestions Inbox before it expires. Drafts are kept in memory for this window only."
           }
         }
       },

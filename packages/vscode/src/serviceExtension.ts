@@ -20,6 +20,7 @@ import type { ExplorerController, ExplorerHost } from './explorerController';
 import { migrateLocalAgents } from './agentMigration';
 import { readJsonConfig } from './agentConfig';
 import { AssistanceIpcHost } from './explorerAssistanceHost';
+import { SuggestionStore } from './explorerSuggestions';
 import { assistanceDirectory, launchDescriptorPath, serverInvocation, writeLaunchDescriptor } from './explorerAssistanceLaunch';
 
 function same(left:string,right:string):boolean {
@@ -51,6 +52,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private explorerLoaded?:ExplorerController;
     private assistanceHost?:AssistanceIpcHost;
     private assistanceGeneration=0;
+    /** Agent drafts for this window, kept in memory only; the Explorer Inbox shows them. */
+    readonly suggestions=new SuggestionStore({binding:()=>this.assistanceHost?.bindingFingerprint??'',revisions:()=>this.explorerLoaded?.draftRevisions??{},
+        publication:()=>this.explorerLoaded?.publication,
+        ttlMs:()=>Math.min(168,Math.max(1,vscode.workspace.getConfiguration('airk').get<number>('explorer.suggestions.ttlHours',24)||24))*3600_000});
 
     private reportInstall(message:string):void{
         this.installProgress?.report({message});this.output.appendLine(message);
@@ -434,7 +439,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         catch(error){this.output.appendLine(`Explorer Assistance launch descriptor was not written: ${error instanceof Error?error.message:String(error)}`);}
         try{
             const host=await AssistanceIpcHost.start({directory:assistanceDirectory(storage),version,roots:this.assistanceFolders().map(folder=>folder.uri.fsPath),
-                explorerOpen:()=>this.explorerLoaded?.panelOpen??false});
+                explorerOpen:()=>this.explorerLoaded?.panelOpen??false,targetRevisions:()=>this.explorerLoaded?.draftRevisions??{},
+                suggest:(kind,draft,client)=>this.assistanceEnabled()?this.suggestions.submit(kind,draft,client):{ok:false,code:'WORKSPACE_UNTRUSTED',message:'The workspace is not trusted.'},
+                proposalStatus:id=>this.suggestions.status(id)});
             if(generation!==this.assistanceGeneration||!this.assistanceEnabled()){host?.dispose();return;}
             this.assistanceHost=host;
         }catch(error){this.output.appendLine(`Explorer Assistance window endpoint is unavailable: ${error instanceof Error?error.message:String(error)}`);}

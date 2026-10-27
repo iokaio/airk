@@ -10,6 +10,7 @@ import { test } from 'node:test';
 import { parseWindowDescriptor, WINDOW_SCHEMA } from '../explorerContracts';
 import { AssistanceIpcHost, sweepExpired, windowsDirectory } from '../explorerAssistanceHost';
 import { assistanceDirectory, LAUNCH_SCHEMA, launchDescriptorPath, serverInvocation, writeLaunchDescriptor } from '../explorerAssistanceLaunch';
+import { SuggestionStore } from '../explorerSuggestions';
 import { serviceTestHost } from './serviceTestHost';
 
 const bundle = path.resolve(__dirname, '..', 'explorerAssistance.js');
@@ -82,7 +83,7 @@ test('a window attaches only for working directories inside its folders, and det
     if (process.platform !== 'win32') { assert.equal(fs.statSync(path.join(windowsDirectory(directory), file)).mode & 0o077, 0); }
 
     const attached = await uiStatus(path.join(workspace, 'src'), directory);
-    assert.deepEqual(attached.ui, { attached: true, binding_fingerprint: descriptor.binding_fingerprint, explorer_open: true });
+    assert.deepEqual(attached.ui, { attached: true, binding_fingerprint: descriptor.binding_fingerprint, explorer_open: true, target_revisions: {} });
     assert.ok(!attached.text.includes(descriptor.credential) && !attached.text.includes(workspace.replaceAll('\\', '\\\\')), 'no credential or path reaches the agent');
     open = false;
     assert.equal((await uiStatus(workspace, directory)).ui.explorer_open, false);
@@ -165,4 +166,48 @@ test('trusted activation offers the Assistance provider and publishes a window e
         assert.deepEqual(await untrusted.assistance.get('airk.explorerAssistance').provideMcpServerDefinitions(), []);
         assert.equal(fs.existsSync(path.join(untrusted.root, 'editor-storage', 'explorer-assistance')), false);
     } finally { await untrusted.close(); }
+});
+
+/** Run several MCP calls against the real bundle from cwd and return structured results in order. */
+async function calls(cwd: string, directory: string, requests: { name: string; args: object }[]): Promise<any[]> {
+    const child = spawn(process.execPath, [bundle, '--assistance-dir', directory], { cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
+    child.stdin.end([JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-11-25', clientInfo: { name: 'test-agent', version: '9' } } }),
+        ...requests.map((request, index) => JSON.stringify({ jsonrpc: '2.0', id: index + 1, method: 'tools/call', params: { name: request.name, arguments: request.args } }))].join('\n') + '\n');
+    await new Promise(resolve => child.on('close', resolve));
+    const replies = stdout.split('\n').filter(Boolean).map(line => JSON.parse(line));
+    return requests.map((_, index) => replies.find(entry => entry.id === index + 1).result.structuredContent);
+}
+
+test('drafts travel over the window endpoint into the Inbox store, idempotently, with the agent label (AT-05, AT-14)', { timeout: 30000 }, async t => {
+    const root = scratch(t), directory = path.join(root, 'assistance');
+    let fingerprint = '';
+    const store = new SuggestionStore({ binding: () => fingerprint, revisions: () => ({ planner: 2 }), publication: () => undefined, ttlMs: () => 3600_000 });
+    const host = (await AssistanceIpcHost.start({ directory, version: '1.5.0', roots: [root], explorerOpen: () => false, targetRevisions: () => ({ planner: 2 }),
+        suggest: (kind, draft, client) => store.submit(kind, draft, client), proposalStatus: id => store.status(id) }))!;
+    t.after(() => host.dispose());
+    fingerprint = host.bindingFingerprint;
+    const draft = { schema_version: '1.0', idempotency_key: 'renew-1', title: 'Find renewals', workspace_binding: fingerprint, draft: { query: 'session renew', path_prefix: 'src/' } };
+    const [status, first, replay, conflict, stale] = await calls(root, directory, [
+        { name: 'airk_explorer_ui_status', args: {} },
+        { name: 'airk_explorer_suggest_search', args: draft },
+        { name: 'airk_explorer_suggest_search', args: draft },
+        { name: 'airk_explorer_suggest_search', args: { ...draft, title: 'Changed' } },
+        { name: 'airk_explorer_suggest_plan', args: { schema_version: '1.0', idempotency_key: 'p', title: 'P', expected_target_revision: 1, tasks: [{ task_id: 'T1', title: 'a' }] } },
+    ]);
+    assert.deepEqual(status.ui.target_revisions, { planner: 2 });
+    assert.equal(first.status, 'pending_review');
+    assert.equal(first.executed, false);
+    assert.equal(replay.proposal_id, first.proposal_id);
+    assert.equal(conflict.error.code, 'PROPOSAL_CONFLICT');
+    assert.equal(stale.error.code, 'PROPOSAL_CONFLICT', 'a stale planner revision is refused');
+    assert.equal(store.list().length, 1);
+    assert.equal(store.list()[0].client.name, 'test-agent', 'the Inbox shows the self-reported client');
+    const body = store.list()[0].draft.body;
+    assert.equal(body.kind === 'search' && body.search.query, 'session renew', 'nothing ran: the query only sits in the draft');
+    store.resolve(first.proposal_id, 'applied');
+    const [after] = await calls(root, directory, [{ name: 'airk_explorer_proposal_status', args: { proposal_id: first.proposal_id } }]);
+    assert.deepEqual({ status: after.status, applied: after.applied, executed: after.executed }, { status: 'applied', applied: true, executed: false });
+    assert.equal(after.query, undefined, 'status never returns the body');
 });

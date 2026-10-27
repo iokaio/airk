@@ -85,6 +85,11 @@ export class ExplorerController implements vscode.Disposable {
         void this.loadStatus();
     }
 
+    /** Studio and Planner draft revisions last reported by the webview (for agent draft conflicts). */
+    draftRevisions: { studio?: number; planner?: number } = {};
+    /** Publication of the selected project's last status, if observed. */
+    get publication(): string | undefined { return this.status?.publication; }
+
     /** Whether the Explorer panel is open in this window (reported to Explorer Assistance). */
     get panelOpen(): boolean { return this.panel.open; }
 
