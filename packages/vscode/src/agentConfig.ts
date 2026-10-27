@@ -2,7 +2,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { applyEdits, findNodeAtLocation, getNodeValue, modify, Node, ParseError, parseTree } from 'jsonc-parser';
-import { Client, LaunchSpec, configFor, launchArgs } from './model';
+import { Client, LaunchSpec, ServerEntry, configFor, launchArgs, retrievalEntry, serializeServers } from './model';
 
 export type JsonClient = 'claude' | 'gemini' | 'antigravity';
 export function isJsonClient(client: Client): client is JsonClient {
@@ -30,24 +30,25 @@ function configurationTree(source: string): Node {
     return tree;
 }
 
-/** Insert only a missing server; retain comments, other settings and client approval policy. */
-export function mergeJsonConfig(client: JsonClient, spec: LaunchSpec, source: string): string {
+/** Insert only missing servers; retain comments, other settings and client approval policy. */
+export function mergeJsonConfig(client: JsonClient, spec: LaunchSpec, source: string, entries: readonly ServerEntry[] = [retrievalEntry(spec)]): string {
     const tree = configurationTree(source);
     const servers = findNodeAtLocation(tree, ['mcpServers']);
     if (servers && servers.type !== 'object') { throw new Error('mcpServers must be an object. Existing configuration was preserved.'); }
-    const name = `airk-${spec.collection}`;
-    const entry = JSON.parse(configFor(client, spec)).mcpServers[name];
-    const existing = findNodeAtLocation(tree, ['mcpServers', name]);
-    if (existing) {
+    const wanted = JSON.parse(serializeServers(client, entries)).mcpServers as Record<string, { command: string; args: string[] }>;
+    const missing: [string, unknown][] = [];
+    // Check every entry before editing, so a conflict leaves the file exactly as it was.
+    for (const [name, entry] of Object.entries(wanted)) {
+        const existing = findNodeAtLocation(tree, ['mcpServers', name]);
+        if (!existing) { missing.push([name, entry]); continue; }
         const value = getNodeValue(existing);
         if (existing.type === 'object' && value.command === entry.command && JSON.stringify(value.args) === JSON.stringify(entry.args)
-            && (!value.type || value.type === 'stdio') && !value.url && !value.serverUrl) { return source; }
-        throw new Error('An AIRK server with this name already has different settings. Open the configuration and review it; nothing was replaced.');
+            && (!value.type || value.type === 'stdio') && !value.url && !value.serverUrl) { continue; }
+        throw new Error(`An AIRK server named ${name} already has different settings. Open the configuration and review it; nothing was replaced.`);
     }
     const indent = source.match(/(?:^|\n)([\t ]+)"/u)?.[1];
-    return applyEdits(source, modify(source, ['mcpServers', name], entry, { formattingOptions: {
-        insertSpaces: !indent?.includes('\t'), tabSize: indent?.length || 2, eol: source.includes('\r\n') ? '\r\n' : '\n'
-    } }));
+    const formattingOptions = { insertSpaces: !indent?.includes('\t'), tabSize: indent?.length || 2, eol: source.includes('\r\n') ? '\r\n' : '\n' };
+    return missing.reduce((result, [name, entry]) => applyEdits(result, modify(result, ['mcpServers', name], entry, { formattingOptions })), source);
 }
 
 async function configurationFile(client: JsonClient, spec: LaunchSpec, create = true): Promise<string> {
@@ -139,11 +140,12 @@ export async function readJsonConfig(destination: string): Promise<string | unde
 
 /** Existing files are saved through the editor, which checks document versions and disk conflicts. */
 export async function installJsonConfig(client: JsonClient, spec: LaunchSpec,
-    checkCurrent: () => void, save: (destination: string, before: string, after: string) => Promise<void>): Promise<string> {
+    checkCurrent: () => void, save: (destination: string, before: string, after: string) => Promise<void>,
+    entries: readonly ServerEntry[] = [retrievalEntry(spec)]): Promise<string> {
     checkCurrent();
     const destination = await configurationFile(client, spec);
     const before = await readJsonConfig(destination);
-    const after = mergeJsonConfig(client, spec, before ?? '{}\n');
+    const after = mergeJsonConfig(client, spec, before ?? '{}\n', entries);
     checkCurrent();
     if (await configurationFile(client, spec) !== destination || await readJsonConfig(destination) !== before) {
         throw new Error('Configuration changed while preparing setup. Retry after reviewing the file.');

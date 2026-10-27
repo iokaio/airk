@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import { Client, LaunchSpec, configFor } from './model';
+import { Client, LaunchSpec, ServerEntry, serializeServers } from './model';
 import { installJsonConfig, isJsonClient, jsonConfigPath, readJsonConfig, reviewLegacyJsonConfig, replaceReviewedLegacyJsonConfig } from './agentConfig';
-import { agentChoices, codexConfigPath, connectionAction, createCodexConfig, renderConnectionGuide, verificationPrompt } from './agentConnections';
+import { agentChoices, assistancePrompt, codexConfigPath, connectionAction, createCodexConfig, renderConnectionGuide, verificationPrompt } from './agentConnections';
 import { McpVerification } from './sidebar';
 
 export interface AgentSetupHost {
@@ -17,6 +17,10 @@ export interface AgentSetupHost {
     isCurrent(spec: LaunchSpec): boolean;
     rootBindings(): ReadonlyArray<{ opened: string; canonical: string }>;
     subscribe(panel: vscode.WebviewPanel): void;
+    /** Retrieval, plus Explorer Assistance once the workspace has a native service binding. */
+    connectionEntries(spec: LaunchSpec): ServerEntry[];
+    /** Start Explorer Assistance through the agent entry and return its tool names. */
+    verifyAssistance(spec: LaunchSpec): Promise<string[]>;
 }
 
 const locations: Record<Client, string> = {
@@ -45,12 +49,13 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
         if (!selected) { return; }
         const spec = await host.chooseSpec(); if (!spec) { return; }
         const client = selected.client;
+        const entries = host.connectionEntries(spec);
         const panel = vscode.window.createWebviewPanel('airk.connection', `AIRK → ${selected.label}`, vscode.ViewColumn.Active,
             { enableScripts: true, localResourceRoots: [] });
         let status = client === 'vscode' ? `VS Code registration is ${host.registrationEnabled() ? 'on' : 'off'}. Agent connection has not been verified.`
             : 'Configuration has not been installed by this guide.';
         let busy = false, closed = false;
-        const render = () => { panel.webview.html = renderConnectionGuide(client, spec, locations[client], status, !!vscode.env.remoteName, busy); };
+        const render = () => { panel.webview.html = renderConnectionGuide(client, spec, locations[client], status, !!vscode.env.remoteName, busy, entries); };
         const checkCurrent = () => {
             host.trusted();
             if (closed || !host.isCurrent(spec)) {
@@ -85,19 +90,19 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
             busy = true;
             try {
                 checkCurrent();
-                if (action === 'copy' || action === 'copyPrompt') {
-                    await vscode.env.clipboard.writeText(action === 'copy' ? configFor(client, spec) : verificationPrompt(spec));
+                if (action === 'copy' || action === 'copyPrompt' || action === 'copyAssistancePrompt') {
+                    await vscode.env.clipboard.writeText(action === 'copy' ? serializeServers(client, entries) : action === 'copyPrompt' ? verificationPrompt(spec) : assistancePrompt());
                     status = action === 'copy' ? 'Configuration copied. Merge it into the selected agent’s configuration; copying does not install it.' : 'Verification prompt copied. Send it in the selected agent to check its actual connection.';
                 } else if (action === 'createCodex') {
                     if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running Codex.'); }
                     const destination = codexConfigPath(spec);
                     configDocument(destination);
-                    await createCodexConfig(spec);
+                    await createCodexConfig(spec, entries);
                     status = 'Codex project configuration created. Restart Codex and verify its tools below. Agent connection has not been verified.';
                 } else if (action === 'installJson' && isJsonClient(client)) {
                     if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running this agent.'); }
                     const checkInstall = () => { checkCurrent(); configDocument(jsonConfigPath(client, spec)); };
-                    await installJsonConfig(client, spec, checkInstall, saveConfiguration);
+                    await installJsonConfig(client, spec, checkInstall, saveConfiguration, entries);
                     status = `${selected.label} project configuration installed. Reload the agent and complete its trust prompts. Agent connection has not been verified.`;
                 } else if (action === 'reviewLegacy' && isJsonClient(client)) {
                     if (vscode.env.remoteName) { throw new Error('Review the configuration on the host running this agent.'); }
@@ -136,6 +141,10 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                 } else if (action === 'vscode') {
                     await host.manageVscodeMcp();
                     status = `VS Code MCP controls opened. Registration is ${host.registrationEnabled() ? 'on' : 'off'}; enable it in the AIRK sidebar if needed. Other agents use their own configuration.`;
+                } else if (action === 'verifyAssistance') {
+                    status = 'Checking Explorer Assistance…'; render();
+                    const tools = await host.verifyAssistance(spec);
+                    status = `Explorer Assistance verified: ${tools.length} tools (${tools.join(', ')}). Agent connection still needs the Assistance prompt below.`;
                 } else if (action === 'verify') {
                     const target = spec.service ? 'AIRK MCP connection' : 'AIRK helper';
                     status = `Checking ${target}…`; render();
