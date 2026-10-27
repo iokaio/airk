@@ -508,6 +508,12 @@
             "type": "boolean",
             "default": true,
             "markdownDescription": "Offer the AIRK Explorer Assistance MCP server (help and Explorer status for coding agents) and publish this trusted window's private attachment endpoint. Assistance never searches code, runs commands or writes files."
+          },
+          "airk.explorer.planner.directory": {
+            "type": "string",
+            "default": ".airk/plans",
+            "scope": "resource",
+            "markdownDescription": "Workspace-relative folder that the Planner's save dialog opens in. The dialog always lets you choose another location inside the workspace. `.airk` is excluded from native indexing, so saved plans do not become evidence."
           }
         }
       },

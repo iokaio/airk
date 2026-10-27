@@ -194,3 +194,6 @@ ol.log { margin: 0; padding-left: 1.2rem; max-height: 16rem; overflow: auto; }
 .studio-head h2 { margin-bottom: 0.2rem; }
 textarea.prompt { min-height: 16rem; }
 .strategies .card { margin-bottom: var(--airk-gap); }
+input.inline { width: auto; min-width: 16rem; font-weight: 600; }
+fieldset.deps { border: 1px solid var(--airk-border); border-radius: 4px; display: flex; gap: 0.75rem; flex-wrap: wrap; margin: 0.5rem 0; }
+.planner .task h3 { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }

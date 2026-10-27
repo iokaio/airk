@@ -2,11 +2,12 @@
 import { useMemo, useState } from 'preact/hooks';
 import {
     CATEGORIES, CatalogEntry, compilePrompt, CORE_PACK, estimateTokens, operator, OPERATORS, OperatorId, PromptProfile, RunResult, Strategy, StrategyStep,
-    unavailableReason, validateStrategy,
+    PLAN_SCHEMA, unavailableReason, validateStrategy,
 } from '../explorerStrategies';
 import { request } from './api';
 import { shortToken } from './format';
-import { StudioDraft, studioHasWork, useStudio } from './strategyStore';
+import { taskFromStudio } from './planner';
+import { StudioDraft, studioHasWork, usePlanner, useStudio } from './strategyStore';
 import type { ScreenProps } from './workspaces';
 
 const message = (failure: unknown) => failure instanceof Error ? failure.message : String(failure);
@@ -88,6 +89,7 @@ function fork(strategy: Strategy, steps: StrategyStep[]): Strategy {
 
 export function StudioScreen(props: ScreenProps) {
     const [draft, setDraft] = useStudio();
+    const [, setPlanner] = usePlanner();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string>();
     const [notice, setNotice] = useState<string>();
@@ -247,6 +249,15 @@ export function StudioScreen(props: ScreenProps) {
                 <div class="actions">
                     <button onClick={async () => { try { await request('clipboard.write', { text: prompt }); setNotice('Prompt copied.'); } catch (failure) { setError(message(failure)); } }}>Copy prompt</button>
                     <button class="ghost" onClick={() => draft.promptEdited ? setConfirmRebuild(true) : rebuild()}>Rebuild</button>
+                    <button class="ghost" onClick={() => {
+                        const snapshot = { ...draft, prompt };
+                        setPlanner(prior => {
+                            const plan = prior.plan ?? { schema: PLAN_SCHEMA, title: strategy.title, objective: draft.objective, ...(props.state.selectedProject ? { project: props.state.selectedProject } : {}), tasks: [] };
+                            if (plan.tasks.length >= 40) { return prior; }
+                            return { ...prior, plan: { ...plan, tasks: [...plan.tasks, taskFromStudio(plan, snapshot)] }, revision: prior.revision + 1 };
+                        });
+                        props.go({ workspace: 'strategies', tab: 'planner' });
+                    }}>Add to Planner</button>
                 </div>
                 <p class="muted">Review the prompt before sharing it: repositories can contain confidential code, secrets, or instructions planted in source comments.</p>
             </section>

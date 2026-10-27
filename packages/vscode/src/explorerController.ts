@@ -14,8 +14,8 @@ import { managementView } from './explorerManagement';
 import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary } from './explorerStatus';
 import { displayPath } from './explorerSource';
-import { exportStrategy, importStrategy, liveAt, openSource } from './explorerWorkspaceIO';
-import { validateStrategy } from './explorerStrategies';
+import { exportStrategy, importStrategy, liveAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
+import { renderPlan, validatePlan, validateStrategy } from './explorerStrategies';
 import { runStrategy } from './explorerStrategyRunner';
 import { LaunchSpec } from './model';
 
@@ -350,8 +350,23 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'strategy.import': return (await importStrategy()) ?? null;
             case 'clipboard.write': await vscode.env.clipboard.writeText((message as WebviewMessageOf<'clipboard.write'>).text); return;
+            case 'planner.openDraft': return openPlanDraft(this.planMarkdown((message as WebviewMessageOf<'planner.openDraft'>).plan));
+            case 'planner.saveInWorkspace': {
+                const typed = message as WebviewMessageOf<'planner.saveInWorkspace'>;
+                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                // The revision comes back unchanged so the webview can ignore a result for an older draft.
+                return { ...(await savePlanInWorkspace(this.planMarkdown(typed.plan), typed.fileName)), revision: typed.revision };
+            }
             default: throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', `${(message as WebviewMessage).type} is not available in this build.`));
         }
+    }
+
+    /** Plans are rendered on the host from a validated plan, never from webview-supplied Markdown. */
+    private planMarkdown(value: Record<string, unknown>): string {
+        const checked = validatePlan(value);
+        if (!checked.ok) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', checked.errors.slice(0, 5).join('; '))); }
+        return renderPlan(checked.plan, { workspace: vscode.workspace.name ?? 'workspace', extensionVersion: this.host.version,
+            ...(this.status?.publication ? { currentPublication: this.status.publication } : {}) });
     }
 
     dispose(): void {

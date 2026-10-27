@@ -418,6 +418,9 @@ export const WEBVIEW_MESSAGES = {
     'strategy.export': { strategy: { kind: 'json', max: 32768 } },
     'strategy.import': {},
     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
+    'planner.openDraft': { plan: { kind: 'json', max: 131072 } },
+    'planner.saveInWorkspace': { plan: { kind: 'json', max: 131072 }, revision: { kind: 'int', min: 0, max: 1_000_000_000 },
+        fileName: { kind: 'string', min: 4, max: 120, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,115}\.md$/ } },
 } as const satisfies Record<string, Record<string, FieldSpec>>;
 
 export type WebviewMessageType = keyof typeof WEBVIEW_MESSAGES;

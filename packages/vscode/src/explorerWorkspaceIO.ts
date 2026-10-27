@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
+import { createHash } from 'node:crypto';
+import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { LiveCheck, OpenSourceResult } from './explorerContracts';
 import { caseFold, inside, liveCheck, sourceFile } from './explorerSource';
 import { explorerError } from './explorerErrors';
 import { EvidenceFailure } from './explorerEvidence';
-import { Strategy, STRATEGY_LIMIT_BYTES, validateStrategy } from './explorerStrategies';
+import { safePrefix, Strategy, STRATEGY_LIMIT_BYTES, validateStrategy } from './explorerStrategies';
 
 const MESSAGES: Record<LiveCheck, string> = {
     matches_index: 'The saved file matches the indexed bytes.',
@@ -68,4 +70,57 @@ export async function importStrategy(): Promise<Strategy | undefined> {
     const checked = validateStrategy(value);
     if (!checked.ok) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', checked.errors.slice(0, 5).join('; '))); }
     return checked.strategy;
+}
+
+/** Open rendered Markdown as an untitled document: opened, never saved. */
+export async function openPlanDraft(markdown: string): Promise<{ opened: true }> {
+    const document = await vscode.workspace.openTextDocument({ content: markdown, language: 'markdown' });
+    await vscode.window.showTextDocument(document, { preview: false });
+    return { opened: true };
+}
+
+export type PlanSaveResult = { saved: true; path: string; hash: string } | { saved: false; reason: string };
+
+/** The workspace setting, accepted only as a relative path inside the folder. */
+export function plannerDirectory(): string {
+    const value = vscode.workspace.getConfiguration('airk').get<string>('explorer.planner.directory', '.airk/plans');
+    return typeof value === 'string' && value.trim() && safePrefix(value.trim()) ? value.trim().replace(/\/+$/, '') : '.airk/plans';
+}
+
+/**
+ * Save a plan inside a workspace folder. The save dialog is the consent gate; the target must
+ * stay inside the chosen folder, an unsaved open copy is never overwritten, an existing file is
+ * replaced only after confirmation, and the written bytes are read back and compared.
+ */
+export async function savePlanInWorkspace(markdown: string, fileName: string): Promise<PlanSaveResult> {
+    const folders = (vscode.workspace.workspaceFolders ?? []).filter(folder => folder.uri.scheme === 'file' || folder.uri.scheme === 'vscode-remote');
+    if (!folders.length) { return { saved: false, reason: 'Open a workspace folder to save plans in it.' }; }
+    const folder = folders.length === 1 ? folders[0] : (await vscode.window.showQuickPick(folders.map(entry => ({ label: entry.name, description: entry.uri.fsPath, folder: entry })),
+        { title: 'Save the AIRK plan in which workspace folder?' }))?.folder;
+    if (!folder) { return { saved: false, reason: 'No workspace folder was chosen.' }; }
+    const defaultUri = vscode.Uri.joinPath(folder.uri, ...plannerDirectory().split('/'), fileName);
+    const target = await vscode.window.showSaveDialog({ title: 'Save AIRK plan', defaultUri, filters: { Markdown: ['md'] } });
+    if (!target) { return { saved: false, reason: 'Save was canceled; nothing was written.' }; }
+    if (target.scheme !== folder.uri.scheme || target.authority !== folder.uri.authority) { return { saved: false, reason: 'Plans can only be saved inside the chosen workspace folder.' }; }
+    const fold = (value: string) => target.scheme === 'file' && process.platform === 'win32' ? value.toLowerCase() : value;
+    const relative = path.posix.relative(fold(folder.uri.path), fold(target.path));
+    if (!relative || relative.startsWith('..') || path.posix.isAbsolute(relative)) { return { saved: false, reason: 'Plans can only be saved inside the chosen workspace folder.' }; }
+    // Show the path as the user typed it; the folded form is only for the containment check.
+    const shown = target.path.slice(folder.uri.path.replace(/\/$/, '').length + 1);
+    const open = vscode.workspace.textDocuments.find(document => document.uri.toString() === target.toString());
+    if (open?.isDirty) { return { saved: false, reason: 'That file has unsaved edits in the editor; save or close it first. Nothing was written.' }; }
+    let exists = false;
+    try { exists = (await vscode.workspace.fs.stat(target)).type === vscode.FileType.File; } catch { exists = false; }
+    if (exists) {
+        const choice = await vscode.window.showWarningMessage(`Replace ${shown}?`, { modal: true, detail: 'The existing file will be overwritten with this plan.' }, 'Replace');
+        if (choice !== 'Replace') { return { saved: false, reason: 'The existing file was kept; nothing was written.' }; }
+    }
+    const bytes = new TextEncoder().encode(markdown);
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(target, '..'));
+    await vscode.workspace.fs.writeFile(target, bytes);
+    const hash = createHash('sha256').update(bytes).digest('hex');
+    const readBack = createHash('sha256').update(await vscode.workspace.fs.readFile(target)).digest('hex');
+    if (readBack !== hash) { return { saved: false, reason: 'The saved file does not match the plan that was written; check the file before handing it off.' }; }
+    await vscode.window.showTextDocument(target, { preview: false });
+    return { saved: true, path: shown, hash };
 }
