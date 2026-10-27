@@ -2,6 +2,8 @@
 
 **Status: approved for implementation, 26 October 2026, targeting AIRK 1.5.0.** The maintainer decided every item marked **Decision**; §15 records the outcomes. Phases P0–P5 are in scope, and P6 needs separate approval. Statements about a feature describe the design. A feature is shipped only when its route's availability in the feature manifest says `implemented`.
 
+**Implementation record, 26 October 2026 (1.5.0 source on `feat/airkexplorer`).** P0–P5 were implemented as designed, with these recorded differences: on Windows the per-window named pipe relies on the user-only descriptor's credential because Node cannot set a pipe ACL (§8.5); Runnable templates are not yet exposed as MCP prompts (§8.2); UI strings are English and do not yet go through `vscode.l10n` (§11.1); plan export as `SKILL.md` is not implemented (§7.7); P6 was not started. The [1.5.0 release record](../release-1.5.0.md) lists what was verified and what remains unqualified. The rest of this document is the design as approved.
+
 **Inputs.** This document consolidates the folder's sources, which are summarized in [README.md](README.md):
 - **Controlling sources:**
   - [AIRK_Explorer_UI_Prototype.html](AIRK_Explorer_UI_Prototype.html), the primary authority for screens and interaction.
