@@ -32,6 +32,8 @@ Recent activity shows bounded job history and exact saved requests. Storage and 
 
 ## Reports and retained logs
 
+Version 1.5.9 adds `job_failed` records for failed jobs observed by the supervisor, including failures that leave their worker running. Records carry the exact project, job ID and durable safe code. Preparation and discovery codes identify their observed stage and recognized SQLite/OS or inventory cause. Unknown causes stay unspecified; raw exceptions, SQL, paths and file content are excluded. These records diagnose new failures; they cannot recover missing details from earlier generic receipts. See the [1.5.9 record](release-1.5.9.md).
+
 Logs offers Generate report, Open report, Copy report and Save report. Open/copy/save use the exact captured report, even if background observations have changed. Reports include the visible project page, cached job/configuration outcomes, recovery budgets, watcher observations and up to 128 cached native events, within a 256 KiB report bound; omissions are explicit. Paths and user/machine names are redacted by default. Reports are not uploaded.
 
 Save retained service logs exports the complete available finite native ring separately: four files of at most 1 MiB each, rather than the recent 32-record display. Invalid records are counted and omitted; rotated-away records cannot be recovered. This is a local CLI export, not an enlarged service IPC response. The equivalent terminal command is `airk service logs --runtime-dir <private-control-directory> --all --format json`; use the inspected installation's log control directory, not its executable or project data directory.

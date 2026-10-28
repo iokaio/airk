@@ -1,6 +1,8 @@
 # Coding-agent MCP setup research
 
-Current 1.5.7 source exposes one unified endpoint; see the [catalog and startup migration](unified-mcp.md). The native evidence adapter retains sixteen compatibility aliases, including airk_help. The fifteen-tool 1.3 statements below describe that historical source.
+Current 1.5.9 source exposes one unified endpoint; see the [catalog and startup migration](unified-mcp.md). The native evidence adapter retains sixteen compatibility aliases, including airk_help. The fifteen-tool 1.3 statements below describe that historical source.
+
+The [1.5.9 stdio correction](release-1.5.9.md) covers discovery, legacy initialization and a delayed-discovery fallback on independent simultaneous connections. Do not infer successful tool discovery from an initialization/connected badge alone: require `tools/list` and a successful scoped call. A model's initial claim that no tools are visible may reflect delayed client discovery; it is not a transport log. An index with blocked freshness is a separate condition from MCP tool availability. Client-private approval/deferral settings remain client-owned.
 
 Reviewed against official client documentation on **13 October 2026**. This is a dated compatibility/design matrix, not a claim of live testing every client. The unreleased 1.3.0 source exposes fifteen read-only tools. Native protocol tests exercise its real stdio lifecycle, changes and conditional reads with CLI/MCP parity. The extension registers a VS Code MCP provider and previews supported native client formats, plus connection details/guidance for Amazon Q and Windsurf/Devin. The current inventory includes bounded code facts, relationships and [remembered-evidence validation](changes.md); historical reads and checkpoints are unsupported in 1.2. Client versions, precedence and policy require live integration checks.
 

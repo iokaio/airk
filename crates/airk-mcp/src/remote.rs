@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Read-only stdio adapter: the native host supplies an authenticated direct connection.
 use rmcp::{
-    ErrorData, RoleServer, ServerHandler, ServiceExt,
+    ErrorData, RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -80,10 +80,9 @@ impl ServerHandler for Bridge {
             return Ok(crate::help::call(serde_json::Value::Object(arguments)).into());
         }
         let client = context
-            .peer
-            .peer_info()
+            .client_info()
             .map_or(airk_core::usage::ClientFamily::Unknown, |info| {
-                airk_core::usage::ClientFamily::from_label(&info.client_info.name)
+                airk_core::usage::ClientFamily::from_label(&info.name)
             });
         self.backend.client(client);
         if self.backend.uses_response_mode(&request.name) {
@@ -101,19 +100,22 @@ impl ServerHandler for Bridge {
 }
 
 pub async fn serve(backend: Arc<dyn RemoteTools>) -> anyhow::Result<()> {
-    Bridge {
+    let bridge = Bridge {
         backend,
         permits: Arc::new(tokio::sync::Semaphore::new(4)),
         response_mode: crate::response::ResponseMode::from_environment(),
-    }
-    .serve((
-        BoundedRead {
-            inner: tokio::io::stdin(),
-            line_bytes: 0,
-        },
-        tokio::io::stdout(),
-    ))
-    .await?
+    };
+    rmcp::service::serve_directly(
+        crate::lifecycle::StdioLifecycle::new(bridge),
+        (
+            BoundedRead {
+                inner: tokio::io::stdin(),
+                line_bytes: 0,
+            },
+            tokio::io::stdout(),
+        ),
+        None,
+    )
     .waiting()
     .await?;
     Ok(())
@@ -158,6 +160,7 @@ impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for BoundedRead<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmcp::ServiceExt;
     use tokio::io::AsyncReadExt;
 
     struct Echo;

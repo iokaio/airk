@@ -311,7 +311,12 @@ fn execute(
             Duration::from_secs(30),
         );
     }
-    let selected = kernel.refresh_service_snapshot()?;
+    let selected =
+        kernel
+            .refresh_service_snapshot()
+            .context(airk_kernel::diagnostics::IndexFailureStage(
+                "select_snapshot",
+            ))?;
     let kernel = &selected;
     match kind {
         JobKind::Index | JobKind::Reconcile => {
@@ -797,7 +802,7 @@ pub async fn run() -> Result<()> {
                             } else if job.kind == JobKind::Configure {
                                 "configuration_failed_reinspect"
                             } else {
-                                let cause = airk_store::diagnostics::failure_code(&error);
+                                let cause = airk_kernel::diagnostics::indexing_failure_code(&error);
                                 return JobOutcome::Failed {
                                     code: match error
                                         .downcast_ref::<airk_kernel::current::RecoveryFailure>()

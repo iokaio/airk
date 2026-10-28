@@ -5,7 +5,7 @@ use airk_core::SearchQuery;
 use airk_core::usage::{ClientFamily, ResponseRepresentation, UsageOperation};
 use airk_kernel::{FactQuery, Kernel};
 use rmcp::{
-    ServerHandler, ServiceExt,
+    ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, ContentBlock, ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router,
@@ -13,6 +13,7 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 
 mod execution;
+mod lifecycle;
 pub mod response;
 use response::ResponseArgs;
 pub mod help;
@@ -958,7 +959,11 @@ impl ServerHandler for AirkServer {
 pub async fn serve(kernel: Kernel) -> anyhow::Result<()> {
     let server = AirkServer::new(kernel);
     let admission = server.admission.clone();
-    let service = server.serve(rmcp::transport::stdio()).await?;
+    let service = rmcp::service::serve_directly(
+        lifecycle::StdioLifecycle::new(server),
+        rmcp::transport::stdio(),
+        None,
+    );
     let result = service.waiting().await;
     admission.shutdown().await;
     result?;

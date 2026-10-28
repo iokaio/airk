@@ -1534,6 +1534,21 @@ impl Supervisor {
                                         .is_some_and(|grant| grant.id == finished)
                                     && let Some(identity) = worker.identity
                                 {
+                                    // A job can fail while its worker remains healthy.
+                                    // Preserve its exact durable result before releasing
+                                    // the grant; process-exit logs alone miss this case.
+                                    if let Some(grant) = resources.running(*project)
+                                        && let Some(registry) = registry.as_ref()
+                                        && let Ok(job) = registry.job(grant.job)
+                                        && job.project == *project
+                                        && let Some(airk_core::service::JobOutcome::Failed { code }) = &job.outcome
+                                    {
+                                        log.record_code(
+                                            airk_core::service_logs::LogKind::JobFailed,
+                                            Some(*project), Some(job.id),
+                                            Some(code),
+                                        );
+                                    }
                                     let _ = resources.finished(identity, finished);
                                 }
                             }

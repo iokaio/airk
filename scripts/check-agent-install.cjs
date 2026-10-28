@@ -11,6 +11,27 @@ const root=path.resolve(__dirname,'..');
 const [editor,vsix,previousVsix]=process.argv.slice(2).map(value=>path.resolve(value));
 if(!editor||!vsix)throw new Error('Expected Code.exe and the local VSIX path.');
 const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;delete env.VSCODE_IPC_HOOK_CLI;
+async function removeFixtureTerminalPath(storage){
+    if(process.platform!=='win32')return;
+    // The real installer adds its command to the account PATH even in a private
+    // editor profile. Remove only this run's exact entry, preserving other edits.
+    const directory=path.join(storage,'service-cli','bin').replaceAll("'","''");
+    const script=`$ErrorActionPreference='Stop'
+$airkFixtureBin='${directory}'
+$airkKey=[Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment',$true)
+if($null -ne $airkKey){try{
+ $airkValue=$airkKey.GetValue('Path',$null,[Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+ if($null -ne $airkValue){
+  $airkParts=@(([string]$airkValue).Split(';') | Where-Object { -not [string]::Equals($_.Trim().Trim('"').TrimEnd('\\','/'),$airkFixtureBin,[StringComparison]::OrdinalIgnoreCase) })
+  $airkNext=$airkParts -join ';'
+  if($airkNext -cne [string]$airkValue){$airkKey.SetValue('Path',$airkNext,$airkKey.GetValueKind('Path'))}
+ }
+}finally{$airkKey.Dispose()}}
+`;
+    await execute(path.join(process.env.SystemRoot||'C:\\Windows','System32/WindowsPowerShell/v1.0/powershell.exe'),
+        ['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],
+        {windowsHide:true,env,timeout:15000,maxBuffer:1024*1024});
+}
 async function main(){
     const candidate=JSON.parse(await fs.readFile(path.join(path.dirname(vsix),'manifest.json'),'utf8')),version=candidate.version;
     const previousVersion=previousVsix?JSON.parse(await fs.readFile(path.join(path.dirname(previousVsix),'manifest.json'),'utf8')).version:null;
@@ -169,6 +190,8 @@ exports.activate=()=>{let reloading=false;void (async()=>{
         const launcher=path.join(install,process.platform==='win32'?'airk-launcher.exe':'airk-launcher');
         try{await execute(launcher,['service','shutdown','--runtime-dir',path.join(install,'control')],{windowsHide:true,env,timeout:30000});}
         catch(error){await fs.writeFile(path.join(run,'shutdown-error.json'),JSON.stringify({error:String(error)}));}
+        try{await removeFixtureTerminalPath(storage);}
+        catch(error){failure??=error;}
     }
     if(failure)throw failure;
 }

@@ -465,7 +465,7 @@ export function LogsScreen(props: ScreenProps) {
                     <p class="muted">{view.processLogStatus}{!view.connected ? ' · disconnected; retained observations only' : ''}</p>
                     {view.processEvents.length ? <ol class="log" tabIndex={0} aria-label="Recent service events">{view.processEvents.map((event, index) => <li key={index}><code class="path">{event}</code></li>)}</ol>
                         : <p class="muted">No service events are present in this observation. This does not prove the service has never logged an event.</p>}
-                    <p class="muted">Up to 32 recent process events are shown. Open service logs writes the bounded native log page to the AIRK Service output channel; Show extension output opens AIRK’s separate extension output channel.</p>
+                    <p class="muted">Up to 32 recent service and job events are shown, including available job IDs and failure reasons. Open service logs writes this bounded native log page to AIRK Service output. Save retained service logs exports the full available history.</p>
                 </article>
                 <article class="card">
                     <h2>Diagnostic report</h2>

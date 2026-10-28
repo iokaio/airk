@@ -1,6 +1,8 @@
 # MCP tools
 
-AIRK uses the official Rust SDK and [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports). The SDK negotiates protocol revisions and validates calls. Stdout contains only protocol messages during MCP operation; diagnostics use stderr.
+AIRK uses the official Rust SDK and [stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports). Its stdio lifecycle adapter keeps protocol negotiation per connection; the SDK retains framing, cancellation and request dispatch. Stdout contains only protocol messages during MCP operation; diagnostics use stderr.
+
+Version 1.5.9 corrects discovery followed by a timed-out client's legacy fallback. After a successful `initialize`, requests may use that connection's negotiated version/capabilities without modern per-request metadata, even if `server/discover` was received first or replies late. Discovery never changes an initialized session. Modern connections still require valid version/capability metadata on every request; explicitly malformed or unsupported metadata is rejected. A reconnect negotiates afresh. Client names do not select protocol behavior. See the [compatibility regression and limits](release-1.5.9.md).
 
 Each launch fixes an explicit allowlist of registered project bindings, with a single-project default when configured. Tools cannot register projects or escape that scope, index source, run commands, remove collections or access another collection. Use CLI/extension operations for setup, indexing and maintenance.
 

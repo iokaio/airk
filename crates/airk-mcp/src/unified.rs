@@ -86,15 +86,21 @@ pub fn tools() -> Vec<Tool> {
             scoped(tool)
         });
     }
-    let variants: Vec<Value> = ["navigation", "review", "management"].iter().map(|kind| {
-        let old = format!("airk_explorer_suggest_{kind}");
-        let tool = legacy.iter().find(|t| t.name == old).unwrap();
-        let mut schema = json!({"properties":{"kind":{"const":kind},"draft":tool.input_schema},"required":["kind","draft"]});
-        public_text(&mut schema);
-        schema
-    }).collect();
+    let variants: Vec<Value> = ["navigation", "review", "management"]
+        .iter()
+        .map(|kind| {
+            let old = format!("airk_explorer_suggest_{kind}");
+            let tool = legacy.iter().find(|t| t.name == old).unwrap();
+            let mut schema = Value::Object((*tool.input_schema).clone());
+            schema["title"] = json!(format!("Draft for kind={kind}"));
+            public_text(&mut schema);
+            schema
+        })
+        .collect();
     result.push(scoped(definition("suggest_view", "Queue a suggestion to open or prefill an Explorer screen, including Review and Management guidance. Returns a proposal receipt; the user applies it. Never runs a query, test or management action.",
-        json!({"type":"object","additionalProperties":false,"properties":{"kind":{"type":"string","enum":["navigation","review","management"]},"draft":{"type":"object"}},"oneOf":variants}), false)));
+        // Some assistants reject or silently omit tools with root composition.
+        // Keep alternatives nested; the adapter validates the chosen kind again.
+        json!({"type":"object","additionalProperties":false,"required":["kind","draft"],"properties":{"kind":{"type":"string","enum":["navigation","review","management"]},"draft":{"type":"object","description":"Use the draft schema matching kind. The editor validates that exact kind before admitting a suggestion.","anyOf":variants}}}), false)));
     result.push(definition("projects", "List only the project bindings configured for this AIRK connection and its default. Use these identifiers to scope evidence and Explorer requests; does not register or switch projects.", json!({"type":"object","additionalProperties":false,"properties":{}}), true));
     let status = result.iter_mut().find(|t| t.name == "status").unwrap();
     status.description = Some("Read index availability, freshness, semantic coverage, current work and Explorer attachment for the configured project. Each component retains its observation age and failure; an unavailable editor does not make the index unavailable. Does not start indexing or repair.".into());
@@ -502,6 +508,25 @@ mod tests {
         assert!(names.iter().all(|n| !n.starts_with("airk_")));
         for tool in catalog {
             let value = serde_json::to_value(&tool).unwrap();
+            let schema = &value["inputSchema"];
+            assert_eq!(schema["type"], "object");
+            for key in ["oneOf", "anyOf", "allOf", "not", "if", "then", "else"] {
+                assert!(schema.get(key).is_none(), "{} uses root {key}", tool.name);
+            }
+            if tool.name == "suggest_view" {
+                assert_eq!(schema["required"], json!(["kind", "draft"]));
+                let variants = schema["properties"]["draft"]["anyOf"].as_array().unwrap();
+                assert_eq!(variants.len(), 3);
+                for (variant, field) in variants.iter().zip(["route", "schema_version", "intent"]) {
+                    assert_eq!(variant["additionalProperties"], false);
+                    assert!(
+                        variant["required"]
+                            .as_array()
+                            .unwrap()
+                            .contains(&json!(field))
+                    );
+                }
+            }
             let writes = tool.name.starts_with("draft_") || tool.name == "suggest_view";
             assert_eq!(
                 value["annotations"]["readOnlyHint"], !writes,

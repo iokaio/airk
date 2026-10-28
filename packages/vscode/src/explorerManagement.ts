@@ -74,6 +74,9 @@ function failureDetail(code: unknown): string {
         quota_ledger_busy: 'Storage accounting is busy in another project. AIRK waits within its recovery budget; saved evidence is preserved.',
         work_stalled: 'The worker stopped making progress. Review the wait reason and diagnostics before retrying.',
         model_setup_failed: 'Offline model preparation failed. Text indexing is still scheduled; review the model and helper diagnostics before retrying semantic setup.',
+        index_scan_sources_source_byte_limit_exceeded: 'The project reached its configured total source-byte limit. Review ingestion limits in Advanced settings before retrying. Any existing searchable index is preserved.',
+        index_scan_sources_extracted_byte_limit_exceeded: 'The project reached its configured extracted-text byte limit. Review ingestion limits in Advanced settings before retrying. Any existing searchable index is preserved.',
+        index_scan_sources_source_file_limit_exceeded: 'The project reached its configured file-count limit. Review ingestion limits in Advanced settings before retrying. Any existing searchable index is preserved.',
     };
     return typeof code === 'string' ? `${explanations[code] ?? 'Review diagnostics before retrying.'} Native reason: ${code}.` : 'No failure reason was observed.';
 }
@@ -315,7 +318,11 @@ export function managementView(state: ServiceConsoleState): ManagementView {
         pending: state.pending.map(intent => ({ id: intent.id, title: intent.title, unknown: intent.unknown, lifecycle: !!intent.lifecycle, forceAvailable: !!intent.forceAvailable })),
         events: state.events.slice(-32).reverse().map(event => `${scalar(event.kind)} · ${scalar(event.project)} · ${scalar(event.job_kind)} · ${scalar(event.code ?? event.observed_unix_ms)}`),
         processEvents: (Array.isArray(state.serviceEvents?.value?.records) ? state.serviceEvents!.value!.records : []).slice(-32).reverse().map(value => {
-            const event = obj(value); return `${scalar(event.kind)} · ${scalar(event.instance)} · ${scalar(event.project)} · ${scalar(event.observed_unix_ms)}`;
+            const event = obj(value), timestamp = bytes(event.observed_unix_ms);
+            const time = timestamp !== undefined && timestamp <= 8640000000000000 ? new Date(timestamp).toISOString() : scalar(event.observed_unix_ms);
+            return [scalar(event.kind), time, ...(event.project ? [`project ${scalar(event.project)}`] : []),
+                ...(event.job ? [`job ${scalar(event.job)}`] : []), ...(event.code ? [`reason ${scalar(event.code)}`] : []),
+                `service ${scalar(event.instance)}`].join(' · ');
         }),
         historyOmitted: state.historyOmitted,
         processLogStatus: state.serviceEvents ? observed('Process logs', state.serviceEvents)[1] : 'Not observed; refresh to request recent service events.',

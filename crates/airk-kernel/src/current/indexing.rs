@@ -600,6 +600,7 @@ impl Kernel {
         repaired_retained_artifacts: &mut usize,
         paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<airk_ingest::IndexReport> {
+        use crate::diagnostics::IndexFailureStage as Stage;
         self.require_service_sources()?;
         let execution_lease = crate::execution::acquire(&self.data_root)?;
         if full {
@@ -611,7 +612,8 @@ impl Kernel {
             phase: "scan_started",
             ..Default::default()
         });
-        self.recover_runtime_bootstrap()?;
+        self.recover_runtime_bootstrap()
+            .context(Stage("bootstrap"))?;
         let mut execution = if self.service_collection.is_some() {
             crate::limits::execution_from_grant(&execution_lease.plan)?
         } else {
@@ -623,8 +625,9 @@ impl Kernel {
             * airk_ingest::ExtractionExecution::MAX_PARALLEL_SOURCE_BYTES;
         execution.execution.validate()?;
         // Recovery takes its own writer lock, before this scan owns one.
-        if let Some(scope) = self.current_scope()? {
-            super::recover_current(&self.store, &self.collection_quota()?, &scope)?;
+        if let Some(scope) = self.current_scope().context(Stage("current_scope"))? {
+            super::recover_current(&self.store, &self.collection_quota()?, &scope)
+                .context(Stage("recover_current"))?;
         }
         let writer = self.store.lock()?;
         let quota = self.collection_quota()?;
@@ -636,9 +639,12 @@ impl Kernel {
         // input or superseded objects still needed by prior-content reuse.
         let captured_objects = writer.capture_objects();
         let mut previous = self
-            .load_optional()?
+            .load_optional()
+            .context(Stage("read_snapshot"))?
             .unwrap_or_else(|| self.empty_snapshot());
-        let configured = self.rebuild_extraction_policy()?;
+        let configured = self
+            .rebuild_extraction_policy()
+            .context(Stage("extraction_settings"))?;
         let policy = configured.policy;
         let compression = self.store.compression_mode(&self.root_id())?;
         let roots = self.configured_roots()?;
@@ -666,14 +672,18 @@ impl Kernel {
             (root_free.min(collection_free) / 2).min(MAX_INDEX_RESERVATION_BYTES),
         )?;
         let model_started = std::time::Instant::now();
-        let objects = self.configured_model_objects(false)?;
+        let objects = self
+            .configured_model_objects(false)
+            .context(Stage("model_settings"))?;
         if let Some(objects) = &objects {
-            self.retain_configured_model(objects, &reservation)?;
+            self.retain_configured_model(objects, &reservation)
+                .context(Stage("retain_model"))?;
         }
         let model = objects
             .as_ref()
             .map(|objects| self.open_configured_model(objects))
-            .transpose()?;
+            .transpose()
+            .context(Stage("open_model"))?;
         let model_load_us = u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let configuration = CollectionConfiguration {
             roots: roots.clone(),
@@ -685,11 +695,15 @@ impl Kernel {
         };
         let existing = self.current_scope()?;
         let (applied, prior_semantic_work, prior_scan_work) = if let Some(scope) = &existing {
-            let read = self.store.current_read(scope)?;
+            let read = self
+                .store
+                .current_read(scope)
+                .context(Stage("read_prior_work"))?;
             (
-                read.collection_state()?,
-                enrichment::read_work(&read, &self.store)?,
-                progress::read_work(&read, &self.store)?,
+                read.collection_state()
+                    .context(Stage("read_configuration"))?,
+                enrichment::read_work(&read, &self.store).context(Stage("read_semantic_work"))?,
+                progress::read_work(&read, &self.store).context(Stage("read_scan_work"))?,
             )
         } else {
             (None, None, None)
@@ -819,7 +833,8 @@ impl Kernel {
                 .retained
                 .as_ref()
                 .and_then(|r| r.profile.as_ref())
-                .context("prior extraction profile missing")?;
+                .context("prior extraction profile missing")
+                .context(Stage("prepare_reuse"))?;
             reusable
                 .entry((
                     artifact.content_hash.clone(),
@@ -834,7 +849,7 @@ impl Kernel {
             &self.data_root,
             &previous,
             &roots,
-            self.scan_limits()?,
+            self.scan_limits().context(Stage("scan_settings"))?,
             &policy,
             full,
             execution.execution,
@@ -928,7 +943,11 @@ impl Kernel {
         );
         let (snapshot, mut report, observation) = match scan_result {
             Ok(value) => value,
-            Err(error) => return Err(record_scan_failure(progressive.as_mut(), error)),
+            Err(error) => {
+                return Err(
+                    record_scan_failure(progressive.as_mut(), error).context(Stage("scan_sources"))
+                );
+            }
         };
         report.repaired_retained_artifacts = *repaired_retained_artifacts;
         report.path_scoped = paths.is_some();

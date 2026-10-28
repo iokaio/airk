@@ -1,5 +1,7 @@
 # Architecture
 
+The 1.5.9 MCP stdio lifecycle adapter lives in `airk-mcp`. It owns only per-connection handshake state around the pinned Rust SDK dispatcher, so a discovery probe followed by legacy initialization cannot strand tool discovery. It retains native project scope, transport bounds and modern request metadata validation. No client-name routing, editor dependency or indexing policy enters this layer; see [MCP compatibility](release-1.5.9.md).
+
 In 1.5.8, store housekeeping also settles obsolete pending maintenance requests with no live owning plan item, using bounded metadata-only transactions. Admission checks the member phase. Active/paused plans and running work remain authoritative; no obsolete approval is replayed. Cached console rows expose the owning plan/gate, and host-generated panel copies preserve bounded diagnostic identities and observation times.
 
 In 1.5.8, the extension captures its loaded version and observes its own extension metadata at activation, extension-list changes and window focus. When VS Code exposes a different installed version, the extension fences further runtime installation, withdraws new MCP definitions and renders a persistent reload action. The strict webview reload request accepts no arguments and reloads only after a user click. Accepted native jobs remain durable. Successful matching-version activation does not ask the user to choose between MCP controls and editor reload.

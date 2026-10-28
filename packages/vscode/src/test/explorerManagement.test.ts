@@ -5,6 +5,28 @@ import { managementView, panelDetails } from '../explorerManagement';
 import { ServiceConsoleState } from '../serviceConsoleView';
 
 const project = '12'.repeat(32), job = '34'.repeat(32), pending = '56'.repeat(32), plan = '78'.repeat(32), intent = '9a'.repeat(16);
+test('service events retain the failed job and reason in displayed and copied details',()=>{
+    const code='index_current_scope_metadata_incomplete';
+    const current=state({serviceEvents:{state:'live',checkedAt:1,value:{records:[
+        {kind:'job_failed',instance:'ab'.repeat(16),project,job,code,observed_unix_ms:1000},
+    ]}}});
+    const view=managementView(current),event=view.processEvents[0];
+    assert.ok(event.includes(job));assert.ok(event.includes(code));assert.ok(event.includes(project));
+    assert.match(event,/1970-01-01T00:00:01.000Z/);
+    const copy=panelDetails(view,'service','1.5.9');
+    assert.ok(copy.includes(job));assert.ok(copy.includes(code));
+});
+test('configured ingestion limits explain the restriction and preserve the native reason',()=>{
+    for(const [suffix,explanation] of [['source_byte_limit_exceeded','total source-byte'],['extracted_byte_limit_exceeded','extracted-text byte'],['source_file_limit_exceeded','file-count']]){
+        const current=state(),row=current.page!.projects[0] as any;
+        const code=`index_scan_sources_${suffix}`;
+        row.progress.job={id:job,kind:'reconcile',state:'failed',outcome:{state:'failed',code}};
+        delete row.pending_job;
+        const health=managementView(current).projects[0].health;
+        assert.equal(health.title,'Job failed');assert.ok(health.detail.includes(explanation));
+        assert.ok(health.detail.includes(code));assert.match(health.detail,/Any existing searchable index is preserved/);
+    }
+});
 test('queued repair is distinct from a finished recovery sample',()=>{
     const current=state(),entry=current.page!.projects[0];
     (entry.progress as any).job={id:job,kind:'recover',state:'succeeded'};

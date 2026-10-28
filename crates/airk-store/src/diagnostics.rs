@@ -4,18 +4,27 @@ pub fn failure_code(error: &anyhow::Error) -> Option<String> {
     if error.is::<crate::quota::QuotaContention>() {
         return Some("quota_ledger_busy".into());
     }
-    if let Some(rusqlite::Error::SqliteFailure(code, _)) = error.downcast_ref::<rusqlite::Error>() {
+    if let Some(rusqlite::Error::SqliteFailure(code, _)) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<rusqlite::Error>())
+    {
         return Some(format!(
             "sqlite_error_{}",
             code.extended_code.unsigned_abs()
         ));
     }
-    let io = error.downcast_ref::<std::io::Error>().or_else(|| {
-        match error.downcast_ref::<std::fs::TryLockError>() {
-            Some(std::fs::TryLockError::Error(io)) => Some(io),
-            _ => None,
-        }
-    });
+    let io = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+        .or_else(|| {
+            match error
+                .chain()
+                .find_map(|cause| cause.downcast_ref::<std::fs::TryLockError>())
+            {
+                Some(std::fs::TryLockError::Error(io)) => Some(io),
+                _ => None,
+            }
+        });
     if let Some(io) = io {
         return Some(if let Some(code) = io.raw_os_error() {
             format!("filesystem_error_{}", code.unsigned_abs())
@@ -31,12 +40,17 @@ pub fn failure_code(error: &anyhow::Error) -> Option<String> {
         });
     }
     if matches!(
-        error.downcast_ref::<std::fs::TryLockError>(),
+        error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<std::fs::TryLockError>()),
         Some(std::fs::TryLockError::WouldBlock)
     ) {
         return Some("native_lock_busy".into());
     }
-    if let Some(error) = error.downcast_ref::<serde_json::Error>() {
+    if let Some(error) = error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<serde_json::Error>())
+    {
         return Some(
             match error.classify() {
                 serde_json::error::Category::Io => "metadata_read_failed",
@@ -52,6 +66,27 @@ pub fn failure_code(error: &anyhow::Error) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[derive(Debug)]
+    struct Wrapped(std::io::Error);
+    impl std::fmt::Display for Wrapped {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("private source path")
+        }
+    }
+    impl std::error::Error for Wrapped {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+    #[test]
+    fn nested_native_cause_survives_a_typed_outer_error() {
+        let error = anyhow::Error::new(Wrapped(std::io::Error::from_raw_os_error(32)))
+            .context("private operation context");
+        assert_eq!(
+            super::failure_code(&error),
+            Some("filesystem_error_32".into())
+        );
+    }
     #[test]
     fn cause_codes_preserve_native_codes_without_paths_sql_or_exception_text() {
         let sql: anyhow::Error = rusqlite::Error::SqliteFailure(

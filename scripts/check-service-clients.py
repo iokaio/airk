@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise an exact native service pair in private, disposable project scopes."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 import errno
 import hashlib
@@ -410,12 +411,13 @@ class Fixture:
                                       "retry", prepared["prepared"]).stdout)
         return self.wait(receipt, expected)
 
-    def stdio(self, name):
+    def stdio(self, name, lifecycle="initialize", client="airk-native-check"):
         child = subprocess.Popen([str(self.binary), *self.arguments(name), "mcp"], cwd=self.runtime,
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  text=True, encoding="utf-8", env=self.environment,
                                  creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         responses = queue.Queue()
+        pending = {}
         threading.Thread(target=lambda: [responses.put(line) for line in child.stdout], daemon=True).start()
         def send(value):
             child.stdin.write(json.dumps(value) + "\n")
@@ -423,32 +425,56 @@ class Fixture:
         def receive(identifier, deadline=None):
             deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 60)
             for _ in range(16):
+                if identifier in pending:
+                    return pending.pop(identifier)
                 value = json.loads(responses.get(timeout=remaining(deadline, 60)))
+                assert "error" not in value, "Native stdio protocol error: " + json.dumps(value.get("error"))
                 if value.get("id") == identifier:
-                    assert "error" not in value, "Native stdio protocol error"
                     return value
+                pending[value["id"]] = value
             raise AssertionError("Matching stdio response missing")
         try:
-            send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "airk-native-check", "version": "1"}}})
-            initialized = receive(1)["result"]
-            assert initialized["serverInfo"]["name"] == "airk" and "response_mode=full" in initialized["instructions"]
-            send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-            send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+            assert lifecycle in ("initialize", "fallback", "inline")
+            meta = {"io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": {"name": client, "version": "fixture"}}
+            if lifecycle != "initialize":
+                send({"jsonrpc": "2.0", "id": 0, "method": "server/discover", "params": {"_meta": meta}})
+            if lifecycle != "inline":
+                # Deliberately pipeline a timed-out probe's fallback before reading
+                # discovery. 1.5.8 initialized successfully then rejected tools/list.
+                send({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                    "protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": client, "version": "1"}}})
+                initialized = receive(1)["result"]
+                assert initialized["serverInfo"]["name"] == "airk" and "response_mode=full" in initialized["instructions"]
+                send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+            if lifecycle != "initialize":
+                discovered = receive(0)["result"]
+                assert "2026-07-28" in discovered["supportedVersions"]
+            params = {"_meta": meta} if lifecycle == "inline" else {}
+            send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": params})
             catalog = receive(2)["result"]["tools"]
             public = {name.removeprefix("airk_") for name in TOOLS} | {
                 "projects", "draft_search", "draft_strategy", "draft_plan", "suggest_view",
                 "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
             assert len(catalog) == len(public) and {item["name"] for item in catalog} == public
+            assert all(not any(key in item["inputSchema"] for key in
+                               ("oneOf", "anyOf", "allOf", "not", "if", "then", "else"))
+                       for item in catalog), "Assistant-facing tool schemas must use plain object roots"
             drafts = {"draft_search", "draft_strategy", "draft_plan", "suggest_view"}
             assert all(item["annotations"]["readOnlyHint"] == (item["name"] not in drafts) for item in catalog)
             request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-                "name": "search", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}}
+                **params, "name": "search", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}}
             def read(until):
                 send(request)
                 return receive(3, until)["result"]
             result, _ = read_envelope(read, time.monotonic() + 60)
             assert json.loads(result["content"][0]["text"])["hits"]
+            send({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+                **params, "name": "projects", "arguments": {}}})
+            scopes = tool_value(receive(4)["result"])
+            assert scopes["default_project"] == self.projects[name]["binding"]
+            assert len(scopes["projects"]) == 1
             return len(catalog)
         finally:
             child.stdin.close()
@@ -457,6 +483,53 @@ class Fixture:
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait(timeout=15)
+
+
+def mixed_mcp_clients(fixture, project):
+    """Actual native processes, not claims about proprietary assistant UI testing."""
+    modes = [("initialize", "codex"), ("fallback", "claude-code"), ("inline", "github-copilot")]
+    # Reconnect all three with the same saved project, without setup or indexing.
+    for _ in range(2):
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            checks = [pool.submit(fixture.stdio, project, lifecycle, client) for lifecycle, client in modes]
+            assert all(check.result() == 26 for check in checks)
+    return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": 26,
+            "lifecycles": [mode for mode, _ in modes], "reconnect": True, "same_project_reads": True}
+
+
+def retained_job_failure(fixture, project):
+    """Break only this disposable fixture's derived metadata, then restore exact bytes."""
+    data = (fixture.owner / "data").resolve(strict=True)
+    assert data.is_relative_to(fixture.owner), "Diagnostic fixture escaped its private owner"
+    # Native Windows registrations use extended paths; samefile verifies identity
+    # without treating the \\?\ spelling as a different parent directory.
+    assert data.samefile(fixture.projects[project]["data_root"])
+    owners = [path for path in data.rglob("current-owner.json")
+              if json.loads(path.read_bytes())["scope"]["collection"] == project]
+    assert len(owners) == 1, owners
+    owner = owners[0]
+    assert owner.resolve(strict=True).is_relative_to(fixture.owner)
+    original = owner.read_bytes()
+    try:
+        owner.write_bytes(b"{")
+        failed = fixture.wait(fixture.enqueue(project, "index"), expected="failed")
+        code = failed["outcome"]["code"]
+        assert code.startswith("index_") and code.endswith("metadata_incomplete"), failed
+        deadline = time.monotonic() + 30
+        while True:
+            page = fixture.rpc({"logs": {"limit": 32}}, deadline=deadline)["page"]
+            matching = [record for record in page["records"]
+                        if record["kind"] == "job_failed" and record["job"] == failed["id"]]
+            if matching:
+                assert len(matching) == 1 and matching[0]["code"] == code, matching
+                assert matching[0]["project"] == fixture.projects[project]["binding"]
+                break
+            assert time.monotonic() < deadline, "Failed job never reached the retained service log"
+            time.sleep(0.05)
+    finally:
+        owner.write_bytes(original)
+    fixture.job(project, "index")
+    return {"receipt_and_log_match": True, "code": code, "metadata_restored": True}
 
 
 def automatic_orphan_recovery(fixture, root):
@@ -528,6 +601,7 @@ def qualify(runtime, files, model):
             full = fixture.tool("project-a", "airk_outline", {"path": "fixture_0.py", "response_mode": "full", "compact": False})
             assert terse["items"][0]["name"] == full["items"][0]["name"] == "polar_fixture_0"
             mcp_tools = fixture.stdio("project-a")
+            mcp_lifecycles = mixed_mcp_clients(fixture, "project-a")
             offline = owner / "temporarily-offline"
             roots[0].rename(offline)
             try:
@@ -551,6 +625,7 @@ def qualify(runtime, files, model):
                 offline.rename(roots[0])
             recovered = fixture.wait(interrupted)
             assert recovered["id"] == interrupted["job"]["id"] and recovered["attempts"] == 2, recovered
+            failure_diagnostics = retained_job_failure(fixture, "project-a")
             if model:
                 fixture.job("project-a", "setup-model")
                 fixture.job("project-a", "index")
@@ -571,6 +646,8 @@ def qualify(runtime, files, model):
                       "runtime_manifest_sha256": hashlib.sha256((runtime / "airk-install.json").read_bytes()).hexdigest(),
                       "projects": 2, "files_per_project": files, "tools": len(TOOLS), "mcp_tools": mcp_tools, "model_checked": model, "missing_source_recovered_same_job": True,
                       "obsolete_request_automatically_published": automatic_healed,
+                      "mcp_lifecycles": mcp_lifecycles,
+                      "failure_diagnostics": failure_diagnostics,
                       "terse_bytes": len(json.dumps(terse).encode()), "full_bytes": len(json.dumps(full).encode()),
                       "elapsed_seconds": round(time.monotonic() - started, 3), "source_bytes_preserved": True}
         finally:

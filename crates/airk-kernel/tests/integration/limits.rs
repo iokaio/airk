@@ -117,7 +117,13 @@ fn large_text_retains_exact_source_reports_partial_and_preserves_revision_on_cap
         corpus_bytes: text.len() - 1,
         ..kernel.scan_limits()?
     })?;
-    let error = kernel.index().unwrap_err().to_string();
+    let error = kernel.index().unwrap_err();
+    assert_eq!(
+        airk_kernel::diagnostics::indexing_failure_code(&error).as_deref(),
+        Some("index_scan_sources_source_byte_limit_exceeded")
+    );
+    // Stage context must preserve the original actionable capacity explanation.
+    let error = format!("{error:#}");
     assert!(
         error.contains("eligible source bytes at large.ts"),
         "{error}"
