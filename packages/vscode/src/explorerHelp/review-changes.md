@@ -16,7 +16,7 @@ For every changed file it shows the change kind, whether AIRK has indexed it, an
 
 1. Open Review › Changes; it reads Git and AIRK when the screen opens.
 2. Choose **Refresh** after saving or staging more changes.
-3. Index the project (Management › Projects › Index now) if changed files differ from the index, then refresh.
+3. Index the project (Management › Index now) if changed files differ from the index, then refresh.
 
 AIRK keeps no history: Git supplies the changes and AIRK describes the current publication only. Each page shows at most 50 changed files, with **Previous**, **Next**, a total count and page position. There is no 50-file total cutoff. Continuation checks the Git change-list identity and publication; if either changes, choose **Refresh** to start a new report rather than mixing pages from different observations.
 

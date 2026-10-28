@@ -8,23 +8,16 @@ related_airk_help: agent-setup, mcp
 ---
 # Agent connections
 
-Management › Agents connects coding agents to AIRK Retrieval, the 16 read-only tools scoped to one project, and Explorer Assistance, the separate 14-tool help and UX connection.
+Open this section from the tabs across the top of Management. Everyday controls remain in the Indexing tab: Search mode, Updates and Evidence detail.
+
+Management > Agents connects coding agents to one AIRK MCP server for evidence, help and reviewed Explorer drafts.
 
 ## Steps
 
-1. **Connect a coding agent…** picks the agent and writes or shows its configuration.
-2. Check the guide's two labeled connections. Supported new project configurations include both. Existing recognized Retrieval-only project configurations gain Assistance during Install or Repair CLI; the Codex guide can update an existing recognized entry explicitly. Custom conflicts, disabled settings and unsaved editor files are preserved.
-3. **Check AIRK MCP connection** starts the Retrieval launcher and lists its tools. **Check Explorer Assistance** verifies its launcher, bundled version, tool inventory and help answer separately.
-4. Restart the agent session so it loads both connections. Send the separate verification prompts in that agent; a helper check does not establish that the agent loaded its config.
+1. Choose **Connect a coding agent…** and the project that agent should query.
+2. Review the single airk connection. New project configurations use it; trusted startup consolidates recognized earlier Retrieval and Explorer entries in supported project files. Other servers and disabled state are preserved. Custom conflicts and unsaved files require review.
+3. **Check AIRK MCP connection** verifies the launcher and unified tool catalog. Restart the coding agent and complete its own trust and renamed-tool approvals.
+4. Ask the agent to use status and capabilities, then search for a known phrase and cite its publication and source. status.explorer reports UI attachment separately.
+5. In multi-root workspaces, projects lists the connection's configured bindings. Pass project explicitly; changing the UI dropdown does not redirect retrieval.
 
-Read Work with an AI agent for template discovery, side-effect-free validation, proposal status, navigation and shared handoffs. Assistance attaches to the trusted window containing the agent's working directory; inspect its current project/binding before proposing work in a multi-root workspace.
-
-## Limits
-
-Helper verification proves the launcher works. Whether an agent loaded it is checked in that agent.
-
-## Terse or Full responses
-
-**Terse** is the default for routine searches and navigation. It keeps focused evidence and citations while omitting repeated metadata, so more of the agent's context budget remains for its task. **Full** adds detailed provenance, readiness and coverage information for missing or surprising results, freshness problems, parser limitations and evidence audits. Full produces larger responses; it does not make the index more complete.
-
-An agent can request response_mode: full for one call. Reconnect its MCP session after changing the default.
+User-wide and client-private configuration/approval stores require that client's controls. A manual recognized VS Code configuration owns its policies; the extension does not register a duplicate connection. Read Work with an AI agent for draft validation, templates, proposals and shared snapshots.

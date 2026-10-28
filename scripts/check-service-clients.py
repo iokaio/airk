@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Exercise an exact native service pair in private, disposable project scopes."""
 import argparse
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import queue
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -435,15 +436,20 @@ class Fixture:
             send({"jsonrpc": "2.0", "method": "notifications/initialized"})
             send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
             catalog = receive(2)["result"]["tools"]
-            assert len(catalog) == len(TOOLS) and {item["name"] for item in catalog} == TOOLS
-            assert all(item["annotations"]["readOnlyHint"] for item in catalog)
+            public = {name.removeprefix("airk_") for name in TOOLS} | {
+                "projects", "draft_search", "draft_strategy", "draft_plan", "suggest_view",
+                "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
+            assert len(catalog) == len(public) and {item["name"] for item in catalog} == public
+            drafts = {"draft_search", "draft_strategy", "draft_plan", "suggest_view"}
+            assert all(item["annotations"]["readOnlyHint"] == (item["name"] not in drafts) for item in catalog)
             request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-                "name": "airk_search", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}}
+                "name": "search", "arguments": {"query": "polaronlymarker", "mode": "lexical", "response_mode": "full"}}}
             def read(until):
                 send(request)
                 return receive(3, until)["result"]
             result, _ = read_envelope(read, time.monotonic() + 60)
             assert json.loads(result["content"][0]["text"])["hits"]
+            return len(catalog)
         finally:
             child.stdin.close()
             try:
@@ -451,6 +457,40 @@ class Fixture:
             except subprocess.TimeoutExpired:
                 child.kill()
                 child.wait(timeout=15)
+
+
+def automatic_orphan_recovery(fixture, root):
+    """Inject one obsolete job only into this campaign's disposable registry, then require automatic publication."""
+    project = fixture.projects["project-a"]["binding"]
+    before = fixture.published_status("project-a")["publication"]["token"]
+    fixture.rpc({"pause": {"project": project, "paused": True}})
+    changed = root / "automatic_heal.py"
+    changed.write_text("def restored_after_obsolete_request():\n    return 1578\n", encoding="utf-8")
+    registry = (fixture.control / "service-1.4.sqlite3").resolve(strict=True)
+    assert registry.is_relative_to(fixture.owner), "Fixture registry escaped its private owner"
+    job = hashlib.sha256(b"original-obsolete-maintenance-request").hexdigest()
+    with closing(sqlite3.connect(registry, timeout=10)) as connection:
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("INSERT INTO service_jobs(id,project,kind,state,epoch,attempts) VALUES(?,?,'repair','pending',0,0)", (job, project))
+        connection.commit()
+    fixture.rpc({"configure_watch": {"project": project, "enabled": True}})
+    # Resume normal automatic policy. Do not submit an index, repair, recovery plan or approval.
+    fixture.rpc({"pause": {"project": project, "paused": False}})
+    settled = fixture.wait({"job": {"id": job}}, expected="failed")
+    assert settled["outcome"] == {"state": "failed", "code": "maintenance_request_obsolete"}, settled
+    deadline = time.monotonic() + 120
+    while True:
+        status = fixture.published_status("project-a", deadline)
+        freshness = status.get("freshness", {})
+        if (status["publication"]["token"] != before and freshness.get("state") == "idle"
+                and freshness.get("completed_watermark", 0) >= freshness.get("requested_watermark", 1)):
+            break
+        assert time.monotonic() < deadline, "Automatic source work did not publish after obsolete request settlement"
+        time.sleep(0.1)
+    result = fixture.tool("project-a", "airk_read_file", {"path": changed.name, "start_line": 1, "end_line": 2, "response_mode": "full"})
+    assert "restored_after_obsolete_request" in result["hits"][0]["text"]
+    assert changed.read_text(encoding="utf-8") == "def restored_after_obsolete_request():\n    return 1578\n"
+    return True
 
 
 def qualify(runtime, files, model):
@@ -487,16 +527,30 @@ def qualify(runtime, files, model):
             terse = fixture.tool("project-a", "airk_outline", {"path": "fixture_0.py", "response_mode": "terse"})
             full = fixture.tool("project-a", "airk_outline", {"path": "fixture_0.py", "response_mode": "full", "compact": False})
             assert terse["items"][0]["name"] == full["items"][0]["name"] == "polar_fixture_0"
-            fixture.stdio("project-a")
+            mcp_tools = fixture.stdio("project-a")
             offline = owner / "temporarily-offline"
             roots[0].rename(offline)
             try:
                 retained = fixture.tool("project-a", "airk_read_file", {"path": "fixture_0.py", "start_line": 1, "end_line": 2, "response_mode": "full"})
                 assert "polar_fixture_0" in retained["hits"][0]["text"]
-                rejected = fixture.job("project-a", "index", expected="failed")
-                assert rejected["outcome"]["code"] == "source_unavailable"
+                interrupted = fixture.enqueue("project-a", "index")
+                deadline = time.monotonic() + 30
+                while True:
+                    page = fixture.rpc({"console": {"after": None, "revision": None, "limit": 32}}, deadline=deadline)["page"]
+                    row = next(project for project in page["projects"]
+                               if project["project"]["registration"]["binding"] == fixture.projects["project-a"]["binding"])
+                    if any(recovery["job"] == interrupted["job"]["id"]
+                           and recovery["reason"] == "source_unavailable" and recovery["state"] == "waiting"
+                           for recovery in row.get("recovery", [])):
+                        observed = fixture.rpc({"job": {"id": interrupted["job"]["id"]}}, deadline=deadline)["job"]
+                        assert observed["state"] == "pending" and observed["attempts"] == 1 and observed["outcome"] is None, observed
+                        break
+                    assert time.monotonic() < deadline, "Missing source did not enter typed recovery"
+                    time.sleep(0.05)
             finally:
                 offline.rename(roots[0])
+            recovered = fixture.wait(interrupted)
+            assert recovered["id"] == interrupted["job"]["id"] and recovered["attempts"] == 2, recovered
             if model:
                 fixture.job("project-a", "setup-model")
                 fixture.job("project-a", "index")
@@ -511,10 +565,12 @@ def qualify(runtime, files, model):
                     time.sleep(0.1)
                 vector = fixture.tool("project-a", "airk_search", {"query": "polar fixture", "mode": "vector", "response_mode": "full"})
                 assert vector["hits"]
+            automatic_healed = automatic_orphan_recovery(fixture, roots[0])
             assert all(hashlib.sha256(path.read_bytes()).hexdigest() == expected for path, expected in original.items())
             report = {"schema": 1, "version": json.loads((runtime / "airk-runtime.json").read_text(encoding="utf-8"))["version"],
                       "runtime_manifest_sha256": hashlib.sha256((runtime / "airk-install.json").read_bytes()).hexdigest(),
-                      "projects": 2, "files_per_project": files, "tools": len(TOOLS), "model_checked": model,
+                      "projects": 2, "files_per_project": files, "tools": len(TOOLS), "mcp_tools": mcp_tools, "model_checked": model, "missing_source_recovered_same_job": True,
+                      "obsolete_request_automatically_published": automatic_healed,
                       "terse_bytes": len(json.dumps(terse).encode()), "full_bytes": len(json.dumps(full).encode()),
                       "elapsed_seconds": round(time.monotonic() - started, 3), "source_bytes_preserved": True}
         finally:

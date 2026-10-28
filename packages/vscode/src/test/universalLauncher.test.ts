@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { parse } from 'jsonc-parser';
 import { migrateAgentConfig } from '../agentMigration';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
-import { assistanceEntry, launchArgs, LaunchSpec, retrievalEntry, serializeServers } from '../model';
+import { assistanceEntry, launchArgs, LaunchSpec, retrievalEntry, unifiedEntry, serializeServers } from '../model';
 import { probeMcp } from '../native';
 import { NativeServiceFixture } from './nativeServiceFixture';
 
@@ -30,11 +30,11 @@ test('the universal launcher keeps every versioned install path out of agent ent
     }
 });
 
-test('migration moves this installation\'s per-install launcher entries to the universal launcher, for both connections', () => {
+test('migration moves this installation\'s per-install launcher entries to the universal launcher, and consolidates the former connections', () => {
     const before = serializeServers('claude', [retrievalEntry(installSpec), assistanceEntry(installSpec, launchDescriptorPath(storage))!]);
     const after = parse(migrateAgentConfig('claude', universalSpec, storage, before)).mcpServers;
-    assert.deepEqual(after['airk-project-fixture'], { command: universal, args: launchArgs(universalSpec) });
-    assert.deepEqual(after.airk_explorer, { command: universal, args: ['explorer-assistance', '--descriptor', launchDescriptorPath(storage)] });
+    assert.deepEqual(Object.keys(after),['airk']);
+    assert.deepEqual(after.airk, { command: universal, args: [...unifiedEntry(universalSpec,launchDescriptorPath(storage)).args] });
 
     const toml = serializeServers('codex', [retrievalEntry(installSpec), assistanceEntry(installSpec, launchDescriptorPath(storage))!]);
     const migrated = migrateAgentConfig('codex', universalSpec, storage, toml);
@@ -44,7 +44,7 @@ test('migration moves this installation\'s per-install launcher entries to the u
     const foreign = JSON.stringify({ mcpServers: { airk_explorer: { command: path.resolve('elsewhere', 'node'), args: ['server.js'] } } });
     assert.equal(migrateAgentConfig('claude', universalSpec, storage, foreign), foreign, 'an Assistance entry this extension did not write is left alone');
     const otherInstall = serializeServers('claude', [retrievalEntry({ ...installSpec, command: path.resolve('other', 'airk-launcher'), service: { installDir: path.resolve('other'), project } })]);
-    assert.throws(() => migrateAgentConfig('claude', universalSpec, storage, otherInstall), /Unrecognized AIRK connection/, 'another installation\'s launcher is never adopted');
+    assert.throws(() => migrateAgentConfig('claude', universalSpec, storage, otherInstall), /Unrecognized/, 'another installation\'s launcher is never adopted');
 });
 
 test('a real universal launcher reads its pointer on every launch and forwards to the installation\'s launcher', { skip: !process.env.AIRK_TEST_BINARY, timeout: 300000 }, async () => {
@@ -60,11 +60,11 @@ test('a real universal launcher reads its pointer on every launch and forwards t
         const pointer = (install: string) => fs.writeFileSync(path.join(launcherDir, 'airk-launcher.json'), JSON.stringify({ schema: 1, install, launcher_sha256: sha }), { mode: 0o600 });
         pointer(spec.service!.installDir);
         const universalCall: LaunchSpec = { ...spec, command: executable, service: { ...spec.service!, universal: true } };
-        assert.equal((await probeMcp(universalCall)).tools.length, 16, 'the universal launcher reaches the installed service');
+        assert.equal((await probeMcp(universalCall)).tools.length, 26, 'the universal launcher reaches the installed service');
         pointer(path.join(directory, 'missing-install'));
         await assert.rejects(probeMcp(universalCall), 'a pointer to a missing installation fails instead of guessing');
         pointer(spec.service!.installDir);
-        assert.equal((await probeMcp(universalCall)).tools.length, 16, 'the next launch follows the rewritten pointer');
+        assert.equal((await probeMcp(universalCall)).tools.length, 26, 'the next launch follows the rewritten pointer');
     } finally {
         // Closing a probe signals its child asynchronously. Windows may still
         // hold the copied executable briefly; always drain the owned fixture,

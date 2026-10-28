@@ -8,7 +8,7 @@ related_airk_help: freshness, workflows
 ---
 # Changes since a publication
 
-Evidence › Changes runs `airk_changes` between an earlier publication token and the current one. Paste a token from a plan or report, or pick one seen in this session.
+Evidence › Changes runs `changes` between an earlier publication token and the current one. Paste a token from a plan or report, or pick one seen in this session.
 
 ## Limits
 

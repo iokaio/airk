@@ -3,6 +3,15 @@ import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { request } from './api';
 
+export function CopyDetails(props: { section: 'health'|'progress'|'activity'|'semantic'|'service'|'storage'|'recovery'; project?: string }) {
+    const [message,setMessage]=useState(''),[busy,setBusy]=useState(false);
+    useEffect(()=>{setMessage('');},[props.section,props.project]);
+    return <span class="copy-details"><button type="button" class="ghost" disabled={busy}
+        title="Copy displayed diagnostic metadata, including any displayed paths and project names. No source contents are copied."
+        onClick={async()=>{setBusy(true);setMessage('');try{await request('details.copy',{section:props.section,...(props.project?{project:props.project}:{})});setMessage('Copied');}catch(error){setMessage(error instanceof Error?error.message:'Copy failed');}finally{setBusy(false);}}}>{busy?'Copying…':'Copy details'}</button>
+        {message&&<span class="muted" role="status"> {message}</span>}</span>;
+}
+
 /** Original inline vectors: no icon font, remote asset or extra package. */
 export function BrandMark() {
     return <svg class="brand-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

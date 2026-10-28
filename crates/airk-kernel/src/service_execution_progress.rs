@@ -17,6 +17,7 @@ pub(super) struct Tracker {
     has_advanced: bool,
     paused_since: Option<Instant>,
     paused_duration: Duration,
+    waiting: bool,
     stalled_since: Option<Instant>,
     finished: Option<Instant>,
 }
@@ -55,6 +56,7 @@ impl Tracker {
             has_advanced: false,
             paused_since: None,
             paused_duration: Duration::ZERO,
+            waiting: false,
             stalled_since: None,
             finished: None,
         }
@@ -67,7 +69,10 @@ impl Tracker {
             return (false, false);
         }
         let snapshot = self.snapshot(now);
-        if self.stalled_since.is_none() && !snapshot.paused && snapshot.unpaused_idle_ms >= 600_000
+        if self.stalled_since.is_none()
+            && !snapshot.paused
+            && !self.waiting
+            && snapshot.unpaused_idle_ms >= 600_000
         {
             self.stalled_since = Some(now);
             self.snapshot.stalled = true;
@@ -111,6 +116,14 @@ impl Tracker {
         if self.finished.is_some() {
             return;
         }
+        self.snapshot.paused = paused;
+        self.blocked(paused || self.waiting, now);
+    }
+    pub(super) fn wait(&mut self, waiting: bool, now: Instant) {
+        self.waiting = waiting;
+        self.blocked(waiting || self.snapshot.paused, now);
+    }
+    fn blocked(&mut self, paused: bool, now: Instant) {
         if paused && self.paused_since.is_none() {
             self.paused_since = Some(now);
             self.changed();
@@ -182,7 +195,6 @@ impl Tracker {
         value.last_advance_age_ms = self
             .has_advanced
             .then(|| ms(now.duration_since(self.advanced)));
-        value.paused = self.paused_since.is_some();
         value.unpaused_idle_ms = ms(self
             .paused_since
             .unwrap_or(now)

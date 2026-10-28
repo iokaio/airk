@@ -1367,12 +1367,19 @@ mod tests {
             )?;
             let result = kernel.index();
             if attempt == 2 {
+                let error = result.as_ref().unwrap_err();
+                assert_eq!(
+                    error
+                        .downcast_ref::<crate::current::RecoveryFailure>()
+                        .map(|stage| stage.0),
+                    Some("recovery_writer_lock")
+                );
                 assert!(
-                    result
-                        .as_ref()
-                        .unwrap_err()
-                        .to_string()
-                        .contains("index writer locked")
+                    matches!(
+                        error.downcast_ref::<std::fs::TryLockError>(),
+                        Some(std::fs::TryLockError::WouldBlock)
+                    ),
+                    "recovery must retain the native writer-lock cause"
                 );
             } else {
                 let report = result.as_ref().unwrap();

@@ -24,7 +24,7 @@ test('the Explorer evidence session reads one pinned publication through the ver
         await fixture.job(spec);
         const published = await fixture.publishedStatus(spec);
         const token = String(record(published.publication).token);
-        assert.equal((await probeMcp(spec)).tools.length, 16, 'the native retrieval tool inventory is unchanged');
+        assert.equal((await probeMcp(spec)).tools.length, 26, 'the public endpoint has one unified catalog');
 
         client = new EvidenceClient(spec, 'native-test', { timeout: 60000 });
         const status = await client.call('airk_status', {}, { timeout: 60000 });

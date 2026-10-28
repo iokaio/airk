@@ -208,6 +208,7 @@ mod tests {
                     nonce: Incarnation::from_bytes([index + 1; 16]),
                 },
                 &ConfigurationRequest {
+                    prepare: false,
                     incarnation: caller,
                     settings: Sha256Digest::from_bytes([2; 32]),
                     configuration: ProjectConfiguration::Usage {

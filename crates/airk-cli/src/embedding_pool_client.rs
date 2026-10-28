@@ -22,6 +22,35 @@ struct Work {
     operation: protocol::Operation,
     reply: Option<mpsc::SyncSender<Result<Response>>>,
 }
+#[derive(Debug)]
+pub struct HelperUnavailable;
+impl std::fmt::Display for HelperUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("shared embedding helper temporarily unavailable")
+    }
+}
+impl std::error::Error for HelperUnavailable {}
+fn transient_helper_error(error: anyhow::Error) -> anyhow::Error {
+    let transient = error.chain().any(|cause| {
+        cause.is::<tokio::time::error::Elapsed>()
+            || cause.downcast_ref::<std::io::Error>().is_some_and(|io| {
+                matches!(
+                    io.kind(),
+                    std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::NotConnected
+                        | std::io::ErrorKind::TimedOut
+                        | std::io::ErrorKind::UnexpectedEof
+                )
+            })
+    });
+    if transient {
+        error.context(HelperUnavailable)
+    } else {
+        error
+    }
+}
 struct Client {
     sender: mpsc::SyncSender<Work>,
     failed: Arc<AtomicBool>,
@@ -45,11 +74,13 @@ async fn exchange(
         operation,
     };
     local_ipc::write_message_limited(stream, &envelope, Duration::from_secs(5), MAX_FRAME_BYTES)
-        .await?;
+        .await
+        .map_err(transient_helper_error)?;
     let result: protocol::ResultEnvelope =
         local_ipc::read_message_limited(stream, Duration::from_secs(120), MAX_FRAME_BYTES)
-            .await?
-            .context("embedding pool disconnected")?;
+            .await
+            .map_err(transient_helper_error)?
+            .ok_or(HelperUnavailable)?;
     ensure!(
         result.project == envelope.project
             && result.worker == envelope.worker
@@ -98,12 +129,12 @@ impl Client {
                     Ok::<_,anyhow::Error>(())
                 })
             })();
-            if result.is_err(){let _=ready.send(Err("embedding pool transport unavailable"));}
+            if let Err(error)=result{let _=ready.send(Err(transient_helper_error(error)));}
             exchange_failed.store(true,Ordering::Release);
         })?;
         initialized
-            .recv_timeout(Duration::from_secs(10))?
-            .map_err(|reason| anyhow::anyhow!(reason))?;
+            .recv_timeout(Duration::from_secs(10))
+            .map_err(|_| HelperUnavailable)??;
         Ok(Self {
             sender,
             failed,
@@ -112,10 +143,7 @@ impl Client {
     }
 
     fn request(&self, session: Incarnation, request: Request) -> Result<Response> {
-        ensure!(
-            !self.failed.load(Ordering::Acquire),
-            "embedding pool connection failed"
-        );
+        ensure!(!self.failed.load(Ordering::Acquire), HelperUnavailable);
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .try_send(Work {
@@ -128,7 +156,7 @@ impl Client {
             .map_err(|_| anyhow::anyhow!("embedding pool client queue full"))?;
         let result = receiver
             .recv_timeout(Duration::from_secs(120))
-            .context("embedding pool deadline exceeded")??;
+            .map_err(|_| HelperUnavailable)??;
         if let Response::Failed { reason } = &result {
             anyhow::bail!("embedding pool rejected request: {reason}");
         }
@@ -289,12 +317,10 @@ impl Hub {
             {
                 return Ok(client.clone());
             }
-            let access = state.access.clone().context(
-                "shared embedding pool unavailable; lexical retrieval remains available",
-            )?;
+            let access = state.access.clone().ok_or(HelperUnavailable)?;
             ensure!(
                 state.attempts < 3 && Instant::now() >= state.retry_at,
-                "embedding reconnect backoff or attempt limit"
+                HelperUnavailable
             );
             // Only one inference caller establishes a connection. Authority updates remain independent.
             let guard = self

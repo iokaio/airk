@@ -8,16 +8,19 @@ related_airk_help: troubleshooting, privacy
 ---
 # Logs and diagnostics
 
-Management › Logs opens the bounded native service logs and builds a metadata-only diagnostic preview.
+Open this section from the tabs across the top of Management. Everyday controls remain in the Indexing tab: Search mode, Updates and Evidence detail.
+
+Management › Logs opens recent native service events, builds a metadata-only diagnostic report and exports the retained service log ring.
 
 ## Steps
 
-1. Choose **Preview report**. Paths and user or machine names are redacted unless you include them.
-2. Choose **Copy this preview** to copy exactly what is shown.
+1. Choose **Generate report**. Paths and user or machine names are redacted unless you include them.
+2. Choose **Open report**, **Copy report** or **Save report…** to open, copy or save that exact captured report.
+3. For the full available native log history, choose **Save retained service logs…**. This exports the finite retained log ring separately from the report and recent-events display.
 
 ## Limits
 
-Reports are never uploaded. Older or rotated log records may be unavailable.
+Reports are never uploaded. They include the visible project page and up to 128 cached native events within a 256 KiB bound; omissions are explicit. The native log ring contains at most four 1 MiB files. Older rotated-away records are unavailable, and malformed records are counted and omitted.
 
 ## Log views
 

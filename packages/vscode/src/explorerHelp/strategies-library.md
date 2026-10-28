@@ -12,7 +12,7 @@ Strategies › Library lists the 25 templates of the AIRK core pack in six categ
 
 Three templates are Runnable: Investigate & fix a bug, Change an API contract and Explain a component. The others are labeled Preview with their actual operator/prerequisite reason. The presence of Review does not automatically make every Git-related template runnable. A Preview template can still be opened in Studio to edit its steps or compile a prompt without evidence.
 
-Agents use airk_explorer_templates_list (following next_offset) and airk_explorer_template_get for this installed pack's exact parameters, defaults, steps, budgets and operator contracts. Availability is reported per template; agents must not invent template IDs or assume Preview means executable.
+Agents use list_templates (following next_offset) and get_template for this installed pack's exact parameters, defaults, steps, budgets and operator contracts. Availability is reported per template; agents must not invent template IDs or assume Preview means executable.
 
 ## Steps
 

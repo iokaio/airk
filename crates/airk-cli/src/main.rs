@@ -229,7 +229,17 @@ enum Command {
         max_bytes: usize,
     },
     /// Serve read-only MCP through the installed broker and direct project worker.
-    Mcp,
+    Mcp {
+        /// Optional verified Explorer adapter; native retrieval works without it.
+        #[arg(long)]
+        explorer_descriptor: Option<PathBuf>,
+        /// Additional explicitly configured project bindings in this same service.
+        #[arg(long)]
+        additional_project: Vec<airk_core::service::ProjectBinding>,
+        /// Require a project argument for scoped tools in multi-root workspaces.
+        #[arg(long)]
+        no_default_project: bool,
+    },
     /// Read-only service adapter for Info.
     Info {
         path: String,
@@ -379,6 +389,9 @@ enum ServiceCommand {
         runtime_dir: PathBuf,
         #[arg(long, default_value_t = 32)]
         limit: usize,
+        /// Export all retained rotated logs locally (at most four MiB of input).
+        #[arg(long, conflicts_with = "limit")]
+        all: bool,
         #[arg(long,default_value="json",value_parser=["json","text"])]
         format: String,
     },
@@ -642,6 +655,29 @@ async fn run() -> Result<()> {
             return print_json(&report);
         }
         Command::Tools { action } if tools::inspect(action)? => return Ok(()),
+        Command::Mcp {
+            explorer_descriptor,
+            additional_project,
+            no_default_project,
+        } => {
+            let project = airk_cli::service_frontend::resolve_mcp(
+                cli.service_install_dir.as_deref(),
+                cli.service_runtime_dir.as_deref(),
+                cli.service_project,
+                &cli.root,
+                cli.data_dir.as_deref(),
+                &cli.collection,
+            )?;
+            return airk_cli::unified_mcp::serve(
+                project.control,
+                project.install,
+                project.registration,
+                additional_project.clone(),
+                *no_default_project,
+                explorer_descriptor.clone(),
+            )
+            .await;
+        }
         Command::Host => {
             return airk_cli::runtime_install::run(
                 &airk_cli::runtime_install::RuntimeCommand::Foreground {
@@ -815,9 +851,7 @@ async fn run() -> Result<()> {
                 configure(&project.control, registration.binding, draft).await
             }
         },
-        Command::Mcp => {
-            airk_cli::project_client::bridge(project.control, registration.binding).await
-        }
+        Command::Mcp { .. } => unreachable!("MCP resolves saved bindings before service election"),
         Command::Tools { action } => {
             tools::run_remote(
                 action,
@@ -911,6 +945,7 @@ async fn initialize(cli: &Cli) -> Result<()> {
         &control,
         ControlMethod::ReserveProject {
             project: registration.clone(),
+            setup_watch: None,
         },
     )
     .await?;
@@ -1057,9 +1092,18 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
         ServiceCommand::Logs {
             runtime_dir,
             limit,
+            all,
             format,
         } => {
-            let page = airk_cli::service_logs::recent(runtime_dir, *limit)?;
+            anyhow::ensure!(
+                !all || format == "json",
+                "full log export requires JSON format"
+            );
+            let page = if *all {
+                airk_cli::service_logs::export(runtime_dir)?
+            } else {
+                airk_cli::service_logs::recent(runtime_dir, *limit)?
+            };
             if format == "text" {
                 println!("{}", airk_cli::service_logs::render(&page)?);
                 Ok(())
@@ -1322,7 +1366,7 @@ fn configuration(
     .into_iter()
     .map(str::to_owned)
     .collect::<Vec<_>>();
-    let name = format!("airk-{}", project.collection);
+    let name = "airk";
     let mut server = json!({"command":command,"args":args});
     let result = match client {
         SetupClient::Codex => {
@@ -1382,21 +1426,19 @@ mod tests {
         ] {
             let text = configuration(launcher, install, &project, client)?;
             assert!(
-                text.contains("airk-setup-fixture")
+                text.contains("airk")
                     && text.contains("--service-project")
                     && text.contains(&project.binding.to_string())
             );
             if matches!(client, SetupClient::Codex) {
-                assert!(text.starts_with("[mcp_servers.airk-setup-fixture]"));
+                assert!(text.starts_with("[mcp_servers.airk]"));
             } else {
                 let value: Value = serde_json::from_str(&text)?;
                 let entry = match client {
-                    SetupClient::Vscode => &value["servers"]["airk-setup-fixture"],
-                    SetupClient::Opencode | SetupClient::Kilo => {
-                        &value["mcp"]["airk-setup-fixture"]
-                    }
-                    SetupClient::OpencodeV2 => &value["mcp"]["servers"]["airk-setup-fixture"],
-                    _ => &value["mcpServers"]["airk-setup-fixture"],
+                    SetupClient::Vscode => &value["servers"]["airk"],
+                    SetupClient::Opencode | SetupClient::Kilo => &value["mcp"]["airk"],
+                    SetupClient::OpencodeV2 => &value["mcp"]["servers"]["airk"],
+                    _ => &value["mcpServers"]["airk"],
                 };
                 let args = entry
                     .get("args")

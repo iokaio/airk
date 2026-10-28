@@ -18,13 +18,43 @@ pub enum ObservationKind {
     MaintenanceRetry,
     Configuration,
     PendingJob,
+    Recovery,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RecoveryObservation {
+    pub reason: String,
+    pub state: String,
+    pub attempts: u32,
+    pub limit: u32,
+    pub next_check_unix_ms: u64,
+    pub started_unix_ms: u64,
+    pub job: Option<crate::identity::Sha256Digest>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IndexingPreference {
+    pub job: crate::identity::Sha256Digest,
+    pub vectors_enabled: Option<bool>,
+    pub detail: Option<crate::extraction::IndexDetail>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PendingJobGate {
+    pub job: crate::identity::Sha256Digest,
+    pub code: String,
+    pub plan: Option<crate::identity::Sha256Digest>,
+    pub plan_phase: Option<String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectObservation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preference: Option<IndexingPreference>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recovery: Vec<RecoveryObservation>,
     pub project: RegisteredProject,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_job: Option<crate::service::JobRecord>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_gate: Option<PendingJobGate>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pending_paused: bool,
     pub watch: Option<WatchObservation>,

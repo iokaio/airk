@@ -154,7 +154,10 @@ impl ProjectConfiguration {
     pub fn needs_inference(&self) -> bool {
         matches!(
             self,
-            Self::BundledModel | Self::InstallModel { .. } | Self::Calibrate { .. }
+            Self::BundledModel
+                | Self::Vectors { enabled: true }
+                | Self::InstallModel { .. }
+                | Self::Calibrate { .. }
         )
     }
     pub fn is_derived_cleanup(&self) -> bool {
@@ -183,6 +186,9 @@ impl ProjectConfiguration {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigurationRequest {
+    /// Only scalar search/detail preferences may defer inspection to their fenced owner.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prepare: bool,
     pub incarnation: Incarnation,
     pub settings: Sha256Digest,
     pub configuration: ProjectConfiguration,
@@ -190,6 +196,14 @@ pub struct ConfigurationRequest {
 impl ConfigurationRequest {
     pub fn validate(&self) -> Result<()> {
         self.configuration.validate()?;
+        ensure!(
+            !self.prepare
+                || matches!(
+                    self.configuration,
+                    ProjectConfiguration::Vectors { .. } | ProjectConfiguration::Detail { .. }
+                ),
+            "deferred preparation is limited to scalar indexing preferences"
+        );
         ensure!(
             serde_json::to_vec(self)?.len() <= MAX_CONFIGURATION_BYTES,
             "project configuration request exceeds job budget"
@@ -212,6 +226,8 @@ mod tests {
     use super::*;
     #[test]
     fn configuration_bounds_file_selectors_without_accepting_raw_inputs() -> Result<()> {
+        assert!(ProjectConfiguration::Vectors { enabled: true }.needs_inference());
+        assert!(!ProjectConfiguration::Vectors { enabled: false }.needs_inference());
         let file = InputFile {
             path: "/explicit/input.json".into(),
             sha256: Sha256Digest::from_bytes([1; 32]),

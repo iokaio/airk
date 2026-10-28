@@ -18,6 +18,7 @@ use response::ResponseArgs;
 pub mod help;
 pub mod local;
 pub mod remote;
+pub mod unified;
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

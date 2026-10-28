@@ -49,7 +49,15 @@ impl Kernel {
         &self,
         provision: bool,
     ) -> Result<Option<ModelObjectSet>> {
-        if !self.vectors_enabled()? {
+        self.model_objects_for_vectors(self.vectors_enabled()?, provision)
+    }
+    /// Prepare the reviewed desired state before saving it. Preserve custom models.
+    pub(crate) fn model_objects_for_vectors(
+        &self,
+        enabled: bool,
+        provision: bool,
+    ) -> Result<Option<ModelObjectSet>> {
+        if !enabled {
             return Ok(None);
         }
         let Some(runtime) = self.store.shared_model_runtime() else {
@@ -168,11 +176,39 @@ mod tests {
             !runtime.join("model-files-1.4").exists(),
             "source indexing provisioned model files"
         );
+        // Enabling used to acknowledge only the switch, then source-only
+        // indexing could publish Disabled forever without a prepared model.
+        kernel.configure_vectors(false)?;
+        let project = crate::service_projects::registration(&source, &data, "fixture")?;
+        let enable = || -> Result<_> {
+            let inspected = kernel.inspect_service(project.binding)?;
+            Ok(airk_core::service_configuration::ConfigurationRequest {
+                prepare: false,
+                incarnation: inspected.incarnation,
+                settings: inspected.settings_digest.context("settings missing")?,
+                configuration: airk_core::service_configuration::ProjectConfiguration::Vectors {
+                    enabled: true,
+                },
+            })
+        };
+        assert!(
+            kernel
+                .configure_service_project(project.binding, &enable()?)
+                .is_err(),
+            "enabling without a model or provisioning connector must fail"
+        );
+        assert!(
+            !kernel.vectors_enabled()?,
+            "failed setup changed saved policy"
+        );
         let mut files = ServiceModelFiles::open(&runtime)?;
         let lease = files.install_readers(&plan, |name| {
             Ok(Box::new(fs::File::open(selected.join(name.filename()))?))
         })?;
         let objects = files.publish_default(&plan)?;
+        let result = kernel.configure_service_project(project.binding, &enable()?)?;
+        assert_eq!(result["enabled"], true);
+        assert_eq!(result["source_pass_requested"], true);
         assert!(kernel.vector_status()?.model_pending_reindex);
         kernel.index_current(false, true)?;
         assert!(!kernel.vector_status()?.model_pending_reindex);

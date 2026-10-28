@@ -9,6 +9,23 @@ const pick = <T extends string>(value: unknown, allowed: readonly T[], fallback:
 const SEMANTIC: readonly SemanticState[] = ['pending', 'partial', 'ready', 'failed', 'disabled'];
 const FRESHNESS: readonly FreshnessState[] = ['unregistered', 'unavailable', 'idle', 'pending', 'running', 'paused', 'blocked', 'failed'];
 
+/** Published readiness and the saved vector policy are independent observations. */
+export function semanticExplanation(status: Pick<StatusSummary, 'semantic' | 'vectorsEnabled' | 'localModelReady'> | undefined): { title: string; detail: string } {
+    if (!status) { return { title: 'Semantic status not checked', detail: 'Refresh published status to check coverage and model configuration.' }; }
+    if (status.vectorsEnabled === false) { return { title: 'Vector search is turned off', detail: 'The saved project policy disables vector search. Review project settings to enable it. Published source evidence has separate availability.' }; }
+    if (status.semantic === 'disabled' && status.vectorsEnabled === true && status.localModelReady !== false) {
+        return { title: 'Semantic setup not yet published', detail: 'Semantic mode is enabled in the saved settings, but this publication has no semantic coverage. Model preparation or indexing may still be queued; Recent activity shows their outcome.' };
+    }
+    if (status.semantic === 'disabled') { return { title: 'Not available in this publication', detail: status.localModelReady === false
+        ? 'This publication has no model configuration or semantic work record. This does not by itself mean vector search was turned off. Model setup or source indexing may still be pending; review semantic setup.'
+        : 'The publication reports semantic coverage as disabled. This alone does not establish a saved vector opt-out or its cause. Review model configuration and project settings.' }; }
+    if (status.semantic === 'failed') { return { title: 'Semantic indexing failed', detail: 'Review the vector job failure and local model status. Source indexing and lexical evidence have separate status.' }; }
+    if (status.semantic === 'partial') { return { title: 'Semantic coverage is partial', detail: 'Some selected artifacts have vectors. Additional work may be queued, paused or blocked; check activity.' }; }
+    if (status.semantic === 'pending') { return { title: 'Semantic indexing pending', detail: 'The publication has pending semantic work. Check activity for admission, pause or failure details.' }; }
+    if (status.semantic === 'ready') { return { title: 'Semantic coverage ready', detail: 'Selected semantic work is complete for this publication. Coverage applies to the configured selection, not every source file.' }; }
+    return { title: 'Semantic status unknown', detail: 'No recognized semantic readiness observation is available. Refresh published status or review diagnostics.' };
+}
+
 /** airk_status payload → published readiness summary. Unknown or absent values stay unknown. */
 export function statusSummary(payload: Value, observedAt = Date.now()): StatusSummary {
     const indexState: IndexState = payload.index_state === 'available' ? 'available' : payload.index_state === 'unavailable' ? 'unavailable' : 'unknown';

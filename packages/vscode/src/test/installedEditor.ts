@@ -267,7 +267,7 @@ export async function run(): Promise<void> {
                     checks.push('concurrent MCP reads during peer indexing', 'post-edit collection isolation');
                 }
             } finally { client.close(); }
-            assert.equal((await probeMcp(spec)).tools.length, 16);
+            assert.equal((await probeMcp(spec)).tools.length, 26);
         }
         checks.push('16-tool handshake', 'MCP positive/negative retrieval', 'citation path/hash matches source', 'collection override rejected', 'path traversal rejected');
         if (scenario === 'same' || scenario === 'different') {

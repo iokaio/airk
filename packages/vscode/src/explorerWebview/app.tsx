@@ -61,6 +61,12 @@ export function App() {
     }, []);
 
     useEffect(() => { saveState({ ...savedState<Persisted>(), route: formatRoute(route) }); }, [route]);
+    // Nested project views share this observer; child unmounts cannot turn it off.
+    useEffect(() => {
+        const open = route.workspace === 'manage' || route.workspace === 'overview';
+        void request('manage.observe', { open }).catch(() => undefined);
+        return () => { if (open) { void request('manage.observe', { open: false }).catch(() => undefined); } };
+    }, [route.workspace]);
 
     const go = (next: Route) => { setRoute(next); setPalette(false); notify('nav.go', { route: formatRoute(next) }); };
     const chooseSource = async () => {
@@ -82,12 +88,15 @@ export function App() {
     if (!state) { return <main class="airk-explorer loading"><p>Connecting to the AIRK extension host…</p><button type="button" onClick={ready}>Retry connection</button>
         <p class="muted">If it remains unavailable, close and reopen Explorer after the extension host restarts.</p></main>; }
     const project = state.projects.find(entry => entry.project === state.selectedProject);
-    const status = headline(state.connection, state.status, state.projects.length);
+    const managed = ['manage','overview'].includes(route.workspace) ? state.management?.projects.find(entry => entry.summary.project === state.selectedProject) : undefined;
+    const fallback = headline(state.connection, state.status, state.projects.length);
+    const status = state.extensionUpdate ? { word: 'Reload to finish update', severity: 'warn' }
+        : managed && state.connection !== 'untrusted' && state.connection !== 'incompatible' ? { word: managed.health.title, severity: managed.health.severity } : fallback;
     return (
         <div class={`airk-explorer${themed ? ' airk-themed' : ''}`}>
             <header class="topbar">
-                <strong class="brand"><BrandMark /><span>AIRK <span class="brand-subtitle">Explorer</span></span></strong>
-                <ProjectPicker projects={state.projects} selected={state.selectedProject} />
+                <strong class="brand" title={`Running AIRK ${state.extensionVersion}`}><BrandMark /><span>AIRK <span class="brand-subtitle">Explorer</span></span></strong>
+                <ProjectPicker projects={state.projects} selected={state.selectedProject} loading={state.connection === 'connecting'} />
                 <button type="button" class={`pill ${status.severity}`} aria-expanded={pill} onClick={() => setPill(open => !open)}
                     title="Service, published index, source work and semantic coverage">{status.word}</button>
                 <div class="topbar-actions">
@@ -120,7 +129,12 @@ export function App() {
             <div class="frame">
                 <Rail route={route} state={state} go={go} />
                 <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>
-                    {route.workspace === 'overview'
+                    {state.extensionUpdate ? <section class="workspace"><article class="card" role="status">
+                        <h1>Reload to finish the AIRK update</h1>
+                        <p>AIRK {state.extensionUpdate.installedVersion} is installed. This window is still running AIRK {state.extensionUpdate.runningVersion}.</p>
+                        <p>Reload this window to load the updated interface and finish runtime activation. Saved indexing work is retained by the AIRK service.</p>
+                        <button type="button" onClick={() => { void request('extension.reload', {}).catch(() => undefined); }}>Reload to finish update</button>
+                    </article></section> : route.workspace === 'overview'
                         ? <Overview state={state} project={project} go={go} />
                         : <WorkspaceView route={route} state={state} go={go} incoming={incoming} navigation={navigation} inspectRef={inspectRef} publications={publications}
                             inspect={ref => { setInspectRef(ref); go({ workspace: 'evidence', tab: 'inspector' }); }}
@@ -132,8 +146,8 @@ export function App() {
     );
 }
 
-function ProjectPicker(props: { projects: readonly ProjectSummary[]; selected?: string }) {
-    if (!props.projects.length) { return <span class="muted">No registered project</span>; }
+function ProjectPicker(props: { projects: readonly ProjectSummary[]; selected?: string; loading?: boolean }) {
+    if (!props.projects.length) { return <span class="muted">{props.loading ? 'Loading projects…' : 'No registered project'}</span>; }
     return (
         <label class="picker">
             <span class="sr-only">Project</span>

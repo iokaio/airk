@@ -13,7 +13,7 @@ import { ASSISTANCE_TOOLS } from '../explorerContracts';
 import { HandoffStore, HANDOFF_TTL_MS } from '../explorerHandoffs';
 import { CORE_PACK, jsonBytes } from '../explorerStrategies';
 import { SuggestionStore } from '../explorerSuggestions';
-import { validateDraft } from '../explorerDrafts';
+import { destinationOf, validateDraft } from '../explorerDrafts';
 import { McpStdioSession } from '../mcpStdioSession';
 
 const index = () => new HelpIndex({ catalogVersion: 1, extensionVersion: '1.5.0', topics: [] });
@@ -68,6 +68,18 @@ test('navigation accepts supported route-specific fields and cannot smuggle exec
     for (const extra of [{ route: 'manage/service', filters: { name: 'shutdown' } }, { route: 'code/symbols', filters: { path_prefix: '../private' } },
         { route: 'docs/facts', filters: { kind: 'execute' } }, { route: 'evidence/changes', filters: { since: 'unknown' } }, { route: 'code/symbols?run=true' }, { route: 'code/symbols', run: true }]) {
         assert.equal(validateDraft('navigation', { ...envelope, ...extra }).ok, false);
+    }
+});
+
+test('legacy Management navigation drafts retain their reviewed body and resolve to current tabs', () => {
+    for (const [route, destination] of [['manage/projects', 'manage/overview'], ['manage/indexing', 'manage/repair']]) {
+        const checked = validateDraft('navigation', { schema_version: '1.0', idempotency_key: 'legacy', title: 'Review indexing', route, filters: {} });
+        assert.ok(checked.ok);
+        assert.equal(checked.draft.body.kind, 'navigation');
+        if (checked.draft.body.kind !== 'navigation') assert.fail();
+        assert.equal(checked.draft.body.route, route, 'the stored draft body is preserved');
+        assert.equal(destinationOf(checked.draft.body), destination);
+        assert.equal(validateDraft('navigation', { schema_version: '1.0', idempotency_key: 'legacy', title: 'Review', route, filters: { run: true } }).ok, false);
     }
 });
 

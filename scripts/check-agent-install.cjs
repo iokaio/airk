@@ -3,6 +3,7 @@
 const fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
 const {spawn,execFile}=require('node:child_process');
 const {promisify}=require('node:util');
+const assert=require('node:assert/strict');
 const net=require('node:net');
 const {editorUi,until}=require('./editor-ui.cjs');
 const execute=promisify(execFile);
@@ -47,8 +48,12 @@ async function main(){
 exports.activate=()=>{let reloading=false;void (async()=>{
  const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);assert.ok(extension.extensionPath.startsWith(${JSON.stringify(extensions)}));
  const api=await extension.activate();let definitions=await api.getServerDefinitions();
- assert.equal(definitions.length,1);
- const definition=definitions[0],files=${JSON.stringify(files)},name=${JSON.stringify(name)};
+ const files=${JSON.stringify(files)},name=${JSON.stringify(name)};
+ const manual=JSON.parse(await fs.readFile(files[2],'utf8')).servers;
+ const definition=manual.airk??definitions[0];assert.ok(definition);
+ if(manual.airk)assert.equal(definitions.length,0,'manual configuration owns disabled state and suppresses a duplicate provider');
+ const flag=(args,key)=>{const index=args.indexOf(key);assert.ok(index>=0,key);return args[index+1];};
+ const spec={command:definition.command,root:${JSON.stringify(canonical)},dataDir:flag(definition.args,'--data-dir'),collection:${JSON.stringify(collection)},name:'fixture',service:{installDir:${JSON.stringify(install)},project:flag(definition.args,'--service-project'),universal:!definition.args.includes('launch')}};
  if(${JSON.stringify(previousVersion)}&&!await fs.access(${JSON.stringify(path.join(run,'baseline.json'))}).then(()=>true,()=>false)){
   assert.equal(extension.packageJSON.version,${JSON.stringify(previousVersion)});
   await fs.writeFile(${JSON.stringify(path.join(run,'baseline.json'))},JSON.stringify({version:extension.packageJSON.version,command:definition.command,args:definition.args}));
@@ -57,29 +62,28 @@ exports.activate=()=>{let reloading=false;void (async()=>{
   reloading=true;await vscode.commands.executeCommand('workbench.action.reloadWindow');return;
  }
  assert.equal(extension.packageJSON.version,${JSON.stringify(version)});
- if(${!!previousVsix}){const old=JSON.parse(await fs.readFile(${JSON.stringify(path.join(run,'baseline.json'))},'utf8'));assert.equal(old.args[12],definition.args[12]);assert.equal(old.args[8],definition.args[8]);}
+ if(${!!previousVsix}){const old=JSON.parse(await fs.readFile(${JSON.stringify(path.join(run,'baseline.json'))},'utf8'));assert.equal(flag(old.args,'--service-project'),spec.service.project);assert.equal(flag(old.args,'--data-dir'),spec.dataDir);}
  if(${!!previousVsix}){
-  const spec={command:definition.command,root:${JSON.stringify(canonical)},dataDir:definition.args[8],collection:${JSON.stringify(collection)},name:'fixture',service:{installDir:definition.args[3],project:definition.args[12]}};
-  const live=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,16,'upgrade-before-reconnect');
+  const live=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,26,'upgrade-before-reconnect');
   const status=JSON.parse(live.status.content[0].text);assert.equal(status.runtime.service.version,${JSON.stringify(version)});
   await fs.writeFile(${JSON.stringify(path.join(run,'new-runtime-active.json'))},JSON.stringify(status));
   const deadline=Date.now()+45000;while(!await fs.access(${JSON.stringify(path.join(run,'clients-disconnected.json'))}).then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Installer did not terminate preceding clients');await new Promise(resolve=>setTimeout(resolve,100));}
  }
  const texts=await Promise.all(files.map(file=>fs.readFile(file,'utf8')));
  for(const text of texts){assert.ok(text.includes('airk-launcher'));assert.ok(text.includes('--service-project'));assert.ok(text.includes(${JSON.stringify(collection)}));}
- assert.ok(texts[0].includes('enabled = false'));assert.ok(texts[0].includes('AIRK_CLIENT = "fixture"'));
- for(const index of [1,2]){const value=JSON.parse(texts[index]),servers=value[index===1?'mcpServers':'servers'];assert.equal(servers[name].disabled,true);assert.equal(servers[name].env.AIRK_CLIENT,'fixture');assert.equal(servers.other.command,'preserve-other');assert.equal(servers[name].command,definition.command);assert.deepEqual(servers[name].args,definition.args);}
+ assert.ok(texts[0].includes('enabled = false'));
+ for(const index of [1,2]){const value=JSON.parse(texts[index]),servers=value[index===1?'mcpServers':'servers'];assert.equal(servers[name],undefined);assert.equal(servers.airk.disabled,true);assert.equal(servers.airk.env.AIRK_CLIENT,'fixture');assert.equal(servers.other.command,'preserve-other');assert.equal(servers.airk.command,definition.command);assert.deepEqual(servers.airk.args,definition.args);}
  await vscode.commands.executeCommand('airk.installCli');assert.deepEqual(await Promise.all(files.map(file=>fs.readFile(file,'utf8'))),texts);
+ await vscode.commands.executeCommand('airk.explorer.open','#manage/overview');
  await vscode.commands.executeCommand('notifications.showList');
- await fs.writeFile(${JSON.stringify(path.join(run,'notification-ready.json'))},'{}');
+ await fs.writeFile(${JSON.stringify(path.join(run,'notification-ready.json'))},JSON.stringify({project:spec.service.project}));
  const noticeDeadline=Date.now()+45000;
  while(!await fs.access(${JSON.stringify(path.join(run,'notification-verified.json'))}).then(()=>true,()=>false)){if(Date.now()>noticeDeadline)throw new Error('Installer notification was not verified');await new Promise(resolve=>setTimeout(resolve,100));}
- const spec={command:definition.command,root:${JSON.stringify(canonical)},dataDir:definition.args[8],collection:${JSON.stringify(collection)},name:'fixture',service:{installDir:definition.args[3],project:definition.args[12]}};
- const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,16,'installer-acceptance');assert.ok(probe.tools.includes('airk_status'));
+ const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,26,'installer-acceptance');assert.ok(probe.tools.includes('status'));
  const observed=JSON.parse(probe.status.content[0].text);
  for(const actual of [observed.runtime.mcp_frontend.process.version,observed.runtime.index_worker.process.version,observed.runtime.service.version])assert.equal(actual,${JSON.stringify(version)});
  assert.equal(observed.runtime.service.payload_sha256,${JSON.stringify(candidate.payload['native/runtime/airk-install.json'])});
- await fs.writeFile(${JSON.stringify(path.join(run,'result.json'))},JSON.stringify({passed:true,installed:true,version:extension.packageJSON.version,extensionPath:extension.extensionPath,files,command:definition.command,args:definition.args,tools:probe.tools,status:probe.status,policyPreserved:true,repairIdempotent:true,restartNotificationVerified:true,installProgressVerified:await fs.access(${JSON.stringify(path.join(run,'progress-verified.json'))}).then(()=>true,()=>false)},null,2));
+ await fs.writeFile(${JSON.stringify(path.join(run,'result.json'))},JSON.stringify({passed:true,installed:true,version:extension.packageJSON.version,extensionPath:extension.extensionPath,files,command:definition.command,args:definition.args,tools:probe.tools,status:probe.status,policyPreserved:true,repairIdempotent:true,quietCompletionVerified:true,managementTabsVerified:true,installProgressVerified:await fs.access(${JSON.stringify(path.join(run,'progress-verified.json'))}).then(()=>true,()=>false)},null,2));
  })().catch(error=>{if(reloading&&String(error)==='Canceled: Canceled')return;return fs.writeFile(${JSON.stringify(path.join(run,'error.json'))},JSON.stringify({error:String(error),stack:error.stack}));}).finally(()=>{if(!reloading)return vscode.commands.executeCommand('workbench.action.quit');});};`);
     const log=await fs.open(path.join(run,'editor.log'),'w');
     const child=spawn(editor,[workspace,'--new-window','--user-data-dir',profile,'--extensions-dir',extensions,'--shared-data-dir',path.join(run,'shared'),
@@ -118,7 +122,7 @@ exports.activate=()=>{let reloading=false;void (async()=>{
                 await fs.writeFile(path.join(run,'upgrade-reload.json'),'{}');
                 const progressUi=await editorUi(port);
                 try{
-                    const page=await until(async()=>{const value=await progressUi.workbench('document.body.innerText');return value&&value.value.includes(`AIRK ${version} setup`)?value:undefined;},'visible upgrade progress popup',30000);
+                    const page=await until(async()=>{const value=await progressUi.workbench('document.body.innerText');return value&&value.value.includes(`Updating AIRK ${version} runtime`)?value:undefined;},'visible upgrade progress popup',30000);
                     await fs.writeFile(path.join(run,'install-progress.txt'),page.value);
                     const screenshot=await page.client.call('Page.captureScreenshot',{format:'png'});await fs.writeFile(path.join(run,'install-progress.png'),Buffer.from(screenshot.data,'base64'));
                     await fs.writeFile(path.join(run,'progress-verified.json'),'{}');
@@ -137,10 +141,13 @@ exports.activate=()=>{let reloading=false;void (async()=>{
             },'installed extension notification ready',180000);
             const ui=await editorUi(port);
             try{
+                const expected=JSON.parse(await fs.readFile(path.join(run,'notification-ready.json'),'utf8'));
                 const notice=await until(async()=>{
                     const page=await ui.workbench('document.body.innerText');
-                    return page&&[`AIRK ${version} installed.`,'MCP Servers','Reload Window','Show Details','Copilot'].every(value=>page.value.includes(value))?page:undefined;
-                },'visible installation restart actions',30000);
+                    if(page&&page.value.includes(`AIRK ${version} installed.`))throw new Error('Obsolete multi-choice completion notification is visible');
+                    const view=await ui.service(`(()=>{const tabs=[...document.querySelectorAll('[role="tab"]')].map(n=>n.textContent.trim());return {version:document.querySelector('.brand')?.title,tabs,project:document.querySelector('.manage select[aria-label="Project"]')?.value,connection:document.querySelector('.manage > p')?.textContent};})()`);
+                    return view&&view.value.version===`Running AIRK ${version}`&&view.value.project===expected.project&&view.value.connection.includes('· connected')&&['Indexing','Activity','Storage','Recovery','Service','Agents','Usage','Logs'].every(tab=>view.value.tabs.includes(tab))?page:undefined;
+                },'quiet automatic connection, registered project and all Management tabs',90000);
                 await fs.writeFile(path.join(run,'notification.txt'),notice.value);
                 const screenshot=await notice.client.call('Page.captureScreenshot',{format:'png'});
                 await fs.writeFile(path.join(run,'notification.png'),Buffer.from(screenshot.data,'base64'));
@@ -150,6 +157,10 @@ exports.activate=()=>{let reloading=false;void (async()=>{
         await Promise.all([exited,notification]);
         const error=await fs.readFile(path.join(run,'error.json'),'utf8').catch(()=>undefined);if(error)throw new Error(error);
         const result=JSON.parse(await fs.readFile(path.join(run,'result.json'),'utf8'));if(!result.passed)throw new Error('Missing success receipt.');
+        const toml=await execute('python',['-c','import json,sys,tomllib; print(json.dumps(tomllib.load(open(sys.argv[1],"rb"))))',files[0]],{env,windowsHide:true,timeout:30000,maxBuffer:1024*1024});
+        const codex=JSON.parse(toml.stdout).mcp_servers;
+        assert.equal(codex[name],undefined);assert.equal(codex.airk.enabled,false);assert.equal(codex.airk.env.AIRK_CLIENT,'fixture');
+        assert.equal(codex.airk.command,result.command);assert.deepEqual(codex.airk.args,result.args);
         console.log(`Installed VSIX migration passed for Codex, Claude Code and Copilot; ${result.tools.length} MCP tools verified.`);
     }catch(error){failure=error;}finally{
         if(failure)child.kill();

@@ -48,6 +48,28 @@ fn long_semantic_preparation_advances_without_claiming_committed_coverage() -> a
 }
 
 #[test]
+fn resource_wait_and_overlapping_pause_do_not_trigger_stall_or_invent_progress()
+-> anyhow::Result<()> {
+    let start = Instant::now();
+    let mut tracker = tracker(start)?;
+    tracker.wait(true, start + Duration::from_secs(10));
+    tracker.pause(true, start + Duration::from_secs(20));
+    tracker.wait(false, start + Duration::from_secs(1000));
+    assert_eq!(
+        tracker.watchdog(start + Duration::from_secs(2000)),
+        (false, false)
+    );
+    tracker.pause(false, start + Duration::from_secs(2010));
+    let observation = tracker.snapshot(start + Duration::from_secs(2011));
+    assert_eq!(observation.unpaused_idle_ms, 11_000);
+    assert_eq!(observation.last_advance_age_ms, None);
+    assert_eq!(
+        tracker.watchdog(start + Duration::from_secs(2600)),
+        (true, false)
+    );
+    Ok(())
+}
+#[test]
 fn heartbeat_and_phase_changes_do_not_extend_real_progress_deadline() -> anyhow::Result<()> {
     let start = Instant::now();
     let mut tracker = tracker(start)?;

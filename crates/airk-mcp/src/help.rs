@@ -53,6 +53,12 @@ pub(super) struct Topic {
 }
 
 fn answer(args: HelpArgs) -> Result<Value, &'static str> {
+    answer_with_catalog(args, None)
+}
+fn answer_with_catalog(
+    args: HelpArgs,
+    tools: Option<Vec<rmcp::model::Tool>>,
+) -> Result<Value, &'static str> {
     if !(4096..=32768).contains(&args.max_bytes) || args.start_line == 0 {
         return Err("invalid_help_budget_or_start_line");
     }
@@ -105,7 +111,8 @@ fn answer(args: HelpArgs) -> Result<Value, &'static str> {
         if args.topic.is_some() && !matches!(topic.as_str(), "tools" | "mcp") {
             return Err("conflicting_help_selectors");
         }
-        let tool = crate::local::tools()
+        let tool = tools
+            .unwrap_or_else(crate::local::tools)
             .into_iter()
             .find(|entry| entry.name == *tool)
             .ok_or("unknown_mcp_tool")?;
@@ -194,6 +201,17 @@ pub fn call(arguments: Value) -> CallToolResult {
     }
 }
 
+/// Public composition supplies its catalog while retaining the same byte/line contract.
+pub(crate) fn call_with_catalog(arguments: Value, tools: Vec<rmcp::model::Tool>) -> CallToolResult {
+    match serde_json::from_value(arguments) {
+        Ok(args) => match answer_with_catalog(args, Some(tools)) {
+            Ok(value) => CallToolResult::success(vec![ContentBlock::text(value.to_string())]),
+            Err(code) => error(code),
+        },
+        Err(_) => error("invalid_help_arguments"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,9 +255,9 @@ mod tests {
         }
         let explorer = answer(args(json!({"topic":"explorer","max_bytes":32768}))).unwrap();
         let text = explorer["content"].as_str().unwrap();
-        assert!(text.contains("14 Explorer Assistance tools"));
+        assert!(text.contains("one airk MCP connection with 26 unprefixed tools"));
         assert!(text.contains("offline"));
-        assert!(text.contains("Applied to a draft is not executed"));
+        assert!(text.contains("Suggestions wait for the user; applied never means executed"));
     }
     #[test]
     fn tool_help_uses_live_schema_and_rejects_unknown_or_unsafe_selectors() {

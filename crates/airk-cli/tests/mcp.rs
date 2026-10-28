@@ -80,6 +80,7 @@ impl Session {
         anyhow::bail!("response not received")
     }
     fn call(&mut self, id: u64, name: &str, arguments: Value) -> anyhow::Result<Value> {
+        let name = name.strip_prefix("airk_").unwrap_or(name);
         self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":name,"arguments":arguments}}))?;
         self.receive(id)
     }
@@ -338,7 +339,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             .as_array()
             .unwrap()
             .len(),
-        16
+        26
     );
     for (id, command, option, tool, field, key) in [
         (
@@ -690,15 +691,37 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
         .output()?;
     assert!(catalog.status.success());
     let catalog: Value = serde_json::from_slice(&catalog.stdout)?;
-    let mut advertised = tools.clone();
-    advertised.sort_by_key(|tool| tool["name"].as_str().unwrap().to_owned());
-    assert_eq!(catalog["tools"], json!(advertised));
-    assert_eq!(tools.len(), 16);
-    assert!(
-        tools
-            .iter()
-            .all(|t| t["annotations"]["readOnlyHint"] == true)
+    assert_eq!(
+        catalog["tools"].as_array().unwrap().len(),
+        16,
+        "terminal evidence adapter retains compatibility aliases"
     );
+    assert_eq!(tools.len(), 26);
+    let names: std::collections::BTreeSet<_> = tools
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names.len(), 26);
+    for tool in catalog["tools"].as_array().unwrap() {
+        let name = tool["name"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("airk_")
+            .unwrap();
+        assert!(names.contains(name), "missing public evidence tool {name}");
+    }
+    let drafts = [
+        "draft_search",
+        "draft_strategy",
+        "draft_plan",
+        "suggest_view",
+    ];
+    for tool in tools {
+        assert_eq!(
+            tool["annotations"]["readOnlyHint"],
+            json!(!drafts.contains(&tool["name"].as_str().unwrap()))
+        );
+    }
     for (i, name, args) in [
         (
             3,

@@ -4,8 +4,8 @@ import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
-import { assistanceEntry, collectionId, launchArgs, LaunchSpec, McpVerification, retrievalEntry, ServerEntry } from './model';
-import { probeAssistance, probeMcp, runText } from './native';
+import { collectionId, launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry } from './model';
+import { probeMcp, runText } from './native';
 import { automaticUpgrade, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError } from './serviceClient';
@@ -17,17 +17,20 @@ import { renderUsage } from './usageReport';
 import { COMMAND_ROUTES } from './explorerCommands';
 import { ExplorerSidebar } from './explorerSidebar';
 import type { ExplorerController, ExplorerHost } from './explorerController';
-import { migrateLocalAgents } from './agentMigration';
+import { hasUnifiedVscodeConfig, migrateLocalAgents } from './agentMigration';
 import { readJsonConfig } from './agentConfig';
 import { AssistanceIpcHost } from './explorerAssistanceHost';
 import { HandoffStore } from './explorerHandoffs';
 import { SuggestionStore } from './explorerSuggestions';
-import { assistanceDirectory, launchDescriptorPath, serverInvocation, writeLaunchDescriptor } from './explorerAssistanceLaunch';
+import { assistanceDirectory, launchDescriptorPath, writeLaunchDescriptor } from './explorerAssistanceLaunch';
 
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
 }
 class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDataProvider<LaunchSpec> {
+    // Capture the loaded code's version; extension metadata can change after a VSIX install.
+    private readonly runningVersion:string;
+    private extensionUpdate?:{runningVersion:string;installedVersion:string};
     readonly output=vscode.window.createOutputChannel('AIRK');
     readonly definitions=new vscode.EventEmitter<void>();
     readonly assistanceDefinitions=new vscode.EventEmitter<void>();
@@ -61,15 +64,41 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private reportInstall(message:string):void{
         this.installProgress?.report({message});this.output.appendLine(message);
     }
-    private async withInstallProgress(action:()=>Promise<void>):Promise<void>{
+    private async withInstallProgress(action:()=>Promise<void>,title=`Checking AIRK ${this.runningVersion} installation`):Promise<void>{
         if(this.installProgress)return action();
-        await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:`AIRK ${this.context.extension.packageJSON.version} setup`,cancellable:false},async progress=>{
+        await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title,cancellable:false},async progress=>{
             this.installProgress=progress;
-            try{await action();}catch(error){this.reportInstall('Installation did not complete. See AIRK output for details.');throw error;}finally{this.installProgress=undefined;}
+            try{await action();}finally{this.installProgress=undefined;}
         });
     }
 
+    checkForExtensionUpdate():boolean{
+        if(this.disposed)return false;
+        const installed=vscode.extensions?.getExtension(this.context.extension.id??'iokaio.airk')?.packageJSON.version;
+        if(!this.extensionUpdate&&typeof installed==='string'&&/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(installed)&&installed!==this.runningVersion){
+            this.extensionUpdate={runningVersion:this.runningVersion,installedVersion:installed};
+            this.output.appendLine(`AIRK ${installed} is installed; this window is still running ${this.runningVersion}. Reload to finish the update. Saved indexing work remains with the native service.`);
+            this.renderUpdateStatus();this.treeChanges.fire();this.definitions.fire();
+            void vscode.window.showWarningMessage(`AIRK ${installed} is installed. Reload this window to replace the running ${this.runningVersion} interface. Saved indexing work is retained.`,
+                'Reload to finish update').then(async action=>{
+                if(this.disposed)return;
+                if(action==='Reload to finish update')await this.reloadUpdatedExtension();
+            }).then(undefined,error=>this.output.appendLine(`Update action failed: ${String(error)}`));
+        }
+        return !!this.extensionUpdate;
+    }
+    private renderUpdateStatus():boolean{
+        if(!this.extensionUpdate)return false;
+        this.status.text='$(sync) AIRK: Reload to finish update';this.status.command='airk.reloadUpdatedExtension';
+        this.status.tooltip=`AIRK ${this.extensionUpdate.installedVersion} installed; ${this.runningVersion} running. Click to reload this window. Saved indexing work is retained.`;
+        return true;
+    }
+    async reloadUpdatedExtension():Promise<void>{
+        if(!this.disposed&&this.extensionUpdate)await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }
+
     constructor(private readonly context:vscode.ExtensionContext){
+        this.runningVersion=context.extension.packageJSON.version;
         const runtime:ConsoleRuntime={discover:()=>this.runtime().discover(),ensure:explicit=>this.runtime().ensure(explicit),
             binding:(inspection,install)=>this.runtime().binding(inspection,install),client:binding=>this.runtime().client(binding),
             snapshot:(binding,after,revision)=>this.runtime().snapshot(binding,after,revision),repair:(binding,preview)=>this.runtime().repair(binding,preview),
@@ -85,11 +114,14 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     private runtime():RuntimeHost{
         if(!this.host){const generation=this.generation;
-            this.host=new RuntimeHost(this.context.extensionPath,this.context.extension.packageJSON.version,serviceRuntimeOptions(),undefined,
-                ()=>vscode.workspace.isTrusted&&!this.disposed&&generation===this.generation);}
+            this.host=new RuntimeHost(this.context.extensionPath,this.runningVersion,serviceRuntimeOptions(),undefined,
+                ()=>vscode.workspace.isTrusted&&!this.disposed&&!this.extensionUpdate&&generation===this.generation);}
         return this.host;
     }
-    trusted():void {if(!vscode.workspace.isTrusted||this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');}
+    trusted():void {
+        if(this.checkForExtensionUpdate())throw new ServiceError('extension_reload_required');
+        if(!vscode.workspace.isTrusted||this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');
+    }
     private folders():readonly vscode.WorkspaceFolder[]{
         return (vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme));
     }
@@ -110,6 +142,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.refreshing=this.refreshOnce().finally(()=>{this.refreshing=undefined;});return this.refreshing;
     }
     private async refreshOnce():Promise<void>{
+        if(this.checkForExtensionUpdate()){this.renderUpdateStatus();return;}
         const previous=JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)]));
         // Observe into locals and publish once: readers never see an empty registration
         // list in the middle of a refresh, only the previous or the new result.
@@ -118,7 +151,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             this.trusted();const observation=await this.runtime().discover();this.trusted();
             if(!observation.inspection||observation.inspection.payload_verified===false||observation.inspection.metadata_only===true){clear();this.status.text='AIRK: setup';return;}
             const binding=this.runtime().binding(observation.inspection,observation.installDir);
-            if(binding.version!==this.context.extension.packageJSON.version)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
+            if(binding.version!==this.runningVersion)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
             const roots:{opened:string;canonical:string}[]=[];
             for(const folder of this.folders()){
                 try{roots.push({opened:folder.uri.fsPath,canonical:await fs.realpath(folder.uri.fsPath)});}catch{/* Saved missing-source bindings remain readable. */}
@@ -134,8 +167,6 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const folder=await vscode.window.showQuickPick(this.folders().map(folder=>({label:folder.name,description:folder.uri.fsPath,folder})),
             {title:'Register a trusted source root with AIRK'});if(!folder)return;this.trusted();
         const old=this.context.globalState.get<Record<string,unknown>>('collections-1.2',{});
-        const explanation=`AIRK 1.4 uses a new service and fresh index namespace. Existing indexes, jobs and old agent entries are preserved and require separate review. ${Object.keys(old).length} legacy collection records are known on this extension host. Runtime installation and fresh indexes require additional disk space; indexing reads the selected sources. Login startup remains off.`;
-        if(await vscode.window.showWarningMessage(explanation,{modal:true},'Review registration')!=='Review registration')return;this.trusted();
         const mode=await vscode.window.showQuickPick([
             {label:'Automatic source watching',description:'Native indexing continues after editor windows close',enabled:true},
             {label:'Manual indexing',description:'Only explicit indexing requests capture sources',enabled:false},
@@ -148,17 +179,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const binding=await this.runtime().ensure();this.trusted();
         const canonical=await fs.realpath(folder.folder.uri.fsPath);this.trusted();
         const registered=await this.workspace.register(binding,folder.folder.uri.fsPath,dataRoot,collectionId(canonical),async review=>{
-            const detail=`Source: ${review.root}\nIndex data: ${review.data_root}\nCollection: ${review.collection}\nProject binding: ${review.binding}\n${mode.enabled?'Automatic work continues after windows close.':'Automatic source watching is disabled.'}\nSet up the shared offline MiniLM model if this collection has no model; preserve an existing selection.\nEvery 1.4 index is rebuilt from sources; old state is not converted.`;
-            return await vscode.window.showWarningMessage('Register this exact native project and start fresh indexing?',{modal:true,detail},'Register')==='Register';
-        });if(!registered)return;this.trusted();
-        const client=this.runtime().client(binding);
-        try{
-            await client.rpc({configure_watch:{project:registered.binding,enabled:mode.enabled}});this.trusted();
-            await this.enqueue(binding,registered.binding,'model_setup',client);
-            await this.enqueue(binding,registered.binding,'index',client);
-        }finally{client.dispose();}
+            const legacy=Object.keys(old).length?`\n${Object.keys(old).length} older collection records are retained; old startup entries need separate review.`:'';
+            const detail=`Source: ${review.root}\nIndex storage: ${review.data_root}\nCollection: ${review.collection}\n${mode.enabled?'Automatic updates continue after windows close.':'Manual updates: initial setup runs once; later changes need Update index.'}\nExisting settings and model selections are preserved. New projects use the shared offline semantic model. Original source files are unchanged.${legacy}`;
+            return await vscode.window.showWarningMessage('Add this project to AIRK and prepare its index?',{modal:true,detail},'Register')==='Register';
+        },mode.enabled);if(!registered)return;this.trusted();
         await this.refresh();
-        this.output.appendLine(`Registered ${registered.binding}. Native indexing continues independently; check its readiness in AIRK Explorer › Management › Projects.`);
+        this.output.appendLine(`Registered ${registered.binding}. Native setup is queued and continues independently. Management shows model preparation, indexing and saved outcomes.`);
     }
     private async enqueue(binding:RuntimeBinding,project:string,kind:'index'|'inspect'|'model_setup',existing?:ReturnType<RuntimeHost['client']>):Promise<void>{
         this.trusted();const client=existing??this.runtime().client(binding);
@@ -209,7 +235,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     async verify(spec?:LaunchSpec):Promise<void>{
         const selected=spec??await this.chooseSpec();if(!selected)return;this.trusted();
         if(!this.isCurrent(selected))throw new ServiceError('workspace_registration_changed');
-        try{const result=await probeMcp(selected,16,this.context.extension.packageJSON.version);this.trusted();
+        try{const result=await probeMcp(selected,26,this.runningVersion,this.connectionEntries(selected)[0]);this.trusted();
             this.checks.set(selected.service!.project,{phase:'verified',tools:result.tools,checkedAt:Date.now(),
                 indexState:record(result.status).state==='not_indexed'?'not_indexed':record(result.status).state==='index_unavailable'?'unavailable':'published'});
             this.output.appendLine(`Verified ${result.tools.length} MCP tools through the installed launcher. Agent connection is separate.`);
@@ -265,32 +291,33 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
         this.reportInstall('Installing the terminal command…');
         const errors=await installLauncherCli(binding.universalLauncher??binding.launcher,this.context);this.trusted();
-        this.reportInstall('Updating agent connections…');
-        await this.migrateAgentConnections(binding);this.trusted();
-        for(const error of errors){this.installationWarnings=true;this.output.appendLine(error);void vscode.window.showWarningMessage(error);}
+        for(const error of errors){this.installationWarnings=true;this.output.appendLine(error);}
         this.reportInstall('Cleaning up previous runtime…');
         await this.runtime().retirePrevious(binding);this.trusted();
+        // Runtime completion is independent of project registration/indexing.
+        if(!errors.length)await this.context.globalState.update(`airk.installComplete.1.${binding.installDir}`,`${this.runningVersion}:${binding.runtimeSha256}`);
     }
     async installationComplete(manual=false):Promise<void>{
         this.trusted();
         const binding=await this.runtime().ensure();this.trusted();
-        const key=`airk.installNotice.1.${binding.installDir}`,identity=`${this.context.extension.packageJSON.version}:${binding.runtimeSha256}`;
+        const key=`airk.installNotice.1.${binding.installDir}`,identity=`${this.runningVersion}:${binding.runtimeSha256}`;
         if(!manual&&!this.migratedConnections&&!this.installationWarnings&&this.context.globalState.get<string>(key)===identity)return;
         await this.context.globalState.update(key,identity);this.trusted();
         this.migratedConnections=false;
-        const message=this.installationWarnings?'AIRK installed with connection or cleanup issues. Review the details before reconnecting tools.':
-            `AIRK ${this.context.extension.packageJSON.version} installed. Restart AIRK in MCP Servers for Copilot, or reload this window. Restart external coding-agent sessions and open new terminals.`;
+        const message=this.installationWarnings?'AIRK runtime installed with connection or cleanup issues. Review the details before reconnecting tools.':
+            `AIRK ${this.runningVersion} ready. This window is running the updated interface. Project indexing continues in Management.`;
         this.output.appendLine(message);
         this.output.appendLine('Copilot: MCP: List Servers → select AIRK → Restart Server. Codex and Claude Code running outside VS Code need their own session restart. Reload Window reloads editor extensions. If VS Code refuses a VSIX reinstall and requests a restart, fully exit all VS Code windows, reopen, then install the VSIX again.');
+        // Successful activation needs no decision. Only actionable problems produce a notification.
+        if(!this.installationWarnings)return;
+        const warningKey=`airk.installWarning.1.${binding.installDir}`;
+        if(!manual&&this.context.globalState.get<string>(warningKey)===identity)return;
+        await this.context.globalState.update(warningKey,identity);
         const generation=this.generation;
-        const notice=this.installationWarnings?vscode.window.showWarningMessage(message,'Show Details','MCP Servers','Reload Window'):
-            vscode.window.showInformationMessage(message,'MCP Servers','Reload Window','Show Details');
-        // Never block activation on a notification, and never reload without the user's click.
+        const notice=vscode.window.showWarningMessage(message,'Review details');
         void notice.then(async action=>{
             if(this.disposed||generation!==this.generation||!vscode.workspace.isTrusted)return;
-            if(action==='Show Details')this.output.show();
-            else if(action==='MCP Servers')await this.manageVscodeMcp();
-            else if(action==='Reload Window')await vscode.commands.executeCommand('workbench.action.reloadWindow');
+            if(action==='Review details')this.output.show();
         }).then(undefined,error=>this.output.appendLine(`Installation action failed: ${String(error)}`));
     }
     private async migrateAgentConnections(binding:RuntimeBinding):Promise<void>{
@@ -312,22 +339,26 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 if(matches.some(document=>document.isDirty))throw new Error('Agent configuration has unsaved edits; save it and retry Install or Repair CLI.');
                 const document=matches[0]??await vscode.workspace.openTextDocument(vscode.Uri.file(destination));
                 if(document.isDirty||document.getText()!==before||await readJsonConfig(destination)!==before)throw new Error('Agent configuration changed; retry Install or Repair CLI.');
+                // VS Code normalizes inserted newlines to the document's EOL mode.
+                // A compact one-line JSON file can inherit Windows CRLF even when the transform uses LF.
+                const editorAfter=document.eol===2?after.replace(/\r?\n/g,'\r\n'):document.eol===1?after.replace(/\r\n/g,'\n'):after;
                 check();const version=document.version,edit=new vscode.WorkspaceEdit();
-                edit.replace(document.uri,new vscode.Range(document.positionAt(0),document.positionAt(before.length)),after);
+                edit.replace(document.uri,new vscode.Range(document.positionAt(0),document.positionAt(before.length)),editorAfter);
                 if(document.version!==version||!await vscode.workspace.applyEdit(edit))throw new Error('Agent configuration edit failed.');
                 check();
-                if(document.getText()!==after||!await document.save())throw new Error('Agent configuration was not saved; review the editor changes.');
+                if(document.getText()!==editorAfter||!await document.save())throw new Error('Agent configuration was not saved; review the editor changes.');
             },vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true));
             for(const message of messages){
                 this.output.appendLine(message);
                 if(message.startsWith('Updated '))this.migratedConnections=true;
-                if(message.startsWith('Could not update')){this.installationWarnings=true;void vscode.window.showWarningMessage(message);}
+                if(message.startsWith('Could not update'))this.installationWarnings=true;
             }
         }
     }
     automaticInstall(notify=true,explicit=false):Promise<void>{
+        if(this.checkForExtensionUpdate())return Promise.resolve();
         if(!vscode.workspace.isTrusted||!explicit&&vscode.workspace.getConfiguration('airk').inspect<boolean>('cli.autoInstall')?.globalValue===false)return Promise.resolve();
-        this.settingUp??=this.withInstallProgress(()=>this.automaticSetup(notify,explicit)).finally(()=>{this.settingUp=undefined;});return this.settingUp;
+        this.settingUp??=this.automaticSetup(notify,explicit).finally(()=>{this.settingUp=undefined;});return this.settingUp;
     }
     async repairInstallation():Promise<void>{
         await this.settingUp;
@@ -335,7 +366,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         await this.withInstallProgress(async()=>{
             await this.automaticInstall(false,true);
             if(this.installationFailed)return;
-            await this.installCommandLine();await this.refresh();await this.installationComplete(true);
+            await this.refresh();await this.installationComplete(true);
         });
     }
     async retryUpdate():Promise<void>{
@@ -345,18 +376,38 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private async automaticSetup(notify:boolean,explicit:boolean):Promise<void>{
         if(!vscode.workspace.isTrusted||!explicit&&vscode.workspace.getConfiguration('airk').inspect<boolean>('cli.autoInstall')?.globalValue===false)return;
         this.installationFailed=false;
+        let runtimeInstalled=false;
         try{
             this.reportInstall('Checking runtime files…');
             let installed=await this.runtime().discover();this.trusted();
+            if(!explicit&&installed.inspection&&installed.inspection.payload_verified!==false&&installed.inspection.metadata_only!==true){
+                const binding=this.runtime().binding(installed.inspection,installed.installDir);
+                const identity=`${this.runningVersion}:${binding.runtimeSha256}`;
+                if(binding.version===this.runningVersion&&binding.runtimeSha256===installed.bundle.digest
+                    &&!installed.diagnosis?.pending_activation&&this.context.globalState.get<string>(`airk.installComplete.1.${binding.installDir}`)===identity){
+                    runtimeInstalled=true;
+                    if(installed.inspection.lifecycle&&record(installed.inspection.lifecycle).explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
+                    // A completed installation does not prove that its on-demand service survived editor/OS shutdown.
+                    await this.runtime().ensure();this.trusted();
+                    await this.prepareWorkspaceProjects(binding,installed);
+                    this.reportInstall('Installed runtime verified. Saved project work is managed by the AIRK service.');
+                    if(notify&&(this.installationWarnings||this.migratedConnections))await this.installationComplete();
+                    return;
+                }
+            }
+            const progressTitle=!installed.inspection?`Installing AIRK ${this.runningVersion} runtime`
+                :this.runtime().binding(installed.inspection,installed.installDir).version!==this.runningVersion?`Updating AIRK ${this.runningVersion} runtime`
+                :`Checking AIRK ${this.runningVersion} installation`;
+            await this.withInstallProgress(async()=>{
             if(installed.inspection&&!serviceRuntimeOptions().managed){
                 const preceding=this.runtime().binding(installed.inspection,installed.installDir);
-                if(automaticUpgrade(preceding.version,this.context.extension.packageJSON.version as string)
+                if(automaticUpgrade(preceding.version,this.runningVersion as string)
                     &&await this.runtime().supersedePending(preceding,installed.diagnosis)){
                     this.reportInstall('Resolved previous unfinished upgrade…');
                     installed=await this.runtime().discover();this.trusted();
                 }
                 if(!installed.inspection)throw new ServiceError('runtime_selection_changed_review_again');
-                const current=this.runtime().binding(installed.inspection,installed.installDir),target=this.context.extension.packageJSON.version as string;
+                const current=this.runtime().binding(installed.inspection,installed.installDir),target=this.runningVersion as string;
                 if(automaticUpgrade(current.version,target)&&(current.version!==target||current.runtimeSha256!==installed.bundle.digest)){
                     this.reportInstall(`Upgrading ${current.version} → ${target}…`);
                     // Finish a prior installation's deferred cleanup before staging another replacement.
@@ -366,30 +417,32 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 }
             }
             await this.installCommandLine();this.trusted();
+            // Activation/retirement can replace the incarnation behind an older metadata pipe.
+            this.console.reset();
             const binding=await this.runtime().ensure();this.trusted();
-            const folders=this.folders(),specs=await this.workspace.definitions(binding,folders.map(folder=>folder.uri.fsPath));
-            this.reportInstall('Preparing workspace projects…');
-            const observation=await this.runtime().discover();this.trusted();
-            const dataRoot=vscode.workspace.getConfiguration('airk').inspect<string>('storage.path')?.globalValue||record(observation.location.user_paths).data;
-            if(typeof dataRoot!=='string'||!path.isAbsolute(dataRoot))throw new ServiceError('invalid_project_data_location');
-            for(const folder of folders){
-                if(this.workspace.hasRegistration(binding,folder.uri.fsPath))continue;
-                this.trusted();const canonical=await fs.realpath(folder.uri.fsPath);this.trusted();
-                if(specs.some(spec=>same(spec.root,canonical)))continue;
-                const project=await this.workspace.register(binding,folder.uri.fsPath,dataRoot,collectionId(canonical),async()=>true);
-                if(!project)continue;this.trusted();const client=this.runtime().client(binding);
-                try{
-                    await client.rpc({configure_watch:{project:project.binding,enabled:true}});this.trusted();
-                    await this.enqueue(binding,project.binding,'model_setup',client);
-                    await this.enqueue(binding,project.binding,'index',client);
-                }finally{client.dispose();}
-                this.output.appendLine(`Automatically registered ${folder.uri.fsPath}. Index data: ${dataRoot}. Automatic watching enabled; change storage or watching with AIRK commands.`);
-            }
-            await this.migrateAgentConnections(binding);
-            this.reportInstall(this.installationWarnings?'Installation finished with issues to review.':'Installation complete. Coding-agent connections can now be restarted.');
+            runtimeInstalled=true;
+            await this.prepareWorkspaceProjects(binding,await this.runtime().discover());
+            this.reportInstall(this.installationWarnings?'Runtime installation finished with issues to review.':'Runtime ready. Project indexing continues in Management.');
             if(notify)await this.installationComplete();
+            },progressTitle);
         }
-        catch(error){this.installationFailed=true;this.output.appendLine(`Automatic installation failed: ${String(error)}`);
+        catch(error){
+            if(error instanceof ServiceError&&error.code==='extension_reload_required')return;
+            if(String(error).includes('service_explicitly_stopped')){
+                this.output.appendLine('AIRK service_explicitly_stopped. Start the service from Management > Service when ready. Saved project work is retained.');return;
+            }
+            if(runtimeInstalled){
+                const code=error instanceof ServiceError?error.code:'project_preparation_failed';
+                this.output.appendLine(`AIRK installation is complete. Project preparation needs attention: ${String(error)}. Review Management; native accepted jobs are retained.`);
+                this.reportInstall('AIRK installed. Project preparation needs attention; review Management.');
+                const key='airk.projectStartupNotice.1',identity=`${this.runningVersion}:${code}`;
+                if(this.context.workspaceState.get<string>(key)!==identity){
+                    await this.context.workspaceState.update(key,identity);
+                    void vscode.window.showWarningMessage(`AIRK is installed. Project preparation needs attention (${code}). Open Management to review indexing or registration; accepted work is retained.`);
+                }
+                return;
+            }
+            this.installationFailed=true;this.output.appendLine(`Automatic installation failed: ${String(error)}`);
             if(String(error).includes('airk_client_restart_required')){
                 this.reportInstall('Upgrade paused: waiting for connected AIRK clients to disconnect. Choose Retry Update when ready.');
                 const generation=this.generation;
@@ -405,18 +458,52 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             this.reportInstall('Installation did not complete. See AIRK output for the failure and retry instructions.');
             void vscode.window.showErrorMessage(`AIRK installation needs attention: ${error instanceof Error?error.message:String(error)}. Use AIRK: Install or Repair CLI to retry.`);}
     }
+    private async prepareWorkspaceProjects(binding:RuntimeBinding,observation:import('./serviceBootstrap').BootstrapObservation):Promise<void>{
+        this.trusted();
+        const folders=this.folders(),specs=await this.workspace.definitions(binding,folders.map(folder=>folder.uri.fsPath));
+        const dataRoot=vscode.workspace.getConfiguration('airk').inspect<string>('storage.path')?.globalValue||record(observation.location.user_paths).data;
+        if(typeof dataRoot!=='string'||!path.isAbsolute(dataRoot))throw new ServiceError('invalid_project_data_location');
+        for(const folder of folders){
+            if(this.workspace.hasRegistration(binding,folder.uri.fsPath))continue;
+            this.trusted();const canonical=await fs.realpath(folder.uri.fsPath);this.trusted();
+            if(specs.some(spec=>same(spec.root,canonical)))continue;
+            this.reportInstall('Registering a new workspace project...');
+            const project=await this.workspace.register(binding,folder.uri.fsPath,dataRoot,collectionId(canonical),async()=>true,true);
+            if(!project)continue;this.trusted();
+            this.output.appendLine(`Registered ${folder.uri.fsPath}. Native model preparation and indexing continue independently of VS Code. Follow progress in Management.`);
+        }
+        this.reportInstall('Updating agent connections…');
+        await this.migrateAgentConnections(binding);
+        await this.context.workspaceState.update('airk.projectStartupNotice.1',undefined);
+    }
     async manageVscodeMcp():Promise<void>{this.trusted();await vscode.commands.executeCommand('workbench.mcp.listServer');}
+    private async hasManualVscodeConnection():Promise<boolean>{
+        // The file owns client policies, including explicit disable. Do not bypass
+        // it by registering a second copy through the extension provider.
+        for(const spec of this.specs){
+            try{
+                const source=await readJsonConfig(path.join(spec.root,'.vscode','mcp.json'));
+                if(source&&hasUnifiedVscodeConfig(spec,this.context.globalStorageUri?.fsPath??'',source))return true;
+            }catch{/* Unsafe/custom configurations remain for review; never execute them here. */}
+        }
+        return false;
+    }
     async provideDefinitions():Promise<vscode.McpStdioServerDefinition[]>{
+        if(this.checkForExtensionUpdate())return [];
         if(!vscode.workspace.isTrusted||!this.registrationEnabled())return [];
         await this.refresh();if(!vscode.workspace.isTrusted||!this.registrationEnabled())return [];
-        return this.specs.map(spec=>{const definition=new vscode.McpStdioServerDefinition(`AIRK: ${spec.name} (${spec.collection})`,spec.command,launchArgs(spec),
-            {AIRK_CLIENT:'vscode',AIRK_MCP_RESPONSE_MODE:this.responseMode()},`${this.context.extension.packageJSON.version}:${spec.service!.project}:${this.responseMode()}`);
-            definition.cwd=vscode.Uri.file(path.dirname(spec.command));return definition;});
+        if(await this.hasManualVscodeConnection())return [];
+        const entry=this.workspaceConnection();if(!entry)return [];
+        const definition=new vscode.McpStdioServerDefinition('AIRK',entry.command,[...entry.args],
+            {AIRK_CLIENT:'vscode',AIRK_MCP_RESPONSE_MODE:this.responseMode()},`${this.runningVersion}:${JSON.stringify(entry.args)}:${this.responseMode()}`);
+        definition.cwd=vscode.Uri.file(path.dirname(entry.command));return [definition];
     }
     async resolveDefinition(definition:vscode.McpServerDefinition):Promise<vscode.McpServerDefinition>{
         this.trusted();if(!this.registrationEnabled())throw new ServiceError('mcp_registration_disabled');
         await this.refresh();this.trusted();
-        if(!(definition instanceof vscode.McpStdioServerDefinition)||!this.specs.some(spec=>spec.command===definition.command&&JSON.stringify(launchArgs(spec))===JSON.stringify(definition.args)))throw new ServiceError('workspace_registration_changed');
+        if(await this.hasManualVscodeConnection())throw new ServiceError('manual_mcp_configuration_owns_connection');
+        const entry=this.workspaceConnection();
+        if(!(definition instanceof vscode.McpStdioServerDefinition)||!entry||entry.command!==definition.command||JSON.stringify(entry.args)!==JSON.stringify(definition.args))throw new ServiceError('workspace_registration_changed');
         await this.runtime().ensure();this.trusted();if(!this.registrationEnabled())throw new ServiceError('mcp_registration_disabled');return definition;
     }
     getTreeItem(spec:LaunchSpec):vscode.TreeItem {
@@ -439,7 +526,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         return this.explorer;
     }
     private explorerHost():ExplorerHost{
-        return {extensionUri:this.context.extensionUri,version:this.context.extension.packageJSON.version,
+        return {extensionUri:this.context.extensionUri,version:this.runningVersion,
+            extensionUpdate:()=>this.extensionUpdate,reloadUpdatedExtension:()=>this.reloadUpdatedExtension(),
             trusted:()=>vscode.workspace.isTrusted&&!this.disposed,specs:()=>this.specs,
             activeProject:()=>{
                 const active=vscode.window.activeTextEditor&&vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
@@ -448,18 +536,18 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             },
             usage:(spec,valid)=>this.embeddedUsage(spec,valid),
             onDidChangeSpecs:this.treeChanges.event,control:this.console,log:line=>this.output.appendLine(line),
-            setStatusBar:(text,tooltip)=>{if(!this.disposed){this.status.text=text;this.status.tooltip=tooltip;}},workspaceState:this.context.workspaceState,suggestions:this.suggestions,handoffs:this.handoffs};
+            setStatusBar:(text,tooltip)=>{if(!this.disposed&&!this.renderUpdateStatus()){this.status.text=text;this.status.tooltip=tooltip;}},workspaceState:this.context.workspaceState,suggestions:this.suggestions,handoffs:this.handoffs};
     }
     private readonly handoffs=new HandoffStore({authorized:()=>this.assistanceEnabled(),binding:()=>this.assistanceHost?.bindingFingerprint??'',
         revisions:()=>this.explorerLoaded?.draftRevisions??{},publication:()=>this.explorerLoaded?.publication});
-    private assistanceEnabled():boolean{return vscode.workspace.isTrusted&&!this.disposed&&vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true);}
+    private assistanceEnabled():boolean{return vscode.workspace.isTrusted&&!this.disposed&&!this.extensionUpdate&&vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true);}
     private assistanceFolders():vscode.WorkspaceFolder[]{return (vscode.workspace.workspaceFolders??[]).filter(folder=>folder.uri.scheme==='file'||folder.uri.scheme==='vscode-remote');}
     /** Refresh the external launch descriptor and this window's attachment endpoint; untrusted windows publish neither. */
     async startAssistance():Promise<void>{
         const generation=++this.assistanceGeneration;
         this.assistanceHost?.dispose();this.assistanceHost=undefined;
         if(!this.assistanceEnabled())return;
-        const storage=this.context.globalStorageUri.fsPath,version=this.context.extension.packageJSON.version;
+        const storage=this.context.globalStorageUri.fsPath,version=this.runningVersion;
         try{writeLaunchDescriptor(storage,this.context.extensionPath,version);}
         catch(error){this.output.appendLine(`Explorer Assistance launch descriptor was not written: ${error instanceof Error?error.message:String(error)}`);}
         try{
@@ -476,31 +564,29 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         }catch(error){this.output.appendLine(`Explorer Assistance window endpoint is unavailable: ${error instanceof Error?error.message:String(error)}`);}
     }
     connectionEntries(spec:LaunchSpec):ServerEntry[]{
-        const assistance=vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true)
-            ?assistanceEntry(spec,launchDescriptorPath(this.context.globalStorageUri.fsPath)):undefined;
-        return assistance?[retrievalEntry(spec),assistance]:[retrievalEntry(spec)];
+        return [unifiedEntry(spec,this.explorerDescriptor())];
+    }
+    agentStorage():string{return this.context.globalStorageUri.fsPath;}
+    private explorerDescriptor():string|undefined{
+        return vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true)?launchDescriptorPath(this.context.globalStorageUri.fsPath):undefined;
+    }
+    private workspaceConnection():ServerEntry|undefined{
+        const [first,...additional]=this.specs;
+        return first?unifiedEntry(first,this.explorerDescriptor(),additional):undefined;
     }
     async verifyAssistance(spec:LaunchSpec):Promise<string[]>{
         this.trusted();
-        const entry=this.connectionEntries(spec).find(value=>value.key!==retrievalEntry(spec).key);
-        if(!entry)throw new Error('Explorer Assistance needs a registered native service binding and airk.explorer.assistance.enabled.');
-        writeLaunchDescriptor(this.context.globalStorageUri.fsPath,this.context.extensionPath,this.context.extension.packageJSON.version);
-        const result=await probeAssistance(entry,spec.root,this.context.extension.packageJSON.version);this.trusted();
-        if(result.version!==this.context.extension.packageJSON.version)throw new Error(`Explorer Assistance ${result.version} does not match this extension.`);
+        const entry=this.connectionEntries(spec)[0];
+        writeLaunchDescriptor(this.context.globalStorageUri.fsPath,this.context.extensionPath,this.runningVersion);
+        const result=await probeMcp(spec,26,this.runningVersion,entry);this.trusted();
         return result.tools;
     }
     provideAssistanceDefinitions():vscode.McpStdioServerDefinition[]{
-        if(!this.assistanceEnabled())return [];
-        const invocation=serverInvocation(this.context.extensionPath,this.context.globalStorageUri.fsPath);
-        const definition=new vscode.McpStdioServerDefinition('AIRK Explorer Assistance',invocation.command,invocation.args,invocation.env,this.context.extension.packageJSON.version);
-        definition.cwd=this.assistanceFolders()[0]?.uri;
-        return [definition];
+        // Retired provider remains registered long enough to withdraw old cached definitions.
+        return [];
     }
-    resolveAssistanceDefinition(definition:vscode.McpServerDefinition):vscode.McpServerDefinition{
-        if(!this.assistanceEnabled())throw new ServiceError('runtime_client_no_longer_authorized');
-        const invocation=serverInvocation(this.context.extensionPath,this.context.globalStorageUri.fsPath);
-        if(!(definition instanceof vscode.McpStdioServerDefinition)||definition.command!==invocation.command||JSON.stringify(definition.args)!==JSON.stringify(invocation.args))throw new ServiceError('workspace_registration_changed');
-        return definition;
+    resolveAssistanceDefinition(_definition:vscode.McpServerDefinition):vscode.McpServerDefinition{
+        throw new ServiceError('legacy_mcp_definition_retired_restart_airk');
     }
     reset():void{this.generation++;this.host=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.console.reset();void this.refresh();}
     dispose():void{if(this.disposed)return;this.disposed=true;this.generation++;this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
@@ -525,6 +611,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
         vscode.window.registerWebviewViewProvider('airk.dashboard',sidebar),
         vscode.window.createTreeView('airk.collectionsView',{treeDataProvider:controller}));
     const safe=(action:(...args:unknown[])=>unknown|Promise<unknown>)=>async(...args:unknown[])=>{try{return await action(...args);}catch(error){controller.output.appendLine(String(error));
+        if(error instanceof ServiceError&&error.code==='extension_reload_required')return;
         void vscode.window.showErrorMessage(`AIRK: ${error instanceof Error?error.message:String(error)}`);throw error;}};
     // Former Service Console commands open the matching Explorer tab (design Appendix B).
     const routed=(name:string)=>async()=>{
@@ -545,6 +632,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
             await controller.registerWorkspace();}};
     commands.installCli=()=>controller.repairInstallation();
     commands.retryUpdate=()=>controller.retryUpdate();
+    commands.reloadUpdatedExtension=()=>controller.reloadUpdatedExtension();
     commands.openTools=()=>controller.openTools();
     commands.usage=()=>controller.usage();
     commands.showExtensionOutput=()=>controller.output.show(false);
@@ -560,7 +648,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     if(vscode.lm?.registerMcpServerDefinitionProvider)context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.explorerAssistance',{
         onDidChangeMcpServerDefinitions:controller.assistanceDefinitions.event,provideMcpServerDefinitions:()=>controller.provideAssistanceDefinitions(),
         resolveMcpServerDefinition:value=>controller.resolveAssistanceDefinition(value)}));
-    const assistanceChanged=()=>{void controller.startAssistance();controller.assistanceDefinitions.fire();};
+    const assistanceChanged=()=>{void controller.startAssistance();controller.assistanceDefinitions.fire();controller.definitions.fire();};
     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(()=>{assistanceChanged();return controller.automaticInstall().then(()=>controller.refresh());}),
         vscode.workspace.onDidGrantWorkspaceTrust(()=>{assistanceChanged();void controller.automaticInstall().then(()=>controller.refresh());}),
         vscode.window.onDidChangeActiveTextEditor(()=>void controller.console.controller.refresh()),vscode.workspace.onDidChangeConfiguration(event=>{
@@ -568,6 +656,9 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
             if(event.affectsConfiguration('airk.service'))controller.reset();
             else if(event.affectsConfiguration('airk.mcp'))controller.registrationChanged();
         }));
+    if(vscode.extensions?.onDidChange)context.subscriptions.push(vscode.extensions.onDidChange(()=>controller.checkForExtensionUpdate()));
+    if(vscode.window.onDidChangeWindowState)context.subscriptions.push(vscode.window.onDidChangeWindowState(state=>{if(state.focused)controller.checkForExtensionUpdate();}));
+    controller.checkForExtensionUpdate();
     void controller.startAssistance();
     await controller.automaticInstall();await controller.refresh();return {getServerDefinitions:()=>controller.provideDefinitions()};
 }

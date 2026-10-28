@@ -43,6 +43,7 @@ const MAX_REQUESTS: i64 = 4096;
 
 #[derive(Default)]
 struct EnqueueOptions {
+    explicit: bool,
     configuration: Option<Box<airk_core::service_configuration::ConfigurationWork>>,
     background_revision: Option<u64>,
     maintenance_now_ms: Option<u64>,
@@ -137,6 +138,23 @@ pub(super) fn worker_epoch(
 }
 
 impl ServiceRegistry {
+    /// Observation only: no pruning, admission or reapplication of an unknown request.
+    pub fn request_receipt(
+        &self,
+        caller: Incarnation,
+        key: &RequestKey,
+    ) -> Result<(Option<JobRecord>, bool)> {
+        let id: Option<String> = self.connection.query_row(
+            "SELECT job FROM service_requests WHERE namespace=?1 AND epoch=?2 AND nonce=?3 AND caller=?4",
+            params![key.namespace.to_string(),i64::try_from(key.epoch).map_err(|_|JobError::KeyExpired)?,key.nonce.to_string(),caller.to_string()],
+            |row|row.get(0)).optional()?;
+        let observed = id
+            .map(|id| record(&self.connection, id.parse()?))
+            .transpose()?;
+        let (namespace, epoch) = self.saved_request_epoch()?;
+        let expired = observed.is_none() && (namespace != key.namespace || epoch != key.epoch);
+        Ok((observed, expired))
+    }
     pub fn job_runs_while_paused(&self, id: Sha256Digest) -> Result<bool> {
         let job = record(&self.connection, id)?;
         Ok(matches!(job.kind, JobKind::Inspect | JobKind::PlanInspect)
@@ -154,7 +172,7 @@ impl ServiceRegistry {
             "invalid pending project page bound"
         );
         let mut statement = self.connection.prepare(
-            &format!("SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1",super::maintenance::ELIGIBLE))?;
+            &format!("SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)))?;
         let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
         rows.map(|row| row?.parse()).collect()
     }
@@ -171,7 +189,7 @@ impl ServiceRegistry {
         let mut statement = self.connection.prepare(
             &format!("SELECT DISTINCT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project
              WHERE (j.state='running' OR (j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}))
-             AND (?1 IS NULL OR j.project>?1) ORDER BY j.project LIMIT ?2",super::maintenance::ELIGIBLE),
+             AND (?1 IS NULL OR j.project>?1) ORDER BY j.project LIMIT ?2",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)),
         )?;
         let rows = statement.query_map(
             params![after.map(|id| id.to_string()), limit as i64],
@@ -184,7 +202,7 @@ impl ServiceRegistry {
             .connection
             .query_row(
                 &format!("SELECT j.id FROM service_jobs j JOIN projects p ON p.binding=j.project
-             WHERE j.project=?1 AND j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",super::maintenance::ELIGIBLE),
+             WHERE j.project=?1 AND j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)),
                 [project.to_string()],
                 |row| row.get(0),
             )
@@ -288,7 +306,16 @@ impl ServiceRegistry {
         key: &RequestKey,
         kind: JobKind,
     ) -> Result<JobRecord> {
-        self.enqueue_impl(project, caller, key, kind, EnqueueOptions::default())
+        self.enqueue_impl(
+            project,
+            caller,
+            key,
+            kind,
+            EnqueueOptions {
+                explicit: true,
+                ..Default::default()
+            },
+        )
     }
 
     /// A deliberate new request preserves the terminal job, joins existing pending
@@ -371,6 +398,7 @@ impl ServiceRegistry {
         options: EnqueueOptions,
     ) -> Result<JobRecord> {
         let EnqueueOptions {
+            explicit,
             configuration,
             background_revision,
             maintenance_now_ms,
@@ -467,6 +495,13 @@ impl ServiceRegistry {
                 "derived cleanup authority does not match this registry and project"
             );
         }
+        if let Some(work) = configuration.as_deref().filter(|work| work.request.prepare) {
+            ensure!(
+                work.request.incarnation.to_string() == namespace
+                    && work.request.settings == project,
+                "indexing preference must name the current registry and exact project"
+            );
+        }
         let registered: Option<bool> = transaction
             .query_row(
                 "SELECT registered FROM projects WHERE binding=?1",
@@ -487,6 +522,19 @@ impl ServiceRegistry {
             .map(|link| super::maintenance::prepare_job(&transaction, link, project, kind))
             .transpose()?
             .unwrap_or(false);
+        if (explicit
+            && matches!(
+                kind,
+                JobKind::Index | JobKind::Reconcile | JobKind::Recover | JobKind::Rebuild
+            ))
+            || manual_retry.is_some()
+            || planned_source
+        {
+            transaction.execute(
+                "DELETE FROM service_recovery_budget WHERE scope IN(?1,?2)",
+                params![format!("source:{project}"), format!("work:{project}")],
+            )?;
+        }
         if let Some(source) = manual_retry {
             let original = record(&transaction, source)?;
             ensure!(
@@ -495,11 +543,15 @@ impl ServiceRegistry {
                     && matches!(original.state, JobState::Failed | JobState::Canceled),
                 JobError::NotRetryable
             );
+            transaction.execute(
+                "DELETE FROM service_recovery_budget WHERE scope=?1",
+                [format!("work:{project}")],
+            )?;
         }
         if maintenance_now_ms.is_some() || source_request.is_some() {
             let busy: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND state IN('pending','running'))",
-                [project.to_string()], |row| row.get(0))?;
+                "SELECT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=?1 AND j.state IN('pending','running') AND (?2=0 OR NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')))",
+                params![project.to_string(), source_request.is_some()], |row| row.get(0))?;
             ensure!(!busy, "project already has admitted work");
         }
         let requests: i64 =
@@ -605,7 +657,8 @@ impl ServiceRegistry {
             if let Some((revision, now_ms)) = source_request {
                 let attempts:u32=transaction.query_row("SELECT w.attempts FROM service_watch w JOIN projects p ON p.binding=w.project
                     WHERE w.project=?1 AND w.enabled=1 AND p.paused=0 AND w.requested=?2 AND w.requested>w.indexed
-                    AND w.attempts<3 AND (w.blocked_revision IS NULL OR w.blocked_revision<w.requested) AND w.next_ms<=?3",
+                    AND w.attempts<3 AND (w.blocked_revision IS NULL OR w.blocked_revision<w.requested) AND w.next_ms<=?3
+                    AND NOT EXISTS(SELECT 1 FROM service_recovery_budget b WHERE b.scope='source:'||w.project AND (b.failures>=3 OR b.next_ms>?3))",
                     params![project.to_string(),i64::try_from(revision)?,i64::try_from(now_ms)?],|row|row.get(0))
                     .context("source reconciliation is no longer eligible")?;
                 let next = now_ms
@@ -738,7 +791,7 @@ impl ServiceRegistry {
         nonce: Incarnation,
     ) -> Result<JobRecord> {
         let (namespace, epoch) = self.request_epoch()?;
-        self.enqueue(
+        self.enqueue_impl(
             project,
             caller,
             &RequestKey {
@@ -747,6 +800,7 @@ impl ServiceRegistry {
                 nonce,
             },
             kind,
+            EnqueueOptions::default(),
         )
     }
     pub(super) fn enqueue_planned(
@@ -805,7 +859,10 @@ impl ServiceRegistry {
         nonce: Incarnation,
     ) -> Result<JobRecord> {
         ensure!(
-            matches!(kind, JobKind::Index | JobKind::Vectors),
+            matches!(
+                kind,
+                JobKind::Index | JobKind::Vectors | JobKind::ModelSetup
+            ),
             "unsupported background continuation"
         );
         let (namespace, epoch) = self.request_epoch()?;
@@ -857,7 +914,38 @@ impl ServiceRegistry {
             code: "configuration_outcome_unknown_reinspect".into(),
         })?;
         super::configuration::recover_results(&transaction, lease, epoch)?;
-        transaction.execute("UPDATE service_jobs SET state='pending' WHERE project=?1 AND kind='configure' AND state='running' AND epoch<>?2 AND attempts<3 AND id IN(SELECT job FROM service_configuration WHERE json_extract(CAST(payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
+        // A forced watchdog exit has already given cooperative cancellation its grace
+        // period. Preserve that reason and allow just one recovery of the same job.
+        let stalled = serde_json::to_vec(&JobOutcome::Failed {
+            code: "work_stalled".into(),
+        })?;
+        let stalled_job:Option<String>=transaction.query_row("SELECT j.id FROM service_jobs j JOIN service_progress p ON p.job=j.id WHERE j.project=?1 AND j.state='running' AND j.epoch<>?2 AND json_extract(CAST(p.observation AS TEXT),'$.progress.stalled')=1 AND NOT EXISTS(SELECT 1 FROM service_job_cancellation WHERE job=j.id) LIMIT 1",params![lease.binding.to_string(),i64::try_from(epoch)?],|r|r.get(0)).optional()?;
+        if let Some(id) = stalled_job {
+            let scope = format!("work:{}", lease.binding);
+            let failures: u32 = transaction.query_row(
+                "SELECT coalesce((SELECT failures FROM service_recovery_budget WHERE scope=?1),0)",
+                [&scope],
+                |r| r.get(0),
+            )?;
+            let now = super::maintenance::clock_ms()?;
+            transaction.execute(
+                "INSERT OR IGNORE INTO service_job_recovery VALUES(?1,'work_stalled',?2,0,?3,?3)",
+                params![
+                    id,
+                    serde_json::to_vec(&super::recovery::RecoveryCondition::Delay)?,
+                    i64::try_from(now)?
+                ],
+            )?;
+            if failures > 0 {
+                transaction.execute(
+                    "UPDATE service_jobs SET state='failed',outcome=?1 WHERE id=?2",
+                    params![stalled, id],
+                )?;
+            }
+            transaction.execute("INSERT INTO service_recovery_budget VALUES(?1,'work',1,0,?2,0) ON CONFLICT(scope) DO UPDATE SET failures=min(failures+1,3)",params![scope,i64::try_from(now)?])?;
+        }
+        transaction.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND state='running' AND epoch<>?3 AND attempts>=2 AND id IN(SELECT job FROM service_progress WHERE json_extract(CAST(observation AS TEXT),'$.progress.stalled')=1) AND NOT EXISTS(SELECT 1 FROM service_job_cancellation WHERE job=service_jobs.id)",params![stalled,lease.binding.to_string(),i64::try_from(epoch)?])?;
+        transaction.execute("UPDATE service_jobs SET state='pending' WHERE project=?1 AND kind='configure' AND state='running' AND epoch<>?2 AND attempts<3 AND id IN(SELECT job FROM service_configuration WHERE json_extract(CAST(payload AS TEXT),'$.request.prepare')=1 OR json_extract(CAST(payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
             params![lease.binding.to_string(),i64::try_from(epoch)?])?;
         transaction.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND kind='configure' AND state='running' AND epoch<>?3",
             params![uncertain,lease.binding.to_string(),i64::try_from(epoch)?])?;
@@ -912,7 +1000,7 @@ impl ServiceRegistry {
         if running {
             return Ok(None);
         }
-        let id: Option<String> = transaction.query_row(&format!("SELECT j.id FROM service_jobs j WHERE j.project=?1 AND j.state='pending' AND (?2 IS NULL OR j.id=?2) AND (NOT ?3 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",super::maintenance::ELIGIBLE), params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| row.get(0)).optional()?;
+        let id: Option<String> = transaction.query_row(&format!("SELECT j.id FROM service_jobs j WHERE j.project=?1 AND j.state='pending' AND (?2 IS NULL OR j.id=?2) AND (NOT ?3 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)), params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| row.get(0)).optional()?;
         let Some(id) = id else {
             return Ok(None);
         };
@@ -1059,6 +1147,37 @@ impl ServiceRegistry {
                 |row| row.get(0),
             )
             .optional()?;
+        let publication_recovery = current.kind == JobKind::Recover
+            || (current.kind == JobKind::Repair
+                && super::maintenance::job_recovers_publication(&transaction, id)?);
+        if source_revision.is_some() || publication_recovery {
+            let scope = format!("source:{}", lease.binding);
+            match &outcome {
+                JobOutcome::Failed { code } => {
+                    let now = now_ms.unwrap_or(0);
+                    // Filesystem hints may advance desired source revision, but cannot
+                    // replenish the project's terminal-failure budget.
+                    transaction.execute("INSERT INTO service_recovery_budget VALUES(?1,?2,1,?3,?4,0)
+                        ON CONFLICT(scope) DO UPDATE SET engine=excluded.engine,failures=min(failures+1,3),next_ms=excluded.next_ms",
+                        params![scope,code,i64::try_from(now.saturating_add(8000))?,i64::try_from(now)?])?;
+                }
+                JobOutcome::Succeeded { .. } => {
+                    transaction.execute(
+                        "DELETE FROM service_recovery_budget WHERE scope=?1",
+                        [scope],
+                    )?;
+                }
+                JobOutcome::Canceled => {}
+            }
+        }
+        if publication_recovery && matches!(outcome, JobOutcome::Succeeded { .. }) {
+            // Recovery makes another source pass useful. Keep desired revisions,
+            // watching preferences, pause and explicit cancellation unchanged.
+            transaction.execute(
+                "UPDATE service_watch SET attempts=0,next_ms=0 WHERE project=?1",
+                [lease.binding.to_string()],
+            )?;
+        }
         if let Some(revision) = source_revision {
             match &outcome {
                 JobOutcome::Succeeded { .. } => {

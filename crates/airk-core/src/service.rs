@@ -22,6 +22,9 @@ pub enum ControlMethod {
     /// Reserve disjoint canonical planned storage before a trusted adapter creates it.
     ReserveProject {
         project: ProjectRegistration,
+        /// Atomically request native storage/model/source setup with this watch preference.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        setup_watch: Option<bool>,
     },
     Projects {
         after: Option<ProjectBinding>,
@@ -29,6 +32,10 @@ pub enum ControlMethod {
         limit: usize,
     },
     RequestEpoch,
+    RequestReceipt {
+        caller: Incarnation,
+        key: RequestKey,
+    },
     PlanCreate {
         caller: Incarnation,
         key: RequestKey,
@@ -269,6 +276,10 @@ pub enum ControlResponse {
     RequestEpoch {
         namespace: Incarnation,
         epoch: u64,
+    },
+    RequestReceipt {
+        job: Option<JobRecord>,
+        expired: bool,
     },
     Events {
         page: crate::service_events::EventPage,

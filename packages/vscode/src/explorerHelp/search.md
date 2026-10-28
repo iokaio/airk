@@ -8,7 +8,7 @@ related_airk_help: search, tool-selection
 ---
 # Search indexed evidence
 
-Search runs `airk_search` against the selected project's published index. Every result is a citation with a path, line range and content hash.
+Search runs `search` against the selected project's published index. Every result is a citation with a path, line range and content hash.
 
 ## Steps
 
@@ -22,7 +22,7 @@ Results display twenty at a time with **Previous** and **Next**. The limit contr
 ## Limits
 
 - Lexical results are ordered by index identity, not relevance.
-- Semantic and hybrid results are similarity candidates, not proof of meaning. Enable vectors in Management › Indexing to use these modes. Building, partial or failed semantic coverage can mean empty, unavailable or incomplete results; readiness appears alongside the results.
+- Semantic and hybrid results are similarity candidates, not proof of meaning. Enable vectors in Management to use these modes. Building, partial or failed semantic coverage can mean empty, unavailable or incomplete results; readiness appears alongside the results.
 - "N returned · limit L · more may exist" means the limit cut the list; raise it or narrow the query.
 - Open source compares the saved bytes with the indexed hash and warns when the file changed.
 

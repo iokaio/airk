@@ -40,6 +40,16 @@ pub struct CurrentRecovery {
     pub maintenance_error: Option<String>,
 }
 
+/// Stable recovery stage retained in a job's failure code without source or paths.
+#[derive(Debug)]
+pub struct RecoveryFailure(pub &'static str);
+impl std::fmt::Display for RecoveryFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for RecoveryFailure {}
+
 /// Resolve Ready, Prepared or Applying after a writer restart. Prepared may be
 /// abandoned only while its original current files still verify; Applying is
 /// replayed or left unavailable on failure. No live source is consulted.
@@ -48,14 +58,27 @@ pub fn recover_current(
     quota: &Quota,
     scope: &CurrentScope,
 ) -> Result<CurrentRecovery> {
-    let capacity = store.current_database_capacity(scope)?;
-    let lock = store.lock()?;
-    let mut writer = store.current_write(&lock, quota, scope, capacity)?;
-    match writer.phase()? {
+    let capacity = store
+        .current_database_capacity(scope)
+        .context(RecoveryFailure("recovery_capacity"))?;
+    let lock = store
+        .lock()
+        .context(RecoveryFailure("recovery_writer_lock"))?;
+    let mut writer = store
+        .current_write(&lock, quota, scope, capacity)
+        .context(RecoveryFailure("recovery_open_writer"))?;
+    match writer
+        .phase()
+        .context(RecoveryFailure("recovery_read_phase"))?
+    {
         TransactionPhase::Ready => {
             let head = writer.head()?;
-            writer.verify_current_lexical()?;
-            writer.release_orphan_grants()?;
+            writer
+                .verify_current_lexical()
+                .context(RecoveryFailure("recovery_verify_published"))?;
+            writer
+                .release_orphan_grants()
+                .context(RecoveryFailure("recovery_release_capacity"))?;
             Ok(CurrentRecovery {
                 token: head.token()?,
                 action: CurrentRecoveryAction::AlreadyReady,
@@ -66,13 +89,18 @@ pub fn recover_current(
         phase @ (TransactionPhase::Prepared | TransactionPhase::Applying) => {
             let pending = writer
                 .pending()?
-                .context("current transaction descriptor missing")?;
+                .context("current transaction descriptor missing")
+                .context(RecoveryFailure("recovery_read_transaction"))?;
             let target = writer.verify_pending_fts(&pending);
             if let Err(error) = target {
                 if phase == TransactionPhase::Prepared {
                     let base = writer.head()?;
-                    writer.verify_current_lexical()?;
-                    writer.abort_prepared(&pending)?;
+                    writer
+                        .verify_current_lexical()
+                        .context(RecoveryFailure("recovery_verify_published"))?;
+                    writer
+                        .abort_prepared(&pending)
+                        .context(RecoveryFailure("recovery_abort_prepared"))?;
                     return Ok(CurrentRecovery {
                         token: base.token()?,
                         action: CurrentRecoveryAction::AbortedPrepared,
@@ -80,13 +108,17 @@ pub fn recover_current(
                         maintenance_error: None,
                     });
                 }
-                return Err(error.context("applying current lexical candidate unavailable"));
+                return Err(error.context(RecoveryFailure("recovery_verify_candidate")));
             }
             if let Err(error) = writer.mark_applying(&pending) {
                 if writer.phase()? == TransactionPhase::Prepared {
                     let base = writer.head()?;
-                    writer.verify_current_lexical()?;
-                    writer.abort_prepared(&pending)?;
+                    writer
+                        .verify_current_lexical()
+                        .context(RecoveryFailure("recovery_verify_published"))?;
+                    writer
+                        .abort_prepared(&pending)
+                        .context(RecoveryFailure("recovery_abort_prepared"))?;
                     return Ok(CurrentRecovery {
                         token: base.token()?,
                         action: CurrentRecoveryAction::AbortedPrepared,
@@ -94,9 +126,11 @@ pub fn recover_current(
                         maintenance_error: None,
                     });
                 }
-                return Err(error.context("applying current after failed verification"));
+                return Err(error.context(RecoveryFailure("recovery_apply_candidate")));
             }
-            let committed = writer.commit(&pending, pending.target.lexical_commit)?;
+            let committed = writer
+                .commit(&pending, pending.target.lexical_commit)
+                .context(RecoveryFailure("recovery_commit_candidate"))?;
             Ok(CurrentRecovery {
                 token: committed.token,
                 action: CurrentRecoveryAction::Applied,

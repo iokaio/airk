@@ -13,6 +13,11 @@ export interface WorkspaceDefinition {
     readonly tabs: readonly TabDefinition[];
 }
 
+/** Accepted historical links; these do not add duplicate tabs or palette entries. */
+export const ROUTE_ALIASES: Readonly<Record<string, string>> = Object.freeze({
+    'manage/projects': 'manage/overview', 'manage/indexing': 'manage/repair',
+});
+
 export const WORKSPACES: readonly WorkspaceDefinition[] = [
     { id: 'overview', title: 'Overview', placement: 'main', tabs: [] },
     { id: 'search', title: 'Search', placement: 'main', tabs: [{ id: 'query', title: 'Query' }, { id: 'recipes', title: 'Saved Searches' }] },
@@ -22,9 +27,10 @@ export const WORKSPACES: readonly WorkspaceDefinition[] = [
     { id: 'review', title: 'Review', placement: 'main', tabs: [{ id: 'changes', title: 'Changes' }, { id: 'impact', title: 'Impact' }, { id: 'tests', title: 'Tests' }] },
     { id: 'strategies', title: 'Strategies', placement: 'main', tabs: [{ id: 'library', title: 'Library' }, { id: 'studio', title: 'Studio' }, { id: 'planner', title: 'Planner' }] },
     { id: 'manage', title: 'Management', placement: 'pinned', tabs: [
-        { id: 'projects', title: 'Projects' }, { id: 'activity', title: 'Activity' }, { id: 'repair', title: 'Repair' },
-        { id: 'indexing', title: 'Indexing' }, { id: 'storage', title: 'Storage' }, { id: 'service', title: 'Service' },
-        { id: 'agents', title: 'Agents' }, { id: 'usage', title: 'Usage' }, { id: 'logs', title: 'Logs' },
+        { id: 'overview', title: 'Indexing' }, { id: 'activity', title: 'Activity' },
+        { id: 'storage', title: 'Storage' }, { id: 'repair', title: 'Recovery' },
+        { id: 'service', title: 'Service' }, { id: 'agents', title: 'Agents' },
+        { id: 'usage', title: 'Usage' }, { id: 'logs', title: 'Logs' },
     ] },
     { id: 'help', title: 'Help', placement: 'drawer', tabs: [] },
 ];
@@ -58,6 +64,9 @@ export function parseRoute(text: string): Route | undefined {
     let tab: string | undefined;
     if (workspace.tabs.length) {
         tab = tabId === undefined || tabId === '' ? workspace.tabs[0].id : tabId;
+        // Older commands, bookmarks and saved panel state still reach their section.
+        const alias = ROUTE_ALIASES[`${workspaceId}/${tab}`];
+        if (alias) { tab = alias.split('/')[1]; }
         if (!workspace.tabs.some(entry => entry.id === tab)) { return undefined; }
     } else if (tabId !== undefined && tabId !== '') { return undefined; }
     let focus: string | undefined;

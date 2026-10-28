@@ -312,16 +312,17 @@ export class RuntimeHost {
         const review:ProjectRegistrationReview=Object.freeze({installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,...registration});
         this.projectReviews.add(review);return review;
     }
-    async registerProject(binding:RuntimeBinding,review:ProjectRegistrationReview):Promise<ProjectRegistrationReview>{
+    async registerProject(binding:RuntimeBinding,review:ProjectRegistrationReview,setupWatch?:boolean):Promise<ProjectRegistrationReview>{
         this.active();
         if(!this.projectReviews.has(review)||review.installDir!==binding.installDir||review.controlDir!==binding.controlDir
             ||review.runtimeSha256!==binding.runtimeSha256)throw new ServiceError('project_registration_not_reviewed');
         const registration={binding:review.binding,root:review.root,data_root:review.data_root,collection:review.collection};
         const client=this.client(binding);
         try {
-            const response=await client.rpc({reserve_project:{project:registration}},'registered');this.active();
+            const response=await client.rpc({reserve_project:{project:registration,...(setupWatch===undefined?{}:{setup_watch:setupWatch})}},'registered');this.active();
             if(JSON.stringify(projectRegistration(record(response.project).registration))!==JSON.stringify(registration))throw new ServiceError('crossed_project_registration');
         }finally{client.dispose();}
+        if(setupWatch!==undefined){this.projectReviews.delete(review);return review;}
         const bundle=await this.verified();
         const completed=projectRegistration(await this.invoke(bundle.main,['service','prepare-storage','--runtime-dir',binding.controlDir,'--project',review.binding]));
         if(JSON.stringify(completed)!==JSON.stringify(registration))throw new ServiceError('crossed_project_storage');

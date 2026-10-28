@@ -319,7 +319,10 @@ fn execute(
         }
         JobKind::Vectors => unreachable!("vector turns use publication-aware retry"),
         JobKind::ModelSetup => {
-            kernel.install_service_default_vector_model()?;
+            // Re-registration preserves an explicit text-only preference.
+            if kernel.vectors_enabled()? {
+                kernel.install_service_default_vector_model()?;
+            }
             return Ok(JobOutcome::Succeeded { revision: None });
         }
         JobKind::Verify => {
@@ -363,6 +366,26 @@ fn execute(
             .publication
             .map(|publication| publication.token),
     })
+}
+
+fn reconcile_semantic_setup(
+    kernel: &Kernel,
+    registry: &mut airk_store::service::registry::ServiceRegistry,
+    lease: &airk_store::service::ProjectLease,
+    engine: airk_core::identity::Sha256Digest,
+) -> Result<()> {
+    let project = lease.identity().0;
+    let snapshot = kernel.inspect_service(project)?;
+    if snapshot.vectors_enabled == Some(true)
+        && snapshot
+            .semantic
+            .as_ref()
+            .is_some_and(|s| s.state == airk_core::readiness::SemanticState::Disabled)
+        && let Some(settings) = snapshot.settings_digest
+    {
+        registry.reconcile_semantic_setup(lease, &format!("{engine}:{settings}"))?;
+    }
+    Ok(())
 }
 
 pub async fn run() -> Result<()> {
@@ -432,9 +455,12 @@ pub async fn run() -> Result<()> {
     let receipt = kernel.service_rebuild_receipt()?;
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
     record_watch_roots(&kernel, &mut registry, &lease);
+    let _ = reconcile_semantic_setup(&kernel, &mut registry, &lease, init.engine);
     // Recovery is durable desired work, admitted by the service rather than an
     // unaccounted startup replay. Failed recovery leaves the owner reachable.
-    if kernel.service_recovery_required().unwrap_or(false) {
+    if kernel.service_recovery_required().unwrap_or(false)
+        && !registry.source_failure_blocked(init.project)?
+    {
         registry.enqueue_internal(
             init.project,
             init.service,
@@ -524,6 +550,8 @@ pub async fn run() -> Result<()> {
             );
             if let Some(job) = registry.claim_job_id(&job_lease, allowance.job)? {
                 let mut completed_maintenance = None;
+                use airk_store::service::registry::RecoveryCondition;
+                let mut recovery_condition = RecoveryCondition::Delay;
                 let outcome = if registry.cancellation_requested(job.id)? {
                     Ok(JobOutcome::Canceled)
                 } else {
@@ -531,13 +559,22 @@ pub async fn run() -> Result<()> {
                         job_storage.check()?;
                         airk_kernel::service_execution::checkpoint()?;
                         if job.kind == JobKind::Configure {
-                            let work = registry
+                            let mut work = registry
                                 .configuration_work(job.id)?
                                 .context("configuration work missing")?;
                             ensure!(
                                 work.engine == init.engine,
                                 airk_kernel::service_configuration::ConfigurationChanged
                             );
+                            if work.request.prepare {
+                                work.request.validate()?;
+                                let observed = kernel.inspect_service(identity.project)?;
+                                work.request.incarnation = observed.incarnation;
+                                work.request.settings = observed
+                                    .settings_digest
+                                    .context("settings inspection unavailable")?;
+                                work.request.prepare = false;
+                            }
                             kernel
                                 .validate_service_configuration(identity.project, &work.request)?;
                             if let Some(roots) =
@@ -631,6 +668,29 @@ pub async fn run() -> Result<()> {
                             });
                         }
                         let outcome = execute(&kernel, kind, job.id)?;
+                        // Successful changes refresh console metadata while this exact job
+                        // still owns its fenced lease. Refreshing the UI must not require
+                        // a second Inspect job to see new counts or semantic readiness.
+                        if matches!(
+                            kind,
+                            JobKind::Index
+                                | JobKind::Reconcile
+                                | JobKind::Vectors
+                                | JobKind::ModelSetup
+                                | JobKind::Rebuild
+                                | JobKind::Repair
+                                | JobKind::Recover
+                        ) && matches!(outcome, JobOutcome::Succeeded { .. })
+                            && let Ok(snapshot) = kernel.inspect_service(identity.project)
+                        {
+                            let observed = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)?
+                                .as_millis()
+                                .try_into()?;
+                            let _ = registry.record_inspection(
+                                &job_lease, identity, job.id, observed, &snapshot,
+                            );
+                        }
                         airk_kernel::service_execution::progress_phase(
                             airk_core::service_progress::WorkPhase::Retiring,
                         );
@@ -652,6 +712,37 @@ pub async fn run() -> Result<()> {
                     })
                 }
                 .unwrap_or_else(|error| {
+                    for cause in error.chain() {
+                        if let Some(pressure) =
+                            cause.downcast_ref::<airk_store::quota::QuotaPressure>()
+                        {
+                            recovery_condition = RecoveryCondition::Quota {
+                                required: pressure.required_bytes,
+                                scope: pressure.scope,
+                            };
+                            break;
+                        }
+                        if let Some(pressure) =
+                            cause.downcast_ref::<airk_store::capacity::StoragePressure>()
+                        {
+                            recovery_condition = RecoveryCondition::Capacity {
+                                required: pressure.required_bytes,
+                            };
+                            break;
+                        }
+                    }
+                    if error.is::<airk_kernel::service_projects::SourceUnavailable>() {
+                        recovery_condition = RecoveryCondition::Source;
+                    } else if error.is::<crate::embedding_pool_client::HelperUnavailable>() {
+                        recovery_condition = RecoveryCondition::Helper;
+                    } else if matches!(
+                        airk_store::capacity::storage_pressure_code(&error),
+                        Some("filesystem_storage_full" | "sqlite_storage_full")
+                    ) {
+                        recovery_condition = RecoveryCondition::Capacity {
+                            required: 16 * 1024 * 1024,
+                        };
+                    }
                     if error
                         .downcast_ref::<airk_kernel::service_execution::Canceled>()
                         .is_some()
@@ -671,6 +762,9 @@ pub async fn run() -> Result<()> {
                                 airk_store::capacity::storage_pressure_code(&error)
                             {
                                 code
+                            } else if error.is::<crate::embedding_pool_client::HelperUnavailable>()
+                            {
+                                "helper_unavailable"
                             } else if job.kind == JobKind::Vectors
                                 && Kernel::service_enrichment_contention(&error)
                             {
@@ -679,6 +773,8 @@ pub async fn run() -> Result<()> {
                                 || error.is::<airk_store::current::CurrentOpenContention>()
                             {
                                 "current_database_admission_busy"
+                            } else if error.is::<airk_store::quota::QuotaContention>() {
+                                "quota_ledger_busy"
                             } else if error.is::<airk_kernel::service_execution::WorkStalled>() {
                                 "work_stalled"
                             } else if error.is::<airk_kernel::service_projects::SourceUnavailable>()
@@ -701,7 +797,20 @@ pub async fn run() -> Result<()> {
                             } else if job.kind == JobKind::Configure {
                                 "configuration_failed_reinspect"
                             } else {
-                                "project_operation_failed"
+                                let cause = airk_store::diagnostics::failure_code(&error);
+                                return JobOutcome::Failed {
+                                    code: match error
+                                        .downcast_ref::<airk_kernel::current::RecoveryFailure>()
+                                    {
+                                        Some(stage) => format!(
+                                            "{}_{}",
+                                            stage.0,
+                                            cause.as_deref().unwrap_or("failed")
+                                        ),
+                                        None => cause
+                                            .unwrap_or_else(|| "project_operation_failed".into()),
+                                    },
+                                };
                             }
                             .into(),
                         }
@@ -754,16 +863,50 @@ pub async fn run() -> Result<()> {
                     registry.set_background_pending(&job_lease, JobKind::Vectors, false)?;
                 }
                 record_watch_roots(&kernel, &mut registry, &job_lease);
-                registry.complete_job_with_maintenance_at(
-                    &job_lease,
-                    job.id,
-                    outcome,
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)?
-                        .as_millis()
-                        .try_into()?,
-                    completed_maintenance.as_ref(),
-                )?;
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_millis()
+                    .try_into()?;
+                let deferred = if let JobOutcome::Failed { code } = &outcome {
+                    registry.defer_job_failure(
+                        &job_lease,
+                        job.id,
+                        code,
+                        &recovery_condition,
+                        now_ms,
+                    )?
+                } else {
+                    false
+                };
+                if !deferred {
+                    registry.complete_job_with_maintenance_at(
+                        &job_lease,
+                        job.id,
+                        outcome.clone(),
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)?
+                            .as_millis()
+                            .try_into()?,
+                        completed_maintenance.as_ref(),
+                    )?;
+                    if job.kind == JobKind::Configure {
+                        let _ = reconcile_semantic_setup(
+                            &kernel,
+                            &mut registry,
+                            &job_lease,
+                            init.engine,
+                        );
+                    }
+                }
+                if matches!(outcome, JobOutcome::Succeeded { revision: Some(_) }) {
+                    registry.reset_recovery_budget(&identity.project.to_string())?;
+                    registry.reset_recovery_budget(&format!("work:{}", identity.project))?;
+                    if job.kind == JobKind::Vectors {
+                        registry.reset_recovery_budget("helper")?;
+                    }
+                    let _ =
+                        reconcile_semantic_setup(&kernel, &mut registry, &job_lease, init.engine);
+                }
                 airk_kernel::service_execution::progress_phase(
                     airk_core::service_progress::WorkPhase::Finished,
                 );

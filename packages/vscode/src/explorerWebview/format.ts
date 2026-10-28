@@ -26,6 +26,14 @@ export function ago(ms: number | undefined, now = Date.now()): string {
     return minutes < 60 ? `${minutes} min ago` : `${Math.round(minutes / 60)} h ago`;
 }
 
+/** Native durations are frozen at the sample; they are not live wall-clock timers. */
+export function duration(ms: number | undefined): string {
+    if (ms === undefined || !Number.isSafeInteger(ms) || ms < 0) { return 'not observed'; }
+    if (ms < 1000) { return `${ms} ms`; }
+    const seconds = Math.floor(ms / 1000), minutes = Math.floor(seconds / 60);
+    return minutes ? `${minutes} min ${seconds % 60} sec` : `${seconds} sec`;
+}
+
 /** Publication tokens are long; show a stable short form with the full value in a title. */
 export function shortToken(token: string | undefined): string {
     if (!token) { return 'none'; }

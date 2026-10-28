@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { headline, statusSummary } from '../explorerStatus';
+import { headline, semanticExplanation, statusSummary } from '../explorerStatus';
 
 test('airk_status maps to separate readiness, freshness and semantic observations', () => {
     const summary = statusSummary({
@@ -38,4 +38,11 @@ test('status versions keep frontend and worker provenance separate and never fil
     const result = statusSummary({ runtime: { mcp_frontend: { basis: 'client_reported', process: { version: '1.5.5', process_id: 25 } },
         index_worker: { basis: 'running_process', process: { process_id: 45 } } } });
     assert.deepEqual(result.runtimeVersions, [['MCP frontend (airk)', '1.5.5 · client_reported · PID 25'], ['Index worker (airk)', 'not observed · running_process · PID 45']]);
+});
+
+test('disabled coverage does not imply saved opt-out and enabling is not readiness', () => {
+    assert.match(semanticExplanation({ semantic:'disabled', vectorsEnabled:true, localModelReady:false }).detail,/no model configuration/);
+    assert.match(semanticExplanation({ semantic:'disabled', vectorsEnabled:false }).title,/turned off/);
+    assert.match(semanticExplanation({ semantic:'pending', vectorsEnabled:true }).title,/pending/);
+    assert.match(semanticExplanation({ semantic:'disabled' }).detail,/does not establish/);
 });

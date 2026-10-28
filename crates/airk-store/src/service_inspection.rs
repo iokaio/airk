@@ -39,7 +39,16 @@ impl ServiceRegistry {
             record.project == worker.project
                 && matches!(
                     record.kind,
-                    JobKind::Inspect | JobKind::PlanInspect | JobKind::Configure
+                    JobKind::Inspect
+                        | JobKind::PlanInspect
+                        | JobKind::Configure
+                        | JobKind::Index
+                        | JobKind::Reconcile
+                        | JobKind::Vectors
+                        | JobKind::ModelSetup
+                        | JobKind::Rebuild
+                        | JobKind::Repair
+                        | JobKind::Recover
                 )
                 && record.state == JobState::Running
                 && record.fencing_generation == epoch,
@@ -167,6 +176,7 @@ mod tests {
             indexed_files: Some(0),
             indexed_vectors: Some(0),
             vectors_enabled: Some(false),
+            index_detail: None,
             semantic: None,
             discovery: None,
             failure: None,

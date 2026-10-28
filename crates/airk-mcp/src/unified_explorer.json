@@ -1,0 +1,1039 @@
+[
+  {
+    "name": "airk_explorer_help_search",
+    "description": "Search offline Explorer and AIRK engine guidance for this version: Developer, Tester, Architect, Writer workflows, indexing choices, document types, OCR, tools and UX. Returns topic ids for airk_explorer_help_get; check applicability before directing a user to a screen.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "area": {
+          "type": "string",
+          "enum": [
+            "about",
+            "engine",
+            "explorer",
+            "guidance",
+            "management",
+            "roles",
+            "strategies"
+          ]
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 5
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 512,
+          "maximum": 32768,
+          "default": 4096
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_help_get",
+    "description": "Read one AIRK Explorer help topic by id: where it is in the UI, ordered steps, applicability for this installed version and related airk_help topics on AIRK Retrieval.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "topic_id"
+      ],
+      "properties": {
+        "topic_id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9.-]{2,63}$"
+        },
+        "detail": {
+          "type": "string",
+          "enum": [
+            "summary",
+            "steps",
+            "full"
+          ],
+          "default": "full"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_ui_status",
+    "description": "Report whether a trusted AIRK Explorer window is attached for this working directory, its binding fingerprint and draft revisions, the screens this version ships and the schema versions. Returns no paths or source content.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_suggest_search",
+    "description": "Propose a Search › Query form (lexical, vector or hybrid; literal path prefix; limit; byte budget). The user decides whether to run it. The draft goes to the Suggestions Inbox of the attached Explorer window and waits for the user; nothing is applied, saved or run. Bodies are limited to 16384 bytes; unknown fields are refused.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "title",
+        "draft"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "description": "Reuse it to retry; the same key with a different body is refused."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "expected_target_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Target draft revision from airk_explorer_ui_status target_revisions."
+        },
+        "workspace_binding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "binding_fingerprint from airk_explorer_ui_status."
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "publication"
+          ],
+          "properties": {
+            "publication": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Exact AIRK publication token the evidence came from."
+            },
+            "citations": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "start_line"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "draft": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "query"
+          ],
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 4096
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "policy",
+                "lexical",
+                "vector",
+                "hybrid"
+              ],
+              "default": "lexical"
+            },
+            "path_prefix": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "max_bytes": {
+              "type": "integer",
+              "minimum": 1024,
+              "maximum": 65536
+            },
+            "full_chunks": {
+              "type": "boolean"
+            }
+          }
+        },
+        "intent": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_suggest_strategy",
+    "description": "Propose a Strategies › Studio draft from a core template (template_id such as airk.core/bug) and/or custom steps. Steps use only these operators: airk.status, airk.capabilities, airk.search, airk.listFiles, airk.fileInfo, airk.symbols, airk.imports, airk.codeFacts, airk.relationships, airk.references, airk.documentFacts, airk.outline, airk.readFile, airk.changes, host.hashSavedFiles, core.dedupe, core.sort, core.clip, core.cite, core.renderPrompt; arguments bind only ${params.NAME} and ${scope.pathPrefix}, and fan-out steps name an earlier step as input. The draft goes to the Suggestions Inbox of the attached Explorer window and waits for the user; nothing is applied, saved or run. Bodies are limited to 16384 bytes; unknown fields are refused.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "title"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "description": "Reuse it to retry; the same key with a different body is refused."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "expected_target_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Target draft revision from airk_explorer_ui_status target_revisions."
+        },
+        "workspace_binding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "binding_fingerprint from airk_explorer_ui_status."
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "publication"
+          ],
+          "properties": {
+            "publication": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Exact AIRK publication token the evidence came from."
+            },
+            "citations": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "start_line"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "template_id": {
+          "type": "string",
+          "pattern": "^airk\\.core/[a-z][a-z0-9-]*$"
+        },
+        "objective": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "maxProperties": 8
+        },
+        "path_prefix": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "steps": {
+          "type": "array",
+          "maxItems": 24,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "op",
+              "args"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9-]{0,31}$"
+              },
+              "op": {
+                "type": "string",
+                "enum": [
+                  "airk.status",
+                  "airk.capabilities",
+                  "airk.search",
+                  "airk.listFiles",
+                  "airk.fileInfo",
+                  "airk.symbols",
+                  "airk.imports",
+                  "airk.codeFacts",
+                  "airk.relationships",
+                  "airk.references",
+                  "airk.documentFacts",
+                  "airk.outline",
+                  "airk.readFile",
+                  "airk.changes",
+                  "host.hashSavedFiles",
+                  "host.gitDiff",
+                  "host.readSavedText",
+                  "core.dedupe",
+                  "core.sort",
+                  "core.clip",
+                  "core.cite",
+                  "core.renderPrompt"
+                ]
+              },
+              "args": {
+                "type": "object"
+              },
+              "input": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "evidence_budget_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 262144
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_suggest_plan",
+    "description": "Propose a Strategies › Planner draft: tasks T1, T2… with dependencies and acceptance notes, and an optional relative .md path hint. The user saves the file; there is no save field. The draft goes to the Suggestions Inbox of the attached Explorer window and waits for the user; nothing is applied, saved or run. Bodies are limited to 16384 bytes; unknown fields are refused.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "title",
+        "tasks"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "description": "Reuse it to retry; the same key with a different body is refused."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "expected_target_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Target draft revision from airk_explorer_ui_status target_revisions."
+        },
+        "workspace_binding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "binding_fingerprint from airk_explorer_ui_status."
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "publication"
+          ],
+          "properties": {
+            "publication": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Exact AIRK publication token the evidence came from."
+            },
+            "citations": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "start_line"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "objective": {
+          "type": "string",
+          "maxLength": 4000
+        },
+        "path_hint": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 40,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "task_id",
+              "title"
+            ],
+            "properties": {
+              "task_id": {
+                "type": "string",
+                "pattern": "^T[1-9][0-9]{0,2}$"
+              },
+              "title": {
+                "type": "string",
+                "maxLength": 160
+              },
+              "instructions": {
+                "type": "string",
+                "maxLength": 6000
+              },
+              "depends_on": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 20
+              },
+              "acceptance": {
+                "type": "string",
+                "maxLength": 1000
+              }
+            }
+          }
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_suggest_review",
+    "description": "Propose opening Review › Changes, Impact or Tests, optionally naming declarations to look at and a short note for the user. Review only reads Git and the index; it never runs tests. The draft goes to the Suggestions Inbox of the attached Explorer window and waits for the user; nothing is applied, saved or run. Bodies are limited to 16384 bytes; unknown fields are refused.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "title"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "description": "Reuse it to retry; the same key with a different body is refused."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "expected_target_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Target draft revision from airk_explorer_ui_status target_revisions."
+        },
+        "workspace_binding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "binding_fingerprint from airk_explorer_ui_status."
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "publication"
+          ],
+          "properties": {
+            "publication": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Exact AIRK publication token the evidence came from."
+            },
+            "citations": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "start_line"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "changes",
+            "impact",
+            "tests"
+          ],
+          "default": "changes"
+        },
+        "names": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z_$][\\w$]{0,127}$"
+          }
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_suggest_management",
+    "description": "Propose management guidance: open one Management screen with fixed guidance for a known intent. It never starts, approves or runs indexing, repair, verification, rebuild, removal or service actions; the user decides on that screen. The draft goes to the Suggestions Inbox of the attached Explorer window and waits for the user; nothing is applied, saved or run. Bodies are limited to 16384 bytes; unknown fields are refused.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "title",
+        "intent"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "description": "Reuse it to retry; the same key with a different body is refused."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "expected_target_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Target draft revision from airk_explorer_ui_status target_revisions."
+        },
+        "workspace_binding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "binding_fingerprint from airk_explorer_ui_status."
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "publication"
+          ],
+          "properties": {
+            "publication": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Exact AIRK publication token the evidence came from."
+            },
+            "citations": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "start_line"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "intent": {
+          "type": "string",
+          "enum": [
+            "indexing.index_now",
+            "indexing.change_mode",
+            "indexing.review_activity",
+            "recovery.verify_retained_data",
+            "recovery.review_failure",
+            "storage.review",
+            "service.review",
+            "agents.setup",
+            "usage.review",
+            "logs.review"
+          ]
+        },
+        "mode": {
+          "type": "string",
+          "const": "show_guidance"
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 1000
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_proposal_status",
+    "description": "Read proposal status, machine-readable reason, admitted/current/applied draft revisions and expiry. Applied means copied into an Explorer draft; executed is always false. Returns no body.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "proposal_id"
+      ],
+      "properties": {
+        "proposal_id": {
+          "type": "string",
+          "pattern": "^ex-prop-[0-9a-f]{16}$"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_templates_list",
+    "description": "Discover installed core strategy templates, their ids, versions, purposes and runnable/preview availability. Offline, bounded and paginated; never runs a template.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 25,
+          "default": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25,
+          "default": 10
+        },
+        "max_bytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 32768,
+          "default": 8192
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_template_get",
+    "description": "Read one complete installed template: exact parameters/defaults, steps, budgets, instructions and operator argument contracts. Includes runnable/preview availability. No execution.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "template_id"
+      ],
+      "properties": {
+        "template_id": {
+          "type": "string",
+          "pattern": "^airk\\.core/[a-z][a-z0-9-]*$"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_validate_draft",
+    "description": "Dry-run the same strict draft validation as submission, without Inbox admission, rate consumption or idempotency reservation. If a trusted window is attached, also check binding, target revision and existing idempotency conflicts. Offline validation never proves live applicability.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "draft"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "search",
+            "strategy",
+            "plan",
+            "review",
+            "management",
+            "navigation"
+          ]
+        },
+        "draft": {
+          "type": "object",
+          "description": "Exact arguments you would pass to the corresponding suggest tool, including its envelope."
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_suggest_navigation",
+    "description": "Propose opening an implemented Explorer route and prefilling its supported fields. Code/docs allow name and path_prefix; docs also kind; Checker allows text; indexed Changes allows since. Other routes accept no filters. Applying never submits a query or executes management. The draft goes to the Suggestions Inbox of the attached Explorer window and waits for the user; nothing is applied, saved or run. Bodies are limited to 16384 bytes; unknown fields are refused.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "idempotency_key",
+        "title",
+        "route"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "const": "1.0"
+        },
+        "idempotency_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "description": "Reuse it to retry; the same key with a different body is refused."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "expected_target_revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Target draft revision from airk_explorer_ui_status target_revisions."
+        },
+        "workspace_binding": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$",
+          "description": "binding_fingerprint from airk_explorer_ui_status."
+        },
+        "evidence": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "publication"
+          ],
+          "properties": {
+            "publication": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Exact AIRK publication token the evidence came from."
+            },
+            "citations": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "path",
+                  "start_line"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "start_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "end_line": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "content_hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "route": {
+          "type": "string",
+          "enum": [
+            "overview",
+            "search/query",
+            "search/recipes",
+            "code/symbols",
+            "code/references",
+            "code/outline",
+            "docs/facts",
+            "evidence/inspector",
+            "evidence/checker",
+            "evidence/changes",
+            "review/changes",
+            "review/impact",
+            "review/tests",
+            "strategies/library",
+            "strategies/studio",
+            "strategies/planner",
+            "manage/overview",
+            "manage/activity",
+            "manage/storage",
+            "manage/repair",
+            "manage/service",
+            "manage/agents",
+            "manage/usage",
+            "manage/logs",
+            "help"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "filters": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 256
+            },
+            "path_prefix": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "kind": {
+              "type": "string",
+              "maxLength": 32
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 8000
+            },
+            "since": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "airk_explorer_handoff_get",
+    "description": "Read only a complete Studio prompt or Planner task explicitly shared by the user. Requires its expiring opaque token. Returns revision, workspace binding, evidence publication when present, text and SHA-256. Draft/binding/publication changes revoke access. No general draft access or execution.",
+    "inputSchema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token"
+      ],
+      "properties": {
+        "token": {
+          "type": "string",
+          "pattern": "^ex-share-[0-9a-f]{64}$"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]

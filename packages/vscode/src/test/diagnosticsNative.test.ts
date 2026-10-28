@@ -30,17 +30,31 @@ test('native console inspections and guarded repair preserve paused, missing and
         await fixture.repair(a,'verify');
         assert.deepEqual((await fixture.publishedStatus(a)).publication,first.publication);
         const offline=path.join(fixture.owner,'offline-a');await fs.rename(a.root,offline);
+        let waitingJob:string|undefined;
         try{
             const retained=await fixture.tool(a,'airk_read_file',{path:'original.rs',start_line:1,end_line:1});
             assert.ok(Array.isArray(retained.hits));assert.equal(record(retained.hits[0]).text,original);
             const accepted=await fixture.client!.submitJob(await fixture.client!.prepareJob(a.service!.project,'index'));
-            const failed=await fixture.waitJob(String(record(accepted.job).id));
-            assert.equal(failed.state,'failed');assert.equal(record(failed.outcome).code,'source_unavailable');
+            waitingJob=String(record(accepted.job).id);
+            const deadline=Date.now()+30000;
+            while(true){
+                const page=record((await fixture.client!.rpc({console:{after:null,revision:null,limit:32}},'console')).page);
+                const row=(page.projects as unknown[]).map(record).find(value=>record(record(value.project).registration).binding===a.service!.project);
+                const recovery=Array.isArray(row?.recovery)?row.recovery.map(record).find(value=>value.job===waitingJob&&value.reason==='source_unavailable'):undefined;
+                if(recovery?.state==='waiting'){
+                    const job=record((await fixture.client!.rpc({job:{id:waitingJob}},'job')).job);
+                    assert.equal(job.state,'pending');assert.equal(job.attempts,1);assert.equal(job.outcome,null);break;
+                }
+                assert.ok(Date.now()<deadline,'missing source must enter a typed durable wait');
+                await new Promise(resolve=>setTimeout(resolve,25));
+            }
             await fixture.job(a,'inspect');
             const missing=await fixture.client!.rpc({inspection:{project:a.service!.project}},'inspection');
             assert.equal(record(record(missing.observation).snapshot).source_state,'unavailable');
             assert.deepEqual((await fixture.publishedStatus(a)).publication,first.publication);
         }finally{await fs.rename(offline,a.root);}
+        const recovered=await fixture.waitJob(waitingJob!);
+        assert.equal(recovered.id,waitingJob);assert.equal(recovered.state,'succeeded');assert.equal(recovered.attempts,2);
         await fixture.repair(a,'rebuild');
         const rebuilt=await fixture.publishedStatus(a);
         assert.notEqual(record(rebuilt.publication).incarnation,record(first.publication).incarnation);

@@ -103,6 +103,16 @@ function checkInputs(name, metafile, allowed) {
 
 async function build() {
     const catalog = helpCatalog();
+    // Native MCP owns the unified public catalog. Keep its embedded UI schemas
+    // byte-for-byte derived from the same validators used by the extension.
+    const { toolDefinitions } = require(path.join(root, 'out', 'explorerAssistance', 'tools.js'));
+    const { HelpIndex } = require(path.join(root, 'out', 'explorerAssistance', 'help.js'));
+    const nativeCatalog = path.resolve(root, '..', '..', 'crates', 'airk-mcp', 'src', 'unified_explorer.json');
+    const schemas = JSON.stringify(toolDefinitions(new HelpIndex(catalog)), null, 2) + '\n';
+    if (process.argv.includes('--write-mcp-catalog')) { fs.writeFileSync(nativeCatalog, schemas); }
+    else if (!fs.existsSync(nativeCatalog) || fs.readFileSync(nativeCatalog, 'utf8') !== schemas) {
+        throw new Error('Native UI schemas differ: run node scripts/build-explorer.cjs --write-mcp-catalog and review the catalog diff.');
+    }
     const common = { absWorkingDir: root, bundle: true, metafile: true, sourcemap: false, legalComments: 'none', logLevel: 'warning', charset: 'utf8',
         plugins: [helpPlugin(catalog)] };
     const webview = await esbuild.build({

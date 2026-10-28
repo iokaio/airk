@@ -41,6 +41,7 @@ fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> Con
     let read_only = matches!(
         method,
         ControlMethod::Job { .. }
+            | ControlMethod::RequestReceipt { .. }
             | ControlMethod::ConfigurationResult { .. }
             | ControlMethod::Plan { .. }
             | ControlMethod::PlanItems { .. }
@@ -119,9 +120,12 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         ControlMethod::PlanCancel { id } => ControlResponse::Plan {
             plan: registry.cancel_maintenance_plan(id, now_ms)?,
         },
-        ControlMethod::ReserveProject { project } => {
+        ControlMethod::ReserveProject {
+            project,
+            setup_watch,
+        } => {
             airk_kernel::service_projects::validate_planned(&project)?;
-            registry.register(&project)?;
+            registry.register_with_setup(&project, setup_watch)?;
             ControlResponse::Registered {
                 project: registry.get(project.binding)?,
             }
@@ -204,6 +208,10 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         ControlMethod::RequestEpoch => {
             let (namespace, epoch) = registry.request_epoch()?;
             ControlResponse::RequestEpoch { namespace, epoch }
+        }
+        ControlMethod::RequestReceipt { caller, key } => {
+            let (job, expired) = registry.request_receipt(caller, &key)?;
+            ControlResponse::RequestReceipt { job, expired }
         }
         ControlMethod::Events {
             project,
@@ -339,15 +347,56 @@ fn console_page_role(
                 )
                 .unwrap_or(true)
             });
+        let configuration = observed(
+            registry.latest_configuration(binding),
+            Kind::Configuration,
+            &mut failed,
+        )
+        .flatten();
+        let preference = configuration
+            .as_ref()
+            .filter(|job| {
+                matches!(
+                    job.state,
+                    airk_core::service::JobState::Pending | airk_core::service::JobState::Running
+                )
+            })
+            .and_then(|job| {
+                let work = observed(
+                    registry.configuration_work(job.id),
+                    Kind::Configuration,
+                    &mut failed,
+                )
+                .flatten()?;
+                use airk_core::service_configuration::ProjectConfiguration;
+                let (vectors_enabled, detail) = match work.request.configuration {
+                    ProjectConfiguration::Vectors { enabled } => (Some(enabled), None),
+                    ProjectConfiguration::Detail { level } => (None, Some(level)),
+                    _ => return None,
+                };
+                Some(airk_core::service_console::IndexingPreference {
+                    job: job.id,
+                    vectors_enabled,
+                    detail,
+                })
+            });
         let row = ProjectObservation {
-            pending_job,
-            pending_paused,
-            configuration: observed(
-                registry.latest_configuration(binding),
-                Kind::Configuration,
+            pending_gate: observed(
+                registry.pending_job_gate(binding),
+                Kind::PendingJob,
                 &mut failed,
             )
             .flatten(),
+            preference,
+            recovery: observed(
+                registry.recovery_observations(binding),
+                Kind::Recovery,
+                &mut failed,
+            )
+            .unwrap_or_default(),
+            pending_job,
+            pending_paused,
+            configuration,
             watch: observed(
                 registry.watch(binding).map(|watch| watch.observation),
                 Kind::Watch,
@@ -706,6 +755,51 @@ mod tests {
             assert!(!owner.path().join("source").exists());
             assert!(!owner.path().join("data").exists());
         }
+        Ok(())
+    }
+    #[test]
+    fn console_explains_paused_maintenance_owner_without_pausing_the_project() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        crate::local_ipc::prepare_root(&root)?;
+        let service = Incarnation::from_bytes([76; 16]);
+        let mut registry = ServiceRegistry::open(&root, service)?;
+        let project =
+            ProjectRegistration::new("/source".into(), "/data".into(), "plan-wait".into())?;
+        registry.register(&project)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        let plan = registry.create_maintenance_plan(
+            service,
+            &airk_core::service::RequestKey {
+                namespace,
+                epoch,
+                nonce: service,
+            },
+            &airk_core::service_maintenance::RepairRequest {
+                selection: airk_core::service_maintenance::RepairSelection::Selected(vec![
+                    project.binding,
+                ]),
+                operation: airk_core::service_maintenance::RepairOperation::Verify,
+            },
+            1000,
+            airk_core::identity::Sha256Digest::from_bytes([2; 32]),
+        )?;
+        registry.advance_maintenance_plans(1100)?;
+        registry.pause_maintenance_plan(plan.id, true, 1200)?;
+        let page = console_page(&mut registry, None, None, 1, 1300)?;
+        let row = &page.projects[0];
+        assert!(!row.project.paused);
+        assert!(!row.pending_paused);
+        let gate = row.pending_gate.as_ref().unwrap();
+        assert_eq!(gate.plan, Some(plan.id));
+        assert_eq!(gate.code, "maintenance_plan_paused");
+        assert_eq!(gate.job, row.pending_job.as_ref().unwrap().id);
+        let encoded = serde_json::to_value(&page)?;
+        assert_eq!(
+            encoded["projects"][0]["pending_gate"]["code"],
+            "maintenance_plan_paused"
+        );
+        assert!(registry.next_pending_job(project.binding)?.is_none());
         Ok(())
     }
     #[test]

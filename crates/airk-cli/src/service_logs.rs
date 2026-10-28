@@ -27,7 +27,7 @@ const FILES: [&str; 4] = [
     "previous-3.jsonl",
 ];
 const FILE_BYTES: u64 = 1 << 20;
-const RECORD_BYTES: usize = 512;
+const RECORD_BYTES: usize = 768;
 const READ_BYTES: usize = 64 << 10;
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
@@ -223,6 +223,7 @@ fn make_record(
         project,
         job,
         count,
+        code: None,
         observed_unix_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
@@ -316,7 +317,20 @@ impl Log {
         )
     }
     pub fn record(&self, kind: LogKind, project: Option<Sha256Digest>, job: Option<Sha256Digest>) {
-        let record = make_record(self.instance, kind, project, job, 1);
+        self.record_code(kind, project, job, None);
+    }
+    pub fn record_code(
+        &self,
+        kind: LogKind,
+        project: Option<Sha256Digest>,
+        job: Option<Sha256Digest>,
+        code: Option<&str>,
+    ) {
+        let mut record = make_record(self.instance, kind, project, job, 1);
+        record.code = code.map(str::to_owned);
+        if record.validate().is_err() {
+            record.code = Some("failure_code_unavailable".into());
+        }
         if self
             .sender
             .as_ref()
@@ -340,6 +354,20 @@ pub fn recent(root: &Path, limit: usize) -> Result<LogPage> {
         (1..=32).contains(&limit),
         "invalid diagnostic log page bound"
     );
+    read_retained(root, limit, READ_BYTES, 48 << 10)
+}
+
+/// Explicit local export of the entire finite ring; never sent over service IPC.
+pub fn export(root: &Path) -> Result<LogPage> {
+    read_retained(root, usize::MAX, FILE_BYTES as usize * FILES.len(), 8 << 20)
+}
+
+fn read_retained(
+    root: &Path,
+    limit: usize,
+    read_bytes: usize,
+    output_bytes: usize,
+) -> Result<LogPage> {
     let directory = owner(root, false)?;
     let stored_bytes = preflight(&directory)?;
     let mut page = LogPage {
@@ -349,7 +377,7 @@ pub fn recent(root: &Path, limit: usize) -> Result<LogPage> {
         malformed_records: 0,
         tail_truncated: false,
     };
-    let mut remaining = READ_BYTES;
+    let mut remaining = read_bytes;
     for name in FILES {
         let path = directory.join(name);
         if !exists(&path)? {
@@ -382,6 +410,8 @@ pub fn recent(root: &Path, limit: usize) -> Result<LogPage> {
                 _ => page.malformed_records += 1,
             }
             if page.records.len() == limit {
+                // The recent page cannot certify that older records were absent.
+                page.tail_truncated = true;
                 break;
             }
         }
@@ -391,7 +421,7 @@ pub fn recent(root: &Path, limit: usize) -> Result<LogPage> {
     }
     page.records.reverse();
     ensure!(
-        serde_json::to_vec(&page)?.len() <= 48 << 10,
+        serde_json::to_vec(&page)?.len() <= output_bytes,
         "diagnostic log page exceeds bound"
     );
     Ok(page)
@@ -417,6 +447,9 @@ pub fn render(page: &LogPage) -> Result<String> {
         }
         if let Some(job) = record.job {
             text.push_str(&format!(" job={job}"));
+        }
+        if let Some(code) = &record.code {
+            text.push_str(&format!(" code={code}"));
         }
         text.push('\n');
     }

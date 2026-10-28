@@ -42,13 +42,13 @@ export class ServiceWorkspace {
         });
     }
     async register(binding:RuntimeBinding,opened:string,dataRoot:string,collection:string,
-        confirm:(review:ProjectRegistrationReview)=>Promise<boolean>):Promise<ProjectRegistrationReview|undefined>{
+        confirm:(review:ProjectRegistrationReview)=>Promise<boolean>,setupWatch?:boolean):Promise<ProjectRegistrationReview|undefined>{
         this.active();absolute(opened);this.saved();
         const review=await this.runtime.reviewProject(binding,opened,dataRoot,collection);this.active();
         const key=PREFIX+createHash('sha256').update(JSON.stringify([review.installDir,review.binding,opened])).digest('hex');
         if(this.storage.get(key)===undefined&&this.saved().length>=1024)throw new ServiceError('workspace_registration_capacity');
         if(!await confirm(review))return;this.active();
-        await this.runtime.registerProject(binding,review);this.active();
+        await this.runtime.registerProject(binding,review,setupWatch);this.active();
         await this.storage.update(key,{schema:1,opened,registration:review} satisfies SavedProject);this.active();
         await this.storage.update(this.selection(review.installDir,opened),review.binding);this.active();
         return review;

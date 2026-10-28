@@ -48,6 +48,7 @@ async fn handle(
         | ControlMethod::ReserveProject { .. }
         | ControlMethod::Projects { .. }
         | ControlMethod::RequestEpoch
+        | ControlMethod::RequestReceipt { .. }
         | ControlMethod::PlanCreate { .. }
         | ControlMethod::Plan { .. }
         | ControlMethod::PlanItems { .. }

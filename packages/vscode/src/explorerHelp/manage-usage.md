@@ -8,6 +8,8 @@ related_airk_help: usage
 ---
 # Usage and savings
 
+Open this section from the tabs across the top of Management. Everyday controls remain in the Indexing tab: Search mode, Updates and Evidence detail.
+
 Management › Usage displays the local Usage & Savings report in this tab for the selected project. Calls are counted by client; searches you run in the Explorer are reported as the AIRK Explorer client, separately from coding agents.
 
 ## Limits

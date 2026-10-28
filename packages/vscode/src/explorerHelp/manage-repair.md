@@ -8,7 +8,9 @@ related_airk_help: maintenance, request-recovery
 ---
 # Diagnose and repair
 
-Management › Repair creates a native repair plan, shows its preview page by page, and runs it only after you approve that exact preview.
+Open this section from the tabs across the top of Management. Everyday controls remain in the Indexing tab: Search mode, Updates and Evidence detail.
+
+Management › Advanced diagnostics and recovery creates a native repair plan, shows its preview page by page, and runs it only after you approve that exact preview.
 
 ## Steps
 
@@ -20,3 +22,5 @@ Management › Repair creates a native repair plan, shows its preview page by pa
 ## Requests awaiting confirmation
 
 A request whose outcome is unknown keeps its original key. **Check / retry exact request** sends that same request again; forgetting it does not cancel native work.
+
+In 1.5.8, the preview shows a plain-language project/action summary and Start repair above its technical details. An explicit fallback checkbox appears only when that plan requires one and resets for a new plan or digest. Approved submission gets an accepted/queued/running/finished distinction. Plan rows update automatically while work runs. This advanced reviewed workflow is separate from the native service's routine automatic recovery.

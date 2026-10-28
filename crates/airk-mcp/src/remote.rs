@@ -13,6 +13,18 @@ use std::{future::Future, pin::Pin, sync::Arc};
 pub type RemoteFuture<'a> =
     Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send + 'a>>;
 pub trait RemoteTools: Send + Sync + 'static {
+    fn catalog(&self) -> Vec<Tool> {
+        crate::local::tools()
+    }
+    fn guidance(&self) -> &'static str {
+        crate::response::GUIDANCE
+    }
+    fn local_help(&self) -> bool {
+        true
+    }
+    fn uses_response_mode(&self, _tool: &str) -> bool {
+        true
+    }
     fn client(&self, _client: airk_core::usage::ClientFamily) {}
     fn call(
         &self,
@@ -34,10 +46,11 @@ impl ServerHandler for Bridge {
                 "airk",
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions(crate::response::GUIDANCE)
+            .with_instructions(self.backend.guidance())
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        crate::local::tools()
+        self.backend
+            .catalog()
             .into_iter()
             .find(|tool| tool.name == name)
     }
@@ -47,7 +60,7 @@ impl ServerHandler for Bridge {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult {
-            tools: crate::local::tools(),
+            tools: self.backend.catalog(),
             ..Default::default()
         })
     }
@@ -63,7 +76,7 @@ impl ServerHandler for Bridge {
             .into());
         };
         let mut arguments = request.arguments.unwrap_or_default();
-        if request.name == "airk_help" {
+        if request.name == "airk_help" && self.backend.local_help() {
             return Ok(crate::help::call(serde_json::Value::Object(arguments)).into());
         }
         let client = context
@@ -73,9 +86,11 @@ impl ServerHandler for Bridge {
                 airk_core::usage::ClientFamily::from_label(&info.client_info.name)
             });
         self.backend.client(client);
-        arguments.entry("response_mode").or_insert_with(|| {
-            serde_json::to_value(self.response_mode).expect("scalar display mode")
-        });
+        if self.backend.uses_response_mode(&request.name) {
+            arguments.entry("response_mode").or_insert_with(|| {
+                serde_json::to_value(self.response_mode).expect("scalar display mode")
+            });
+        }
         let result = self
             .backend
             .call(request.name.to_string(), arguments)

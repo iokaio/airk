@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { parse } from 'jsonc-parser';
 import { installJsonConfig, JsonClient, jsonConfigPath, mergeJsonConfig, readJsonConfig, reviewLegacyJsonConfig, replaceReviewedLegacyJsonConfig } from '../agentConfig';
-import { LaunchSpec, launchArgs } from '../model';
+import { LaunchSpec, launchArgs, retrievalEntry } from '../model';
 
 const spec: LaunchSpec = { command: 'C:\\Program Files\\AIRK\\airk.exe', root: '/fixture', dataDir: '/index with spaces', collection: 'project-fixture', name: 'Fixture' };
 const clients: JsonClient[] = ['claude', 'gemini', 'antigravity'];
@@ -29,9 +29,9 @@ test('JSON installation preserves comments, other servers and approval policy fo
         assert.match(after, /\t"mcp"/);
         assert.deepEqual(data.mcp, { excluded: ['other'] });
         assert.deepEqual(data.mcpServers.other, { command: 'original', trust: false });
-        assert.deepEqual(data.mcpServers['airk-project-fixture'], { command: spec.command, args: launchArgs(spec) });
+        assert.deepEqual(data.mcpServers['airk'], { command: spec.command, args: launchArgs(spec) });
         assert.equal(mergeJsonConfig(client, spec, after), after, 'reinstall makes no edits');
-        Object.assign(data.mcpServers['airk-project-fixture'], { trust: false });
+        Object.assign(data.mcpServers['airk'], { trust: false });
         const policy = JSON.stringify(data);
         assert.equal(mergeJsonConfig(client, spec, policy), policy, 'same launch preserves client policy');
         assert.throws(() => mergeJsonConfig(client, { ...spec, dataDir: '/changed' }, policy), /different settings/);
@@ -41,7 +41,7 @@ test('JSON installation preserves comments, other servers and approval policy fo
 test('JSON installation rejects malformed, ambiguous, oversized and conflicting settings', () => {
     for (const source of ['', '[]', '{broken', '{"mcpServers": []}', '{"mcpServers":null}',
         '{"mcpServers":{}, "mcpServers":{}}', '{"settings":{"key":1,"key":2}}',
-        '{"mcpServers":{"airk-project-fixture":{"command":"different"}}}', ' '.repeat(1_048_577)]) {
+        '{"mcpServers":{"airk":{"command":"different"}}}', ' '.repeat(1_048_577)]) {
         assert.throws(() => mergeJsonConfig('claude', spec, source), /valid JSON|must be an object|duplicate|different settings|limit/);
     }
 });
@@ -51,7 +51,7 @@ test('legacy replacement reviews only the selected bound server and preserves po
     const selected = { ...legacy, command: path.join(root, 'launcher', process.platform === 'win32' ? 'airk.exe' : 'airk'),
         dataDir: path.join(root, 'fresh-index'), service: { installDir: path.join(root, 'install'), project: 'a'.repeat(64) } };
     for (const client of clients) {
-        await installJsonConfig(client, legacy, () => {}, async () => assert.fail('new configuration'));
+        await installJsonConfig(client, legacy, () => {}, async () => assert.fail('new configuration'), [retrievalEntry(legacy)]);
         const destination = jsonConfigPath(client, legacy);
         const value = parse(await fs.readFile(destination, 'utf8'));
         value.mcpServers.other = { command: 'preserve', trust: false };
@@ -99,7 +99,7 @@ test('reviewed legacy replacement refuses edits, forged proposals and revoked wo
     const legacy = { ...spec, root, command: path.join(root, 'airk.exe') };
     const selected = { ...legacy, service: { installDir: path.join(root, 'install'), project: 'c'.repeat(64) } };
     const destination = jsonConfigPath('claude', selected);
-    await installJsonConfig('claude', legacy, () => {}, async () => assert.fail('new configuration'));
+    await installJsonConfig('claude', legacy, () => {}, async () => assert.fail('new configuration'), [retrievalEntry(legacy)]);
     const review = await reviewLegacyJsonConfig('claude', selected, () => {});
     const save = async () => assert.fail('stale or unapproved proposal must not write');
     await assert.rejects(replaceReviewedLegacyJsonConfig('claude', selected, { ...review }, () => {}, save), /expired/);
@@ -114,7 +114,7 @@ test('install creates exact project destinations and merges through the guarded 
     for (const client of clients) {
         const destination = jsonConfigPath(client, selected);
         await installJsonConfig(client, selected, () => {}, async () => { assert.fail('New file needs no editor rewrite'); });
-        assert.deepEqual(parse((await fs.readFile(destination, 'utf8'))).mcpServers['airk-project-fixture'].args, launchArgs(selected));
+        assert.deepEqual(parse((await fs.readFile(destination, 'utf8'))).mcpServers['airk'].args, launchArgs(selected));
         const existing = '{"mcpServers":{"other":{"command":"keep"}},"policy":false}\n';
         await fs.writeFile(destination, existing);
         let saves = 0;
@@ -138,7 +138,7 @@ test('install refuses stale guides, concurrent creators and redirected or hardli
     assert.equal(await readJsonConfig(destination), undefined);
     const outcomes = await Promise.allSettled([1, 2].map(() => installJsonConfig('claude', selected, () => {}, async () => {})));
     assert.ok(outcomes.some(result => result.status === 'fulfilled'));
-    assert.deepEqual(parse(await fs.readFile(destination, 'utf8')).mcpServers['airk-project-fixture'].args, launchArgs(selected));
+    assert.deepEqual(parse(await fs.readFile(destination, 'utf8')).mcpServers['airk'].args, launchArgs(selected));
     const outside = path.join(root, 'elsewhere'); await fs.mkdir(outside);
     await fs.symlink(outside, path.join(root, '.gemini'), process.platform === 'win32' ? 'junction' : 'dir');
     await assert.rejects(installJsonConfig('gemini', selected, () => {}, async () => {}), /regular directory/);

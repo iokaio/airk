@@ -59,6 +59,9 @@ mod provider_drains;
 pub use provider_drains::{MAX_PROVIDER_DRAINS, ProviderBoot, ProviderDrain};
 #[path = "service_background.rs"]
 mod background;
+#[path = "service_recovery.rs"]
+mod recovery;
+pub use recovery::{RecoveryBudget, RecoveryCondition, WaitingRecovery};
 #[path = "service_cleanup.rs"]
 mod cleanup;
 #[path = "service_configuration.rs"]
@@ -258,7 +261,7 @@ impl ServiceRegistry {
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && (2..=7).contains(&version),
+            application == APPLICATION && (2..=8).contains(&version),
             "unsupported saved service registry format"
         );
         let registry = Self {
@@ -334,7 +337,7 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=7).contains(&version),
+                    application == APPLICATION && (1..=8).contains(&version),
                     "unsupported service registry format"
                 );
                 schema_version = version;
@@ -553,6 +556,41 @@ impl ServiceRegistry {
             transaction.commit()?;
         }
         registry.watch_traversal_state = true;
+        {
+            let tx = registry
+                .connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)?;
+            for schema in [background::SETUP_SCHEMA, recovery::SCHEMA] {
+                for definition in schema.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+                    let tail = definition
+                        .strip_prefix("CREATE TABLE IF NOT EXISTS ")
+                        .context("invalid recovery schema")?;
+                    let name = tail
+                        .split('(')
+                        .next()
+                        .context("invalid recovery table")?
+                        .trim();
+                    let existing: Option<String> = tx
+                        .query_row(
+                            "SELECT sql FROM sqlite_schema WHERE name=?1 AND type='table'",
+                            [name],
+                            |r| r.get(0),
+                        )
+                        .optional()?;
+                    if let Some(sql) = existing {
+                        ensure!(
+                            sql == format!("CREATE TABLE {tail}"),
+                            "unexpected recovery metadata schema"
+                        );
+                    } else {
+                        ensure!(schema_version < 8, "initialized recovery table is missing");
+                        tx.execute_batch(definition)?;
+                    }
+                }
+            }
+            tx.pragma_update(None, "user_version", 8)?;
+            tx.commit()?;
+        }
         if !owner.ready {
             owner.complete(&registry.root)?;
         }
@@ -569,6 +607,14 @@ impl ServiceRegistry {
     }
 
     pub fn register(&mut self, registration: &ProjectRegistration) -> Result<()> {
+        self.register_with_setup(registration, None)
+    }
+    /// Registration and first setup are one durable intent, even if the client closes.
+    pub fn register_with_setup(
+        &mut self,
+        registration: &ProjectRegistration,
+        setup_watch: Option<bool>,
+    ) -> Result<()> {
         registration.validate()?;
         super::data_scope::check(
             Path::new(&registration.data_root),
@@ -587,6 +633,7 @@ impl ServiceRegistry {
                 |row| row.get(0),
             )
             .optional()?;
+        let mut newly_active = existing.is_none();
         if let Some(existing) = existing {
             ensure!(
                 existing == payload,
@@ -612,6 +659,7 @@ impl ServiceRegistry {
                 [registration.binding.to_string()],
             )? == 1
             {
+                newly_active = true;
                 bump(&transaction)?;
             }
         } else {
@@ -634,6 +682,23 @@ impl ServiceRegistry {
                 params![registration.binding.to_string(), payload],
             )?;
             bump(&transaction)?;
+        }
+        if newly_active && let Some(enabled) = setup_watch {
+            watch::ensure_row(&transaction, registration.binding)?;
+            transaction.execute("UPDATE service_watch SET enabled=?1,configuration_epoch=configuration_epoch+1,requested=requested+CASE WHEN ?1 THEN 1 ELSE 0 END,attempts=0,next_ms=0,blocked_revision=NULL,backend=CASE WHEN ?1 THEN 'periodic_fallback' ELSE 'disabled' END,native_roots=0 WHERE project=?2",params![enabled,registration.binding.to_string()])?;
+            background::set(
+                &transaction,
+                registration.binding,
+                airk_core::service::JobKind::ModelSetup,
+                true,
+            )?;
+            // Source evidence remains scheduled even if model preparation fails.
+            background::set(
+                &transaction,
+                registration.binding,
+                airk_core::service::JobKind::Index,
+                true,
+            )?;
         }
         transaction.commit()?;
         Ok(())
@@ -909,7 +974,7 @@ mod tests {
         let version: i64 = registry
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
         registry
             .connection
             .execute_batch("DROP TABLE service_watch_traversal")?;

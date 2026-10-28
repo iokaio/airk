@@ -48,9 +48,36 @@ export function eligibleEvent(file: string, root: string, dataDir: string): bool
     });
 }
 
-/** One MCP server an agent configuration carries; keys of the two AIRK connection types can never collide. */
+/** One MCP server in an agent configuration. Legacy entries exist only for migration. */
 export interface ServerEntry { readonly key: string; readonly command: string; readonly args: readonly string[]; readonly label: string }
 export const ASSISTANCE_KEY = 'airk_explorer';
+export const UNIFIED_KEY = 'airk';
+export const RETRIEVAL_TOOLS = ['capabilities','changes','code_facts','context','document_facts','file_info','help','imports','list_files','outline','read_file','references','relationships','search','status','symbols'] as const;
+export const UNIFIED_TOOLS = [...RETRIEVAL_TOOLS, 'projects', 'draft_search', 'draft_strategy', 'draft_plan', 'suggest_view', 'list_templates', 'get_template', 'validate_draft', 'proposal_status', 'get_handoff'] as const;
+export const EXPLORER_TOOL_RENAMES: Readonly<Record<string,string>> = {
+    airk_explorer_help_search:'help', airk_explorer_help_get:'help', airk_explorer_ui_status:'status',
+    airk_explorer_suggest_search:'draft_search', airk_explorer_suggest_strategy:'draft_strategy', airk_explorer_suggest_plan:'draft_plan',
+    airk_explorer_suggest_navigation:'suggest_view', airk_explorer_suggest_review:'suggest_view', airk_explorer_suggest_management:'suggest_view',
+    airk_explorer_templates_list:'list_templates', airk_explorer_template_get:'get_template',
+    airk_explorer_validate_draft:'validate_draft', airk_explorer_proposal_status:'proposal_status', airk_explorer_handoff_get:'get_handoff',
+};
+
+/** One public endpoint; editor attachment never chooses the retrieval binding. */
+export function unifiedEntry(spec: LaunchSpec, descriptor?: string, additional: readonly LaunchSpec[] = []): ServerEntry {
+    const args = launchArgs(spec);
+    if (descriptor) {
+        if (!path.isAbsolute(descriptor)) { throw new Error('Invalid Explorer descriptor.'); }
+        args.push('--explorer-descriptor', descriptor);
+    }
+    for (const other of additional) {
+        if (!other.service || !spec.service || other.service.installDir !== spec.service.installDir || other.service.project === spec.service.project) {
+            throw new Error('Additional projects must be distinct bindings of the same service.');
+        }
+        args.push('--additional-project', other.service.project);
+    }
+    if (additional.length) { args.push('--no-default-project'); }
+    return { key: UNIFIED_KEY, command: spec.command, args, label: 'AIRK (indexed evidence, help and Explorer drafts)' };
+}
 
 /** AIRK Retrieval: the native read-only evidence tools for one collection. */
 export function retrievalEntry(spec: LaunchSpec): ServerEntry {
@@ -94,7 +121,7 @@ export function serializeServers(client: Client, entries: readonly ServerEntry[]
     return JSON.stringify(config, null, 2) + '\n';
 }
 
-/** The retrieval connection alone, as earlier releases configured it. */
+/** One unified public connection. */
 export function configFor(client: Client, spec: LaunchSpec): string {
-    return serializeServers(client, [retrievalEntry(spec)]);
+    return serializeServers(client, [unifiedEntry(spec)]);
 }

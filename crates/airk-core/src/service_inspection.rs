@@ -84,6 +84,8 @@ pub struct InspectionSnapshot {
     pub indexed_files: Option<u64>,
     pub indexed_vectors: Option<u64>,
     pub vectors_enabled: Option<bool>,
+    #[serde(default)]
+    pub index_detail: Option<crate::extraction::IndexDetail>,
     pub semantic: Option<SemanticSummary>,
     pub discovery: Option<DiscoverySummary>,
     pub failure: Option<InspectionFailure>,

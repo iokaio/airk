@@ -8,7 +8,9 @@ related_airk_help: service, upgrades, resources
 ---
 # Service and runtime
 
-Management › Service shows the native service's health, runtime selection, resource admission and the local inference helper.
+Open this section from the tabs across the top of Management. Everyday controls remain in the Indexing tab: Search mode, Updates and Evidence detail.
+
+Management › Service details shows the native service's health, runtime selection, resource admission and the local inference helper.
 
 ## Actions
 

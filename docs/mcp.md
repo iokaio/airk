@@ -2,15 +2,15 @@
 
 AIRK uses the official Rust SDK and [stdio transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports). The SDK negotiates protocol revisions and validates calls. Stdout contains only protocol messages during MCP operation; diagnostics use stderr.
 
-Each launch fixes root, data directory and collection. Tools cannot change that scope, index source, run commands, remove collections or access another collection. Use CLI/extension operations for setup, indexing and maintenance.
+Each launch fixes an explicit allowlist of registered project bindings, with a single-project default when configured. Tools cannot register projects or escape that scope, index source, run commands, remove collections or access another collection. Use CLI/extension operations for setup, indexing and maintenance.
 
 Multiple agents can launch independent stdio connections against the same root/data-directory/collection and query one shared disk index concurrently. No agent owns the collection. Reads continue during indexing and later requests reopen the published generation; compare exact publication tokens when combining results from multiple calls. A numerical generation alone does not establish identity. See [shared-collection behavior](collections.md#multiple-agents-sharing-one-collection).
 
-The VS Code extension also ships a separate MCP server, **AIRK Explorer Assistance** (`airk-explorer`), with `airk_explorer_*` help and UI-status tools. It is not part of this native server: the retrieval inventory below stays at sixteen tools, and Assistance never calls them. See [the extension guide](vscode-extension.md) and [agent setup](agent-integration.md#two-connection-types-150).
+Version 1.5.7 serves one `airk` connection with 26 unprefixed tools. The sixteen native evidence/help tools below are joined by projects, reviewed Explorer drafts, template discovery, validation, proposal status and shared handoffs. See [the complete catalog, rationale and migration contract](unified-mcp.md). Old prefixed calls remain hidden compatibility aliases. Evidence scope never follows UI selection; multiple configured bindings require project explicitly. The editor adapter is optional and native evidence does not depend on an open window.
 
 ## Implemented tools
 
-`airk_help` is the sixteenth read-only tool. With no arguments it returns an overview and 35-topic catalog covering CLI/MCP usage, indexing/jobs, health, freshness, models, resources, storage, installation/retirement, troubleshooting, privacy and interpretation limits. `topic` selects bundled version-matched guidance; `command` selects exact public command help generated from the native executable's parser; `tool` selects a current MCP description/schema. It executes no command and reads no sources/indexes. The stdio frontend serves help without querying a project worker, and `airk tools call airk_help` works without a workspace registration or running service.
+`help` combines native documentation and optional bundled Explorer guidance. With no arguments it returns an overview and 35-topic catalog covering CLI/MCP usage, indexing/jobs, health, freshness, models, resources, storage, installation/retirement, troubleshooting, privacy and interpretation limits. `topic` selects bundled version-matched guidance; `command` selects exact public command help generated from the native executable's parser; `tool` selects a current MCP description/schema. It executes no command and reads no sources/indexes. The stdio frontend serves help without querying a project worker, and `airk tools call airk_help` works without a workspace registration or running service.
 
 Help accepts `max_bytes` (4096–32768, default 8192) and 1-based `start_line`. Repeat the same selector with `next_line` to continue. The budget covers the complete help JSON payload. Unknown selectors, conflicting command/tool requests and out-of-range budgets fail explicitly. Native command help is unavailable explicitly when a non-native host supplies no parser catalog. Both response modes return the same guidance.
 
@@ -19,10 +19,10 @@ Example argument objects (use one per call):
 ```json
 {"topic":"jobs"}
 {"command":"runtime retire-previous"}
-{"tool":"airk_status"}
+{"tool":"status"}
 ```
 
-`airk_status.work` is a separate instance-bound service metadata observation for the selected project. It includes cached progress/job records, current-worker/fencing comparison, active job when supported by a matching running observation, up to 16 queued jobs with `queue_truncated`, project/pending pause state, source-watcher status and current-worker sampled waits matched to observed job IDs. Queue records include paused work and do not admit jobs. `pending_job` remains the first queued job. Sample timestamps/ages and `failed_observations` make missing, stale or unavailable data explicit. No totals or percentages are fabricated; progress grant identifiers are omitted. These reads do not inspect sources, start indexing or change job state.
+`status.work` is a separate instance-bound service metadata observation for the selected project. It includes cached progress/job records, current-worker/fencing comparison, active job when supported by a matching running observation, up to 16 queued jobs with `queue_truncated`, project/pending pause state, source-watcher status and current-worker sampled waits matched to observed job IDs. Queue records include paused work and do not admit jobs. `pending_job` remains the first queued job. Sample timestamps/ages and `failed_observations` make missing, stale or unavailable data explicit. No totals or percentages are fabricated; progress grant identifiers are omitted. These reads do not inspect sources, start indexing or change job state.
 
 Compare work observations with published readiness/freshness rather than treating either as the other. Health is not progress. `progress_current_worker` is a worker-generation check, not proof of recent advancement. Missing/mismatched waits do not prove no wait. Use help topics `jobs`, `indexing`, `freshness`, `service`, `resources`, `request-recovery`, `maintenance` and `troubleshooting` to explain the readings and CLI management options. MCP tools never perform those management actions.
 
@@ -35,7 +35,7 @@ Typed read rejection is a separate contract: only complete allowlisted publicati
 
 Broker-only queued-job wait samples are labeled `observed_pending_job_unconfirmed_worker` when their exact job ID matches the scoped pending queue but no serving worker is confirmed. Active-job waits still require a matching serving worker/generation. Always retain both sample ages and this confidence distinction when explaining a wait.
 
-`airk_status.runtime` is an explicit, versioned JSON observation of the running processes, included in both Terse and Full responses. It distinguishes the MCP frontend from the native broker/service and the project worker that indexes sources and answers evidence requests. These runtime versions are separate from `extractor_version` and indexed publication identity.
+`status.runtime` is an explicit, versioned JSON observation of the running processes, included in both Terse and Full responses. It distinguishes the MCP frontend from the native broker/service and the project worker that indexes sources and answers evidence requests. These runtime versions are separate from `extractor_version` and indexed publication identity.
 
 Runtime `protocol` fields identify native IPC, not the MCP JSON-RPC protocol revision negotiated separately by the SDK during initialization.
 
@@ -53,22 +53,22 @@ Build receipts are bounded and checked against the local inventory and observed 
 
 | Tool | Main inputs | Result |
 |---|---|---|
-| airk_search | query; mode, path_prefix, limit, max_bytes, full_chunks | Lexical, local vector or hybrid evidence; focused snippets by default, original locations and truncation |
-| airk_read_file | path, start_line, end_line; max_bytes | Inclusive indexed line range |
-| airk_list_files | prefix, limit, max_bytes, cursor | Indexed paths only |
-| airk_status | none | Published readiness/freshness, runtime versions/builds, and separately sampled project jobs/progress/watcher/waits |
-| airk_help | topic, command or tool; start_line, max_bytes | Version-matched usage guidance, generated public CLI help and current MCP schemas; independent of indexing |
-| airk_file_info | path | Language, method, parse status, hash, counts and line basis |
-| airk_outline | path; limit, max_bytes, cursor, compact | Exact-file rich facts or compact names/kinds/spans/keys |
-| airk_symbols | name, language, path_prefix; limit, max_bytes, cursor | Exact native definition names; omit name to list |
-| airk_imports | name substring, language, path_prefix; limit, max_bytes, cursor | Selected native import/use/include declarations |
-| airk_document_facts | compact; kind, name substring, language, path_prefix; limit, max_bytes, cursor | Requirements, dates, design/architecture/features/decisions, sections, keys and asset facts with document metadata and original locations |
-| airk_references | identifier name, path_prefix; limit, max_bytes | Exact-case whole-identifier textual occurrences selected through lexical candidates, then checked against retained source; no resolution |
-| airk_context | path, indexed line; before, after, max_bytes | Neighboring indexed lines |
-| airk_capabilities | adapter, rich | Compact adapter catalog; exact adapter capabilities or rich profiles on request, even before indexing |
-| airk_code_facts | compact; exact name/qualified name/symbol ID, kind, language, path_prefix; limit, max_bytes, cursor | Enriched syntax and optional hash-bound SCIP facts with scopes/signatures/producer coverage |
-| airk_relationships | symbol; direction, kind, path_prefix, hops, limit, max_bytes | Available structural candidates or producer assertions; Agent Lean and Rich Structure retain supported call occurrences; written targets remain unresolved candidates, so caller coverage is incomplete |
-| airk_changes | since and/or selectors; path_prefix, include_symbols, include_documents, limit, max_bytes, cursor | Bounded observed indexed changes, remembered-evidence validation, independent coverage and scheduler freshness |
+| search | query; mode, path_prefix, limit, max_bytes, full_chunks | Lexical, local vector or hybrid evidence; focused snippets by default, original locations and truncation |
+| read_file | path, start_line, end_line; max_bytes | Inclusive indexed line range |
+| list_files | prefix, limit, max_bytes, cursor | Indexed paths only |
+| status | none | Published readiness/freshness, runtime versions/builds, and separately sampled project jobs/progress/watcher/waits |
+| help | topic, command or tool; start_line, max_bytes | Version-matched usage guidance, generated public CLI help and current MCP schemas; independent of indexing |
+| file_info | path | Language, method, parse status, hash, counts and line basis |
+| outline | path; limit, max_bytes, cursor, compact | Exact-file rich facts or compact names/kinds/spans/keys |
+| symbols | name, language, path_prefix; limit, max_bytes, cursor | Exact native definition names; omit name to list |
+| imports | name substring, language, path_prefix; limit, max_bytes, cursor | Selected native import/use/include declarations |
+| document_facts | compact; kind, name substring, language, path_prefix; limit, max_bytes, cursor | Requirements, dates, design/architecture/features/decisions, sections, keys and asset facts with document metadata and original locations |
+| references | identifier name, path_prefix; limit, max_bytes | Exact-case whole-identifier textual occurrences selected through lexical candidates, then checked against retained source; no resolution |
+| context | path, indexed line; before, after, max_bytes | Neighboring indexed lines |
+| capabilities | adapter, rich | Compact adapter catalog; exact adapter capabilities or rich profiles on request, even before indexing |
+| code_facts | compact; exact name/qualified name/symbol ID, kind, language, path_prefix; limit, max_bytes, cursor | Enriched syntax and optional hash-bound SCIP facts with scopes/signatures/producer coverage |
+| relationships | symbol; direction, kind, path_prefix, hops, limit, max_bytes | Available structural candidates or producer assertions; Agent Lean and Rich Structure retain supported call occurrences; written targets remain unresolved candidates, so caller coverage is incomplete |
+| changes | since and/or selectors; path_prefix, include_symbols, include_documents, limit, max_bytes, cursor | Bounded observed indexed changes, remembered-evidence validation, independent coverage and scheduler freshness |
 
 Defaults are 10 results and 8192 payload bytes; bounds are 1–100 and 1–65536. Context radius defaults to 5 lines each way and cannot exceed 100. Unknown arguments are rejected. Results use one JSON text block; metadata/framing adds bytes beyond payload budgets. Errors return tool errors, not misleading empty hits.
 
@@ -78,15 +78,15 @@ Agent Lean fact replies include bounded discovery and independent scheduler-fres
 
 The former `airk_history` endpoint is absent from the 1.3.0 source catalog because AIRK 1.2 retains only one current index; the published 1.2.4 helper still lists it but returns an unsupported error. Capabilities advertise historical reads/checkpoints as unsupported. Use source control for source history. See [tool retirement](unreleased-mcp-tool-retirement.md).
 
-Search returns a focused excerpt of at most 768 UTF-8 bytes per hit by default, with adjusted indexed line coordinates and the original source hash/location. `full_chunks: true` requests the prior complete-chunk behavior within the existing response budget. A snippet or byte-budget cut sets truncation; use `airk_read_file` or `airk_context` for a wider selected passage. Mixed code/document results indicate relevance, not proof that an application uses a configuration described in prose. Use `path_prefix` for a known project or component and inspect code evidence before claiming behavior.
+Search returns a focused excerpt of at most 768 UTF-8 bytes per hit by default, with adjusted indexed line coordinates and the original source hash/location. `full_chunks: true` requests the prior complete-chunk behavior within the existing response budget. A snippet or byte-budget cut sets truncation; use `read_file` or `context` for a wider selected passage. Mixed code/document results indicate relevance, not proof that an application uses a configuration described in prose. Use `path_prefix` for a known project or component and inspect code evidence before claiming behavior.
 
-Set `AIRK_MCP_RESPONSE_MODE=terse` on the MCP worker to omit repeated full readiness, freshness and indexing blocks from ordinary evidence replies. Terse replies retain a compact `coverage` state, exact `publication.token`, collection, citations, hashes, validators and truncation. `airk_status` and `airk_capabilities` remain detailed. Terse is the default; Full is available explicitly; a terse reply still does not verify live source bytes.
+Set `AIRK_MCP_RESPONSE_MODE=terse` on the MCP worker to omit repeated full readiness, freshness and indexing blocks from ordinary evidence replies. Terse replies retain a compact `coverage` state, exact `publication.token`, collection, citations, hashes, validators and truncation. `status` and `capabilities` remain detailed. Terse is the default; Full is available explicitly; a terse reply still does not verify live source bytes.
 
-`airk_search.mode` accepts `lexical` (explicit AND-term retrieval), `vector` (approximate similarity using an explicitly provisioned local word-vector or CPU ONNX model), or `hybrid` (bounded reciprocal-rank fusion of both branches from one pinned generation). Omitting `mode` uses the saved collection policy: partial hybrid by default, lexical while vectors are pending if selected, or an explicit unavailable result until vectors are complete if required. The panel's vector opt-out selects lexical and rejects explicit vector/hybrid requests. Search results and `airk_status` disclose pending, partial, ready or failed semantic coverage against the exact current publication. Explicit vector requests never silently fall back to lexical evidence. These read-only tools do not start enrichment, download models or use cloud inference. `semantic: true` is a compatibility alias for vector and cannot be combined with an explicit mode. Similarity is not complete language understanding, answer generation, resolved references or a relevance guarantee.
+`search.mode` accepts `lexical` (explicit AND-term retrieval), `vector` (approximate similarity using an explicitly provisioned local word-vector or CPU ONNX model), or `hybrid` (bounded reciprocal-rank fusion of both branches from one pinned generation). Omitting `mode` uses the saved collection policy: partial hybrid by default, lexical while vectors are pending if selected, or an explicit unavailable result until vectors are complete if required. The panel's vector opt-out selects lexical and rejects explicit vector/hybrid requests. Search results and `status` disclose pending, partial, ready or failed semantic coverage against the exact current publication. Explicit vector requests never silently fall back to lexical evidence. These read-only tools do not start enrichment, download models or use cloud inference. `semantic: true` is a compatibility alias for vector and cannot be combined with an explicit mode. Similarity is not complete language understanding, answer generation, resolved references or a relevance guarantee.
 
 Successful result objects can include an opaque `request_id` for optional local usefulness feedback. [Usage reporting](usage-reporting.md) defaults to content-free daily aggregates and measures the serialized tool-result envelope once per outer call. `AIRK_USAGE_MODE=disabled` opts out. Recording failures never change tool success/error results; reports, feedback and recording controls remain CLI/extension maintenance operations and add no MCP tools.
 
-To explicitly request vector retrieval from a connected coding agent, ask: “Call AIRK `airk_search` with `mode: \"vector\"` and query `how is a forgotten password recovered`. Show the tool arguments and cite the returned evidence.” The arguments are:
+To explicitly request vector retrieval from a connected coding agent, ask: “Call AIRK `search` with `mode: \"vector\"` and query `how is a forgotten password recovered`. Show the tool arguments and cite the returned evidence.” The arguments are:
 
 ```json
 {"query":"how is a forgotten password recovered","mode":"vector","limit":5,"max_bytes":8192}
@@ -98,11 +98,11 @@ The existing native CLI can run the same search without a coding agent and print
 airk --root <workspace> --data-dir <storage> --collection <collection> search "how is a forgotten password recovered" --mode vector --limit 5
 ```
 
-This CLI command exercises retrieval directly; `airk mcp` starts the stdio protocol server. An enabled collection needs a published model and DiskANN index before explicit vector retrieval can succeed.
+This CLI command exercises native retrieval directly; `airk mcp` starts the stdio protocol server. An enabled collection needs a published model and DiskANN index before explicit vector retrieval can succeed.
 
 ## Call tools without a coding agent
 
-The native 1.4.0 CLI exposes the same sixteen MCP tools, schemas and handlers:
+The native CLI retains the sixteen native evidence aliases, schemas and handlers for terminal compatibility; the public unified stdio catalog is described above:
 
 ```console
 airk tools list
@@ -132,13 +132,13 @@ Opening the console does not index or download a model. Trust is required in the
 
 Discovery fact budgets count complete serialized records, including document/code metadata and citations; response envelope and array framing remain additional. The optional exact kind filter selects categories such as requirement, date, architecture, design, feature, decision, acceptance, table_row or table_cell. See [document indexing](document-indexing.md) for candidate semantics, normalized dates, units, heading context and bounds.
 
-The sixteen-tool inventory is shared across clients. Code details count toward fact budgets. Relationship budgets count serialized edges/citations, with 1–3 hops, 100 visited symbols, 256 candidate files and 256 MiB of evidence work. Native targets remain unresolved; imported SCIP references/implementations are producer assertions and references are not calls. [Code storage and import contracts](code-facts-and-relationships.md) describe identities, coverage, binding and conservative invalidation.
+The unified tool inventory is shared across clients. Code details count toward fact budgets. Relationship budgets count serialized edges/citations, with 1–3 hops, 100 visited symbols, 256 candidate files and 256 MiB of evidence work. Native targets remain unresolved; imported SCIP references/implementations are producer assertions and references are not calls. [Code storage and import contracts](code-facts-and-relationships.md) describe identities, coverage, binding and conservative invalidation.
 
 ## Remembered evidence and conditional reads
 
-`airk_changes` and `airk changes` validate current remembered citations/handles and report independent scheduler freshness. Unavailable retained baselines are explicit; observed history and move/similarity suggestions are bounded and do not prove filesystem intent. Follow returned validation pages before treating a request as consumed. See [changes](changes.md).
+`changes` and `airk changes` validate current remembered citations/handles and report independent scheduler freshness. Unavailable retained baselines are explicit; observed history and move/similarity suggestions are bounded and do not prove filesystem intent. Follow returned validation pages before treating a request as consumed. See [changes](changes.md).
 
-`airk_file_info`, `airk_read_file`, `airk_outline` and `airk_context` additionally accept `if_evidence`, `follow_moves`, `known_hash` and `artifact_id`. Normal payload fields remain top-level; an additive `read` object provides publication, status, requested/resolved path, validator, basis and reason. A matching representation validator yields `read.status: "not_modified"` and omits the ordinary payload. A supplied `known_hash` that differs from a present indexed source fails explicitly; source hashes alone do not suppress evidence. Move following defaults to false and requires both the current artifact handle and matching source hash; an old path alone cannot redirect.
+`file_info`, `read_file`, `outline` and `context` additionally accept `if_evidence`, `follow_moves`, `known_hash` and `artifact_id`. Normal payload fields remain top-level; an additive `read` object provides publication, status, requested/resolved path, validator, basis and reason. A matching representation validator yields `read.status: "not_modified"` and omits the ordinary payload. A supplied `known_hash` that differs from a present indexed source fails explicitly; source hashes alone do not suppress evidence. Move following defaults to false and requires both the current artifact handle and matching source hash; an old path alone cannot redirect.
 
 These four tools accept an exact `revision` token only for the current head. Superseded tokens fail explicitly without returning current or live-source bytes. Current cursors also expire after publication. See the [1.2 contract](current-index-runtime.md).
 

@@ -1,6 +1,6 @@
 # Coding-agent MCP setup research
 
-Current 1.4.0 source exposes sixteen read-only tools, including airk_help; see the [current MCP catalog](mcp.md). The fifteen-tool 1.3 statements below describe that historical source.
+Current 1.5.7 source exposes one unified endpoint; see the [catalog and startup migration](unified-mcp.md). The native evidence adapter retains sixteen compatibility aliases, including airk_help. The fifteen-tool 1.3 statements below describe that historical source.
 
 Reviewed against official client documentation on **13 October 2026**. This is a dated compatibility/design matrix, not a claim of live testing every client. The unreleased 1.3.0 source exposes fifteen read-only tools. Native protocol tests exercise its real stdio lifecycle, changes and conditional reads with CLI/MCP parity. The extension registers a VS Code MCP provider and previews supported native client formats, plus connection details/guidance for Amazon Q and Windsurf/Devin. The current inventory includes bounded code facts, relationships and [remembered-evidence validation](changes.md); historical reads and checkpoints are unsupported in 1.2. Client versions, precedence and policy require live integration checks.
 
@@ -81,13 +81,8 @@ VS Code uses its documented host API. Other supported clients get a persistent c
 
 Run a native helper self-check and a stdio handshake/tool-list/status probe in the chosen collection. Distinguish valid generated configuration from an actually connected agent; only the client can confirm its own discovery and approval. Include per-client tests and a documentation/version refresh before release.
 
-### Two connection types (1.5.0)
+### One connection in 1.5.7
 
-For a workspace registered with the AIRK service, Connect Coding Agent shows two separately labeled connections and checks each one on its own:
+The current branch replaces the former 1.5.0 two-server design with one airk endpoint and 26 uniquely named tools. See [the catalog and migration contract](unified-mcp.md). Supported project files are consolidated on trusted startup after registration; user-wide/client-private settings remain under the client's controls. Restart each coding agent and approve renamed tools after migration. Native setup prints the same single endpoint; the extension additionally supplies the verified UI adapter descriptor.
 
-- **AIRK Retrieval (evidence)** uses the server key `airk-<collection>` and runs the version-free [universal launcher](service-installation.md) with `--root … --service-project … mcp`. When no universal launcher is published (custom or managed install roots), the per-installation launcher with `runtime launch --install-dir <dir> -- …` is used as before.
-- **AIRK Explorer Assistance (help and UI status)** uses the server key `airk_explorer`, which can never collide with a retrieval key. It runs the same launcher as `explorer-assistance --descriptor <extension storage>/explorer-assistance/launch-1.json` (with the `runtime launch --install-dir <dir> --` prefix only for the per-installation launcher). The runtime's forwarder verifies that descriptor and starts the extension's bundled server with VS Code's own runtime, so agents need no system Node.
-
-Generated Codex tables, Claude Code, Gemini CLI and Antigravity JSON, and the copied configuration include both entries. JSON installation checks both before editing anything, so a conflicting `airk_explorer` entry leaves the file untouched. **Check Explorer Assistance** starts the Assistance entry exactly as an agent would and checks its nine tools and bundled help. Existing-entry migration (Install or Repair CLI and trusted activation) moves recognized entries for this installation, including earlier per-installation launcher entries, to the universal launcher. An `airk_explorer` entry is rewritten only when it is one this extension wrote for this installation; any other `airk_explorer` entry is left untouched. VS Code agents get Explorer Assistance from the separate `airk.explorerAssistance` provider instead. See [the extension guide](vscode-extension.md) for what Assistance does and does not do.
-
-VS Code and Cursor can have direct in-host registration. An AIRK VS Code extension can guide or prepare other agents' settings, but cannot assume a public API into their private extension state. This is why a setup wizard needs both direct registration and guided setup modes.
+VS Code registers one workspace definition, with explicit configured-project selection in a multi-root workspace. A recognized manual .vscode/mcp.json entry owns its disabled/tool policies, so the provider does not add a duplicate. Other clients still need their own setup; VS Code's registry does not configure them.

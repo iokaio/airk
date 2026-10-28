@@ -5,7 +5,7 @@
 import {
     CORE_PACK, DEFAULT_BUDGETS, Plan, PLAN_SCHEMA, PlanTask, safePrefix, Strategy, STRATEGY_SCHEMA, StrategyParam, StrategyStep, validatePlan, validateStrategy,
 } from './explorerStrategies';
-import { ROUTE_KEYS } from './explorerRoutes';
+import { ROUTE_ALIASES, ROUTE_KEYS } from './explorerRoutes';
 import { FEATURES } from './explorerFeatures';
 
 export const DRAFT_SCHEMA_VERSION = '1.0';
@@ -16,7 +16,7 @@ export const DRAFT_KINDS = ['search', 'strategy', 'plan', 'review', 'management'
 export type DraftKind = typeof DRAFT_KINDS[number];
 /** Default destination per kind; review and management drafts name a more specific screen. */
 export const DESTINATIONS: Readonly<Record<DraftKind, string>> = { search: 'search/query', strategy: 'strategies/studio', plan: 'strategies/planner', review: 'review/changes',
-    management: 'manage/projects', navigation: 'overview' };
+    management: 'manage/overview', navigation: 'overview' };
 export const REVIEW_SCOPES = ['changes', 'impact', 'tests'] as const;
 
 /**
@@ -24,11 +24,11 @@ export const REVIEW_SCOPES = ['changes', 'impact', 'tests'] as const;
  * extension-authored guidance; none can start, approve or run a native operation.
  */
 export const MANAGEMENT_INTENTS = {
-    'indexing.index_now': { route: 'manage/projects', guidance: 'Review the project in Management › Projects and choose Index now yourself if the index is out of date.' },
-    'indexing.change_mode': { route: 'manage/indexing', guidance: 'Review indexing mode, pause state and vector settings in Management › Indexing; each change asks for confirmation.' },
+    'indexing.index_now': { route: 'manage/overview', guidance: 'Review the project in Management › Indexing and choose Update index yourself if the index is out of date.' },
+    'indexing.change_mode': { route: 'manage/overview', guidance: 'Review Search mode, Updates and Evidence detail in Management › Indexing. Requested settings and published coverage are shown separately.' },
     'indexing.review_activity': { route: 'manage/activity', guidance: 'Check the current job, its phase and wait reason in Management › Activity before changing anything.' },
-    'recovery.verify_retained_data': { route: 'manage/repair', guidance: 'In Management › Repair, create a verify preview, read every page, and approve it only if it matches what you expect.' },
-    'recovery.review_failure': { route: 'manage/repair', guidance: 'Read the failure and request status in Management › Repair and Activity; a rebuild is a last resort you choose explicitly.' },
+    'recovery.verify_retained_data': { route: 'manage/repair', guidance: 'In Management › Recovery, create a verify preview, read every page, and approve it only if it matches what you expect.' },
+    'recovery.review_failure': { route: 'manage/repair', guidance: 'Read the failure and request status in Management › Recovery and Activity; a rebuild is a last resort you choose explicitly.' },
     'storage.review': { route: 'manage/storage', guidance: 'Review storage location, quotas and cleanup previews in Management › Storage.' },
     'service.review': { route: 'manage/service', guidance: 'Check service health and runtime state in Management › Service; lifecycle actions ask for confirmation.' },
     'agents.setup': { route: 'manage/agents', guidance: 'Use Management › Agents to connect or check a coding agent; each connection is configured and verified separately.' },
@@ -39,7 +39,7 @@ export type ManagementIntent = keyof typeof MANAGEMENT_INTENTS;
 
 /** Where a draft would go in the Explorer. */
 export function destinationOf(body: DraftBody): string {
-    return body.kind === 'navigation' ? body.route : body.kind === 'review' ? `review/${body.scope}` : body.kind === 'management' ? MANAGEMENT_INTENTS[body.intent].route : DESTINATIONS[body.kind];
+    return body.kind === 'navigation' ? ROUTE_ALIASES[body.route] ?? body.route : body.kind === 'review' ? `review/${body.scope}` : body.kind === 'management' ? MANAGEMENT_INTENTS[body.intent].route : DESTINATIONS[body.kind];
 }
 export interface NavigationFilters { readonly name?: string; readonly path_prefix?: string; readonly kind?: string; readonly text?: string; readonly since?: string }
 export const navigationFilters = (props: { navigation?: { route: string; filters: NavigationFilters } }, route: string): NavigationFilters => props.navigation?.route === route ? props.navigation.filters : {};
@@ -214,7 +214,8 @@ function managementBody(value: Record<string, unknown>, errors: string[]): Draft
 
 /** Navigation fills supported forms; it never submits them or accepts arbitrary route parameters. */
 function navigationBody(value: Record<string, unknown>, errors: string[]): DraftBody | undefined {
-    if (typeof value.route !== 'string' || !ROUTE_KEYS.includes(value.route) || FEATURES[value.route] !== 'implemented') {
+    const destination = typeof value.route === 'string' ? ROUTE_ALIASES[value.route] ?? value.route : undefined;
+    if (typeof value.route !== 'string' || !destination || !ROUTE_KEYS.includes(destination) || FEATURES[destination] !== 'implemented') {
         errors.push('route must name an implemented Explorer route'); return undefined;
     }
     const allowed: Record<string, readonly string[]> = { 'code/symbols': ['name', 'path_prefix'], 'code/references': ['name', 'path_prefix'],

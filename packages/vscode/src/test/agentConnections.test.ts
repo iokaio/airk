@@ -50,7 +50,7 @@ test('guide separates client setup from helper checks and escapes all workspace 
     assert.match(html, /Create Codex project configuration/);
     assert.match(html, /restart the extension/);
     assert.match(html, /cannot confirm that Codex loaded/);
-    assert.match(html, /airk_status/);
+    assert.match(html, /status and capabilities/);
     assert.match(html, /&lt;error&gt;/);
     assert.match(html, /&lt;instructions&gt;/);
     assert.doesNotMatch(html, /<script>alert/);

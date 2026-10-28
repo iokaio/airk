@@ -1,6 +1,10 @@
 # AIRK documentation
 
-Current development version: **1.5.5**. See the [1.5.5 development record](release-1.5.5.md) (Explorer sessions, Studio Save and Management refinements) for search-session persistence/paging, paged Git changes, robust Review reports and ignore-aware watcher directory planning. The [published 1.5.4 record](release-1.5.4.md) and earlier candidate records retain their original evidence and publication scope.
+Current 1.5.8 uses [one unified MCP connection](unified-mcp.md), with 26 distinct tools, fixed project scope and guarded startup consolidation of recognized old server definitions. [Index management](index-management.md) documents progress, saved settings, recovery and diagnostics.
+
+The [1.5.8 update lifecycle record](release-1.5.8.md) describes the single-action reload notice, explicit runtime installation stages and quiet success. [1.5.7](release-1.5.7.md) retains its original candidate validation.
+
+Current development version: **1.5.8**. Management uses horizontal tabs, captured diagnostic report open/copy/save and full retained service log export. Completed runtime setup reopens quietly. Recovery checks the unfinished runtime marker, resumes outstanding source work after successful recovery and preserves failure budgets across new source hints; see the [1.5.7 development record](release-1.5.7.md), [index management](index-management.md) and [automatic indexing recovery](index-self-healing.md). The [original recovery proposal](index-self-healing-proposal.md), [1.5.6 record](release-1.5.6.md), [1.5.5 record](release-1.5.5.md), [published 1.5.4 record](release-1.5.4.md) and earlier records retain their original design, evidence and publication scope.
 
 The 1.5.0 local Explorer candidate includes fourteen Assistance tools, paired project setup, a unified offline Help search, four role guides, purpose/format-based indexing guidance and About/community links. See [the extension guide](vscode-extension.md), [implementation receipts](explorer/code-review-action-plan.md), [role guidance](../packages/vscode/src/explorerHelp/role-developer.md), [indexing choices](../packages/vscode/src/explorerHelp/indexing-choices.md) and [document types](../packages/vscode/src/explorerHelp/document-types.md). These articles and the native engine guidance are also available directly in Explorer Help and through Assistance help tools.
 
@@ -18,13 +22,13 @@ Installation now shows a completion notification with MCP Servers, Reload Window
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
 
-The current branch is synchronized at **1.5.5**, carrying forward the 1.5.0 addition of the [AIRK Explorer and Explorer Assistance](release-1.5.0.md); the paragraphs above and below about 1.4.x describe earlier releases. [Routine CI](ci-and-builds.md) runs the full workspace once on Linux, focused native regressions elsewhere, all platform builds/package smoke and a container smoke. Full platform/container suites and installed-runtime lifecycle campaigns are explicit qualification. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
+The current branch is synchronized at **1.5.8**, carrying forward the 1.5.0 addition of the [AIRK Explorer and Explorer Assistance](release-1.5.0.md); the paragraphs above and below about 1.4.x describe earlier releases. [Routine CI](ci-and-builds.md) runs the full workspace once on Linux, focused native regressions elsewhere, all platform builds/package smoke and a container smoke. Full platform/container suites and installed-runtime lifecycle campaigns are explicit qualification. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
 
 The [MCP contract](mcp.md) distinguishes raw unavailable diagnostics, bounded publication/readiness observations and typed exact-request retries. Qualification clients preserve these distinctions and exact submitted-query accounting.
 
-The [MCP contract](mcp.md) also covers `airk_help` (35 usage topics, native parser-generated CLI help and current tool schemas) and `airk_status.work` (scoped progress/jobs, bounded queues, watcher status and matched waits). All 16 tools remain read-only.
+The [MCP contract](mcp.md) also covers `help` (native usage topics, native parser-generated CLI help and current tool schemas) and `status.work` (scoped progress/jobs, bounded queues, watcher status and matched waits). The sixteen native evidence tools remain read-only; the unified catalog also advertises explicitly reviewed UI drafts.
 
-The [MCP contract](mcp.md) documents `airk_status.runtime`, including running frontend/worker/service versions, process and payload identities, build receipt metadata and explicit missing observations.
+The [MCP contract](mcp.md) documents `status.runtime`, including running frontend/worker/service versions, process and payload identities, build receipt metadata and explicit missing observations.
 
 CLI installation removes previous terminal executables regardless of version and retires the previous native runtime and rollback reference after successful activation. Locked files report incomplete cleanup and retry on a later trusted activation or **Install or Repair CLI**. Sources, indexes and settings are preserved. See the [console installation contract](service-console.md).
 
@@ -34,14 +38,16 @@ Trusted VSIX activation now installs the native runtime and the `airk` terminal 
 
 The **1.4.4 release** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [historical 1.4.4 release record](release-1.4.4.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). Native Mac and the complete installed-platform/signing/policy matrix remain unqualified.
 
-The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.5.5; publication is a separate action.
+The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.5.7; publication is a separate action.
 
 The [Windows build/editor guide](windows-local-build.md) describes pair builds, stage-only acceptance without a VSIX, and real native registration/usage/response-mode checks in isolated editor profiles.
 
 - [Architecture and code boundaries](architecture.md)
 - [AIRK Explorer design inputs and approved 1.5.0 design](explorer/README.md): the planned workbench that replaces the Service Console, plus the separate Explorer Assistance MCP server. In development; not shipped.
 - [AIRK 1.4.0 local service architecture and implementation plan](airkservice-architecture.md)
-- [Current 1.5.5 development record](release-1.5.5.md)
+- [Current 1.5.8 development record](release-1.5.7.md)
+- [Earlier 1.5.6 development record](release-1.5.6.md)
+- [Earlier 1.5.5 development record](release-1.5.5.md)
 - [Published 1.5.4 release record](release-1.5.4.md)
 - [1.5.3 local candidate record](release-1.5.3.md)
 - [1.5.0 Explorer release record](release-1.5.0.md)

@@ -1,10 +1,69 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { managementView } from '../explorerManagement';
+import { managementView, panelDetails } from '../explorerManagement';
 import { ServiceConsoleState } from '../serviceConsoleView';
 
 const project = '12'.repeat(32), job = '34'.repeat(32), pending = '56'.repeat(32), plan = '78'.repeat(32), intent = '9a'.repeat(16);
+test('queued repair is distinct from a finished recovery sample',()=>{
+    const current=state(),entry=current.page!.projects[0];
+    (entry.progress as any).job={id:job,kind:'recover',state:'succeeded'};
+    entry.pending_job={id:pending,kind:'repair',state:'pending'};
+    const health=managementView(current).projects[0].health;
+    assert.equal(health.title,'Work queued');
+    assert.match(health.detail,/repair request has not started/);
+    assert.match(health.detail,/not reported a blocking reason/);
+    assert.equal(health.reviewTab,'logs');
+    assert.match(health.detail,/previous recover job \(succeeded\)/);
+    assert.doesNotMatch(health.detail,/Work is running/);
+});
+test('queued maintenance gates identify a paused plan separately from project pause and reject foreign job gates',()=>{
+    const current=state(),row=current.page!.projects[0];
+    (row as any).pending_gate={job:pending,code:'maintenance_plan_paused',plan,plan_phase:'running'};
+    let entry=managementView(current).projects[0];
+    assert.equal(entry.health.title,'Repair plan paused');assert.equal(entry.health.reviewTab,'repair');
+    assert.ok(entry.activity.some(([label,value])=>label==='Owning repair plan'&&value===plan));
+    (row as any).pending_gate.job=job;
+    entry=managementView(current).projects[0];assert.notEqual(entry.health.title,'Repair plan paused');
+});
+test('copyable activity retains exact request identities and unknown progress without requesting native work',()=>{
+    const view=managementView(state()),entry=view.projects[0];
+    const text=panelDetails(view,'activity','1.5.8',entry.summary.project,undefined,0);
+    assert.match(text,/AIRK 1.5.8 — activity/);assert.match(text,/Captured: 1970-01-01T00:00:00.000Z/);
+    assert.ok(text.includes(pending));assert.match(text,/Worker progress/);assert.match(text,/Wait reason/);
+    assert.throws(()=>panelDetails(view,'activity','1.5.8','ff'.repeat(32)),/no longer available/);
+    const long={...view,projects:[{...entry,events:['x'.repeat(100000)]}]};
+    const bounded=panelDetails(long,'activity','1.5.8',entry.summary.project);
+    assert.ok(new TextEncoder().encode(bounded).length<=65536);assert.match(bounded,/Details truncated/);
+});
+test('recovery explains source waits and helper exhaustion while preserving pause and disconnected observations',()=>{
+    const current=state(),row=current.page!.projects[0];
+    row.recovery=[{reason:'source_unavailable',state:'waiting',attempts:1,limit:3,job:pending,next_check_unix_ms:10000}];
+    assert.equal(managementView(current).projects[0].health.title,'Waiting for source folder');
+    (row.project as any).paused=true;assert.equal(managementView(current).projects[0].health.title,'Project paused');
+    (row.project as any).paused=false;current.model.value!.available=false;row.recovery=[{reason:'helper_unavailable',state:'needs_attention',attempts:3,limit:3}];
+    assert.equal(managementView(current).projects[0].health.action,'retryRecovery');
+    current.connected=false;assert.equal(managementView(current).projects[0].health.title,'Connection unavailable');
+});
+test('shared helper retry history does not obscure a healthy helper or text-only project',()=>{
+    const current=state(),row=current.page!.projects[0];
+    row.recovery=[{reason:'helper_unavailable',state:'retrying',attempts:1,limit:3,job:null}];
+    assert.notEqual(managementView(current).projects[0].health.title,'Recovering semantic indexing');
+    current.model.value!.available=false;(row.inspection as any).snapshot.vectors_enabled=false;
+    assert.notEqual(managementView(current).projects[0].health.title,'Recovering semantic indexing');
+    row.configuration={id:pending,state:'pending'};row.preference={job:pending,vectors_enabled:true};
+    assert.equal(managementView(current).projects[0].health.title,'Recovering semantic indexing');
+});
+test('queued preferences distinguish requested and saved settings and reject another job preference',()=>{
+    const current=state(),row=current.page!.projects[0];
+    (row.inspection as any).snapshot.vectors_enabled=false;
+    row.configuration={id:pending,state:'pending'};
+    row.preference={job:pending,vectors_enabled:true};
+    let settings=managementView(current).projects[0].configuration;
+    assert.equal(settings.vectorsEnabled,false);assert.equal(settings.requestedVectors,true);
+    row.preference={job,vectors_enabled:true};settings=managementView(current).projects[0].configuration;
+    assert.equal(settings.requestedVectors,undefined);
+});
 function state(overrides: Partial<ServiceConsoleState> = {}): ServiceConsoleState {
     const live = (value: any) => ({ state: 'live' as const, checkedAt: 1, value });
     return {
@@ -99,4 +158,76 @@ test('executable versions distinguish approved payloads from running health obse
     assert.ok(versions.some(([name, value]) => name.startsWith('Service') && value.startsWith('1.5.0')));
     current.bootstrap.value.payloadVerified = false;
     assert.ok(managementView(current).runtimeVersions.some(([name, value]) => name.includes('airk-embed') && value === 'Not observed'));
+});
+
+test('exhausted worker startup exposes the project restart beside a retained running job', () => {
+    const current = state();
+    const progress = current.page!.projects[0].progress as any;
+    progress.job.state = 'running';
+    current.workers = { observations: [{ project, identity: null, automatic_start_blocked: true, restarting: false }] };
+    const entry = managementView(current).projects[0];
+    assert.equal(entry.health.title, 'Indexing cannot continue');
+    assert.equal(entry.health.action, 'restartProject');
+    assert.equal(entry.work.current, false);
+    assert.equal(entry.work.worker, 'unavailable');
+    assert.equal(entry.work.captured, 4, 'old counters are retained, not silently discarded');
+    assert.equal(entry.work.total, undefined, 'no invented completion denominator');
+    current.connected = false;
+    assert.equal(managementView(current).projects[0].health.action, undefined, 'retained metadata cannot recommend an enabled restart offline');
+});
+
+test('progress matches project, service, worker generation and job before being called current', () => {
+    const current = state(), progress = current.page!.projects[0].progress as any;
+    const identity = { project, service: 'ab'.repeat(16), worker: 'cd'.repeat(16), fencing_generation: 4 };
+    progress.worker = { ...identity }; progress.current_fencing_generation = 4;
+    progress.job.state = 'running'; progress.progress.job = job;
+    progress.progress.elapsed_ms = 32000; progress.progress.phase_totals_ms = { extracting: 25000 };
+    current.workers = { observations: [{ project, identity, automatic_start_blocked: false, restarting: false }] };
+    assert.equal(managementView(current).projects[0].work.current, true);
+    assert.equal(managementView(current).projects[0].health.title, 'Indexing');
+    progress.worker.fencing_generation = 3;
+    assert.equal(managementView(current).projects[0].work.current, false);
+    progress.worker = { ...identity, project: 'ff'.repeat(32) };
+    assert.equal(managementView(current).projects[0].work.current, false);
+    progress.worker = { ...identity }; progress.progress.job = pending;
+    assert.equal(managementView(current).projects[0].work.current, false, 'a preceding job is not current progress');
+});
+
+test('health separates pause, restart acceptance, terminal jobs, removed projects and source failures', () => {
+    const current = state(), row = current.page!.projects[0] as any;
+    row.project.paused = true;
+    assert.equal(managementView(current).projects[0].health.action, 'resume');
+    row.project.paused = false;
+    assert.equal(managementView(current).projects[0].health.action, 'retryJob');
+    current.workers = { observations: [{ project, identity: null, restarting: true, automatic_start_blocked: false }] };
+    assert.equal(managementView(current).projects[0].health.title, 'Restarting project worker');
+    assert.equal(managementView(current).projects[0].health.action, undefined, 'acceptance is not recovery');
+    current.inactiveProjects = true;
+    assert.equal(managementView(current).projects[0].health.title, 'Removed from AIRK');
+    current.inactiveProjects = false; current.workers = undefined;
+    row.progress.job.state = 'succeeded'; delete row.pending_job;
+    row.watch.failure = 'root_unavailable';
+    assert.equal(managementView(current).projects[0].health.title, 'Source watching needs attention');
+    delete row.watch.failure; row.inspection.snapshot.index_state = 'ready';
+    assert.equal(managementView(current).projects[0].health.title, 'Published index available');
+});
+
+test('completed cleanup is distinguished from a captured preview and project history stays isolated', () => {
+    const value=state({inactiveProjects:true});
+    value.page!.projects[0].configuration={id:job,state:'succeeded'};
+    value.events.push({project:'ff'.repeat(32),kind:'foreign'});
+    value.configurationResults=new Map([[project,{job,jobState:'succeeded',checkedAt:1,value:{guard:'ef'.repeat(32),complete:true}}]]);
+    let entry=managementView(value).projects[0];
+    assert.match(entry.lifecycle,/Cleanup completed/);assert.equal(entry.canDeleteDerived,false);
+    assert.equal(entry.events.some(event=>event.includes('foreign')),false);
+    value.configurationResults.get(project)!.value={guard:'ef'.repeat(32),active:'cd'.repeat(16)};
+    entry=managementView(value).projects[0];assert.match(entry.lifecycle,/finish cleanup/);assert.equal(entry.canDeleteDerived,true);
+});
+
+test('idle semantic mode without published coverage offers complete setup and unavailable sources get recheck guidance', () => {
+    const value=state();const row=value.page!.projects[0];row.progress=null;row.pending_job=null;
+    row.inspection={snapshot:{index_state:'ready',vectors_enabled:true,semantic:{state:'disabled'}}};
+    let entry=managementView(value).projects[0];assert.equal(entry.health.action,'enableSemantic');
+    (row.inspection as any).snapshot.source_state='unavailable';
+    entry=managementView(value).projects[0];assert.equal(entry.health.title,'Source folder unavailable');assert.equal(entry.health.action,'inspect');
 });

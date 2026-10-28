@@ -28,6 +28,8 @@ pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
 const PREPARED_PUBLICATION: &str = "prepared-publication.json";
 mod current;
 pub use current::{CurrentGrant, CurrentGrantScope};
+mod admission;
+pub use admission::{QuotaContention, with_lock_admission};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -323,6 +325,37 @@ fn inventory_read<T>(
 }
 
 impl Quota {
+    /// Bounded metadata-only observation; creates nothing and retires no reservations.
+    pub fn service_recovery_available(
+        root: &Path,
+        collection: &str,
+        scope: PressureScope,
+    ) -> Result<u64> {
+        let root = root.canonicalize()?;
+        ensure_current_root(&root)?;
+        let quota = Self {
+            root,
+            namespace: Namespace::Service,
+        };
+        let deadline = Some(Instant::now() + Duration::from_millis(50));
+        let _lock = quota.lock_before(deadline)?;
+        let records = quota.records_without_recovery(deadline)?;
+        let policy = quota.read_policy()?;
+        let report = quota.measure(&policy, &records, deadline)?;
+        Ok(match scope {
+            PressureScope::Root => report
+                .root_limit_bytes
+                .saturating_sub(report.used_bytes.saturating_add(report.reserved_bytes)),
+            PressureScope::Collection | PressureScope::Reservation => report
+                .collections
+                .get(collection)
+                .map(|c| {
+                    c.limit_bytes
+                        .saturating_sub(c.used_bytes.saturating_add(c.reserved_bytes))
+                })
+                .unwrap_or(policy.limit(collection)),
+        })
+    }
     /// Canonicalizing aliases ensures all cooperating processes share one ledger.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         Self::open_namespace(root.as_ref(), Namespace::Legacy)
@@ -401,18 +434,7 @@ impl Quota {
             .create(true)
             .truncate(false)
             .open(path)?;
-        let started = Instant::now();
-        loop {
-            match file.try_lock() {
-                Ok(()) => break,
-                Err(std::fs::TryLockError::WouldBlock)
-                    if deadline.is_none() && started.elapsed() < Duration::from_secs(2) =>
-                {
-                    std::thread::sleep(Duration::from_millis(10))
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
+        admission::acquire(&file, deadline)?;
         for entry in fs::read_dir(self.control_path())? {
             within_deadline(deadline)?;
             let entry = entry?;

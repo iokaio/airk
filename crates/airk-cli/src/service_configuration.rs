@@ -204,6 +204,7 @@ pub async fn prepare(
             anyhow::bail!("native cleanup authority is unavailable")
         };
         let request = ConfigurationRequest {
+            prepare: false,
             incarnation: namespace,
             settings: project,
             configuration: draft.prepare()?,
@@ -233,6 +234,7 @@ pub async fn prepare(
         draft => draft.prepare()?,
     };
     let request = ConfigurationRequest {
+        prepare: false,
         incarnation: observation.snapshot.incarnation,
         settings: observation
             .snapshot

@@ -124,7 +124,7 @@ def prepare_config(before, root, helper, data_dir=None, new_data_dir=None):
         require(data_dir.is_absolute(), 'New storage directory must be absolute')
         identity = str(root).lower() if os.name == 'nt' else str(root)
         collection = 'project-' + hashlib.sha256(identity.encode()).hexdigest()[:24]
-        name = 'airk-' + collection
+        name = 'airk'
         require(name not in servers, 'AIRK server name belongs to another root')
         server = {'command': str(helper), 'args': ['--root', str(root), '--data-dir', str(data_dir),
                                                   '--collection', collection, 'mcp'],
@@ -137,9 +137,10 @@ def prepare_config(before, root, helper, data_dir=None, new_data_dir=None):
     require(tomllib.loads(source) == expected,
             'Unsupported TOML layout; unrelated settings were preserved. Use a standard AIRK table')
     server = expected['mcp_servers'][name]
-    required = {'airk_status', 'airk_search', 'airk_read_file'}
-    require(not required.intersection(server.get('disabled_tools', []))
-            and ('enabled_tools' not in server or required.issubset(server['enabled_tools'])),
+    required = {'status', 'search', 'read_file'}
+    normalize = lambda names: {name.removeprefix('airk_') for name in names}
+    require(not required.intersection(normalize(server.get('disabled_tools', [])))
+            and ('enabled_tools' not in server or required.issubset(normalize(server['enabled_tools']))),
             'Existing tool policy disables local smoke-test tools; policy was preserved')
     return source.encode('utf-8'), name, server
 
@@ -276,6 +277,7 @@ def smoke(server, version, root):
                 return result['result']
 
     def call(number, name, arguments):
+        name = name.removeprefix('airk_') if name.removeprefix('airk_') in names else name
         result = request(number, 'tools/call', {'name': name, 'arguments': arguments})
         require(not result.get('isError'), f'MCP {name} failed; check helper/index compatibility')
         return json.loads(result['content'][0]['text'])
@@ -286,7 +288,7 @@ def smoke(server, version, root):
         require(init.get('serverInfo', {}).get('version') == version, 'MCP helper version differs from the installed candidate')
         send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
         names = {tool['name'] for tool in request(2, 'tools/list', {})['tools']}
-        require({'airk_status', 'airk_search', 'airk_read_file'} <= names, 'Required MCP tools are missing')
+        require({'status', 'search', 'read_file'} <= {name.removeprefix('airk_') for name in names}, 'Required MCP tools are missing')
         status = call(3, 'airk_status', {})
         require(status.get('index_state') == 'available' and status.get('collection') == scope['--collection']
                 and type(status.get('files')) is int and status['files'] > 0,

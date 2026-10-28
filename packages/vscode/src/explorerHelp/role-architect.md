@@ -13,7 +13,7 @@ Compare documented intent with written code structure and bounded dependency can
 ## Steps
 
 1. Select the project's boundaries and relevant reference documents with the user. Additional source roots require reviewed registration; do not silently traverse sibling projects or assume collections are interchangeable.
-2. Check airk_status and airk_capabilities, then Search for component names and Documents > Facts for architecture/design/decision statements. Keep dated historical decisions distinct from current implementation.
+2. Check status and capabilities, then Search for component names and Documents > Facts for architecture/design/decision statements. Keep dated historical decisions distinct from current implementation.
 3. Use Code > Symbols, Outline, written imports and candidate Relationships to explore one boundary at a time. Follow bounded continuations and label unresolved calls or producer-dependent imported assertions.
 4. Cross-check the strongest relationships with source excerpts and live files. Treat absence of an edge as incomplete evidence. For Markdown/Office diagrams or PDF figures, inspect the original visual material rather than assuming text extraction captured the design.
 5. Use Review > Impact for changed declarations and candidate consumers, including old rename/deletion paths when still indexed. Require one consistent publication across evidence calls.

@@ -18,12 +18,10 @@ impl Kernel {
             self.service_collection.is_some(),
             "service collection required"
         );
-        if self
-            .store
-            .directory()
-            .join("current-bootstrap.json")
-            .try_exists()?
-        {
+        // current-bootstrap.json is a permanent database initialization receipt,
+        // including after complete=true. Only the unfinished runtime recipe
+        // or a non-Ready publication phase calls for recovery.
+        if self.store.runtime_bootstrap()?.is_some() {
             return Ok(true);
         }
         let Some(scope) = self.current_scope()? else {
@@ -186,6 +184,51 @@ mod tests {
             limit: 5,
             max_bytes: 4096,
         }
+    }
+
+    #[test]
+    fn completed_bootstrap_does_not_queue_recovery_on_every_reopen() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let source = owner.path().join("source");
+        let data = owner.path().join("data");
+        std::fs::create_dir(&source)?;
+        std::fs::create_dir(&data)?;
+        std::fs::write(
+            source.join("memo.txt"),
+            "retained evidence remains searchable",
+        )?;
+        let kernel = Kernel::open_service_collection(&source, Some(data.clone()), "fixture")?;
+        kernel.configure_vectors(false)?;
+        kernel.index_service_sources()?;
+        assert!(
+            kernel
+                .store
+                .directory()
+                .join("current-bootstrap.json")
+                .exists()
+        );
+        assert!(!kernel.service_recovery_required()?);
+        let token = kernel.status()?.publication.unwrap().token;
+        let reopened =
+            Kernel::open_service_collection_for_diagnostics(&source, Some(data), "fixture")?;
+        assert!(!reopened.service_recovery_required()?);
+        assert_eq!(reopened.recover_service_publication()?, Some(token));
+        assert!(!reopened.service_recovery_required()?);
+        std::fs::write(
+            source.join("memo.txt"),
+            "updated evidence resumes normal indexing",
+        )?;
+        reopened.index_service_sources()?;
+        assert_ne!(reopened.status()?.publication.unwrap().token, token);
+        assert!(!reopened.service_recovery_required()?);
+        // A real unfinished runtime marker must still be reported, even while
+        // the previous publication is readable; malformed recipes fail closed.
+        let lock = reopened.store.lock()?;
+        reopened.store.write_runtime_bootstrap(&lock, b"{}")?;
+        drop(lock);
+        assert!(reopened.service_recovery_required()?);
+        assert!(reopened.recover_service_publication().is_err());
+        Ok(())
     }
 
     #[test]

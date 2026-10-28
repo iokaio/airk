@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { McpSessionError, McpStdioSession } from './mcpStdioSession';
 import { ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from './explorerContracts';
-import { LaunchSpec, launchArgs, ServerEntry } from './model';
+import { LaunchSpec, launchArgs, ServerEntry, UNIFIED_TOOLS } from './model';
 
 export interface IndexProgress {
     collection: string; phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
@@ -218,18 +218,18 @@ export async function joinScheduledIndex<T>(initialArgs: string[],
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
-export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 = 16, clientVersion = 'development'): Promise<{ tools: string[]; status: unknown }> {
+export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 26 = 26, clientVersion = 'development', entry?: ServerEntry): Promise<{ tools: string[]; status: unknown }> {
     const deadline = Date.now() + (spec.service ? 90000 : 15000);
     const remaining = () => Math.max(1, deadline - Date.now());
     let session: McpStdioSession | undefined;
     try {
-        session = (await McpStdioSession.open({ command: spec.command, args: launchArgs(spec), cwd: spec.service ? path.dirname(spec.command) : spec.root,
+        session = (await McpStdioSession.open({ command: entry?.command??spec.command, args: entry?[...entry.args]:launchArgs(spec), cwd: spec.service ? path.dirname(spec.command) : spec.root,
             env: { AIRK_CLIENT: 'vscode' }, clientName: 'airk-extension-check', clientVersion }, remaining())).session;
         const listed = await session.request('tools/list', {}, remaining());
         const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);
-        const required = ['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
+        const required = expectedTools===26?UNIFIED_TOOLS:['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
         if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
-        const status = await session.request('tools/call', { name: 'airk_status', arguments: {} }, remaining());
+        const status = await session.request('tools/call', { name: expectedTools===26?'status':'airk_status', arguments: {} }, remaining());
         if (status.isError) {
             const message = status.content?.map((part: { text?: string }) => part.text ?? '').join('\n') ?? '';
             if (!message.includes('workspace is not indexed')) { throw new Error(`AIRK MCP status failed: ${message.slice(0, 300)}`); }

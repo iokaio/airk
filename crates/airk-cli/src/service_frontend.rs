@@ -10,6 +10,51 @@ pub struct Project {
     pub registration: ProjectRegistration,
 }
 
+/// MCP initialization/help uses saved bindings only; native reads elect lazily.
+pub fn resolve_mcp(
+    install: Option<&Path>,
+    control: Option<&Path>,
+    binding: Option<ProjectBinding>,
+    root: &Path,
+    data: Option<&Path>,
+    collection: &str,
+) -> Result<Project> {
+    if let Some(control) = control {
+        let control = control.canonicalize()?;
+        crate::runtime_install::validate_control_root(&control)?;
+        let registration = saved(
+            &control,
+            Some(binding.context("project binding required")?),
+            root,
+            data.unwrap_or(root),
+            collection,
+        )?;
+        return Ok(Project {
+            install: None,
+            control,
+            registration,
+        });
+    }
+    let install = install
+        .map(Path::to_path_buf)
+        .map(Ok)
+        .unwrap_or_else(crate::runtime_install::caller_install_root)?;
+    let control = crate::runtime_install::installed_metadata_control(&install)?;
+    let default_data = crate::runtime_install::default_project_data(&install)?;
+    let registration = saved(
+        &control,
+        binding,
+        root,
+        data.unwrap_or(&default_data),
+        collection,
+    )?;
+    Ok(Project {
+        install: Some(install),
+        control,
+        registration,
+    })
+}
+
 pub async fn resolve(
     install: Option<&Path>,
     binding: Option<ProjectBinding>,

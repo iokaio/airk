@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import { homedir } from 'node:os';
 import { BootstrapObservation, LegacyStartupTarget, nativeRunner, RuntimeHost, RuntimeOptions } from './serviceBootstrap';
 import { RecordValue, ServiceError, record } from './serviceClient';
 import { ServiceConsoleController } from './serviceConsoleController';
 import { ServiceConsoleState } from './serviceConsoleView';
+import { runText } from './native';
 export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'|'lifecycle'|'abandonLifecycle'> & Partial<Pick<RuntimeHost,'reviewLegacyStartup'|'loadLegacyStartup'|'legacyStartupReceipts'|'removeLegacyStartup'>>;
 
 /** Machine/user settings only. A repository cannot nominate an executable or approval. */
@@ -50,9 +52,12 @@ export class ServiceConsole implements vscode.Disposable {
         return new ServiceConsoleController({
             version:this.context.extension.packageJSON.version,authority:vscode.env.remoteName?`Remote execution host (${vscode.env.remoteName})`:'Local execution host',
             storage:this.context.globalState,runtime:this.runtime,trusted:()=>vscode.workspace.isTrusted&&!this.disposed,
-            changed:state=>this.changed(state),confirm:async message=>(await vscode.window.showWarningMessage(message,{modal:true},'Continue'))==='Continue',
+            changed:state=>this.changed(state),confirm:async(message,acceptLabel='Continue')=>(await vscode.window.showWarningMessage(message,{modal:true},acceptLabel))===acceptLabel,
             copy:async text=>vscode.env.clipboard.writeText(text),logs:observation=>this.logs(observation),resources:current=>this.resources(current),
-            configuration:row=>this.configuration(row),
+            openReport:async text=>{await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({content:text,language:'json'}),{preview:false});},
+            saveReport:text=>this.saveDiagnostic(text,'airk-diagnostic-report'),
+            exportLogs:observation=>this.exportLogs(observation),
+            configuration:(row,operation)=>this.configuration(row,operation),
             ...(this.runtime.reviewLegacyStartup&&this.runtime.loadLegacyStartup&&this.runtime.legacyStartupReceipts&&this.runtime.removeLegacyStartup?{legacy:{
                 choose:()=>this.legacyTarget(),review:(binding:import('./serviceBootstrap').RuntimeBinding,target:LegacyStartupTarget)=>this.runtime.reviewLegacyStartup!(binding,target),
                 load:(binding:import('./serviceBootstrap').RuntimeBinding,approval:string)=>this.runtime.loadLegacyStartup!(binding,approval),
@@ -93,7 +98,7 @@ export class ServiceConsole implements vscode.Disposable {
         this.failures=this.controller.state.connected?0:Math.min(this.failures+1,5);
         this.timer=setTimeout(()=>{
             void this.controller.refresh().finally(()=>this.schedule());
-        },this.failures?Math.min(30000,1000*2**this.failures):5000);
+        },this.failures?Math.min(30000,1000*2**this.failures):2000);
     }
     /**
      * Run one allowlisted console action without moving focus. Fields go through the
@@ -110,6 +115,21 @@ export class ServiceConsole implements vscode.Disposable {
     }
     async configureProject(project:string,draft:RecordValue,valid:()=>boolean):Promise<void>{
         await this.controller.projectConfiguration(project,draft,valid);
+    }
+    private async saveDiagnostic(text:string,name:string):Promise<void>{
+        const target=await vscode.window.showSaveDialog({title:'Save AIRK diagnostics',saveLabel:'Save',filters:{JSON:['json']},
+            defaultUri:vscode.Uri.file(path.join(homedir(),`${name}-${new Date().toISOString().replace(/[:.]/g,'-')}.json`))});
+        if(!target||this.disposed)return;
+        await vscode.workspace.fs.writeFile(target,Buffer.from(text,'utf8'));
+    }
+    private async exportLogs(observation?:BootstrapObservation):Promise<void>{
+        if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');
+        const bootstrap=observation??await this.runtime.discover();
+        const control=bootstrap.inspection?.log_control_dir??bootstrap.inspection?.control_dir;
+        if(typeof control!=='string'||!path.isAbsolute(control)||control.length>4096||/[\u0000-\u001f\u007f]/.test(control))throw new ServiceError('log_control_binding_unavailable');
+        const text=await runText(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--all','--format','json'],path.dirname(bootstrap.bundle.main),60000);
+        if(!vscode.workspace.isTrusted||this.disposed)return;
+        await this.saveDiagnostic(text,'airk-retained-service-logs');
     }
     private async logs(observation?:BootstrapObservation):Promise<void>{
         if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');
@@ -154,9 +174,15 @@ export class ServiceConsole implements vscode.Disposable {
         }
         return result;
     }
-    private async configuration(row:RecordValue):Promise<RecordValue|undefined>{
+    private async configuration(row:RecordValue,requested?:'detail'|'advanced'):Promise<RecordValue|undefined>{
         const registration=record(record(row.project).registration);
-        const selection=await vscode.window.showQuickPick([
+        const common=requested?{operation:requested}:await vscode.window.showQuickPick([
+            {label:'Semantic search',operation:'vectors',description:'Enable with offline model preparation, or turn off'},
+            {label:'Index detail',operation:'detail',description:'Choose source evidence detail; independent of semantic search'},
+            {label:'Advanced settings…',operation:'advanced',description:'Models, source roots, limits, quotas and usage'},
+        ],{title:`AIRK settings: ${String(registration.collection)}`,placeHolder:'Changes are queued; Activity shows when they apply'});
+        if(!common)return;
+        const selection=common.operation==='advanced'?await vscode.window.showQuickPick([
             {label:'Vector search',operation:'vectors',description:'Enable or disable semantic indexing for this project'},
             {label:'Index detail',operation:'detail',description:'Choose evidence detail for the next source pass'},
             {label:'Vector eligibility',operation:'vector_selection',description:'Set bounded inclusion/exclusion policy JSON'},
@@ -171,12 +197,12 @@ export class ServiceConsole implements vscode.Disposable {
             {label:'Shared storage quota file',operation:'quota_policy',description:'Change storage admission for all collections sharing this data root'},
             {label:'Calibrate token counts',operation:'calibrate',description:'Count explicit logical JSON samples with a local tokenizer'},
             {label:'Unregister project',operation:'unregister',description:'Stop new connections and automatic work; preserve sources, settings and index data'},
-        ],{title:`AIRK project settings: ${String(registration.collection)}`,placeHolder:'Changes become durable native jobs; source files stay unchanged'});
+        ],{title:`AIRK project settings: ${String(registration.collection)}`,placeHolder:'Advanced changes become guarded native jobs; source files stay unchanged'}):common;
         if(!selection)return;
         const operation=selection.operation;
         if(operation==='bundled_model'||operation==='unregister'||operation==='reset_scan_limits')return {operation};
         if(operation==='vectors'){
-            const enabled=await vscode.window.showQuickPick([{label:'Enable vector search',value:true},{label:'Disable vector search',value:false}],{title:'AIRK vector search'});
+            const enabled=await vscode.window.showQuickPick([{label:'Enable semantic search',description:'Prepare the offline model, then index sources and build vectors',value:true},{label:'Turn off semantic search',description:'Use lexical evidence; sources and saved settings are retained',value:false}],{title:'AIRK vector search'});
             return enabled?{operation,enabled:enabled.value}:undefined;
         }
         if(operation==='detail'){

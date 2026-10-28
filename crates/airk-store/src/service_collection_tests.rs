@@ -128,6 +128,7 @@ fn derived_cleanup_requires_inactive_fenced_approval_preserves_settings_and_resu
     assert!(collection.derived_cleanup_preview(&lease).is_err());
     let (ns, epoch) = registry.request_epoch()?;
     let request = ConfigurationRequest {
+        prepare: false,
         incarnation: slot,
         settings: engine,
         configuration: ProjectConfiguration::Unregister,
@@ -157,6 +158,7 @@ fn derived_cleanup_requires_inactive_fenced_approval_preserves_settings_and_resu
                 nonce: Incarnation::from_bytes([nonce; 16]),
             },
             &ConfigurationRequest {
+                prepare: false,
                 incarnation: namespace,
                 settings: project.binding,
                 configuration,

@@ -35,6 +35,8 @@ pub struct LogRecord {
     pub project: Option<Sha256Digest>,
     pub job: Option<Sha256Digest>,
     pub count: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 impl LogRecord {
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -44,6 +46,14 @@ impl LogRecord {
                 && (self.kind == LogKind::RecordsDropped || self.count == 1)
                 && (self.job.is_none() || self.project.is_some()),
             "invalid diagnostic log record"
+        );
+        anyhow::ensure!(
+            self.code.as_ref().is_none_or(|code| !code.is_empty()
+                && code.len() <= 128
+                && code
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')),
+            "invalid diagnostic failure code"
         );
         Ok(())
     }

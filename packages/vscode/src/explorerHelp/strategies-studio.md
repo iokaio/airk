@@ -20,7 +20,7 @@ Steps come from a closed operator catalog: AIRK retrieval tools, a saved-file ha
 4. Read the outcome. A verified snapshot means every cited file's saved bytes matched the index; otherwise the run is partial and lists why (truncation, budgets, a step error or a live hash mismatch).
 5. Choose the prompt profile: Portable includes the excerpts and assumes no AIRK; MCP-aware also asks the agent to re-check with AIRK if it has the tools.
 6. Edit the prompt if needed, then **Copy prompt**. **Rebuild** asks before discarding edits.
-7. Or choose **Share snapshot with agent**, review the confirmation and give the ten-minute token to the agent for airk_explorer_handoff_get. The full snapshot is capped at 24 KiB; edits, binding changes and observed evidence changes revoke the token. Read Share a reviewed snapshot for the full contract.
+7. Or choose **Share snapshot with agent**, review the confirmation and give the ten-minute token to the agent for get_handoff. The full snapshot is capped at 24 KiB; edits, binding changes and observed evidence changes revoke the token. Read Share a reviewed snapshot for the full contract.
 
 ## Save, import and export
 

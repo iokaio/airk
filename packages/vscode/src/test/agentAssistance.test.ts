@@ -6,7 +6,7 @@ import { parse } from 'jsonc-parser';
 import { mergeJsonConfig } from '../agentConfig';
 import { connectionAction, renderConnectionGuide } from '../agentConnections';
 import { migrateAgentConfig } from '../agentMigration';
-import { ASSISTANCE_KEY, assistanceEntry, clients, configFor, LaunchSpec, retrievalEntry, serializeServers } from '../model';
+import { ASSISTANCE_KEY, assistanceEntry, clients, configFor, LaunchSpec, retrievalEntry, unifiedEntry, serializeServers } from '../model';
 
 const spec: LaunchSpec = { command: path.resolve('installed', 'airk-launcher'), root: path.resolve('source'), dataDir: path.resolve('data'),
     collection: 'project-fixture', name: 'Fixture', service: { installDir: path.resolve('installed'), project: 'ab'.repeat(32) } };
@@ -24,44 +24,40 @@ test('Explorer Assistance is a second, separately keyed launcher entry that neve
     assert.equal(assistanceEntry(spec, 'relative/launch-1.json'), undefined);
 });
 
-test('every client format carries both connections, and the retrieval-only form is unchanged', () => {
+test('every supported client format has one named endpoint with evidence and optional UI adapter', () => {
+    const entry=unifiedEntry(spec,descriptor);
     for (const client of clients) {
-        const text = serializeServers(client, both);
-        assert.ok(text.includes(ASSISTANCE_KEY) && text.includes(retrievalEntry(spec).key), client);
-        assert.ok(text.includes('explorer-assistance'), client);
-        assert.equal(serializeServers(client, [retrievalEntry(spec)]), configFor(client, spec), client);
+        const text=serializeServers(client,[entry]);
+        assert.ok(!text.includes(ASSISTANCE_KEY)&&!text.includes(retrievalEntry(spec).key),client);
+        assert.ok(text.includes('--explorer-descriptor'),client);
+        assert.equal(configFor(client,spec),serializeServers(client,[unifiedEntry(spec)]));
     }
-    const codex = serializeServers('codex', both);
-    assert.ok(codex.startsWith('[mcp_servers.airk-project-fixture]\n') && codex.indexOf('\n\n[mcp_servers.airk_explorer]\ncommand = ') > 0, codex);
-    assert.deepEqual(Object.keys(JSON.parse(serializeServers('claude', both)).mcpServers), ['airk-project-fixture', 'airk_explorer']);
-    assert.deepEqual(Object.keys(JSON.parse(serializeServers('vscode', both)).servers), ['airk-project-fixture', 'airk_explorer']);
+    assert.deepEqual(Object.keys(JSON.parse(serializeServers('claude',[entry])).mcpServers),['airk']);
+    assert.deepEqual(Object.keys(JSON.parse(serializeServers('vscode',[entry])).servers),['airk']);
+    const other={...spec,service:{...spec.service!,project:'cd'.repeat(32)}};
+    const multi=unifiedEntry(spec,descriptor,[other]);
+    assert.ok(multi.args.includes('--no-default-project'));
+    assert.deepEqual(multi.args.slice(-3),['--additional-project',other.service.project,'--no-default-project']);
+    assert.throws(()=>unifiedEntry(spec,descriptor,[spec]),/distinct bindings/);
 });
 
-test('JSON installation adds both entries, keeps existing ones, and refuses any conflict without editing', () => {
-    const source = '{\n  // policy\n  "mcpServers": {\n    "other": { "command": "x" }\n  }\n}\n';
-    const merged = mergeJsonConfig('claude', spec, source, both);
-    const servers = parse(merged).mcpServers;
-    assert.deepEqual(Object.keys(servers), ['other', 'airk-project-fixture', 'airk_explorer']);
-    assert.deepEqual(servers.airk_explorer, { command: assistance.command, args: assistance.args });
-    assert.ok(merged.includes('// policy'));
-    assert.equal(mergeJsonConfig('claude', spec, merged, both), merged, 'idempotent');
-    const conflicting = merged.replace('"explorer-assistance"', '"something-else"');
-    assert.throws(() => mergeJsonConfig('claude', spec, conflicting, both), /airk_explorer already has different settings/);
-    const retrievalOnly = mergeJsonConfig('gemini', spec, '{}\n');
-    assert.deepEqual(Object.keys(parse(retrievalOnly).mcpServers), ['airk-project-fixture'], 'callers that pass no entries keep the retrieval-only install');
+test('JSON installation writes one endpoint and refuses conflicting custom settings',()=>{
+    const entry=unifiedEntry(spec,descriptor);
+    const source='{\n  // policy\n  "mcpServers": {"other":{"command":"x"}}\n}\n';
+    const after=mergeJsonConfig('claude',spec,source,[entry]);
+    assert.ok(after.includes('// policy'));
+    assert.deepEqual(Object.keys(parse(after).mcpServers),['other','airk']);
+    assert.equal(mergeJsonConfig('claude',spec,after,[entry]),after);
+    assert.throws(()=>mergeJsonConfig('claude',spec,after.replace('"--explorer-descriptor"','"--custom"'),[entry]),/different settings/);
 });
 
-test('the guide shows two labeled connections with separate checks, and migration leaves Assistance alone', () => {
-    const html = renderConnectionGuide('claude', spec, 'Install.', undefined, false, false, both);
-    assert.ok(html.includes('AIRK Retrieval (evidence)') && html.includes('AIRK Explorer Assistance (help and UI status)'));
-    assert.ok(html.includes('data-action="verify"') && html.includes('data-action="verifyAssistance"') && html.includes('data-action="copyAssistancePrompt"'));
-    assert.ok(!renderConnectionGuide('claude', spec, 'Install.').includes('data-action="verifyAssistance"'));
-    assert.equal(connectionAction({ action: 'verifyAssistance' }, 'codex'), 'verifyAssistance');
-    assert.equal(connectionAction({ action: 'runAssistanceCommand' }, 'codex'), undefined);
-
-    const storage = path.resolve('storage');
-    const current = serializeServers('claude', both);
-    assert.deepEqual(parse(migrateAgentConfig('claude', spec, storage, current)), JSON.parse(current), 'a current two-connection file keeps both entries');
-    const toml = serializeServers('codex', both), table = toml.slice(toml.indexOf('[mcp_servers.airk_explorer]'));
-    assert.ok(migrateAgentConfig('codex', spec, storage, toml).endsWith(table), 'the Assistance table is never rewritten');
+test('connection guide describes a single catalog and one connection check',()=>{
+    const html=renderConnectionGuide('claude',spec,'Install.',undefined,false,false,[unifiedEntry(spec,descriptor)]);
+    assert.ok(html.includes('One AIRK connection'));
+    assert.ok(html.includes('data-action="verify"')&&!html.includes('data-action="verifyAssistance"'));
+    assert.ok(!html.includes('separately keyed')&&!html.includes('both connections'));
+    assert.equal(connectionAction({action:'runAssistanceCommand'},'codex'),undefined);
+    const storage=path.resolve('storage');
+    const after=migrateAgentConfig('claude',spec,storage,serializeServers('claude',both));
+    assert.deepEqual(Object.keys(parse(after).mcpServers),['airk']);
 });
