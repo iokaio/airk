@@ -109,7 +109,10 @@ impl ChildWorker {
         service: Incarnation,
         derived: bool,
     ) -> Result<Self> {
-        let executable = std::env::current_exe()?.canonicalize()?;
+        let executable = crate::process_roles::executable(
+            &std::env::current_exe()?.canonicalize()?,
+            crate::process_roles::Role::Index,
+        )?;
         let worker = new_instance_id()?;
         let mut command = Command::new(executable);
         command

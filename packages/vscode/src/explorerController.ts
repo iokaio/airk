@@ -21,6 +21,7 @@ import { SuggestionStore, suggestionsView } from './explorerSuggestions';
 import { ReviewContext, reviewChanges, reviewImpact, reviewTests } from './explorerReview';
 import { LaunchSpec } from './model';
 import { saveStudioInWorkspace } from './explorerWorkspaceIO';
+import { openAgentInstructions } from './explorerWorkspaceIO';
 import { validateStudio } from './explorerStrategies';
 import { usageAction } from './usageReport';
 import { HandoffStore } from './explorerHandoffs';
@@ -32,6 +33,8 @@ export interface ExplorerHost {
     readonly extensionUri: vscode.Uri;
     readonly version: string;
     extensionUpdate?(): ExplorerViewState['extensionUpdate'];
+    connectionCheck?(): ExplorerViewState['connectionCheck'];
+    startup?(): ExplorerViewState['startup'];
     reloadUpdatedExtension?(): Promise<void>;
     trusted(): boolean;
     specs(): readonly LaunchSpec[];
@@ -149,6 +152,8 @@ export class ExplorerController implements vscode.Disposable {
             revision: this.revision,
             extensionVersion: this.host.version,
             ...(this.host.extensionUpdate?.() ? { extensionUpdate: this.host.extensionUpdate() } : {}),
+            connectionCheck: this.host.connectionCheck?.(),
+            startup: this.host.startup?.(),
             trusted: this.host.trusted(),
             connection: this.control.connection(),
             projects,
@@ -306,6 +311,13 @@ export class ExplorerController implements vscode.Disposable {
 
     protected async dispatch(message: WebviewMessage): Promise<unknown> {
         switch (message.type) {
+            case 'instructions.open': {
+                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                if (message.project !== this.requireProject()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+                const spec = this.host.specs().find(entry => entry.service?.project === message.project), epoch = this.selectionEpoch;
+                if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
+                return openAgentInstructions(spec.root, message.agent, () => !this.disposed && this.host.trusted() && epoch === this.selectionEpoch);
+            }
             case 'details.copy': {
                 if(!this.host.trusted())throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED'));
                 const status=message.project===this.selected&&this.statusFor===this.selected?this.status:undefined;
@@ -396,7 +408,8 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'manage.command': {
                 if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
-                await vscode.commands.executeCommand((message as WebviewMessageOf<'manage.command'>).command);
+                const command=(message as WebviewMessageOf<'manage.command'>).command;
+                await vscode.commands.executeCommand(command, ...(command==='airk.verifyMcp'?[this.selected]:[]));
                 return;
             }
             case 'search.form': {

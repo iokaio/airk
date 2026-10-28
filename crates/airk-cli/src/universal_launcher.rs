@@ -7,8 +7,8 @@
 //! the current install root. Every invocation reads that file again and hands its
 //! arguments and stdio to the named installation's own pinned launcher, so a later
 //! installation only rewrites the file; agent configurations never change. The universal
-//! copy never interprets runtime layouts itself, which keeps an old copy compatible
-//! with newer installations.
+//! copy delegates unknown launcher implementations, keeping old copies compatible
+//! with newer installations. An identical verified launcher can skip that extra hop.
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -121,8 +121,27 @@ pub fn is_universal(executable: &Path) -> bool {
 
 /// Hand the call to the named installation's own verified stable launcher.
 pub fn run(executable: &Path, args: Vec<OsString>) -> Result<()> {
+    crate::client_owner::watch()?;
     let install = resolve(executable)?;
     let target = crate::runtime_install::verified_launcher(&install)?;
+    if digest(&target)? == digest(executable)?
+        && !args.iter().any(|arg| {
+            arg == "--service-install-dir"
+                || arg
+                    .to_str()
+                    .is_some_and(|arg| arg.starts_with("--service-install-dir="))
+        })
+        && let Ok((_, main, _)) = crate::runtime_install::selected(&install)
+    {
+        // Identical verified implementations can skip the intermediate launcher.
+        // Missing/broken selections still delegate so runtime repair commands work.
+        let mut command = Command::new(main);
+        command
+            .arg("--service-install-dir")
+            .arg(&install)
+            .args(args);
+        return crate::native_process::forward_stdio(command);
+    }
     let mut command = Command::new(target);
     command.args(args);
     crate::native_process::forward_stdio(command)

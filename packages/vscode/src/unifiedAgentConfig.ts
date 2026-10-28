@@ -153,7 +153,8 @@ export function consolidateToml(source:string,options:Consolidation):string {
     const fields=merge(entries,options), env=fields.env;
     const lines=[...tables.flatMap(table=>table.comments),'[mcp_servers.airk]',...Object.entries(fields).filter(([key])=>key!=='env').map(([key,value])=>`${key} = ${JSON.stringify(value)}`)];
     if (env) { lines.push('','[mcp_servers.airk.env]',...Object.entries(env as Fields).map(([key,value])=>`${JSON.stringify(key)} = ${JSON.stringify(value)}`)); }
-    const replacement=lines.join('\n')+'\n\n';
+    const eol=source.includes('\r\n')?'\r\n':'\n';
+    const replacement=lines.join(eol)+eol+eol;
     let result=source;
     for (const table of [...tables].sort((a,b)=>b.start-a.start)) { result=result.slice(0,table.start)+(table===tables[0]?replacement:'')+result.slice(table.end); }
     return result===source?source:result;

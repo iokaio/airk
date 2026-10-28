@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LaunchSpec } from './model';
 import { ProjectRegistrationReview, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
-import { identifier, record, ServiceError } from './serviceClient';
+import { identifier, record, ServiceError, type ConsolePage } from './serviceClient';
 import { IntentStorage } from './serviceIntents';
 
 const PREFIX='airk.service.workspace.1.';
@@ -78,5 +78,53 @@ export class ServiceWorkspace {
             }
         }
         return specs;
+    }
+
+    /** Resolve an agent's selected source against native metadata, never a saved editor binding alone. */
+    async resolveConnection(binding:RuntimeBinding,spec:LaunchSpec,
+        read:(after:string|null,revision:number|null)=>Promise<ConsolePage>):Promise<LaunchSpec>{
+        this.active();
+        if(!spec.service||!same(spec.service.installDir,binding.installDir))throw new ServiceError('workspace_registration_changed');
+        const candidates:ProjectRegistrationReview[]=[],seen=new Set<string>();
+        let after:string|null=null,revision:number|null=null;
+        do{
+            const page=await read(after,revision);this.active();
+            if(revision!==null&&page.revision!==revision)throw new ServiceError('workspace_registry_changed');
+            revision=page.revision;
+            for(const row of page.projects){
+                const project=record(record(row.project).registration),id=identifier(project.binding,32);
+                if(seen.has(id)||seen.size>=1024)throw new ServiceError('workspace_registry_page_invalid');
+                seen.add(id);
+                const root=absolute(project.root),data_root=absolute(project.data_root);
+                if(typeof project.collection!=='string'||!/^[A-Za-z0-9._-]{1,128}$/.test(project.collection)||['.','..'].includes(project.collection))throw new ServiceError('invalid_saved_workspace_registration');
+                if(same(root,spec.root)&&project.collection===spec.collection)candidates.push({installDir:binding.installDir,
+                    controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,binding:id,root,data_root,collection:project.collection});
+            }
+            if(page.after!==null&&(page.after===after||!page.projects.length||seen.size>=1024))throw new ServiceError('workspace_registry_page_invalid');
+            after=page.after;
+        }while(after!==null);
+        const exact=candidates.find(project=>project.binding===spec.service!.project);
+        if(exact&&!same(exact.data_root,spec.dataDir))throw new ServiceError('workspace_registration_changed');
+        if(!exact&&candidates.length>1)throw new Error('Several native indexes match this project. Select the intended index before connecting an agent.');
+        const project=exact??candidates[0];
+        if(!project)throw new Error('This project is no longer registered in the AIRK service. Add it in Management before connecting an agent.');
+        const saved=this.saved().filter(value=>same(value.registration.installDir,binding.installDir)
+            &&value.registration.binding===spec.service!.project&&same(value.registration.root,spec.root));
+        if(!saved.length)throw new ServiceError('workspace_registration_changed');
+        // Only repair the editor's reference to an already registered native index.
+        // No project registration, source work, or index movement occurs here.
+        for(const value of saved){
+            this.active();
+            if(value.registration.binding!==project.binding||!same(value.registration.data_root,project.data_root)
+                ||!same(value.registration.controlDir,project.controlDir)||value.registration.runtimeSha256!==project.runtimeSha256){
+                const key=PREFIX+createHash('sha256').update(JSON.stringify([project.installDir,project.binding,value.opened])).digest('hex');
+                if(this.storage.get(key)===undefined&&this.saved().length>=1024)throw new ServiceError('workspace_registration_capacity');
+                await this.storage.update(key,{schema:1,opened:value.opened,registration:project} satisfies SavedProject);this.active();
+                await this.storage.update(this.selection(project.installDir,value.opened),project.binding);this.active();
+            }
+        }
+        return {...spec,root:project.root,dataDir:project.data_root,collection:project.collection,
+            command:binding.universalLauncher??binding.launcher??spec.command,
+            service:{installDir:binding.installDir,project:project.binding,...(binding.universalLauncher?{universal:true}:{})}};
     }
 }

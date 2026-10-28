@@ -13,7 +13,7 @@ import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
 import * as cliInstall from '../cliInstall';
 
-export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string}={}){
+export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean}={}){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-service-'));
     const values=new Map<string,unknown>(),settings=new Map<string,unknown>(),commands=new Map<string,(...args:unknown[])=>Promise<unknown>>();
     const assistance=new Map<string,any>(),writes:any[]=[],calls:string[]=[],warnings:string[]=[],clipboard:string[]=[],panels:any[]=[],events:any[]=[],notices:{message:string;actions:string[]}[]=[],progressRuns:{title:string;messages:string[]}[]=[];
@@ -69,7 +69,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     commands:{registerCommand:(name:string,action:(...args:unknown[])=>Promise<unknown>)=>{commands.set(name,action);return disposable;},
         executeCommand:async(name:string)=>calls.push(name),getCommands:async()=>['workbench.mcp.listServer']},
     lm:{registerMcpServerDefinitionProvider:(name:string,provider:unknown)=>{if(name==='airk.collections')events.push(provider);else assistance.set(name,provider);return disposable;}},
-    env:{clipboard:{writeText:async(text:string)=>{clipboard.push(text);}}},StatusBarAlignment:{Left:1},ConfigurationTarget:{Global:1},ViewColumn:{Active:1,Beside:2},ProgressLocation:{Notification:15},
+    env:{clipboard:{writeText:async(text:string)=>{clipboard.push(text);}}},StatusBarAlignment:{Left:1},ConfigurationTarget:{Global:1},ViewColumn:{Active:1,Beside:2},ProgressLocation:{Notification:15},EndOfLine:{LF:1,CRLF:2},
     EventEmitter:class{listeners:any[]=[];event=(listener:any)=>{this.listeners.push(listener);return disposable;};fire(){for(const listener of this.listeners)listener();}dispose(){}},
     TreeItem:class{constructor(public label:string){}},Uri:{file:(fsPath:string)=>({scheme:'file',fsPath}),joinPath:(base:any,...parts:string[])=>({scheme:'file',fsPath:path.join(base?.fsPath??'',...parts),toString(){return this.fsPath;}})},
     Range:class{constructor(..._args:any[]){}},
@@ -80,7 +80,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         if(state.down)throw new ServiceError('service_unavailable');
         if(['enqueue','configure_watch','pause','plan_create','plan_execute'].includes(name))writes.push(structuredClone(method));
         switch(name){
-            case 'health':return {status:'health',observation:{instance:'12'.repeat(16),version:'1.4.0'}};
+            case 'health':return {status:'health',observation:{instance:'12'.repeat(16),version:binding.version,runtime_sha256:binding.runtimeSha256,policy:{accepting:true}}};
             case 'request_epoch':return {status:'request_epoch',namespace:'34'.repeat(16),epoch:1};
             case 'resources':return {status:'resources',observation:{configuration:{preset:'balanced'}}};
             case 'embedding_status':return {status:'embedding_status',available:false};
@@ -100,6 +100,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     }};
     test.mock.method(RuntimeHost.prototype,'discover',async function(this:RuntimeHost){
         state.discovered++;assert.equal(this.options.installDir,install);
+        await options.discoveryGate;
         return {bundle:{main:path.join(root,'bundle-main'),helper:path.join(root,'bundle-helper'),source:root,digest:binding.runtimeSha256,version:'1.4.0',platform:'fixture'},
             installDir:install,installed:true,location:{user_paths:{data}},inspection:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:'trusted_distribution'},
             executable:binding.executable,launcher:binding.launcher,control_dir:control,registry_namespace:'34'.repeat(16),lifecycle:{explicitly_stopped:state.stopped}}};
@@ -118,13 +119,14 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     test.mock.method(native,'prepareHelper',async()=>{throw new Error('Legacy helper preparation is forbidden');});
     test.mock.method(native,'runJson',async()=>{throw new Error('Direct collection command is forbidden');});
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;
-    const modules=['../extension','../serviceExtension','../serviceConsole','../agentSetup'];
+    const modules=['../extension','../serviceExtension','../serviceConsole','../agentSetup','../explorerController','../explorerPanel'];
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     let extension:any;
     try{extension=require('../extension');const context:any={extensionPath:root,extensionUri:{scheme:'file',fsPath:path.resolve(__dirname,'../..')},extension:{id:'iokaio.airk',packageJSON:{version:options.upgrade?'1.4.1':'1.4.0'}},globalState:storage,workspaceState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
+        if(!options.deferStartup)await api.whenReady();
         return {root,folders,binding,registrations,values,settings,commands,writes,calls,warnings,clipboard,panels,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
             extensionsChanged(){extensionsChanged!();},focus(){windowFocused!({focused:true});},
             async refreshFolders(){await foldersChanged!();},

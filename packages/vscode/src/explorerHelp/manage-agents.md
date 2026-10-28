@@ -8,6 +8,8 @@ related_airk_help: agent-setup, mcp
 ---
 # Agent connections
 
+**Help your agent discover and use AIRK** provides copyable project instructions and separate buttons for Claude Code's CLAUDE.md, Codex's AGENTS.md and GitHub Copilot's .github/copilot-instructions.md. Open **Instruction file help** for the review/save steps and guidance for other assistants. Existing files are preserved; missing files open as unsaved drafts.
+
 Open this section from the tabs across the top of Management. Everyday controls remain in the Indexing tab: Search mode, Updates and Evidence detail.
 
 Management > Agents connects coding agents to one AIRK MCP server for evidence, help and reviewed Explorer drafts.
@@ -22,4 +24,10 @@ Management > Agents connects coding agents to one AIRK MCP server for evidence, 
 
 User-wide and client-private configuration/approval stores require that client's controls. A manual recognized VS Code configuration owns its policies; the extension does not register a duplicate connection. Read Work with an AI agent for draft validation, templates, proposals and shared snapshots.
 
+After reinstalling AIRK with fresh storage, an existing agent configuration may still reference the previous index. **Update existing AIRK connection** for Codex, or **Install** for supported JSON clients, replaces the old storage path and project identity together for this source and collection. Setup checks the native registration first. Do not change only the folder name by hand. Codex creation/update checks the saved connection automatically and distinguishes a successful save from a failed AIRK check; restart the agent separately to load it. Unsaved edits, custom launchers and ambiguous registrations are preserved and reported for review.
+
 Codex, Claude Code, Copilot and other assistants can connect to the same project simultaneously. Each connection negotiates independently. Version 1.5.9 corrects discovery followed by a legacy handshake, which previously could deliver instructions but reject tool listing. A client's connected label alone does not prove tools are available: use **Check AIRK MCP connection** and verify an actual tool call. A failed freshness job is a separate indexing problem; it does not mean the MCP connection failed.
+
+Management → Agents → **Check AIRK connection** shows its stages, elapsed time and result in the panel, with **Copy connection details**. It checks the selected project's current native registration, launches AIRK, lists the 26 unified tools and reads status without starting indexing. Failure details retain the failed stage and available launcher error output. A slow handshake can exceed an agent's own startup deadline even when this check eventually passes.
+
+Ask an assistant to discover AIRK in its full tool catalog, including deferred tools, and call `status` before claiming the tools are unavailable. The extension's successful check does not establish that another agent loaded its configuration. Use that agent's MCP controls to check its server entry and collect the exact failure if access still fails. The copied verification prompt includes these steps.

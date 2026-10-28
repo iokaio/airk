@@ -169,6 +169,43 @@ async function transitionFixture(){
         setPending:(value:RecordValue)=>{pending=value;},setCandidateVersion:(value:string)=>{candidateVersion=value;},setSelectedVersion:(value:string)=>{selectedVersion=value;}};
 }
 
+test('concurrent discovery shares verification and callers cannot mutate each other’s observations',async()=>{
+    const t=await transitionFixture();
+    try{
+        const [first,second]=await Promise.all([t.host.discover(),t.host.discover()]);
+        assert.equal(t.calls.filter(args=>args[1]==='inspect').length,1);
+        assert.equal(t.calls.filter(args=>args[1]==='self-test').length,1);
+        first.inspection!.selection={active:'ff'.repeat(32)};
+        assert.notDeepEqual(first.inspection!.selection,second.inspection!.selection);
+        await t.host.discover();
+        assert.equal(t.calls.filter(args=>args[1]==='inspect').length,2,'a subsequent discovery observes external selection changes');
+        assert.equal(t.calls.filter(args=>args[1]==='self-test').length,1,'the unchanged verified bundle tests once per host');
+    }finally{await t.f.cleanup();}
+});
+
+test('warm reconnect checks live identity without restarting; missing health and pending updates use native lifecycle',async context=>{
+    const t=await transitionFixture();let ensures=0,disposed=0,healthReads=0;
+    let health:RecordValue={version:'1.4.0',runtime_sha256:t.binding().runtimeSha256,policy:{accepting:true}};
+    context.mock.method(t.host,'ensure',async()=>{ensures++;return t.binding();});
+    context.mock.method(t.host,'client',()=>new ServiceClient({dispose:()=>{disposed++;},request:async()=>{
+        healthReads++;return {status:'health',observation:health};
+    }}));
+    try{
+        const observation=await t.host.discover(),calls=t.calls.length;
+        const binding=await t.host.reconnect(observation);assert.equal(binding.runtimeSha256,t.binding().runtimeSha256);
+        assert.equal(ensures,0);assert.equal(t.calls.length,calls);assert.equal(disposed,1);
+        observation.inspection!.lifecycle={explicitly_stopped:true};
+        await assert.rejects(t.host.reconnect(observation),/service_explicitly_stopped/);
+        assert.equal(healthReads,1);assert.equal(ensures,0);
+        observation.inspection!.lifecycle={explicitly_stopped:false};
+        health={...health,runtime_sha256:'ff'.repeat(32)};await t.host.reconnect(observation);assert.equal(ensures,1);
+        observation.diagnosis={pending_activation:{phase:'probe'}};
+        await t.host.reconnect(observation);assert.equal(ensures,2);assert.equal(healthReads,2);
+        observation.diagnosis={};observation.inspection!.lifecycle={pending:{intent:'stop'}};
+        await t.host.reconnect(observation);assert.equal(ensures,3);assert.equal(healthReads,2);
+    }finally{await t.f.cleanup();}
+});
+
 test('new installation resolves an exact older unfinished upgrade before bundled activation',async()=>{
     const t=await transitionFixture();
     try{

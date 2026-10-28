@@ -210,6 +210,8 @@ jobs:
         run: python scripts/ci-metrics.py run --name release-pair -- python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/${{ matrix.target }}
       - name: Native direct clients, retained reads and shared offline inference
         run: python scripts/check-service-clients.py --runtime-dir artifacts/runtime/${{ matrix.target }} --files 16 --model --report artifacts/benchmarks/${{ matrix.target }}-clients.json
+      - name: Installed process roles and client lifetime
+        run: python scripts/check-service-install.py --runtime artifacts/runtime/${{ matrix.target }}
       - name: Real embedded model indexing and vector retrieval
         if: ${{ inputs.qualification }}
         run: python scripts/check-transformer-model.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}

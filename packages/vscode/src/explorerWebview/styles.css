@@ -1,4 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+.instruction-suggestion { border-left: 3px solid var(--vscode-focusBorder, #4ec9b0); padding: 0 1rem; margin: 1rem 0; }
+.agent-instructions { margin-top: 1rem; }
 /* AIRK Explorer: prototype hierarchy and surfaces adapted to VS Code theme tokens. */
 :root {
   --airk-gap: 1rem;
@@ -334,6 +336,10 @@ body.vscode-light:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .a
 .work-progress { margin-block: 1rem; }
 .progress-metrics dd { font-size: 1.5rem; }
 .semantic-status { margin-block: 1rem; }
+.index-contents { margin-block: 1rem; border-top: 3px solid var(--airk-accent); }
+.index-contents .project-metrics { grid-template-columns: repeat(3,minmax(0,1fr)); }
+.semantic-coverage progress { width: 100%; height: 0.8rem; accent-color: var(--airk-accent); }
+.project-details { margin-block: 1rem; }
 @media (max-width: 1000px) {
   .frame { grid-template-columns: 62px minmax(0, 1fr); }
   .rail { padding-inline: 0.4rem; } .rail-caption, .rail .nav-label, .rail .tag { display: none; }
@@ -342,7 +348,7 @@ body.vscode-light:not(.vscode-high-contrast):not(.vscode-high-contrast-light) .a
 }
 @media (max-width: 680px) {
   .topbar-actions { flex-basis: 100%; justify-content: flex-end; } .topbar kbd { display: none; }
-  .content { padding: 1.2rem; } .project-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .content { padding: 1.2rem; } .project-metrics, .index-contents .project-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .hero-block { padding: 1.5rem; } .hero-block .brand-mark { display: none; }
 }
 @media (max-width: 480px) {

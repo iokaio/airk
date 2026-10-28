@@ -62,6 +62,29 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, Intent)> {
 }
 
 #[test]
+fn installed_role_aliases_preserve_inventory_and_retire_with_the_owned_payload() -> Result<()> {
+    let (_owner, root, intent) = fixture()?;
+    let (main, _) = verify_runtime(&root, &intent.candidate)?;
+    let directory = runtime_pair::payload_root(&main)?;
+    let original = fs::read(directory.join("airk-install.json"))?;
+    crate::process_roles::install(&main)?;
+    assert_eq!(fs::read(directory.join("airk-install.json"))?, original);
+    verify_runtime(&root, &intent.candidate)?;
+    let alias = crate::process_roles::executable(&main, crate::process_roles::Role::Service)?;
+    fs::remove_file(&alias)?;
+    fs::write(&alias, b"modified alias must be preserved")?;
+    assert!(verify_runtime(&root, &intent.candidate).is_err());
+    assert!(retirement::remove(&root, &intent.candidate).is_err());
+    assert!(main.exists());
+    fs::remove_file(&alias)?;
+    crate::process_roles::install(&main)?;
+    retirement::remove(&root, &intent.candidate)?;
+    assert!(!directory.exists());
+    verify_runtime(&root, &intent.prior.unwrap().active)?;
+    Ok(())
+}
+
+#[test]
 fn reviewed_activation_refuses_a_changed_selection_and_crossed_pending_intent() -> Result<()> {
     let (_owner, root, intent) = fixture()?;
     let expected = &intent.prior.as_ref().unwrap().active;

@@ -3,7 +3,7 @@ import type { FactRow, ManagedProject, ManagementView, PlanView, ProjectHealthVi
 import { projectSummaries } from './explorerControl';
 import type { RecordValue } from './serviceClient';
 import { ConsoleObservation, ServiceConsoleState, waitLabel } from './serviceConsoleView';
-import { semanticExplanation } from './explorerStatus';
+import { indexContents, semanticExplanation } from './explorerStatus';
 
 /** Copy cached diagnostic metadata only. No reads, source bodies, jobs or index inspection are triggered. */
 export function panelDetails(view: ManagementView, section: string, version: string, projectId?: string, status?: StatusSummary, now = Date.now()): string {
@@ -14,6 +14,15 @@ export function panelDetails(view: ManagementView, section: string, version: str
     const facts=(heading:string,rows:readonly FactRow[])=>{lines.push('',heading,...rows.map(([key,value])=>`${key}: ${value}`));};
     if(entry){
         lines.push(`Project: ${entry.summary.name}`,`Project identity: ${entry.summary.project}`,`Health: ${entry.health.title}`,entry.health.detail);
+    }
+    if(entry&&['index','health','progress','activity'].includes(section)){
+        const saved=indexContents(entry.summary,status);
+        facts('Published index',[
+            ['Files',scalar(saved.files)],['Chunks',scalar(saved.chunks)],['Vectors',scalar(saved.vectors)],
+            ['Semantic files completed / selected',`${scalar(saved.semanticCompleted)} / ${scalar(saved.semanticSelected)}`],
+            ['Publication',saved.publication??'Not observed'],['Source discovery',saved.discoveryState??'Not observed'],['Source updates',saved.freshness??'Not observed'],
+            ['Publication observed',saved.observedAt===undefined?'Not observed':new Date(saved.observedAt).toISOString()],
+        ]);
     }
     if(entry&&['health','progress','activity'].includes(section)){
         facts('Worker progress',entry.activity);
@@ -149,7 +158,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         : sampleCurrent && work.stalled === true
         ? { severity: 'warn', title: 'No work advancement reported', detail: 'The native worker reports stalled work. Review the wait and diagnostics; cancellation may be waiting for a safe boundary.' }
         : job.state === 'running' || job.state === 'pending' || typeof pending.id === 'string'
-        ? { severity: 'info', title: sampleCurrent && job.state === 'running' ? job.kind === 'model_setup' ? 'Preparing offline model' : job.kind === 'inspect' ? 'Checking index and settings' : job.kind === 'vectors' ? 'Building semantic index' : 'Indexing' : 'Waiting for work', detail: sampleCurrent ? matchingWait ? wait : 'Work is running. Progress below describes the latest worker sample.' : 'The saved job and progress are shown below. Current progress has not been confirmed for this worker.' }
+        ? { severity: 'info', routineWork:sampleCurrent&&job.state==='running'&&!matchingWait, title: sampleCurrent && job.state === 'running' ? work.phase==='retiring' ? 'Cleaning up index' : job.kind === 'model_setup' ? 'Preparing offline model' : job.kind === 'inspect' ? 'Checking index and settings' : job.kind === 'vectors' ? 'Building semantic index' : 'Indexing' : 'Waiting for work', detail: sampleCurrent ? matchingWait ? wait : 'Work is running. Progress below describes the latest worker sample.' : 'The saved job and progress are shown below. Current progress has not been confirmed for this worker.' }
         : semantic.state === 'disabled' && snapshot.vectors_enabled === true
         ? { severity: 'warn', title: 'Semantic setup incomplete', detail: 'Semantic mode is enabled, but the inspected publication has no semantic coverage and no active request was observed. Complete setup prepares the selected offline model and queues indexing.', action: 'enableSemantic', actionLabel: 'Complete semantic setup' }
         : snapshot.index_state === 'available' || snapshot.index_state === 'ready'
@@ -171,7 +180,8 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
             ['Pending job', pending.id ? `${scalar(pending.kind)} · ${scalar(pending.state)}` : undefined],
             ['Queued request eligibility',gate.code??(pending.id?'No plan gate observed':'No queued request')],['Owning repair plan',gate.plan],['Owning plan phase',gate.plan_phase],['Wait reason (sampled)', wait],
             ['Wait sample age (ms)', matchingWait ? waiting.age_ms : undefined], ['Captured / extracted files', work.captured_files === undefined ? undefined : `${scalar(work.captured_files)} / ${scalar(work.extracted_files)}`],
-            ['Committed changes', work.committed_changes], ['Published batches', work.publications], ['Total files', work.total_files],
+            ['Prepared changes', work.prepared_changes], ['Committed changes', work.committed_changes], ['Published batches', work.publications], ['Total files', work.total_files],
+            ['Completed semantic units (reported)',work.completed_semantic_units],
             ['Last real advance (ms ago at sample)', work.last_advance_age_ms], ['Unpaused time without progress (ms)', work.unpaused_idle_ms],
             ['Phase elapsed (ms)', work.phase_elapsed_ms], ['Last job failure code', obj(job.outcome).code]]),
         extra: {

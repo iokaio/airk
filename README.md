@@ -1,12 +1,20 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+Management → Agents now offers **Copy instructions** and separate buttons to open Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`) and GitHub Copilot (`.github/copilot-instructions.md`) project instructions. The suggestion teaches agents to discover deferred AIRK tools, confirm status, use focused evidence and verify live files. Existing files stay unchanged; missing files open as unsaved drafts for review and saving. The bundled **Project instructions for AI agents** help topic also covers other assistants.
+
+Development has advanced to **1.5.12** on the index-management branch. Explorer opens while runtime checks continue in the background. Healthy completed installations reconnect without running native startup again, and simultaneous discovery requests share work. Agent configuration uses current native registrations. The Agents panel displays connection-check stages, elapsed time and copyable results for the unified 26-tool connection. The full inline agent setup guide remains a proposal. See the [1.5.12 development record](docs/release-1.5.12.md).
+
+AIRK 1.5.12 also ties MCP process lifetime to its client and gives installed service, index and source workers distinct executable names. Role copies are created locally; downloads still include one main engine. Live agents keep independent MCP connections, while background indexing remains service-owned.
+
+Overview and Management now lead with published files, text chunks, vectors and semantic file coverage. Current work appears separately with counters appropriate to source indexing, semantic batches or cleanup. The display updates automatically; starting another attempt does not replace saved index counts with zeros.
+
 The [1.5.10 candidate](docs/release-1.5.10.md) adds local raw job-error logs, continued cleanup of obsolete index objects, explicit failed repair results, and [storage format identifiers](docs/storage-formats.md) independent of application versions. Existing owned storage locations remain compatible; fresh installations use `runtime`, `index-v1` data and `service-v1` state defaults.
 
 Version 1.5.9 fixes MCP discovery followed by a legacy handshake: a delayed discovery response no longer leaves a successfully initialized connection rejecting its tool requests. Protocol state stays per connection, so assistants can share one project using different handshake styles. Modern requests still require valid metadata. See the [1.5.9 compatibility record](docs/release-1.5.9.md).
 
 Failed jobs observed by the service now produce retained `job_failed` events with the exact job and safe failure code. Index preparation and discovery preserve stage and recognized native causes. Older generic failures cannot be reconstructed; unknown causes remain explicit.
 
-**Development version: 1.5.10.** Management uses consistent horizontal tabs for Indexing, Activity, Storage, Recovery, Service, Agents, Usage and Logs. Indexing contains a health banner, current progress, published search availability, and three everyday settings: search mode, updates and evidence detail. Semantic enablement verifies/prepares the offline model before saving the policy and requests source and semantic work. Registration records native setup durably, so closing the editor does not strand a newly registered project before its initial index requests. See the [1.5.8 development record](docs/release-1.5.8.md).
+**Development version: 1.5.12.** Management uses consistent horizontal tabs for Indexing, Activity, Storage, Recovery, Service, Agents, Usage and Logs. Indexing contains a health banner, current progress, published search availability, and three everyday settings: search mode, updates and evidence detail. Semantic enablement verifies/prepares the offline model before saving the policy and requests source and semantic work. Registration records native setup durably, so closing the editor does not strand a newly registered project before its initial index requests. See the [1.5.8 development record](docs/release-1.5.8.md).
 
 Queued repair requests whose plan has finished or lost its owner are settled without replaying old approvals, so they cannot indefinitely block otherwise eligible source work. Overview and Management update automatically while visible. Management exposes plan gates, confirms manual diagnostic status checks, separates old counters from queued work, and provides Copy details for troubleshooting panels.
 
@@ -42,7 +50,7 @@ Successful runtime activation finishes quietly. A detected extension update offe
 
 Trusted startup and **Install or Repair CLI** migrate recognized project-local agent connections to one stable-launcher endpoint. Codex, Claude Code, Copilot, Gemini, Antigravity, Cursor, Roo and Junie files are supported. Other servers, environment values and disabled state are preserved; conflicts, unsafe files and unsaved edits remain for review. Restart the coding agent and approve the renamed tools after migration.
 
-The current development package version is **1.5.10**. The earlier 1.5.0 candidate superseded 1.4.4; its [release notes](docs/release-1.5.0.md) retain their original validation scope.
+The current development package version is **1.5.12**. The earlier 1.5.0 candidate superseded 1.4.4; its [release notes](docs/release-1.5.0.md) retain their original validation scope.
 
 CLI installation removes previous extension-managed terminal executable copies regardless of version. It also retires the previous native rollback payload after successful activation, preserving the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to retry. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
 

@@ -22,3 +22,9 @@ Management › Service details shows the native service's health, runtime select
 ## Limits
 
 Health confirms responsiveness only. An external service manager controls lifecycle, upgrades and rollback when one is configured.
+
+## Processes on this machine
+
+A user-owned installation uses `airk-service` for the shared service, `airk-index` for project workers, `airk-source` for source watching and `airk-embed` for inference (`.exe` on Windows). Agents and Explorer can each have a separate MCP frontend and launcher. Two VS Code windows do not imply only two AIRK processes. MCP processes follow their client lifetime; background indexing can continue after an editor closes. An idle, connected agent remains connected.
+
+The installer creates the role names from one downloaded engine. Organization-managed read-only payloads and development builds retain their original executable names.

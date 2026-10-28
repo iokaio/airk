@@ -47,6 +47,8 @@ The native frontend owns stdio and direct evidence reads. The CLI composes an op
 
 After verified runtime selection and native registration, trusted startup and **Install or Repair CLI** consolidate recognized existing project configurations in one guarded save per file:
 
+Version 1.5.11 checks saved editor bindings against the current native registry before generating these updates. An unambiguous replacement registration for the same source and collection repairs the editor reference; unavailable or ambiguous metadata cannot authorize a configuration rewrite. Explicit setup still revalidates immediately before writing. Already matching files are retained without repeated update messages.
+
 - `.codex/config.toml`
 - `.mcp.json`
 - `.vscode/mcp.json`
@@ -59,5 +61,9 @@ After verified runtime selection and native registration, trusted startup and **
 For the current project, the old `airk-<collection>` and extension-owned `airk_explorer` definitions are removed and replaced with `airk`. Launchers, canonical roots, collection/binding and the extension descriptor must match this installation; old commands are never executed. New setup snippets also contain one entry. The retired VS Code Assistance provider withdraws its definitions instead of advertising a second server.
 
 Migration preserves unrelated servers/settings, JSON comments, supported TOML comments, environment values and disabled state. If either old server was disabled, the unified connection remains disabled. Supported tool allow/deny/preapproval lists are translated; partially approved combined view tools require fresh approval rather than granting additional actions. Conflicting environments/policies, unknown launchers, unsupported TOML, unsafe/linked files or unsaved/concurrent edits preserve the file and produce a message for review. Missing configurations do not enable an agent. User-wide and client-private approval stores are not rewritten. Restart the agent and approve renamed tools through that client's controls.
+
+In 1.5.11, opening an agent guide checks the selected source/collection against a complete, revision-bound native registration listing. An obsolete editor registration can be repaired only when there is one matching active native index; ambiguity, missing registrations and unavailable metadata remain explicit failures. This changes the editor reference, not native registrations or index contents. Setup rechecks before writing configuration.
+
+After a fresh installation or a reviewed storage change, use the explicit **Update existing AIRK connection** action for Codex, or **Install** in the supported JSON-client guide. These actions can replace the storage path and project identity together for the same source, collection and recognized launcher. Background migration still requires the original project identity. Merely replacing `service-1.4` with `index-v1` in an existing configuration is insufficient because storage participates in the native project identity. Codex saves retain the document's newline convention and read back the saved file. Both creation and update automatically probe AIRK; the guide distinguishes saved, already matching, and connection-check failure. This does not prove the external agent loaded its configuration or override its tool/disabled policies.
 
 Index jobs, sources, publications and model settings are unchanged by connection migration. The service remains the sole owner of indexing and recovery. See [index management](index-management.md), [the evidence contract](mcp.md) and the [1.5.7 development record](release-1.5.7.md).

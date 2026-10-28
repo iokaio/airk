@@ -46,3 +46,44 @@ test('reviewing new storage changes only the active workspace binding and preser
         assert.equal([...values.keys()].filter(key=>key.startsWith('airk.service.workspace.1.')).length,2);
     }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('agent connections resolve stale editor registrations from complete native metadata without registering or indexing',async()=>{
+    const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-workspace-agent-'))),values=new Map<string,unknown>();
+    const source=path.join(root,'source');await fs.mkdir(source);
+    const binding:RuntimeBinding={installDir:root,controlDir:path.join(root,'control'),executable:path.join(root,'main'),launcher:path.join(root,'airk-launcher'),
+        runtimeSha256:'ab'.repeat(32),version:'1.5.11',lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
+    const old:ProjectRegistrationReview={...binding,binding:'cd'.repeat(32),root:source,data_root:path.join(root,'service-1.4'),collection:'fixture'};
+    let registrations=0;
+    const workspace=new ServiceWorkspace({keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,
+        update:async(key,value)=>{values.set(key,value);}},
+        {reviewProject:async()=>old,registerProject:async()=>{registrations++;return old;}},()=>true);
+    const page=(projects:ProjectRegistrationReview[],after:string|null=null,revision=3)=>({revision,cached:true as const,observed_unix_ms:1,after,
+        projects:projects.map(registration=>({project:{registration}}))});
+    try{
+        await workspace.register(binding,source,old.data_root,old.collection,async()=>true);
+        const stale=(await workspace.definitions(binding,[source]))[0];
+        const current={...old,binding:'ef'.repeat(32),data_root:path.join(root,'index-v1')};
+        await assert.rejects(workspace.resolveConnection(binding,stale,async()=>page([])),/no longer registered/);
+        await assert.rejects(workspace.resolveConnection(binding,stale,async()=>{throw new Error('offline');}),/offline/);
+        await assert.rejects(workspace.resolveConnection(binding,stale,async()=>page([current,{...current,binding:'12'.repeat(32)}])),/Several native indexes/);
+        await assert.rejects(workspace.resolveConnection(binding,stale,async()=>page([{...old,data_root:current.data_root}])),/workspace_registration_changed/);
+        assert.equal((await workspace.definitions(binding,[source]))[0].service!.project,old.binding,'failed resolution cannot replace the selection');
+        const unrelated={...old,root:path.join(root,'other'),binding:'34'.repeat(32)};
+        const calls:unknown[]=[];
+        const selected=await workspace.resolveConnection(binding,stale,async(after,revision)=>{
+            calls.push([after,revision]);return after===null?page([unrelated],unrelated.binding):page([current]);
+        });
+        assert.deepEqual(calls,[[null,null],[unrelated.binding,3]]);
+        assert.equal(selected.service!.project,current.binding);assert.equal(selected.dataDir,current.data_root);
+        assert.equal((await workspace.definitions(binding,[source]))[0].service!.project,current.binding);
+        assert.equal(registrations,1,'resolution never reserves or indexes a project');
+        const exact=await workspace.resolveConnection(binding,selected,async()=>page([old,current]));
+        assert.equal(exact.service!.project,current.binding,'existing selected binding wins over another retained index');
+        await assert.rejects(workspace.resolveConnection(binding,selected,async(after)=>after===null?page([unrelated],unrelated.binding):page([current],null,4)),/registry_changed/);
+        await assert.rejects(workspace.resolveConnection(binding,selected,async()=>page([unrelated],unrelated.binding)),/page_invalid/);
+    }finally{
+        assert.equal(path.dirname(await fs.realpath(root)),await fs.realpath(os.tmpdir()));
+        assert.ok(path.basename(root).startsWith('airk-workspace-agent-'));
+        await fs.rm(root,{recursive:true,force:true});
+    }
+});

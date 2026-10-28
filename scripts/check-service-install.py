@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -42,6 +43,15 @@ def main():
             raise RuntimeError(result.stderr[-4096:])
         return result.stdout.strip() if raw else json.loads(result.stdout)
 
+    def client_lifetime(launcher, source, control):
+        result = subprocess.run([sys.executable, str(Path(__file__).with_name("check-client-lifetime.py")),
+                                 "--launcher", str(launcher), "--root", str(source), "--control-dir", str(control)],
+                                capture_output=True, encoding="utf-8", timeout=120,
+                                env=environment, creationflags=flags)
+        if result.returncode:
+            raise RuntimeError(f"Client lifetime fixture failed ({result.returncode}): {result.stdout[-4096:]} {result.stderr[-8192:]}")
+        print(result.stdout.strip(), flush=True)
+
     with tempfile.TemporaryDirectory(prefix="airk install original café fixture-", dir=Path(__file__).resolve().parents[1] / "target") as temporary:
         fixture = Path(temporary)
         install = fixture / "install"
@@ -75,6 +85,20 @@ def main():
             first = run("activate", "--install-dir", install, "--runtime-sha256", identity)
             if first["active"] != identity:
                 raise RuntimeError("First activation lost approved identity")
+            print("Checking installed process names without duplicate distribution images...", flush=True)
+            installed_payload = install / "runtimes" / identity
+            for role in ("airk-service", "airk-index", "airk-source"):
+                alias = installed_payload / (role + (".exe" if os.name == "nt" else ""))
+                if not alias.is_file() or alias.is_symlink() or sha256(alias) != sha256(binary):
+                    raise RuntimeError("Installed role image is missing or differs from the approved engine")
+                if alias.stat().st_nlink != 1:
+                    raise RuntimeError("Role images weakened unaliased-file ownership")
+                if invoke(alias, "runtime", "self-test").get("self_test") != "passed":
+                    raise RuntimeError("Role image cannot resolve its verified helper")
+                if (payload / alias.name).exists():
+                    raise RuntimeError("Installer modified distribution payload with role copies")
+            if sha256(installed_payload / "airk-install.json") != identity:
+                raise RuntimeError("Role installation rewrote approved inventory")
             health = run("ensure", "--install-dir", install)
             if health["runtime_sha256"] != identity:
                 raise RuntimeError("Health does not bind the installed payload")
@@ -86,6 +110,18 @@ def main():
             state_owner = state / "airk-state-1.4.owner.json"
             state_owner_digest = sha256(state_owner)
             launcher = Path(inspection["launcher"])
+            print("Checking client shutdown preserves other sessions and the service...", flush=True)
+            client_lifetime(launcher, user_data, control)
+            universal = fixture / "universal"
+            universal.mkdir()
+            entrypoint = universal / launcher.name
+            shutil.copy2(launcher, entrypoint)
+            (universal / "airk-launcher.json").write_text(json.dumps({
+                "schema": 1, "install": str(install.resolve()), "launcher_sha256": sha256(entrypoint)
+            }), encoding="utf-8")
+            client_lifetime(entrypoint, user_data, control)
+            if run("ensure", "--install-dir", install)["instance"] != health["instance"]:
+                raise RuntimeError("MCP client shutdown disturbed the shared service")
             actual = invoke(launcher, "runtime", "launch", "--install-dir", install,
                             "--", "--version", raw=True)
             if actual != f"airk {version}":

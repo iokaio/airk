@@ -73,7 +73,7 @@ export class McpStdioSession {
                     if (this.pending.delete(id)) {
                         // The server may still finish the work; its late reply is discarded.
                         this.notify('notifications/cancelled', { requestId: id, reason: 'client deadline' });
-                        reject(new McpSessionError('timeout', `AIRK MCP request ${method} exceeded ${timeout} ms.`));
+                        reject(new McpSessionError('timeout', `AIRK MCP request ${method} exceeded ${timeout} ms.${this.stderr ? `\nLauncher/server stderr: ${this.stderr}` : '\nNo launcher/server error output was received.'}`));
                     }
                 }, timeout);
             }

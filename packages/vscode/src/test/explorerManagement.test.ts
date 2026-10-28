@@ -3,8 +3,27 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { managementView, panelDetails } from '../explorerManagement';
 import { ServiceConsoleState } from '../serviceConsoleView';
+import { statusSummary } from '../explorerStatus';
 
 const project = '12'.repeat(32), job = '34'.repeat(32), pending = '56'.repeat(32), plan = '78'.repeat(32), intent = '9a'.repeat(16);
+
+test('semantic cleanup and copy reports retain publication counts separately from attempt counters',()=>{
+    const value=state(), row=value.page!.projects[0] as any;
+    const worker={project,worker:'ab'.repeat(16),service:'cd'.repeat(16),fencing_generation:1};
+    value.workers={observations:[{project,identity:worker}]};
+    row.pending_job=null;
+    row.progress={worker,current_fencing_generation:1,job:{id:job,kind:'vectors',state:'running'},progress:{job,phase:'retiring',completed_semantic_units:10511,captured_files:0,extracted_files:0,publications:1,committed_changes:32}};
+    let view=managementView(value),entry=view.projects[0];
+    assert.equal(entry.health.title,'Cleaning up index');assert.equal(entry.health.routineWork,true);
+    assert.equal(entry.summary.semanticCompleted,2);assert.equal(entry.summary.semanticSelected,10);
+    const status=statusSummary({index_state:'available',files:8158,chunks:65404,indexed_vectors:9805,publication:{token:'new-publication'},semantic_readiness:{state:'partial',completed_artifacts:160,selected_artifacts:8156}},20);
+    const report=panelDetails(view,'progress','1.5.11',project,status);
+    assert.match(report,/Files: 8,158/);assert.match(report,/Vectors: 9,805/);assert.match(report,/Completed semantic units \(reported\): 10,511/);
+    assert.match(report,/Captured \/ extracted files: 0 \/ 0/);
+    row.progress.job.state='failed';row.progress.job.outcome={code:'example_failure'};
+    view=managementView(value);entry=view.projects[0];
+    assert.equal(entry.health.routineWork,undefined);assert.equal(entry.health.severity,'error');
+});
 test('storage format and cleanup progress do not infer compatibility from application version',()=>{
     const current=state();
     current.health.value={observation:{version:'9.8.7',storage_formats:{index:1,service_state:1,logs:1}}};

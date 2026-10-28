@@ -57,6 +57,8 @@ fn build(
     main: &Path,
     executable: &str,
 ) -> Result<(airk_core::identity::Sha256Digest, RuntimeBuild)> {
+    let image = crate::process_roles::main_image(main)?;
+    let main = image.as_path();
     let root = crate::runtime_pair::payload_root(main)?;
     let bytes = bounded(&root.join("airk-install.json"), 512 * 1024)?;
     let payload = format!("{:x}", Sha256::digest(&bytes)).parse()?;

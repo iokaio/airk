@@ -97,6 +97,7 @@ export async function run(): Promise<void> {
     if(stage)assert.equal(await fs.realpath(extension.extensionPath),await fs.realpath(stage));
     else assert.ok(path.resolve(extension.extensionPath).startsWith(path.join(runRoot,'extensions')+path.sep));
     const api = await extension.activate();
+    await api.whenReady();
     const commands = await vscode.commands.getCommands(true);
     for (const name of ['airk.index', 'airk.reindex', 'airk.chooseStorage', 'airk.collections', 'airk.setupAgent', 'airk.verifyMcp', 'airk.status', 'airk.usage']) {
         assert.ok(commands.includes(name), name);

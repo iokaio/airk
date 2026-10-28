@@ -174,5 +174,6 @@ pub async fn serve(
     let explorer = descriptor
         .map(|descriptor| Arc::new(Explorer { descriptor, roots }) as Arc<dyn ExplorerTools>);
     let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
+    crate::client_owner::watch()?;
     airk_mcp::remote::serve(Arc::new(backend)).await
 }

@@ -85,7 +85,7 @@ test('trusted activation installs and registers all folders once with model/inde
         const servers=await f.api.getServerDefinitions();assert.equal(servers.length,1);assert.ok(servers[0].args.includes('--no-default-project'));assert.ok(servers[0].args.includes('--additional-project'));
         const writes=f.writes.length,retirements=f.calls.filter(value=>value==='previous-runtime-retired').length,ensures=f.state.ensured;
         await f.refreshFolders();assert.equal(f.writes.length,writes);
-        assert.equal(f.state.ensured,ensures+1,'quiet reopen still ensures its on-demand service is available');
+        assert.equal(f.state.ensured,ensures,'healthy reopen uses authenticated health without another native start/ensure');
         assert.equal(f.progressRuns.length,1,'verified reopen must not display installation progress');
         assert.equal(f.calls.filter(value=>value==='previous-runtime-retired').length,retirements,'verified reopen must not reinstall the terminal command or retire runtimes');
         assert.equal(f.notices.length,0,'routine reopen must remain quiet');

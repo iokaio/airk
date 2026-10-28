@@ -129,6 +129,7 @@ export function App() {
             <div class="frame">
                 <Rail route={route} state={state} go={go} />
                 <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>
+                    {state.startup&&!state.extensionUpdate&&<StartupProgress startup={state.startup} />}
                     {state.extensionUpdate ? <section class="workspace"><article class="card" role="status">
                         <h1>Reload to finish the AIRK update</h1>
                         <p>AIRK {state.extensionUpdate.installedVersion} is installed. This window is still running AIRK {state.extensionUpdate.runningVersion}.</p>
@@ -144,6 +145,14 @@ export function App() {
             {palette && <Palette state={state} go={go} close={() => setPalette(false)} />}
         </div>
     );
+}
+
+function StartupProgress({startup}:{startup:NonNullable<ExplorerViewState['startup']>}) {
+    const [now,setNow]=useState(Date.now());
+    useEffect(()=>{if(startup.failed)return;const timer=setInterval(()=>setNow(Date.now()),1000);return ()=>clearInterval(timer);},[startup.startedAt,startup.failed]);
+    return <aside class="callout" role="status"><strong>{startup.failed?'Connection needs attention':'Connecting to AIRK'}</strong>
+        <p>{startup.message}</p>{!startup.failed&&<p>Elapsed: {Math.max(0,Math.floor((now-startup.startedAt)/1000))} seconds. You can keep using Explorer while AIRK connects.</p>}
+        <button class="ghost" onClick={()=>{void request('manage.command',{command:'airk.showExtensionOutput'}).catch(()=>undefined);}}>Show connection log</button></aside>;
 }
 
 function ProjectPicker(props: { projects: readonly ProjectSummary[]; selected?: string; loading?: boolean }) {

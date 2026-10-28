@@ -8,7 +8,9 @@ related_airk_help: indexing, jobs, models
 ---
 # Manage project indexing
 
-Management uses the same horizontal tabs as the other Explorer areas. Indexing is the default tab. Choose a project and read its health banner, current work and published search availability. The main action follows its state: update, pause, resume, restart a blocked worker or retry a failed job.
+Management uses the same horizontal tabs as the other Explorer areas. Indexing is the default tab. **In your index** shows published files, text chunks, vectors and semantic file coverage. **Working now** shows current source, semantic or cleanup work separately. Errors and recovery actions remain prominent. The main action follows its state: update, pause, resume, restart a blocked worker or retry a failed job.
+
+Semantic jobs work from already indexed content: their useful counters are completed semantic units, committed files and published batches. Cleanup highlights Clean up and keeps the published totals visible. **This attempt** is the current job's elapsed time, not total initial indexing time. The coverage bar measures published semantic files, not an ETA. Both views update automatically. Copy details includes publication and attempt observations for diagnosis.
 
 Search mode selects Text only or Text + semantic. Enabling semantic prepares the offline model, preserves an existing model selection and schedules source publication followed by semantic work. Disabled published coverage is not proof the saved setting is off. Settings can be queued; Recent activity shows their native outcomes.
 

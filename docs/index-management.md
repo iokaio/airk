@@ -1,6 +1,8 @@
 # Managing project indexes
 
-Version 1.5.7 development, 28 October 2026.
+Updated for 1.5.12 development, 28 October 2026. The tabbed design originated in 1.5.7; dated release records retain their original validation scope.
+
+Management → Agents also offers optional [project instructions](agent-integration.md#project-instructions-1512), with a copy button and separate open-file buttons for Claude Code, Codex and GitHub Copilot. Existing files are unchanged and missing files open as unsaved drafts; the user reviews and saves the suggestion. The bundled help topic covers other assistants and the distinction between instructions, MCP configuration and actual tool access.
 
 Management uses eight horizontal tabs: Indexing, Activity, Storage, Recovery, Service, Agents, Usage and Logs. Project tabs share a persistent project selector. The banner explains the observed state and offers a recovery action when one is known. Otherwise Update index or Pause indexing is the main action. Search availability describes the published index; current work describes its own attempt. Old counters are labeled retained when worker, service, generation or job identity differs.
 
@@ -12,7 +14,11 @@ Search mode and Evidence detail are accepted durably before inspection. Their na
 
 ## Progress and waiting
 
-Progress shows phase, observation age, time since real advancement at that sample, captured files, newly extracted payloads, published transactions and eligible total when known. Captured files include reused extraction. Newly extracted is not a numerator for an overall percentage. Phase timings and completed semantic units remain available. Phases can repeat by batch; there is no estimated completion time.
+Overview and Management → Indexing start with **In your index**: published files, searchable text chunks, semantic vectors and completed/selected semantic files. The coverage bar measures files with published semantic data, not overall progress or time remaining. Discovery and pending source updates are distinct. Counts come from one dated publication observation; partial console metadata is used only until the complete MCP snapshot arrives, without filling missing counts from a different revision. Disconnected observations stay labeled. Copy details includes these counts and their publication identity.
+
+**Working now** follows with the current phase, sample age and real advancement. Source jobs show capture/extraction counts; vector jobs show completed semantic units, files committed in this attempt and published batches. Semantic preparation includes computing vectors and constructing search structures, so real work can advance before the next batch is published. Cleanup has its own highlighted stage and keeps published results visible. It does not lead with zero captured/extracted files. Routine running banners are folded into progress; errors, waits and recovery actions stay prominent.
+
+**This attempt** is elapsed time for the reported job, not the entire initial index. Source counters reset per attempt; reported semantic units can include retained work from earlier attempts. Unknown stays unknown. Failed attempts are labeled failed; a completed attempt does not mean all source and semantic work is complete. Phases can repeat by batch; there is no overall percentage or estimated completion time.
 
 A queued job after a completed attempt is labeled Work queued and names both jobs. A finished worker sample is not evidence that the queued job is running. Later successful publication or recovery supersedes an old recovery alert while preserving its failed historical receipt.
 

@@ -162,6 +162,8 @@ export async function verifyBundledRuntime(extensionPath:string,version:string,
 export class RuntimeHost {
     private bundle?:Promise<VerifiedBundle>;
     private preparing?:Promise<RuntimeBinding>;
+    private discovering?:Promise<BootstrapObservation>;
+    private tested?:Promise<void>;
     private readonly transitionReviews=new WeakSet<RuntimeTransitionReview>();
     private readonly projectReviews=new WeakSet<ProjectRegistrationReview>();
     private readonly legacyReviews=new WeakSet<LegacyStartupReview>();
@@ -182,10 +184,16 @@ export class RuntimeHost {
     private verified():Promise<VerifiedBundle>{
         this.bundle??=verifyBundledRuntime(this.extensionPath,this.version).catch(error=>{this.bundle=undefined;throw error;});return this.bundle;
     }
-    async discover():Promise<BootstrapObservation>{
+    discover():Promise<BootstrapObservation>{
+        this.discovering??=this.discoverOnce().finally(()=>{this.discovering=undefined;});
+        return this.discovering.then(value=>structuredClone(value));
+    }
+    private async discoverOnce():Promise<BootstrapObservation>{
         const bundle=await this.verified();
-        const self=await this.invoke(bundle.main,['runtime','self-test']);
-        if(self.protocol!==1||self.version!==this.version||self.self_test!=='passed'||self.metadata_console!==1){throw new ServiceError('service_runtime_self_test_failed');}
+        this.tested??=this.invoke(bundle.main,['runtime','self-test']).then(self=>{
+            if(self.protocol!==1||self.version!==this.version||self.self_test!=='passed'||self.metadata_console!==1)throw new ServiceError('service_runtime_self_test_failed');
+        }).catch(error=>{this.tested=undefined;throw error;});
+        await this.tested;
         const location=await this.invoke(bundle.main,['runtime','location','--channel',this.options.channel]);
         if(location.protocol!==1){throw new ServiceError('runtime_locator_protocol_mismatch');}
         const installDir=this.options.installDir??safePath(location.install_dir);
@@ -203,6 +211,24 @@ export class RuntimeHost {
         try {observation.diagnosis=await this.invoke(bundle.main,['runtime','diagnose','--install-dir',installDir]);}
         catch {observation.error??='runtime_diagnostics_unavailable';}
         return observation;
+    }
+    /** A verified installation can reconnect without running install/ensure again.
+     * Missing or mismatched health falls back to the native lifecycle authority. */
+    async reconnect(observed:BootstrapObservation):Promise<RuntimeBinding>{
+        this.active();
+        const inspection=observed.inspection;
+        if(!inspection||inspection.payload_verified===false||inspection.metadata_only===true||observed.error
+            ||observed.diagnosis?.pending_activation||record(inspection.lifecycle??{}).pending||this.options.managed)return this.ensure();
+        if(record(inspection.lifecycle??{}).explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
+        const binding=this.binding(inspection,observed.installDir);
+        if(binding.version!==this.version)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
+        const client=this.client(binding);
+        try{
+            const reply=await client.rpc('health','health');this.active();
+            const health=record(reply.observation);
+            if(health.version===this.version&&health.runtime_sha256===binding.runtimeSha256&&record(health.policy).accepting===true)return binding;
+        }catch(error){this.active();}finally{client.dispose();}
+        return this.ensure();
     }
     ensure(explicitStart=false):Promise<RuntimeBinding>{
         this.preparing??=this.prepare(explicitStart).finally(()=>{this.preparing=undefined;});return this.preparing;

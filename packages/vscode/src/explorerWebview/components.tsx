@@ -2,8 +2,9 @@
 import { ComponentChildren } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { request } from './api';
+import type { WebviewMessageOf } from '../explorerContracts';
 
-export function CopyDetails(props: { section: 'health'|'progress'|'activity'|'semantic'|'service'|'storage'|'recovery'; project?: string }) {
+export function CopyDetails(props: { section: WebviewMessageOf<'details.copy'>['section']; project?: string }) {
     const [message,setMessage]=useState(''),[busy,setBusy]=useState(false);
     useEffect(()=>{setMessage('');},[props.section,props.project]);
     return <span class="copy-details"><button type="button" class="ghost" disabled={busy}

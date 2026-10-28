@@ -31,7 +31,9 @@ pub mod service_manager;
 
 mod child_job;
 
+pub mod client_owner;
 mod native_process;
+mod process_roles;
 
 pub mod source_protocol;
 

@@ -271,7 +271,8 @@ fn validated_inventory(root: &Path, identity: &str) -> Result<InstallManifest> {
 }
 
 pub(super) fn remove(root: &Path, identity: &str) -> Result<()> {
-    let inventory = validated_inventory(root, identity)?;
+    let mut inventory = validated_inventory(root, identity)?;
+    crate::process_roles::inventory(&mut inventory.files);
     // Preflight ancillary receipts before deleting any payload bytes. This also
     // runs when a crash already removed the last runtime directory entry.
     validate_startup(root, identity)?;

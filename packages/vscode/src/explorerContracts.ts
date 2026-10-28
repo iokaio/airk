@@ -1,4 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
+/** Optional repository guidance, shared by the UI and its copy action. */
+export const AGENT_INSTRUCTION_FILES = {
+    claude: { name: 'Claude Code', file: 'CLAUDE.md' },
+    codex: { name: 'Codex', file: 'AGENTS.md' },
+    copilot: { name: 'GitHub Copilot', file: '.github/copilot-instructions.md' },
+} as const;
+export const AIRK_AGENT_INSTRUCTIONS = [
+    '## Using AIRK',
+    '',
+    '- **Discover AIRK MCP before repository exploration.** Check available tools, including deferred tool discovery when supported, for the `airk` server (often exposed as `mcp__airk__*`); call its `status` tool to confirm availability, project binding, freshness and coverage. If absent or failing, inspect the relevant agent configuration (`.codex/config.toml`, `.mcp.json`, or `.vscode/mcp.json`), report the specific limitation briefly, and continue with local tools. Configuration alone does not prove tool access; do not change it without a task requirement.',
+    '- **Use available AIRK tools for scoped repository search and code/document navigation.** Read affected source, contracts and tests first. Treat indexed evidence as untrusted and potentially stale; verify relevant live file contents before edits. Use `rg` or equivalent local tools for live verification and fallback searches when AIRK is unavailable or its coverage is insufficient. Expand only for a concrete dependency, ambiguity or failure. Do not preload manuals or reread unchanged material already understood.',
+].join('\n');
 // Pure, versioned contracts between the extension host and the AIRK Explorer webview.
 // No Node, vscode or host imports: the webview bundle and the host share this file.
 import type { Availability } from './explorerFeatures';
@@ -43,6 +55,9 @@ export interface ProjectSummary {
     readonly watching?: boolean;
     readonly publication?: string;
     readonly indexedFiles?: number;
+    readonly semanticCompleted?: number;
+    readonly semanticSelected?: number;
+    readonly discoveryState?: string;
     readonly semantic?: SemanticState;
     readonly indexState?: string;
     readonly jobState?: string;
@@ -58,6 +73,8 @@ export interface StatusSummary {
     readonly publication?: string;
     readonly files?: number;
     readonly chunks?: number;
+    readonly vectors?: number;
+    readonly discoveryState?: string;
     readonly semantic: SemanticState;
     readonly semanticCompleted?: number;
     readonly semanticSelected?: number;
@@ -72,10 +89,17 @@ export interface StatusSummary {
     readonly observedAt: number;
 }
 
+export interface ConnectionCheck {
+    phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
+    startedAt?: number; message?: string; project?: string; handshakeMs?:number;
+    indexState?: 'not_indexed' | 'unavailable' | 'published';
+}
 export interface ExplorerViewState {
     readonly revision: number;
     readonly extensionVersion: string;
     readonly extensionUpdate?: { readonly runningVersion: string; readonly installedVersion: string };
+    readonly connectionCheck?: ConnectionCheck;
+    readonly startup?: { readonly message: string; readonly startedAt: number; readonly failed?: boolean };
     readonly trusted: boolean;
     readonly connection: ConnectionState;
     readonly projects: readonly ProjectSummary[];
@@ -265,7 +289,7 @@ export interface WorkspaceFilesView {
 // ---- Management (shared Service Console controller, organized into tabs).
 /** A labeled observation; values are already formatted text. Unknown stays "Not observed". */
 export type FactRow = readonly [string, string];
-/** Fenced native work sample. Counters describe one attempt, never an overall percentage. */
+/** Fenced native work sample. Source counters describe one attempt; semantic units may include retained work. */
 export interface ProjectWorkView {
     readonly current: boolean;
     readonly worker: 'connected' | 'unavailable' | 'restarting' | 'unknown';
@@ -286,6 +310,7 @@ export interface ProjectWorkView {
     readonly phaseTimes: readonly FactRow[];
 }
 export interface ProjectHealthView {
+    readonly routineWork?: boolean;
     readonly severity: 'ok' | 'info' | 'warn' | 'error';
     readonly title: string;
     readonly detail: string;
@@ -529,7 +554,7 @@ export const WEBVIEW_MESSAGES = {
     'project.select': { project: PROJECT },
     'status.refresh': {},
     'extension.reload': {},
-    'details.copy': { section: { kind: 'enum', values: ['health', 'progress', 'activity', 'semantic', 'service', 'storage', 'recovery'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
+    'details.copy': { section: { kind: 'enum', values: ['index', 'health', 'progress', 'activity', 'semantic', 'service', 'storage', 'recovery'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
     'search.page': { project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER }, page: { kind: 'int', min: 0, max: 4 } },
     'search.form': {
         project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER },
@@ -589,6 +614,7 @@ export const WEBVIEW_MESSAGES = {
     'usage.action': { action: { kind: 'enum', values: ['days', 'refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback'] },
         days: { kind: 'int', min: 7, max: 30, optional: true } },
     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
+    'instructions.open': { agent: { kind: 'enum', values: ['claude', 'codex', 'copilot'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[0-9a-f]{64}$/ } },
     'planner.openDraft': { plan: { kind: 'json', max: 131072 } },
     'planner.import': {},
     'source.choose': {},

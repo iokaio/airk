@@ -42,7 +42,7 @@ test('service activation advertises reviewed bindings without indexing and prese
     let extension:any;const extensionContext:any={extensionPath:root,extension:{packageJSON:{version:'1.4.0'}},globalState:storage,subscriptions:[]};
     try{
         delete require.cache[require.resolve('../serviceExtension')];extension=require('../serviceExtension');
-        const api=await extension.activate(extensionContext);assert.equal(ensures,0);assert.ok(discoveries>0);
+        const api=await extension.activate(extensionContext);await api.whenReady();assert.equal(ensures,0);assert.ok(discoveries>0);
         const definitions=await api.getServerDefinitions();assert.equal(definitions.length,1);assert.equal(ensures,0);
         assert.equal(definitions[0].command,binding.launcher);assert.equal(definitions[0].env.AIRK_MCP_RESPONSE_MODE,'full');
         assert.ok(definitions[0].args.includes(registration.binding));assert.equal(definitions[0].cwd.fsPath,path.dirname(binding.launcher));

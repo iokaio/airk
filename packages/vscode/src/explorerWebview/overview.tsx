@@ -4,8 +4,8 @@ import { ExplorerViewState, ProjectSummary } from '../explorerContracts';
 import { Route } from '../explorerRoutes';
 import { savedState, saveState } from './api';
 import { CopyDetails, Facts, WorkspaceIcon } from './components';
-import { ago, observed, shortToken } from './format';
-import { Act, ProjectHealth, useActions, WorkProgress } from './manage';
+import { ago, observed } from './format';
+import { Act, IndexContents, ProjectHealth, useActions, WorkProgress } from './manage';
 import { semanticExplanation } from '../explorerStatus';
 
 const JOURNEYS: { id: string; title: string; text: string; route: Route }[] = [
@@ -56,9 +56,10 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
             {first && <p class="callout">{first}</p>}
             {actions.outcome && <p class="callout" role="status">{actions.outcome}</p>}
             {management?.message && !actions.outcome && <p class="muted" role="status">Last control outcome: {management.message}</p>}
+            {project&&<IndexContents project={project} status={status} connected={management?.connected??state.connection==='ready'}/>}
             {managed && management && <>
-                <ProjectHealth entry={managed} view={management} actions={actions} go={props.go} />
-                <WorkProgress entry={managed} />
+                <ProjectHealth entry={managed} view={management} actions={actions} go={props.go} compact />
+                {(managed.jobId||managed.pendingJobId||managed.configuration.pending)&&<WorkProgress entry={managed} />}
                 <div class="actions">
                     <button type="button" class="ghost" onClick={() => props.go({ workspace: 'manage', tab: 'activity' })}>View full activity</button>
                     <Act actions={actions} action={managed.summary.paused ? 'resume' : 'pause'} fields={{ project: managed.summary.project }} enabled={management.enabled.projectActions && !management.inactive} ghost>{managed.summary.paused ? 'Resume project' : 'Pause project'}</Act>
@@ -66,6 +67,7 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
                 </div>
             </>}
             {!managed && <p class="muted">Current worker progress is not present in this project page. <button type="button" class="ghost" onClick={() => props.go({ workspace: 'manage', tab: 'overview' })}>Review projects</button></p>}
+            <details class="card project-details"><summary>Project and semantic settings</summary>
             <div class="cards two">
                 <article class="card">
                     <h2>Selected project</h2>
@@ -78,21 +80,6 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
                         ['Console observation', `cached · ${ago(state.projectsObservedAt)}`],
                     ]} />
                 </article>
-                <article class="card">
-                    <h2>Published index</h2>
-                    <Facts rows={[
-                        ['Service', state.connection],
-                        ['Index', status?.indexState ?? 'not observed'],
-                        ['Publication', <span title={status?.publication}>{shortToken(status?.publication)}</span>],
-                        ['Files · chunks', status ? `${observed(status.files)} · ${observed(status.chunks)}` : 'not observed'],
-                        ['Source work', status?.freshness ?? 'not observed'],
-                        ['Semantic coverage', semantic.title],
-                        ['Observed', ago(status?.observedAt)],
-                    ]} />
-                    <p class="muted">Counts come from AIRK. Ready means a publication exists; it is not proof that saved files still match.</p>
-                    <p class="muted">Updates automatically while Explorer is open.</p>
-                </article>
-            </div>
             <article class="card semantic-status">
                 <div class="section-head"><h2>Semantic search — {semantic.title}</h2>{state.selectedProject&&<CopyDetails section="semantic" project={state.selectedProject} />}</div><p>{semantic.detail}</p>
                 <Facts rows={[
@@ -106,6 +93,7 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
                 <div class="actions"><button type="button" onClick={() => props.go({ workspace: 'manage', tab: 'overview' })}>Review semantic setup</button>
                     <button type="button" class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'indexing-choices' })}>Why these states?</button></div>
             </article>
+            </div></details>
             <div class="section-head">
                 <h2>Journeys</h2>
                 <label>Lens <select value={lens} onChange={event => {

@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ComponentChildren } from 'preact';
-import { useState } from 'preact/hooks';
-import { FactRow, MANAGE_ACTIONS, MANAGE_COMMANDS, ManagedProject, ManagementView } from '../explorerContracts';
+import { useEffect, useState } from 'preact/hooks';
+import { AGENT_INSTRUCTION_FILES, AIRK_AGENT_INSTRUCTIONS, FactRow, MANAGE_ACTIONS, MANAGE_COMMANDS, ManagedProject, ManagementView, ProjectSummary, StatusSummary } from '../explorerContracts';
 import { request } from './api';
 import { CopyDetails, Facts } from './components';
 import type { Route } from '../explorerRoutes';
 import { ago, byteSize, duration, observed, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
 import { UsageReport } from './usage';
-import { semanticExplanation } from '../explorerStatus';
+import { indexContents, semanticExplanation, sourceWorkExplanation, workProgressDisplay } from '../explorerStatus';
+import { Markdown } from './help';
 
 type Action = typeof MANAGE_ACTIONS[number];
 type Command = typeof MANAGE_COMMANDS[number];
@@ -97,8 +98,11 @@ function Paging(props: { view: ManagementView; actions: ReturnType<typeof useAct
     </div>;
 }
 
-export function ProjectHealth(props: { entry: ManagedProject; view: ManagementView; actions: ReturnType<typeof useActions>; go?(route:Route):void }) {
+export function ProjectHealth(props: { entry: ManagedProject; view: ManagementView; actions: ReturnType<typeof useActions>; compact?:boolean; go?(route:Route):void }) {
     const { entry, view, actions } = props, health = entry.health;
+    // Ordinary live work is explained by the adjacent progress card. Keep failures,
+    // pauses, recovery and waits prominent instead of repeating a generic running banner.
+    if(props.compact&&health.routineWork)return null;
     return <section class={`project-health health-${health.severity}`} aria-label={`${entry.summary.name} health`}>
         <div class="section-head"><h3>{health.title}</h3><CopyDetails section="health" project={entry.summary.project} /></div><p>{health.detail}</p>
         {health.severity==='error'&&<Act actions={actions} action="openRawLogs" ghost>Open raw diagnostic log</Act>}
@@ -110,27 +114,49 @@ export function ProjectHealth(props: { entry: ManagedProject; view: ManagementVi
     </section>;
 }
 
+/** The same publication summary leads Overview and Management; work counters never replace it. */
+export function IndexContents(props:{project:ProjectSummary;status?:StatusSummary;connected:boolean}) {
+    const saved=indexContents(props.project,props.status);
+    const coverageKnown=saved.semanticCompleted!==undefined&&saved.semanticSelected!==undefined&&saved.semanticSelected>0&&saved.semanticCompleted<=saved.semanticSelected;
+    const available=saved.indexState==='available'||saved.indexState==='ready';
+    return <section class="card index-contents" aria-label="Published index contents">
+        <div class="section-head"><h2>In your index</h2><CopyDetails section="index" project={props.project.project}/></div>
+        <p><strong>{available?'Published for search':saved.indexState==='unavailable'?'Published index unavailable':'Waiting for a published index observation'}</strong> · observed {ago(saved.observedAt)}{!props.connected?' · disconnected; showing retained observations':''}</p>
+        <dl class="project-metrics progress-metrics">
+            <div><dt>Files indexed</dt><dd>{observed(saved.files)}</dd></div>
+            <div><dt>Searchable text chunks</dt><dd>{observed(saved.chunks)}</dd></div>
+            <div><dt>Semantic vectors published</dt><dd>{observed(saved.vectors)}</dd></div>
+        </dl>
+        <div class="semantic-coverage">
+            <p><strong>Semantic coverage</strong> · {saved.semanticCompleted===undefined&&saved.semanticSelected===undefined?'Not reported yet':`${observed(saved.semanticCompleted)} of ${saved.semanticSelected===undefined?'an unknown number of':observed(saved.semanticSelected)} selected files`}</p>
+            {coverageKnown&&<progress value={saved.semanticCompleted} max={saved.semanticSelected} aria-label="Selected files with published semantic data"/>}
+            <p class="muted">{saved.semantic==='ready'?'Semantic coverage is ready.':saved.semantic==='partial'?'Some selected files have published semantic data. Current work and waits are shown below.':saved.semantic==='disabled'?'This publication has no semantic coverage. Saved setup and current work are separate.':saved.semantic==='failed'?'Semantic indexing reported a failure; review Activity for its outcome.':`Semantic readiness: ${saved.semantic}.`} {saved.discoveryState==='ready'?'Source discovery completed for this snapshot.':saved.discoveryState==='partial'?'Source discovery is still partial.':''}</p>
+        </div>
+        <p>{sourceWorkExplanation(saved.freshness)}</p>
+        <details><summary>Publication details</summary><p>These are saved results, separate from the current attempt below. Updates appear automatically. File coverage is not a time estimate.</p><Facts rows={[
+            ['Publication',shortToken(saved.publication)],['Observed',saved.observedAt===undefined?'Not observed':new Date(saved.observedAt).toISOString()],
+            ['Source discovery',saved.discoveryState??'Not observed'],['Source updates',saved.freshness??'Not observed'],
+        ]}/></details>
+    </section>;
+}
+
 /** Shared dashboard for one exact native attempt. Previous-worker counters remain labeled. */
 export function WorkProgress(props: { entry: ManagedProject }) {
     const work = props.entry.work;
-    const phases: Record<string, string> = { starting: 'Starting worker', discovering: 'Discovering source files', extracting: 'Extracting source files',
-        preparing: 'Preparing index changes', publishing: 'Publishing index changes', embedding: 'Building semantic index', verifying: 'Verifying retained data',
-        recovering: 'Recovering captured work', retiring: 'Cleaning up owned index state', finished: 'Work finished' };
+    const display=workProgressDisplay(work,props.entry.summary.jobKind,props.entry.jobState);
     const sample=<section class="card work-progress" aria-label="Indexing progress">
-        <div class="section-head"><h2>Indexing progress</h2><span class="muted">Sample observed {ago(work.observedAt)}</span><CopyDetails section="progress" project={props.entry.summary.project} /></div>
-        <h3>{props.entry.summary.jobKind === 'model_setup' && props.entry.jobState === 'running' ? 'Preparing offline model' : work.phase ? phases[work.phase] ?? work.phase : 'Progress not observed'}</h3>
+        <div class="section-head"><h2>{work.current&&props.entry.jobState==='running'?'Working now':'Latest work attempt'}</h2><span class="muted">Updated {ago(work.observedAt)}</span><CopyDetails section="progress" project={props.entry.summary.project} /></div>
+        <h3>{display.title}</h3>
         <p class="muted">{work.current ? 'Worker connected · matching job sample' : 'Retained sample · current progress unconfirmed'}.
-            {' '}Last advancement: {duration(work.lastAdvanceMs)} ago at sample · Elapsed: {duration(work.elapsedMs)}.</p>
-        <div class="progress-stages" aria-label="Indexing stages">{[['discovering','Discover'],['extracting','Extract'],['publishing','Publish'],['embedding','Semantic']].map(([phase,label]) => <span key={phase} class={work.current && work.phase === phase ? 'active' : ''}>{label}</span>)}</div>
+            {' '}Last advancement: {work.lastAdvanceMs===undefined?'not reported':`${duration(work.lastAdvanceMs)} ago at sample`} · This attempt: {duration(work.elapsedMs)}.</p>
+        {display.explanation&&<p>{display.explanation}</p>}
+        <div class="progress-stages" aria-label="Indexing stages">{display.stages.map(stage => <span key={stage.phase} class={stage.active ? 'active' : ''}>{stage.label}</span>)}</div>
         {work.wait !== 'No matching native wait observation' && <p class="callout">{work.wait}</p>}
         <dl class="project-metrics progress-metrics">
-            <div><dt>Captured files</dt><dd>{observed(work.captured)}</dd></div>
-            <div><dt>Newly extracted</dt><dd>{observed(work.extracted)}</dd></div>
-            <div><dt>Index transactions published</dt><dd>{observed(work.publications)}</dd></div>
-            <div><dt>Total eligible files</dt><dd>{work.total === undefined ? 'Unknown' : observed(work.total)}</dd></div>
+            {display.metrics.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value===undefined?'Not reported':observed(value)}</dd></div>)}
         </dl>
         <details><summary>More progress details</summary>
-            <p class="muted">Captured includes reused results. Newly extracted counts new payloads, not a completion fraction. Counters belong to this attempt. Stages can repeat by batch; semantic work follows source publication. No overall percentage or ETA is inferred.</p>
+            <p class="muted">Capture, extraction and publication counters describe this attempt. Captured includes reused results. Semantic units describe retained semantic work and are not a file count. Stages can repeat by batch; no overall percentage or ETA is inferred.</p>
             <Facts rows={[
                 ['Current phase at sample', duration(work.phaseElapsedMs)],
                 ['Prepared / committed work items', `${observed(work.prepared)} / ${observed(work.committed)}`],
@@ -172,18 +198,14 @@ export function ProjectsScreen(props: ScreenProps) {
             {!entry && <p class="callout" role="status">{!view.connected?view.busy?'Connecting to AIRK and loading saved project details…':'Project registrations could not be checked. Retained work has not been reported as removed.':`No ${view.inactive?'removed':'active'} projects on this page. Add project reviews an open folder.`}</p>}
             {entry && scoped && <>
                 <h2>{entry.summary.name}</h2><p class="path">{entry.summary.root}</p>
-                <ProjectHealth entry={entry} view={view} actions={actions} go={props.go} />
+                {tab==='overview'&&<IndexContents project={entry.summary} status={entry.summary.project===props.state.selectedProject?props.state.status:undefined} connected={view.connected}/>}
+                <ProjectHealth entry={entry} view={view} actions={actions} go={props.go} compact={tab==='overview'||tab==='activity'} />
                 {tab === 'overview' && !view.inactive && !entry.health.action && <div class="actions">
                     <Act actions={actions} action={entry.jobState === 'running' || entry.jobState === 'pending' || entry.pendingJobId ? 'pause' : 'index'} fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions}>
                         {entry.jobState === 'running' || entry.jobState === 'pending' || entry.pendingJobId ? 'Pause indexing' : 'Update index'}</Act>
                 </div>}
                 {view.inactive && <p class="callout">{entry.lifecycle}. Removal stops indexing and retains settings and index data. Add project reviews registration again; pending cleanup must finish first.</p>}
-                {tab === 'overview' && <><section class="card"><h3>Available for search</h3>
-                    <p>Text index: <strong>{entry.summary.indexState ?? 'not checked'}</strong> · {observed(entry.summary.indexedFiles)} published files · observed {ago(entry.summary.observedAt)}</p>
-                    <p>Semantic coverage: <strong>{semanticExplanation({ semantic: entry.summary.semantic ?? 'unknown', vectorsEnabled: entry.configuration.vectorsEnabled }).title}</strong></p>
-                    <p class="muted">{semanticExplanation({ semantic: entry.summary.semantic ?? 'unknown', vectorsEnabled: entry.configuration.vectorsEnabled }).detail}</p>
-                    <p class="muted">Published counts describe saved evidence, separately from new work. They do not prove all saved files are up to date.</p>
-                </section>
+                {tab === 'overview' && <>
                 {!view.inactive && <>
                     {(entry.jobId || entry.pendingJobId || entry.configuration.pending) && <WorkProgress entry={entry} />}
                     <ProjectSettings entry={entry} view={view} actions={actions} />
@@ -410,20 +432,64 @@ export function ServiceScreen(props: ScreenProps) {
     );
 }
 
+function AgentInstructions(props: ScreenProps) {
+    const [busy, setBusy] = useState<string>(), [result, setResult] = useState<string>();
+    const project = props.state.selectedProject;
+    const run = async (label: string, action: () => Promise<string>) => {
+        setBusy(label); setResult(undefined);
+        try { setResult(await action()); } catch (error) { setResult(error instanceof Error ? error.message : String(error)); }
+        finally { setBusy(undefined); }
+    };
+    return <article class="card agent-instructions">
+        <h2>Help your agent discover and use AIRK</h2>
+        <p>Add this suggestion to your project instructions so the agent checks its tools before claiming AIRK is unavailable, uses focused indexed evidence and verifies live files before edits.</p>
+        <div class="instruction-suggestion"><Markdown text={AIRK_AGENT_INSTRUCTIONS}/></div>
+        <div class="actions">
+            <button type="button" disabled={!!busy} onClick={() => void run('copy', async () => {
+                await request('clipboard.write', { text: AIRK_AGENT_INSTRUCTIONS + '\n' }); return 'Instructions copied. Open an instruction file, paste and review them, then save.';
+            })}>{busy === 'copy' ? 'Copying…' : 'Copy instructions'}</button>
+            <button type="button" class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'agent-instructions' })}>Instruction file help</button>
+        </div>
+        <p>Open instructions for <strong>{props.state.projects.find(entry => entry.project === project)?.name ?? 'the selected project'}</strong>:</p>
+        <div class="actions">
+            {(Object.keys(AGENT_INSTRUCTION_FILES) as (keyof typeof AGENT_INSTRUCTION_FILES)[]).map(agent => <button key={agent} type="button" class="ghost" disabled={!!busy || !project || !props.state.trusted}
+                title={AGENT_INSTRUCTION_FILES[agent].file} onClick={() => void run(agent, async () => (await request<{ message: string }>('instructions.open', { agent, project: project! })).message)}>
+                {busy === agent ? 'Opening…' : `Open ${AGENT_INSTRUCTION_FILES[agent].name} instructions`}</button>)}
+        </div>
+        {busy && <p role="status">{busy === 'copy' ? 'Copying instructions…' : `Opening ${AGENT_INSTRUCTION_FILES[busy as keyof typeof AGENT_INSTRUCTION_FILES].file}…`}</p>}
+        {result && <p class="callout" role="status">{result}</p>}
+        <p class="muted">Claude Code: <code>CLAUDE.md</code> · Codex: <code>AGENTS.md</code> · Copilot: <code>.github/copilot-instructions.md</code>. Existing files open without changes; missing files open as unsaved drafts. Review with your existing rules before saving. Other assistants can use the copied text in their supported project instruction or rules file. Instructions guide the agent; they do not configure MCP or guarantee tool access.</p>
+    </article>;
+}
+
 export function AgentsScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
+    const check=props.state.connectionCheck;
+    const checking=check?.phase==='preparing'||check?.phase==='checking';
+    const [now,setNow]=useState(Date.now()),[copied,setCopied]=useState<string>();
+    useEffect(()=>setCopied(undefined),[check?.startedAt]);
+    useEffect(()=>{if(!checking)return;const timer=setInterval(()=>setNow(Date.now()),1000);return ()=>clearInterval(timer);},[checking]);
     return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Connect coding agents to AIRK Retrieval (cited evidence) on">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Connect coding agents to AIRK on">
             {view && <>
                 <div class="cards two">
-                    <article class="card"><h2>AIRK Retrieval</h2>
-                        <p>The 16 read-only <code>airk_*</code> tools, scoped to one project. Agents use them for cited evidence.</p>
+                    <article class="card"><h2>AIRK agent connection</h2>
+                        <p>One connection provides 26 tools for indexed evidence, help and Explorer drafts. Drafts wait for your review.</p>
                         <div class="actions">
                             <button type="button" onClick={() => { void actions.command('airk.setupAgent'); }}>Connect a coding agent…</button>
-                            <button type="button" class="ghost" onClick={() => { void actions.command('airk.verifyMcp'); }}>Check the AIRK MCP helper</button>
+                            <button type="button" class="ghost" disabled={checking||!props.state.selectedProject} onClick={() => { void actions.command('airk.verifyMcp'); }}>{checking?'Checking AIRK…':'Check AIRK connection'}</button>
                             <button type="button" class="ghost" onClick={() => { void actions.command('airk.manageVscodeMcp'); }}>VS Code / Copilot MCP controls</button>
                         </div>
-                        <p class="muted">Helper verification proves the launcher starts and lists tools. Whether an agent loaded it is checked in that agent.</p></article>
+                        {check&&<div class="callout" role="status">
+                            <strong>{checking?'Checking connection':check.phase==='verified'?'AIRK connection verified':'AIRK connection check failed'}</strong>
+                            {check.project&&<p>Project: {props.state.projects.find(project=>project.project===check.project)?.name??check.project}</p>}
+                            <p>{check.message??check.error}</p>
+                            {check.startedAt&&<p>{checking?'Elapsed':'Duration'}: {duration(Math.max(0,(checking?now:check.checkedAt??now)-check.startedAt))}</p>}
+                            {check.checkedAt&&<p>Checked: {new Date(check.checkedAt).toLocaleString()}</p>}
+                            <button class="ghost" onClick={async()=>{try{await request('clipboard.write',{text:`AIRK ${props.state.extensionVersion} — MCP connection check\n${JSON.stringify(check,null,2)}`});setCopied('Details copied.');}catch(error){setCopied(String(error));}}}>Copy connection details</button>
+                            {copied&&<p>{copied}</p>}
+                        </div>}
+                        <p class="muted">This checks the installed launcher, MCP handshake, tool list and index status. It does not establish that Claude Code, Codex or Copilot loaded their configuration. If AIRK passes but an agent has no tools, inspect that agent’s MCP connection error.</p></article>
                     <article class="card"><h2>Responses and terminal</h2>
                         <p>MCP response mode: <strong>{view.responseMode}</strong>.</p>
                         <p><strong>Terse (default)</strong> suits routine code searches and navigation. It keeps focused evidence and citations while reducing repeated metadata, leaving more of the agent’s context budget for the task.</p>
@@ -435,6 +501,7 @@ export function AgentsScreen(props: ScreenProps) {
                             <button type="button" class="ghost" onClick={() => { void actions.command('airk.openTools'); }}>Open AIRK Tools terminal</button>
                         </div></article>
                 </div>
+                <AgentInstructions key={props.state.selectedProject} {...props}/>
             </>}
         </Frame>
     );

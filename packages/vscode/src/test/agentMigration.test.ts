@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { parse } from 'jsonc-parser';
-import { LaunchSpec, unifiedEntry, assistanceEntry } from '../model';
+import { LaunchSpec, unifiedEntry, assistanceEntry, serializeServers } from '../model';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
 import { LocalAgent, hasUnifiedVscodeConfig, migrateAgentConfig, migrateLocalAgents } from '../agentMigration';
 
@@ -150,4 +150,22 @@ test('comments inside removed server entries survive consolidation and repeated 
     const updated=migrateAgentConfig('codex',spec,storage,old);
     assert.ok(updated.includes('# Keep table note'));
     assert.equal(migrateAgentConfig('codex',spec,storage,updated),updated);
+});
+
+test('explicit connection update replaces old storage and binding together, while startup preserves identity',()=>{
+    const old={...spec,dataDir:path.resolve('data','service-1.4'),service:{...spec.service!,project:'cd'.repeat(32)}};
+    const current={...spec,dataDir:path.resolve('data','index-v1')};
+    for(const agent of ['codex','claude','copilot'] as const){
+        const before=serializeServers(agent==='copilot'?'vscode':agent,[unifiedEntry(old,launchDescriptorPath(storage))]);
+        assert.throws(()=>migrateAgentConfig(agent,current,storage,before),/Unrecognized/,'background migration must not silently rebind');
+        const after=migrateAgentConfig(agent,current,storage,before,true,undefined,true);
+        assert.ok(after.includes('index-v1')&&after.includes(current.service!.project));
+        assert.ok(!after.includes('service-1.4')&&!after.includes(old.service.project));
+        assert.equal(migrateAgentConfig(agent,current,storage,after,true,undefined,true),after);
+        for(const foreign of [{...old,root:path.resolve('another-project')},{...old,collection:'another-collection'},
+            {...old,command:path.resolve('foreign-launcher')},{...old,dataDir:current.dataDir}]){
+            const source=serializeServers(agent==='copilot'?'vscode':agent,[unifiedEntry(foreign,launchDescriptorPath(storage))]);
+            assert.throws(()=>migrateAgentConfig(agent,current,storage,source,true,undefined,true),/Unrecognized/);
+        }
+    }
 });

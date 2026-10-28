@@ -28,6 +28,16 @@ pub(super) fn stop(root: &Path, identity: &str) -> Result<()> {
             );
             paths.push(launcher);
         }
+        for role in [
+            crate::process_roles::Role::Service,
+            crate::process_roles::Role::Index,
+            crate::process_roles::Role::Source,
+        ] {
+            let path = crate::process_roles::executable(&main, role)?;
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
         let mut owners = Vec::new();
         // Capture and verify every exact process before terminating any of them.
         for path in paths {

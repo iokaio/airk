@@ -3,13 +3,14 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { migrateAgentConfig } from './agentMigration';
-import { Client, LaunchSpec, McpVerification, ServerEntry, serializeServers } from './model';
+import { Client, LaunchSpec, McpVerification, ServerEntry, serializeServers, launchArgs } from './model';
 import { installJsonConfig, isJsonClient, jsonConfigPath, readJsonConfig, reviewLegacyJsonConfig, replaceReviewedLegacyJsonConfig } from './agentConfig';
 import { agentChoices, assistancePrompt, codexConfigPath, connectionAction, createCodexConfig, renderConnectionGuide, verificationPrompt } from './agentConnections';
 
 export interface AgentSetupHost {
     trusted(): void;
     chooseSpec(): Promise<LaunchSpec | undefined>;
+    resolveAgentSpec(spec: LaunchSpec): Promise<LaunchSpec>;
     registrationEnabled(): boolean;
     registrationChanged(): void;
     manageVscodeMcp(): Promise<void>;
@@ -49,7 +50,9 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
             title: 'Connect a coding agent to AIRK', placeHolder: 'Which agent should use this workspace index?', matchOnDescription: true
         });
         if (!selected) { return; }
-        const spec = await host.chooseSpec(); if (!spec) { return; }
+        const spec = await vscode.window.withProgress({location:vscode.ProgressLocation.Notification,title:`Checking AIRK project for ${selected.label}`},async()=>{
+            const chosen=await host.chooseSpec();return chosen?host.resolveAgentSpec(chosen):undefined;
+        }); if (!spec) { return; }
         const client = selected.client;
         const entries = host.connectionEntries(spec);
         const panel = vscode.window.createWebviewPanel('airk.connection', `AIRK → ${selected.label}`, vscode.ViewColumn.Active,
@@ -77,13 +80,32 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
             const document = configDocument(destination) ?? await vscode.workspace.openTextDocument(vscode.Uri.file(destination));
             const version = document.version;
             if (document.isDirty || document.getText() !== before) { throw new Error('Configuration has unsaved or external changes. Review it before installing AIRK.'); }
+            // VS Code applies the document's EOL mode to inserted text.
+            const editorAfter=document.eol===vscode.EndOfLine.CRLF?after.replace(/\r?\n/g,'\r\n'):after.replace(/\r\n/g,'\n');
             const edit = new vscode.WorkspaceEdit();
-            edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(before.length)), after);
+            edit.replace(document.uri, new vscode.Range(document.positionAt(0), document.positionAt(before.length)), editorAfter);
             if (await readJsonConfig(destination) !== before) { throw new Error('Configuration changed on disk. Retry setup.'); }
             checkCurrent(); configDocument(destination);
             if (document.version !== version || !await vscode.workspace.applyEdit(edit)) { throw new Error('Configuration changed during setup. Review the file and retry.'); }
             checkCurrent();
-            if (document.getText() !== after || !await document.save()) { throw new Error('Configuration was not saved. Review the editor’s changes and save manually.'); }
+            if (document.getText() !== editorAfter || !await document.save()) { throw new Error('Configuration was not saved. Review the editor’s changes and save manually.'); }
+            if(await readJsonConfig(destination)!==editorAfter)throw new Error('Configuration on disk does not match the saved connection. Review the file before restarting the agent.');
+        };
+        const verifySavedCodex = async (destination:string,changed:boolean) => {
+            const before=await readJsonConfig(destination);
+            const saved=changed?'Codex configuration saved.':'Codex configuration already matches the selected project; no changes were needed.';
+            status=`${saved} Checking the AIRK connection…`;render();
+            try{
+                checkCurrent();
+                await host.verify(spec);checkCurrent();
+                if(await readJsonConfig(destination)!==before)throw new Error('Configuration changed during the connection check.');
+                const check=host.verification(spec);
+                if(check?.phase!=='verified')throw new Error(check?.error??'AIRK did not confirm its tool list.');
+                status=`${saved} AIRK responded with ${check.tools?.length??0} tools. Start a new Codex session in this trusted project. Whether Codex loaded AIRK has not been verified.`;
+            }catch(error){
+                status=`${saved} The AIRK connection check failed: ${error instanceof Error?error.message:String(error)}. The configuration was retained.`;
+                if(!closed)void vscode.window.showErrorMessage(status);
+            }
         };
         render();
         const listener = panel.webview.onDidReceiveMessage(async value => {
@@ -92,6 +114,11 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
             busy = true;
             try {
                 checkCurrent();
+                status='Working on the selected agent connection…';render();
+                if(['createCodex','updateCodex','installJson','reviewLegacy'].includes(action)){
+                    const current=await host.resolveAgentSpec(spec);checkCurrent();
+                    if(current.command!==spec.command||JSON.stringify(launchArgs(current))!==JSON.stringify(launchArgs(spec)))throw new Error('The native project registration changed. Reopen Connect Coding Agent to use the current index.');
+                }
                 if (action === 'copy' || action === 'copyPrompt' || action === 'copyAssistancePrompt') {
                     await vscode.env.clipboard.writeText(action === 'copy' ? serializeServers(client, entries) : action === 'copyPrompt' ? verificationPrompt(spec) : assistancePrompt());
                     status = action === 'copy' ? 'Configuration copied. Merge it into the selected agent’s configuration; copying does not install it.' : 'Verification prompt copied. Send it in the selected agent to check its actual connection.';
@@ -100,7 +127,7 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                     const destination = codexConfigPath(spec);
                     configDocument(destination);
                     await createCodexConfig(spec, entries);
-                    status = 'Codex project configuration created. Restart Codex and verify its tools below. Agent connection has not been verified.';
+                    await verifySavedCodex(destination,true);
                 } else if (action === 'updateCodex') {
                     if (vscode.env.remoteName || !spec.service) { throw new Error('Review existing Codex connections on the host running this agent.'); }
                     const connection = entries.find(entry => entry.key === 'airk');
@@ -115,17 +142,19 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                     if (!info.isDirectory() || info.isSymbolicLink() || await fs.realpath(directory) !== directory) { throw new Error('Redirected Codex configuration directory; review manually.'); }
                     const before = await readJsonConfig(destination);
                     if (before === undefined) { throw new Error('Create a new Codex project configuration first.'); }
-                    const after = migrateAgentConfig('codex', spec, host.agentStorage(), before,connection.args.includes('--explorer-descriptor'));
+                    // This explicit action updates the selected source's old storage binding;
+                    // background migration still requires an exact native identity match.
+                    const after = migrateAgentConfig('codex', spec, host.agentStorage(), before,connection.args.includes('--explorer-descriptor'),undefined,true);
                     if (!after.includes('[mcp_servers.airk]')) { throw new Error('No recognized AIRK entry for this project; merge the displayed connection manually.'); }
                     checkCurrent();
                     if (after !== before) { await saveConfiguration(destination, before, after); }
-                    status = 'Codex project AIRK connection updated. Restart Codex and approve the renamed tools in that client.';
+                    await verifySavedCodex(destination,after!==before);
                 } else if (action === 'installJson' && isJsonClient(client)) {
                     if (vscode.env.remoteName) { throw new Error('Use manual configuration on the host running this agent.'); }
                     const checkInstall = () => { checkCurrent(); configDocument(jsonConfigPath(client, spec)); };
                     const connection=entries.find(entry=>entry.key==='airk');
                     await installJsonConfig(client, spec, checkInstall, saveConfiguration, entries, source=>
-                        migrateAgentConfig(client,spec,host.agentStorage(),source,connection?.args.includes('--explorer-descriptor')??false));
+                        migrateAgentConfig(client,spec,host.agentStorage(),source,connection?.args.includes('--explorer-descriptor')??false,undefined,true));
                     status = `${selected.label} project configuration installed. Reload the agent and complete its trust prompts. Agent connection has not been verified.`;
                 } else if (action === 'reviewLegacy' && isJsonClient(client)) {
                     if (vscode.env.remoteName) { throw new Error('Review the configuration on the host running this agent.'); }
@@ -176,7 +205,10 @@ export async function setupAgent(host: AgentSetupHost): Promise<void> {
                     status = check?.phase === 'verified' ? `${target} verified: ${check.tools?.length ?? 0} tools. Agent connection still needs the verification prompt below.`
                         : `${target} check did not succeed: ${check?.error ?? 'workspace or storage changed'}`;
                 }
-            } catch (error) { status = error instanceof Error ? error.message : String(error); }
+            } catch (error) {
+                status = `${selected.label} connection action failed: ${error instanceof Error ? error.message : String(error)}`;
+                if(!closed)void vscode.window.showErrorMessage(status);
+            }
             finally { busy = false; if (!closed) { render(); } }
         });
         panel.onDidDispose(() => { closed = true; listener.dispose(); });
