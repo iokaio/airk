@@ -8,6 +8,89 @@ use airk_core::{
 };
 
 #[test]
+fn obsolete_pending_plan_requests_are_settled_without_replaying_work_or_overriding_pause()
+-> Result<()> {
+    for mode in ["finished", "missing", "paused", "active"] {
+        let root = tempfile::tempdir()?;
+        let mut registry = ServiceRegistry::open(root.path(), Incarnation::from_bytes([1; 16]))?;
+        let project = register(&mut registry, 1)?;
+        registry.configure_watch(project, true)?;
+        let plan = request(
+            &mut registry,
+            RepairSelection::Selected(vec![project]),
+            RepairOperation::Recover,
+            6,
+        )?;
+        registry.advance_maintenance_plans(1100)?;
+        let lease = owner(&mut registry, root.path(), project)?;
+        inspect(&mut registry, &lease, &snapshot(project))?;
+        let preview = registry.maintenance_plan(plan.id)?.preview_digest.unwrap();
+        registry.approve_maintenance_plan(plan.id, preview, false, 1400)?;
+        registry.advance_maintenance_plans(1500)?;
+        let queued = registry.pending_job_observation(project)?.unwrap();
+        assert_eq!(queued.kind, JobKind::Repair);
+        match mode {
+            "finished" => {
+                registry.connection.execute(
+                    "UPDATE service_plans SET phase='finished',outcome='succeeded' WHERE id=?1",
+                    [plan.id.to_string()],
+                )?;
+            }
+            "missing" => {
+                registry.connection.execute(
+                    "DELETE FROM service_plan_jobs WHERE job=?1",
+                    [queued.id.to_string()],
+                )?;
+            }
+            "paused" => {
+                registry.pause_maintenance_plan(plan.id, true, 1550)?;
+            }
+            _ => {}
+        }
+        if mode != "active" {
+            let gate = registry.pending_job_gate(project)?.unwrap();
+            assert_eq!(gate.job, queued.id);
+            assert_eq!(
+                gate.code,
+                match mode {
+                    "finished" => "maintenance_request_obsolete",
+                    "missing" => "maintenance_request_orphaned",
+                    _ => "maintenance_plan_paused",
+                }
+            );
+            assert!(registry.next_pending_job(project)?.is_none());
+        }
+        assert!(registry.due_source_projects(None, 100_000, 32)?.is_empty());
+        registry.advance_maintenance_plans(1600)?;
+        let receipt = registry.job(queued.id)?;
+        if matches!(mode, "finished" | "missing") {
+            assert_eq!(receipt.state, JobState::Failed);
+            assert!(
+                matches!(receipt.outcome,Some(JobOutcome::Failed{ref code}) if code=="maintenance_request_obsolete")
+            );
+            assert_eq!(
+                registry.due_source_projects(None, 100_000, 32)?,
+                vec![(project, 1)]
+            );
+            assert!(
+                registry.claim_job(&lease)?.is_none(),
+                "obsolete approval must not run again"
+            );
+            registry.advance_maintenance_plans(1700)?;
+            assert_eq!(registry.job(queued.id)?.outcome, receipt.outcome);
+        } else {
+            assert_eq!(receipt.state, JobState::Pending);
+            if mode == "paused" {
+                assert!(registry.claim_job(&lease)?.is_none());
+                registry.pause_maintenance_plan(plan.id, false, 1700)?;
+            }
+            assert_eq!(registry.claim_job(&lease)?.unwrap().id, queued.id);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn dispatch_turns_are_bounded_and_independent_plans_do_not_share_jobs() -> Result<()> {
     let root = tempfile::tempdir()?;
     let mut registry = ServiceRegistry::open(root.path(), Incarnation::from_bytes([1; 16]))?;
@@ -127,6 +210,7 @@ fn snapshot(project: ProjectBinding) -> InspectionSnapshot {
         indexed_files: Some(0),
         indexed_vectors: Some(0),
         vectors_enabled: Some(false),
+        index_detail: None,
         semantic: None,
         discovery: None,
         failure: None,
@@ -157,6 +241,57 @@ fn inspect(
         },
         1300,
     )?;
+    Ok(())
+}
+
+#[test]
+fn approved_recovery_resumes_desired_sources_but_preserves_explicit_cancellation() -> Result<()> {
+    for canceled in [false, true] {
+        let root = tempfile::tempdir()?;
+        let mut registry = ServiceRegistry::open(root.path(), Incarnation::from_bytes([1; 16]))?;
+        let project = register(&mut registry, 1)?;
+        registry.configure_watch(project, true)?;
+        registry.connection.execute(
+            "UPDATE service_watch SET attempts=3,blocked_revision=?1 WHERE project=?2",
+            params![canceled.then_some(1), project.to_string()],
+        )?;
+        let plan = request(
+            &mut registry,
+            RepairSelection::Selected(vec![project]),
+            RepairOperation::Recover,
+            6,
+        )?;
+        registry.advance_maintenance_plans(1100)?;
+        let lease = owner(&mut registry, root.path(), project)?;
+        let mut observed = snapshot(project);
+        observed.recovery_required = Some(true);
+        inspect(&mut registry, &lease, &observed)?;
+        let ready = registry.maintenance_plan(plan.id)?;
+        registry.approve_maintenance_plan(plan.id, ready.preview_digest.unwrap(), false, 1400)?;
+        registry.advance_maintenance_plans(1500)?;
+        let job = registry.claim_job(&lease)?.unwrap();
+        assert_eq!(job.kind, JobKind::Repair);
+        assert_eq!(
+            registry.repair_work(&lease, job.id, plan.engine)?.operation,
+            RepairOperation::Recover
+        );
+        registry.complete_job_at(
+            &lease,
+            job.id,
+            JobOutcome::Succeeded { revision: None },
+            1600,
+        )?;
+        let watch = registry.watch(project)?.observation;
+        assert_eq!(watch.requested_revision, 1);
+        assert_eq!(
+            watch.completed_revision, 0,
+            "recovery is not source reconciliation"
+        );
+        assert_eq!(
+            registry.due_source_projects(None, 100_000, 32)?.is_empty(),
+            canceled
+        );
+    }
     Ok(())
 }
 

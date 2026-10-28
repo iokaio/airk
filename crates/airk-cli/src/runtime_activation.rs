@@ -322,6 +322,10 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
         owner.require_stopped_for_maintenance()?;
         let _quiescence = quiescent(root)?;
         launcher_repair::repair(root, &intent.candidate)?;
+        let (main, approval) = verify_runtime(root, &intent.candidate)?;
+        if approval.version == env!("CARGO_PKG_VERSION") {
+            crate::process_roles::install(&main)?;
+        }
         intent.phase(root, Phase::Probe)?;
     }
     let (main, approval) = verify_runtime(root, &intent.candidate)?;

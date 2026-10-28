@@ -79,3 +79,12 @@ test('a failed handshake kills the child and rejects', async () => {
     await assert.rejects(McpStdioSession.open({ command: process.execPath, args: ['-e', 'process.exit(2)'], cwd: os.tmpdir(),
         clientName: 'airk-explorer', clientVersion: 'test' }, 5000), (error: unknown) => error instanceof McpSessionError && error.code === 'exited');
 });
+
+test('a silent handshake timeout retains bounded launcher diagnostics and the failed method',async()=>{
+    await assert.rejects(McpStdioSession.open({command:process.execPath,
+        args:['-e','process.stderr.write("fixture: waiting for runtime lock");setInterval(()=>{},1000);'],
+        cwd:os.tmpdir(),clientName:'airk-test',clientVersion:'test'},1000),error=>{
+        assert.ok(error instanceof McpSessionError);assert.equal(error.code,'timeout');
+        assert.match(error.message,/initialize.*1000 ms/);assert.match(error.message,/waiting for runtime lock/);return true;
+    });
+});

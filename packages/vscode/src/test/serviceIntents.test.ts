@@ -14,6 +14,20 @@ class Memory implements IntentStorage {
 }
 const namespace='ab'.repeat(16),project='cd'.repeat(32),caller='ef'.repeat(16);
 const intent=(index:number):MutationIntent=>({enqueue:{project,caller,kind:'index',key:{namespace,epoch:7,nonce:index.toString(16).padStart(32,'0')}}});
+test('transient metadata contention retries bounded reads but never automatically retries mutations',async()=>{
+    let calls=0;const client=new ServiceClient({dispose(){},async request(){calls++;return calls<3?{status:'failure',code:'registry_busy'}:{status:'job',job:{id:'12'.repeat(32),project}};}});
+    await client.rpc({job:{id:'12'.repeat(32)}},'job');assert.equal(calls,3);
+    calls=0;await assert.rejects(client.submitMutation(intent(1)),/registry_busy/);assert.equal(calls,1);
+});
+test('lost acknowledgement reconciles by read-only receipt and never resubmits a missing request',async()=>{
+    const storage=new Memory(),journal=new IntentJournal(storage,'/control',namespace);
+    await journal.prepare('Index',intent(1));let found=false,receipts=0;const sent:unknown[]=[];
+    const client=new ServiceClient({dispose(){},async request(value){sent.push(value);return {status:'request_receipt',expired:!found,job:found?{id:'12'.repeat(32),project,kind:'index'}:null};}});
+    await journal.reconcile(client,async()=>{receipts++;});assert.equal(journal.list().length,1);
+    found=true;await journal.reconcile(client,async()=>{receipts++;});
+    assert.equal(receipts,1);assert.equal(journal.list().length,0);
+    assert.deepEqual(sent,[{request_receipt:{caller,key:(intent(1) as {enqueue:JobIntent}).enqueue.key}},{request_receipt:{caller,key:(intent(1) as {enqueue:JobIntent}).enqueue.key}}]);
+});
 test('configuration journal rejects raw input fields, stale body reuse and oversized configuration',async()=>{
     const storage=new Memory(),journal=new IntentJournal(storage,'/control',namespace);
     const request={incarnation:namespace,settings:'12'.repeat(32),configuration:{operation:'vectors',enabled:false}};

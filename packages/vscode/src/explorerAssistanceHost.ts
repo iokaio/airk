@@ -23,7 +23,7 @@ export interface AssistanceHostPort {
     readonly roots: readonly string[];
     authorized?(): boolean;
     explorerOpen(): boolean;
-    uiStatus?(): Pick<AssistanceWindowStatus, 'active_route' | 'binding_generation' | 'blockers'>;
+    uiStatus?(): Pick<AssistanceWindowStatus, 'active_route' | 'binding_generation' | 'blockers' | 'selected_project'>;
     validate?(kind: DraftKind, draft: unknown): Record<string, unknown>;
     handoff?(token: string): ExplorerHandoff | undefined;
     targetRevisions?(): { readonly studio?: number; readonly planner?: number };
@@ -144,7 +144,14 @@ export class AssistanceIpcHost {
         if (offered.length !== expected.length || !timingSafeEqual(offered, expected) || this.disposed) { return undefined; }
         if (request.v !== 1) { return { v: 1, ok: false, code: 'SCHEMA_UNSUPPORTED' }; }
         if (this.port.authorized?.() === false) { return { v: 1, ok: false, code: 'WORKSPACE_UNTRUSTED' }; }
-        const fields = (...allowed: string[]) => Object.keys(request).every(key => ['v', 'credential', 'type', ...allowed].includes(key));
+        if (request.project !== undefined && (typeof request.project !== 'string' || !/^[a-f0-9]{64}$/.test(request.project))) {
+            return { v: 1, ok: false, code: 'INVALID_SCHEMA' };
+        }
+        // Enforce the agent's configured project at admission, not merely in an earlier status read.
+        if (request.project !== undefined && request.type !== 'status' && request.project !== this.port.uiStatus?.().selected_project) {
+            return { v: 1, ok: false, code: 'STALE_BINDING', message: 'Select the agent\'s configured project in Explorer before applying a UI request.' };
+        }
+        const fields = (...allowed: string[]) => Object.keys(request).every(key => ['v', 'credential', 'type', 'project', ...allowed].includes(key));
         switch (request.type) {
             case 'status':
                 if (!fields()) { break; }

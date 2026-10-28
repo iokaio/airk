@@ -18,8 +18,26 @@ function workingDirectory(): string {
 }
 
 const index = new HelpIndex(catalog);
-const tools = new AssistanceTools(index, windowChannel(option('--assistance-dir'), workingDirectory()));
+const project = option('--project-binding');
+if (project && !/^[a-f0-9]{64}$/.test(project)) { throw new Error('Invalid project binding'); }
+const tools = new AssistanceTools(index, windowChannel(option('--assistance-dir'), option('--project-root') ?? workingDirectory(), project));
 const server = new AssistanceServer(index, tools, catalog.extensionVersion);
-void serve(server, process.stdin, text => new Promise<void>((resolve, reject) => {
+async function oneShot(): Promise<void> {
+    let input = '';
+    process.stdin.setEncoding('utf8');
+    for await (const chunk of process.stdin) {
+        input += chunk;
+        if (Buffer.byteLength(input) > 65536) { throw new Error('Request exceeds bound'); }
+    }
+    const request = JSON.parse(input);
+    if (!request || typeof request.tool !== 'string' || Object.keys(request).some(key => !['tool', 'arguments', 'client'].includes(key))) {
+        throw new Error('Invalid request');
+    }
+    const result = await tools.call(request.tool, request.arguments ?? {}, { name: String(request.client ?? 'AIRK agent').slice(0,64), version: catalog.extensionVersion });
+    process.stdout.write(JSON.stringify(result));
+}
+if (process.argv.includes('--one-shot')) {
+    void oneShot().catch(() => { process.stdout.write(JSON.stringify({ ok: false, code: 'INVALID_SCHEMA' })); process.exitCode = 1; });
+} else void serve(server, process.stdin, text => new Promise<void>((resolve, reject) => {
     process.stdout.write(text, error => error ? reject(error) : resolve());
 })).then(() => { process.stdin.destroy(); process.exitCode = 0; });

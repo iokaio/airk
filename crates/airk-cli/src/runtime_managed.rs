@@ -105,7 +105,11 @@ pub(super) fn verify_topology(
     installed: bool,
 ) -> Result<()> {
     use std::collections::BTreeSet;
-    let mut files = inventory.files.keys().cloned().collect::<BTreeSet<_>>();
+    let mut approved_files = inventory.files.clone();
+    if installed {
+        crate::process_roles::inventory(&mut approved_files);
+    }
+    let mut files = approved_files.keys().cloned().collect::<BTreeSet<_>>();
     files.insert("airk-install.json".into());
     if installed {
         files.insert("approval.json".into());
@@ -147,6 +151,18 @@ pub(super) fn verify_topology(
                 pending.push(path);
             } else {
                 safe_file(&path)?;
+                let name = relative
+                    .to_str()
+                    .context("non-UTF-8 managed payload name")?
+                    .replace('\\', "/");
+                if !inventory.files.contains_key(&name)
+                    && let Some(expected) = approved_files.get(&name)
+                {
+                    ensure!(
+                        runtime_pair::digest_file(&path)? == *expected,
+                        "modified process alias refused"
+                    );
+                }
                 ensure!(
                     files.contains(
                         &relative

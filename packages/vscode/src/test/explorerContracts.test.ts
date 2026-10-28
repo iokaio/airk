@@ -8,8 +8,9 @@ import { formatRoute, parseRoute, ROUTE_KEYS, routeKey, WORKSPACES } from '../ex
 
 test('routes resolve default tabs, focus and reject anything outside the manifest', () => {
     assert.deepEqual(parseRoute('#overview'), { workspace: 'overview' });
+    assert.deepEqual(parseRoute('#manage'), { workspace: 'manage', tab: 'overview' });
     assert.deepEqual(parseRoute('search'), { workspace: 'search', tab: 'query' });
-    assert.deepEqual(parseRoute('#manage/indexing?focus=extraction'), { workspace: 'manage', tab: 'indexing', focus: 'extraction' });
+    assert.deepEqual(parseRoute('#manage/indexing?focus=extraction'), { workspace: 'manage', tab: 'repair', focus: 'extraction' });
     for (const bad of ['#nowhere', '#search/unknown', '#overview/tab', '#search/query/extra', '#manage/indexing?focus=Bad!',
         '#manage/indexing?other=x', '#search?focus=a?b', '#' + 'x'.repeat(200), '#manage/indexing?focus=']) {
         assert.equal(parseRoute(bad), undefined, bad);
@@ -21,7 +22,8 @@ test('routes resolve default tabs, focus and reject anything outside the manifes
     }
     assert.equal(new Set(ROUTE_KEYS).size, ROUTE_KEYS.length);
     assert.equal(WORKSPACES.filter(workspace => workspace.placement === 'pinned').map(workspace => workspace.id).join(), 'manage');
-    assert.equal(WORKSPACES.find(workspace => workspace.id === 'manage')!.tabs.length, 9);
+    assert.equal(WORKSPACES.find(workspace => workspace.id === 'manage')!.tabs.length, 8);
+    assert.deepEqual(parseRoute('#manage/projects'), { workspace: 'manage', tab: 'overview' });
 });
 
 test('every route has an availability and unknown keys are unsupported', () => {
@@ -40,6 +42,10 @@ test('errors come from one registry and native codes pass through bounded', () =
 });
 
 test('webview messages require the exact declared fields', () => {
+    assert.ok(parseWebviewMessage({v:1,type:'extension.reload',requestId:'reload'}));
+    assert.equal(parseWebviewMessage({v:1,type:'extension.reload',requestId:'reload',command:'workbench.action.quit'}),undefined);
+    assert.ok(parseWebviewMessage({v:1,type:'details.copy',requestId:'copy',section:'activity',project:'ab'.repeat(32)}));
+    assert.equal(parseWebviewMessage({v:1,type:'details.copy',requestId:'copy',section:'source',text:'arbitrary'}),undefined);
     const search = { v: 1, type: 'search.run', requestId: 'r1', query: 'session refresh', mode: 'lexical', limit: 20, maxBytes: 16384, fullChunks: false };
     assert.deepEqual(parseWebviewMessage(search), search);
     const draft = { ...search, type: 'search.form', query: '', pathPrefix: '', project: 'ab'.repeat(32), selectionEpoch: 2 };

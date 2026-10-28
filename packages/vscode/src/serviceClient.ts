@@ -103,12 +103,13 @@ export interface JobIntent { project: string; caller: string; key: RequestKey; k
 export type JobKind = 'index' | 'reconcile' | 'vectors' | 'model_setup' | 'verify' | 'inspect' | 'recover' | 'maintain';
 export interface RetryIntent { id: string; caller: string; key: RequestKey }
 export interface PlanIntent { caller: string; key: RequestKey; request: { selection: 'all' | { selected: string[] }; operation: RepairOperation } }
-export interface ProjectConfigurationRequest { incarnation:string;settings:string;configuration:RecordValue }
+export interface ProjectConfigurationRequest { incarnation:string;settings:string;configuration:RecordValue;prepare?:boolean }
 export interface ConfigurationIntent {project:string;caller:string;key:RequestKey;request:ProjectConfigurationRequest}
 export type MutationIntent = { enqueue: JobIntent } | { retry: RetryIntent } | { plan_create: PlanIntent } | {configure_project:ConfigurationIntent};
 export function validateConfigurationRequest(input:unknown):ProjectConfigurationRequest {
     const value=record(input),configuration=record(value.configuration),operation=configuration.operation;
-    if(Object.keys(value).sort().join(',')!=='configuration,incarnation,settings'||Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('invalid_project_configuration');
+    if(!['configuration,incarnation,settings','configuration,incarnation,prepare,settings'].includes(Object.keys(value).sort().join(','))||Buffer.byteLength(JSON.stringify(value))>16384)throw new ServiceError('invalid_project_configuration');
+    if(value.prepare!==undefined&&(typeof value.prepare!=='boolean'||value.prepare&&!['vectors','detail'].includes(String(operation))))throw new ServiceError('invalid_project_configuration');
     identifier(value.incarnation,16);identifier(value.settings,32);
     const names:Record<string,string[]>={unregister:[],prepare_derived_cleanup:[],delete_derived:['preview'],bundled_model:[],vectors:['enabled'],detail:['level'],vector_selection:['policy'],
         add_root:['alias','path'],remove_root:['alias'],install_model:['directory','manifest_sha256'],usage:['mode'],
@@ -191,7 +192,13 @@ export class ServiceClient {
     private readonly caller = randomUUID().replaceAll('-', '');
     constructor(readonly transport: ControlTransport) {}
     async rpc(method: unknown, expected?: string): Promise<RecordValue> {
-        const response = await this.transport.request(method);
+        const name=typeof method==='string'?method:method&&typeof method==='object'?Object.keys(method)[0]:undefined;
+        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance'].includes(String(name));
+        let response = await this.transport.request(method);
+        for(let attempt=0;readOnly&&response.status==='failure'&&response.code==='registry_busy'&&attempt<2;attempt++){
+            await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
+            response=await this.transport.request(method);
+        }
         if (response.status === 'failure') {
             const code = typeof response.code === 'string' && /^[a-z0-9_]{1,128}$/.test(response.code) ? response.code : 'invalid_service_failure';
             throw new ServiceError(code, code.endsWith('_outcome_unknown') || code === 'registry_response_unknown_retry_with_key');
@@ -237,6 +244,11 @@ export class ServiceClient {
     async prepareConfiguration(project:string,request:ProjectConfigurationRequest):Promise<MutationIntent>{
         validateConfigurationRequest(request);
         return {configure_project:{project:identifier(project,32),caller:this.caller,key:await this.key(),request:structuredClone(request)}};
+    }
+    async preparePreference(project:string,configuration:RecordValue):Promise<MutationIntent>{
+        const key=await this.key(),request={incarnation:key.namespace,settings:identifier(project,32),configuration,prepare:true};
+        validateConfigurationRequest(request);
+        return {configure_project:{project,caller:this.caller,key,request}};
     }
     async preparePlan(selection: 'all' | string[], operation: RepairOperation): Promise<MutationIntent> {
         if (selection !== 'all') {

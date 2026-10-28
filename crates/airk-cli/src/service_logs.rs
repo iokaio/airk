@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Finite diagnostic ring. No source/query text, paths, raw stderr or exception strings.
+//! Finite summary ring; explicit local error details use a separate private ring.
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
     service_logs::{LogKind, LogPage, LogRecord, LogTelemetry},
@@ -27,8 +27,13 @@ const FILES: [&str; 4] = [
     "previous-3.jsonl",
 ];
 const FILE_BYTES: u64 = 1 << 20;
-const RECORD_BYTES: usize = 512;
+const RECORD_BYTES: usize = 768;
 const READ_BYTES: usize = 64 << 10;
+
+#[path = "service_raw_logs.rs"]
+mod raw;
+pub use raw::export as export_raw;
+pub(crate) use raw::{FailureDetail, JobFailure};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -57,14 +62,17 @@ fn exists(path: &Path) -> Result<bool> {
     }
 }
 fn owner(root: &Path, create: bool) -> Result<PathBuf> {
+    named_owner(root, create, DIRECTORY, OWNER)
+}
+fn named_owner(root: &Path, create: bool, name: &str, owner_name: &str) -> Result<PathBuf> {
     let parent = crate::runtime_install::log_parent(root)?;
     if !exists(&parent)? {
         ensure!(create, "diagnostic log location missing");
         crate::local_ipc::prepare_root(&parent)?;
     }
     crate::local_ipc::prepare_root(&parent)?;
-    let directory = parent.join(DIRECTORY);
-    let receipt = parent.join(OWNER);
+    let directory = parent.join(name);
+    let receipt = parent.join(owner_name);
     let expected = expected_owner(root)?;
     if !exists(&receipt)? {
         ensure!(
@@ -115,6 +123,7 @@ fn preflight(directory: &Path) -> Result<u64> {
 struct Sink {
     directory: PathBuf,
     lock: File,
+    record_bytes: usize,
 }
 impl Drop for Sink {
     fn drop(&mut self) {
@@ -123,12 +132,19 @@ impl Drop for Sink {
 }
 impl Sink {
     fn open(root: &Path) -> Result<Self> {
-        let directory = owner(root, true)?;
+        Self::named(root, DIRECTORY, OWNER, RECORD_BYTES)
+    }
+    fn named(root: &Path, name: &str, receipt: &str, record_bytes: usize) -> Result<Self> {
+        let directory = named_owner(root, true, name, receipt)?;
         preflight(&directory)?;
         let lock = open_file(&directory.join("writer.lock"), true)?;
         crate::runtime_install::safe_file(&directory.join("writer.lock"))?;
         lock.try_lock()?;
-        Ok(Self { directory, lock })
+        Ok(Self {
+            directory,
+            lock,
+            record_bytes,
+        })
     }
     fn rotate(&self) -> Result<()> {
         preflight(&self.directory)?;
@@ -146,10 +162,12 @@ impl Sink {
     }
     fn append(&mut self, record: &LogRecord) -> Result<()> {
         record.validate()?;
-        let mut bytes = serde_json::to_vec(record)?;
+        self.append_bytes(serde_json::to_vec(record)?)
+    }
+    fn append_bytes(&mut self, mut bytes: Vec<u8>) -> Result<()> {
         bytes.push(b'\n');
         ensure!(
-            record.schema == 1 && bytes.len() <= RECORD_BYTES,
+            bytes.len() <= self.record_bytes,
             "invalid diagnostic log record"
         );
         preflight(&self.directory)?;
@@ -223,6 +241,7 @@ fn make_record(
         project,
         job,
         count,
+        code: None,
         observed_unix_ms: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
@@ -230,6 +249,7 @@ fn make_record(
 }
 enum Message {
     Record(LogRecord),
+    Failure(LogRecord, JobFailure),
     Stop,
 }
 #[derive(Clone)]
@@ -261,6 +281,7 @@ impl Log {
             .name("airk-diagnostic-log".into())
             .spawn(move || {
                 let mut sink = Sink::open(&root).ok();
+                let mut raw_sink = None;
                 observed.available.store(sink.is_some(), Ordering::Release);
                 if sink.is_none() {
                     observed.failures.fetch_add(1, Ordering::Relaxed);
@@ -283,8 +304,16 @@ impl Log {
                         observed.available.store(false, Ordering::Release);
                         sink = None;
                     }
-                    let Message::Record(record) = message else {
-                        break;
+                    let record = match message {
+                        Message::Stop => break,
+                        Message::Record(record) => record,
+                        Message::Failure(record, failure) => {
+                            let saved = raw::append(&root, &mut raw_sink, &record, &failure);
+                            if saved.is_err() {
+                                observed.failures.fetch_add(1, Ordering::Relaxed);
+                            }
+                            record
+                        }
                     };
                     if let Some(active) = sink.as_mut() {
                         if active.append(&record).is_err() {
@@ -316,7 +345,20 @@ impl Log {
         )
     }
     pub fn record(&self, kind: LogKind, project: Option<Sha256Digest>, job: Option<Sha256Digest>) {
-        let record = make_record(self.instance, kind, project, job, 1);
+        self.record_code(kind, project, job, None);
+    }
+    pub fn record_code(
+        &self,
+        kind: LogKind,
+        project: Option<Sha256Digest>,
+        job: Option<Sha256Digest>,
+        code: Option<&str>,
+    ) {
+        let mut record = make_record(self.instance, kind, project, job, 1);
+        record.code = code.map(str::to_owned);
+        if record.validate().is_err() {
+            record.code = Some("failure_code_unavailable".into());
+        }
         if self
             .sender
             .as_ref()
@@ -332,6 +374,27 @@ impl Log {
             write_failures: self.counters.failures.load(Ordering::Relaxed),
         }
     }
+    pub fn job_failure(&self, project: Sha256Digest, failure: JobFailure) {
+        let mut record = make_record(
+            self.instance,
+            LogKind::JobFailed,
+            Some(project),
+            Some(failure.job),
+            1,
+        );
+        record.code = Some(failure.code.clone());
+        if record.validate().is_err() || failure.validate().is_err() {
+            self.counters.lose();
+            return;
+        }
+        if self
+            .sender
+            .as_ref()
+            .is_none_or(|sender| sender.try_send(Message::Failure(record, failure)).is_err())
+        {
+            self.counters.lose();
+        }
+    }
 }
 
 /// Cached diagnostics work without a live service and never create paths.
@@ -340,6 +403,20 @@ pub fn recent(root: &Path, limit: usize) -> Result<LogPage> {
         (1..=32).contains(&limit),
         "invalid diagnostic log page bound"
     );
+    read_retained(root, limit, READ_BYTES, 48 << 10)
+}
+
+/// Explicit local export of the entire finite ring; never sent over service IPC.
+pub fn export(root: &Path) -> Result<LogPage> {
+    read_retained(root, usize::MAX, FILE_BYTES as usize * FILES.len(), 8 << 20)
+}
+
+fn read_retained(
+    root: &Path,
+    limit: usize,
+    read_bytes: usize,
+    output_bytes: usize,
+) -> Result<LogPage> {
     let directory = owner(root, false)?;
     let stored_bytes = preflight(&directory)?;
     let mut page = LogPage {
@@ -349,7 +426,7 @@ pub fn recent(root: &Path, limit: usize) -> Result<LogPage> {
         malformed_records: 0,
         tail_truncated: false,
     };
-    let mut remaining = READ_BYTES;
+    let mut remaining = read_bytes;
     for name in FILES {
         let path = directory.join(name);
         if !exists(&path)? {
@@ -382,6 +459,8 @@ pub fn recent(root: &Path, limit: usize) -> Result<LogPage> {
                 _ => page.malformed_records += 1,
             }
             if page.records.len() == limit {
+                // The recent page cannot certify that older records were absent.
+                page.tail_truncated = true;
                 break;
             }
         }
@@ -391,7 +470,7 @@ pub fn recent(root: &Path, limit: usize) -> Result<LogPage> {
     }
     page.records.reverse();
     ensure!(
-        serde_json::to_vec(&page)?.len() <= 48 << 10,
+        serde_json::to_vec(&page)?.len() <= output_bytes,
         "diagnostic log page exceeds bound"
     );
     Ok(page)
@@ -417,6 +496,9 @@ pub fn render(page: &LogPage) -> Result<String> {
         }
         if let Some(job) = record.job {
             text.push_str(&format!(" job={job}"));
+        }
+        if let Some(code) = &record.code {
+            text.push_str(&format!(" code={code}"));
         }
         text.push('\n');
     }

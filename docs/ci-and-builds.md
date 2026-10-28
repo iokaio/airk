@@ -2,11 +2,13 @@
 
 A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). Its complete cumulative diff must stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only then do PR/main CI run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remains the authenticated producer.
 
-The current package version is **1.5.5**; see [its release record](release-1.5.5.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
+The current package version is **1.5.12**; see [its candidate record](release-1.5.12.md). Prior 1.4.0/1.4.1/1.4.2 build and qualification records below retain their original scope.
 
 Native smoke jobs, the container adapter, service-pool campaign and installed-console fixture share one metadata retry policy. It honors only the native actor's explicit `registry_busy` contract within finite attempt/time budgets; an accepted index/configuration job is polled by the same receipt, never resubmitted. Deliberate negative tests require an exact expected failure code and do not retry it. The document-table smoke retains its original source, coordinate, extraction, budget and usage assertions. See [the protocol](service-protocol.md) for retry exclusions.
 
 Native smoke and qualification tools distinguish a raw diagnostic status from an available publication. They share scoped, bounded observation helpers and preserve explicit failed readiness, typed read-retry limits and exact usage accounting; see the [MCP consumer contract](mcp.md). The mandatory 16-file/model service-client and document-table smokes remain routine on every native host. Local verification uses a freshly constructed matching release pair before a corrective push; hosted CI is not the primary debugging loop.
+
+MCP smoke checks require the exact unified 26-tool catalog, including rejection of missing, duplicate and retired advertised names. Container and native client checks share that expected public catalog, while standalone extension frontend checks use the current 26-tool probe. The 16 prefixed native `airk tools` aliases remain a separate CLI compatibility contract.
 
 Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
 
@@ -54,7 +56,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.5.5 candidate notes](release-1.5.5.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact sixteen-tool MCP catalog, including airk_help; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.5.12 candidate notes](release-1.5.12.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact sixteen-tool MCP catalog, including airk_help; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 
@@ -157,3 +159,5 @@ The separate [Extended qualification workflow](../.github/workflows/qualificatio
 Debug/test builds optimize the SHA-256 dependency because integration fixtures authenticate complete native images and offline model assets. Existing digest, ownership and deadline checks remain enabled; release builds retain their existing optimization profile. macOS installer fixtures use canonical temporary roots and app-bundle-aware payload paths rather than relaxing redirect checks.
 
 The real-model kernel step passes an absolute `AIRK_TEST_MODEL_DIR` rooted at the checked-out GitHub workspace. Cargo runs each integration target from its crate directory, so a repository-relative asset path is not a valid test input. The pinned asset verification and model/retrieval assertions remain unchanged.
+
+For the 1.5.12 process changes, routine native CI also runs the offline installed-runtime lifecycle fixture. It verifies generated role executables and helper identity, real MCP EOF/abrupt client loss through stable and universal launchers, preservation of another live session and the shared service, and owned retirement. This focused installer gate covers the changed lifecycle on the existing four native hosts; it does not enable the broad opt-in qualification matrix.

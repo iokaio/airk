@@ -600,10 +600,14 @@ impl Kernel {
         repaired_retained_artifacts: &mut usize,
         paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<airk_ingest::IndexReport> {
-        self.require_service_sources()?;
-        let execution_lease = crate::execution::acquire(&self.data_root)?;
+        use crate::diagnostics::IndexFailureStage as Stage;
+        self.require_service_sources()
+            .context(Stage("source_access"))?;
+        let execution_lease =
+            crate::execution::acquire(&self.data_root).context(Stage("execution_admission"))?;
         if full {
-            self.prepare_full_rebuild()?;
+            self.prepare_full_rebuild()
+                .context(Stage("rebuild_admission"))?;
         }
         let index_started = std::time::Instant::now();
         self.emit_progress(airk_core::readiness::IndexProgress {
@@ -611,23 +615,30 @@ impl Kernel {
             phase: "scan_started",
             ..Default::default()
         });
-        self.recover_runtime_bootstrap()?;
+        self.recover_runtime_bootstrap()
+            .context(Stage("bootstrap"))?;
         let mut execution = if self.service_collection.is_some() {
-            crate::limits::execution_from_grant(&execution_lease.plan)?
+            crate::limits::execution_from_grant(&execution_lease.plan)
+                .context(Stage("extraction_admission"))?
         } else {
-            crate::limits::configured_extraction_execution()?
+            crate::limits::configured_extraction_execution()
+                .context(Stage("extraction_admission"))?
         };
         execution.requested = execution_lease.plan.requested_extraction_workers;
         execution.execution.workers = execution_lease.plan.extraction_workers;
         execution.execution.max_in_flight_source_bytes = execution.execution.workers
             * airk_ingest::ExtractionExecution::MAX_PARALLEL_SOURCE_BYTES;
-        execution.execution.validate()?;
+        execution
+            .execution
+            .validate()
+            .context(Stage("extraction_admission"))?;
         // Recovery takes its own writer lock, before this scan owns one.
-        if let Some(scope) = self.current_scope()? {
-            super::recover_current(&self.store, &self.collection_quota()?, &scope)?;
+        if let Some(scope) = self.current_scope().context(Stage("current_scope"))? {
+            super::recover_current(&self.store, &self.collection_quota()?, &scope)
+                .context(Stage("recover_current"))?;
         }
-        let writer = self.store.lock()?;
-        let quota = self.collection_quota()?;
+        let writer = self.store.lock().context(Stage("writer_admission"))?;
+        let quota = self.collection_quota().context(Stage("quota_open"))?;
         ensure!(
             !self.root.starts_with(quota.root()),
             "index storage must not contain sources"
@@ -636,19 +647,27 @@ impl Kernel {
         // input or superseded objects still needed by prior-content reuse.
         let captured_objects = writer.capture_objects();
         let mut previous = self
-            .load_optional()?
+            .load_optional()
+            .context(Stage("read_snapshot"))?
             .unwrap_or_else(|| self.empty_snapshot());
-        let configured = self.rebuild_extraction_policy()?;
+        let configured = self
+            .rebuild_extraction_policy()
+            .context(Stage("extraction_settings"))?;
         let policy = configured.policy;
-        let compression = self.store.compression_mode(&self.root_id())?;
-        let roots = self.configured_roots()?;
-        let selection = self.vector_selection()?;
+        let compression = self
+            .store
+            .compression_mode(&self.root_id())
+            .context(Stage("compression_settings"))?;
+        let roots = self.configured_roots().context(Stage("source_settings"))?;
+        let selection = self.vector_selection().context(Stage("vector_settings"))?;
         // Keep a small independent allowance alive before capture/publication
         // can exhaust quota. Failure reporting must not require a fresh grant.
-        let failure_reservation = self.publication_reservation_with_limit(2 << 20)?;
+        let failure_reservation = self
+            .publication_reservation_with_limit(2 << 20)
+            .context(Stage("failure_reservation"))?;
         // Do not reserve all remaining capacity: durable SQL growth/replay owns
         // an independent grant while preparation is still alive.
-        let available = quota.status()?;
+        let available = quota.status().context(Stage("quota_inventory"))?;
         let root_free = available
             .root_limit_bytes
             .saturating_sub(available.used_bytes)
@@ -661,19 +680,25 @@ impl Kernel {
                     .saturating_sub(c.used_bytes)
                     .saturating_sub(c.reserved_bytes)
             });
-        let reservation = quota.reserve_available(
-            &self.collection,
-            (root_free.min(collection_free) / 2).min(MAX_INDEX_RESERVATION_BYTES),
-        )?;
+        let reservation = quota
+            .reserve_available(
+                &self.collection,
+                (root_free.min(collection_free) / 2).min(MAX_INDEX_RESERVATION_BYTES),
+            )
+            .context(Stage("capture_reservation"))?;
         let model_started = std::time::Instant::now();
-        let objects = self.configured_model_objects(false)?;
+        let objects = self
+            .configured_model_objects(false)
+            .context(Stage("model_settings"))?;
         if let Some(objects) = &objects {
-            self.retain_configured_model(objects, &reservation)?;
+            self.retain_configured_model(objects, &reservation)
+                .context(Stage("retain_model"))?;
         }
         let model = objects
             .as_ref()
             .map(|objects| self.open_configured_model(objects))
-            .transpose()?;
+            .transpose()
+            .context(Stage("open_model"))?;
         let model_load_us = u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let configuration = CollectionConfiguration {
             roots: roots.clone(),
@@ -685,11 +710,15 @@ impl Kernel {
         };
         let existing = self.current_scope()?;
         let (applied, prior_semantic_work, prior_scan_work) = if let Some(scope) = &existing {
-            let read = self.store.current_read(scope)?;
+            let read = self
+                .store
+                .current_read(scope)
+                .context(Stage("read_prior_work"))?;
             (
-                read.collection_state()?,
-                enrichment::read_work(&read, &self.store)?,
-                progress::read_work(&read, &self.store)?,
+                read.collection_state()
+                    .context(Stage("read_configuration"))?,
+                enrichment::read_work(&read, &self.store).context(Stage("read_semantic_work"))?,
+                progress::read_work(&read, &self.store).context(Stage("read_scan_work"))?,
             )
         } else {
             (None, None, None)
@@ -819,7 +848,8 @@ impl Kernel {
                 .retained
                 .as_ref()
                 .and_then(|r| r.profile.as_ref())
-                .context("prior extraction profile missing")?;
+                .context("prior extraction profile missing")
+                .context(Stage("prepare_reuse"))?;
             reusable
                 .entry((
                     artifact.content_hash.clone(),
@@ -834,7 +864,7 @@ impl Kernel {
             &self.data_root,
             &previous,
             &roots,
-            self.scan_limits()?,
+            self.scan_limits().context(Stage("scan_settings"))?,
             &policy,
             full,
             execution.execution,
@@ -928,7 +958,11 @@ impl Kernel {
         );
         let (snapshot, mut report, observation) = match scan_result {
             Ok(value) => value,
-            Err(error) => return Err(record_scan_failure(progressive.as_mut(), error)),
+            Err(error) => {
+                return Err(
+                    record_scan_failure(progressive.as_mut(), error).context(Stage("scan_sources"))
+                );
+            }
         };
         report.repaired_retained_artifacts = *repaired_retained_artifacts;
         report.path_scoped = paths.is_some();

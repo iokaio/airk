@@ -10,11 +10,15 @@ export interface ConsoleHost {
     runtime:Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'>;
     trusted():boolean;
     changed(state:ServiceConsoleState):void;
-    confirm(message:string):Promise<boolean>;
+    confirm(message:string,acceptLabel?:string):Promise<boolean>;
     copy(text:string):Promise<void>;
+    openReport?(text:string):Promise<void>;
+    saveReport?(text:string):Promise<void>;
+    exportLogs?(observation?:BootstrapObservation):Promise<void>;
+    rawLogs?(save:boolean,observation?:BootstrapObservation):Promise<void>;
     logs(observation?:BootstrapObservation):Promise<void>;
     resources(current:RecordValue):Promise<RecordValue|undefined>;
-    configuration?(row:RecordValue):Promise<RecordValue|undefined>;
+    configuration?(row:RecordValue,operation?:'detail'|'advanced'):Promise<RecordValue|undefined>;
     lifecycle(binding:RuntimeBinding,intent:LifecycleIntent,force?:boolean):Promise<RecordValue>;
     abandonLifecycle?(binding:RuntimeBinding,intent:LifecycleIntent,id:string):Promise<RecordValue>;
     responseMode?():'terse'|'full';
@@ -30,6 +34,7 @@ export interface ConsoleHost {
     };
 }
 const empty=():ConsoleObservation=>({state:'unavailable',checkedAt:Date.now()});
+function objOutcomeUnknown(row:RecordValue):boolean{return record(record(row.configuration??{}).outcome??{}).code==='configuration_outcome_unknown_reinspect';}
 function code(error:unknown):string{return error instanceof ServiceError?error.code:'console_operation_failed';}
 export class ServiceConsoleController {
     readonly state:ServiceConsoleState;
@@ -195,9 +200,11 @@ export class ServiceConsoleController {
         const prior=this.state.page;
         const start=first?{after:null,revision:null}:next?{after:prior?.after??null,revision:prior?.revision??null}:this.pageStart;
         if(!this.client){await this.savedSnapshot(start.after,start.after?start.revision:null);this.pageStart=start;return;}
+        if(this.journal?.list().length){await this.journal.reconcile(this.client,response=>this.receipt(response));this.pending();}
         const page=await this.client.projects(start.after,start.after?start.revision:null,16,this.state.inactiveProjects===true);
         this.pageStart=start;
         this.authorized();this.state.page=page;
+        this.state.workers=undefined;
         this.state.workers=await this.client.workers(page.projects.map(row=>String(record(record(row.project).registration).binding)));
         const results:NonNullable<ServiceConsoleState['configurationResults']>=new Map();
         for(const row of page.projects){
@@ -235,7 +242,9 @@ export class ServiceConsoleController {
         if(value.id!==id)throw new ServiceError('crossed_plan_receipt');
         if(current.items.length&&current.value.preview_digest!==value.preview_digest){
             more=false;this.state.message='Repair preview changed; review the current pages before approval.';
-        }else if(!more&&current.items.length){current.value=value;return;}
+        }else if(!more&&current.items.length&&current.value.phase===value.phase
+            &&JSON.stringify(current.value.counts)===JSON.stringify(value.counts)
+            &&!['planning','running','canceling'].includes(String(value.phase))){current.value=value;return;}
         const page=record((await this.rpc({plan_items:{id,after:more?current.after:null,limit:32}},'plan_items')).page);
         if(!Array.isArray(page.items)||page.items.length>32)throw new ServiceError('invalid_plan_page');
         const items=page.items.map(item=>record(item));
@@ -301,6 +310,14 @@ export class ServiceConsoleController {
                 this.state.includePaths=action.includePaths!;this.state.preview=diagnosticPreview(this.state,this.state.includePaths);return;
             }
             if(action.action==='copyReport'){if(requestedPreview)await this.host.copy(requestedPreview);this.state.preview=requestedPreview;return;}
+            if(action.action==='openReport'||action.action==='saveReport'){
+                if(!requestedPreview)throw new ServiceError('generate_diagnostic_report_first');
+                const operation=action.action==='openReport'?this.host.openReport:this.host.saveReport;
+                if(!operation)throw new ServiceError('diagnostic_export_unavailable');
+                await operation(requestedPreview);this.state.preview=requestedPreview;return;
+            }
+            if(action.action==='exportLogs'){this.authorized();if(!this.host.exportLogs)throw new ServiceError('diagnostic_export_unavailable');await this.host.exportLogs(this.bootstrap);return;}
+            if(action.action==='openRawLogs'||action.action==='saveRawLogs'){this.authorized();if(!this.host.rawLogs)throw new ServiceError('diagnostic_export_unavailable');await this.host.rawLogs(action.action==='saveRawLogs',this.bootstrap);return;}
             if(action.action==='logs'){await this.host.logs(this.bootstrap);return;}
             if(action.action==='copyConfiguration'){
                 const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===action.project);
@@ -445,6 +462,11 @@ export class ServiceConsoleController {
             check();identifier(project,32);if(!this.client)await this.discover();check();
             if(!this.client||!this.binding)throw new ServiceError('console_not_connected');
             await this.observe();check();
+            if(['vectors','detail'].includes(String(draft.operation))){
+                const intent=await this.client.preparePreference(project,draft);check();
+                await this.mutation(`Set ${String(draft.operation)} ${project}`,intent);
+                this.state.message='Settings request accepted. Native preparation and indexing continue when this window closes.';return;
+            }
             const wait=(response:RecordValue,kind:string)=>this.waitForProjectJob(response,project,kind,check);
             await wait(await this.mutation(`Inspect configuration ${project}`,{enqueue:await this.client.prepareJob(project,'inspect')}),'inspect');check();
             const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);check();
@@ -477,12 +499,15 @@ export class ServiceConsoleController {
                 if(record(observed.outcome).state!=='succeeded')throw new ServiceError('configuration_job_failed');
                 return id;
             }
-            if(Date.now()>=deadline)throw new ServiceError('configuration_job_still_pending');
+            if(Date.now()>=deadline)throw new ServiceError(kind==='inspect'?'Prerequisite inspection has not finished. The follow-up change has not been submitted; repeat it after inspection completes.':'The native change was accepted but has not finished. Follow its saved outcome in Recent activity.');
             await new Promise(resolve=>setTimeout(resolve,100));
         }
     }
     private async connectedAction(action:NonNullable<ReturnType<typeof consoleAction>>):Promise<void>{
         const project=action.project!,id=action.id!;
+        if(['index','inspect','modelSetup','enableSemantic','disableSemantic','configureDetail','configureProject','retryRecovery'].includes(action.action) && this.state.pending.some(intent=>intent.unknown)){
+            this.state.message='A saved request has an unknown outcome. Check its exact request in Recent activity before submitting new work.';return;
+        }
         switch(action.action){
             case 'unregisterProject':{
                 const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===project);
@@ -521,20 +546,31 @@ export class ServiceConsoleController {
                 const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);this.authorized();
                 await this.mutation(`${action.action} ${project}`,await this.client!.prepareConfiguration(project,request));break;
             }
-            case 'configureProject':{
+            case 'enableSemantic':case 'disableSemantic':case 'configureDetail':case 'configureProject':{
                 const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===project);
-                if(!row||!this.binding||!this.host.configuration)throw new ServiceError('project_configuration_unavailable');
-                if(!row.inspection||!record(record(row.inspection).snapshot).settings_digest){
-                    this.state.message='Inspect this project before configuring it so the request can bind its current settings.';return;
+                if(!row||!this.binding||['configureProject','configureDetail'].includes(action.action)&&!this.host.configuration)throw new ServiceError('project_configuration_unavailable');
+                if(row.configuration&&['pending','running'].includes(String(record(row.configuration).state))){
+                    this.state.message='A settings change is already queued or applying. Check its activity before submitting another change. Published semantic coverage still describes the earlier index.';return;
                 }
-                const draft=await this.host.configuration(row);this.authorized();if(!draft)return;
+                const draft=['configureProject','configureDetail'].includes(action.action)?await this.host.configuration!(row,action.action==='configureDetail'?'detail':'advanced'):{operation:'vectors',enabled:action.action==='enableSemantic'};this.authorized();if(!draft)return;
+                if(['vectors','detail'].includes(String(draft.operation))){
+                    const accepted=await this.mutation(`Set ${String(draft.operation)} ${project}`,await this.client!.preparePreference(project,draft));
+                    this.state.message=`Settings request ${String(record(accepted.job).state??'queued')}. AIRK will check and apply your choice, then update the index. This continues when VS Code closes.`;break;
+                }
+                if(!record(record(row.inspection??{}).snapshot??{}).settings_digest || objOutcomeUnknown(row)){
+                    this.state.message='Checking current settings before applying your change…';this.publish();
+                    await this.waitForProjectJob(await this.mutation(`Inspect settings ${project}`,{enqueue:await this.client!.prepareJob(project,'inspect')}),project,'inspect');
+                }
+                this.authorized();
                 const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);this.authorized();
                 if(request.configuration.operation==='unregister'){
                     const registration=record(record(row.project).registration);
                     if(!await this.host.confirm(`Unregister ${String(registration.collection)} from AIRK on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. This stops automatic work and new connections for this project; its owned worker will drain and existing clients may disconnect. Sources, settings and index data are retained. Registration must be reviewed again before reconnecting.`))return;
                     this.authorized();
                 }
-                await this.mutation(`Configure ${String(request.configuration.operation)} ${project}`,await this.client!.prepareConfiguration(project,request));break;
+                const accepted=await this.mutation(`Configure ${String(request.configuration.operation)} ${project}`,await this.client!.prepareConfiguration(project,request));
+                const acceptedJob=record(accepted.job);
+                this.state.message=`Settings request accepted: ${String(acceptedJob.state??'queued')}. Acceptance is separate from applying settings and published coverage. Existing work runs first; semantic setup is followed by source publication and vector processing. Recent activity shows its saved outcome.`;break;
             }
             case 'firstPage':await this.page(false,true);return;
             case 'nextPage':if(this.state.page?.after)await this.page(true);return;
@@ -543,6 +579,18 @@ export class ServiceConsoleController {
             case 'resources':{
                 const configuration=await this.host.resources(record(record(this.state.resources.value?.observation).configuration));
                 this.authorized();if(configuration)await this.rpc({configure_resources:{configuration}},'resources');break;
+            }
+            case 'retryRecovery':{
+                const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===project);
+                if(!row||!Array.isArray(row.recovery))throw new ServiceError('recovery_not_observed');
+                const recoveries=row.recovery.map(record);
+                if(recoveries.some(r=>r.reason==='helper_unavailable')){
+                    const model=await this.rpc('embedding_status','embedding_status');this.authorized();
+                    if(model.available===false)await this.rpc('start_embedding','embedding_starting');
+                }
+                const failed=recoveries.find(r=>r.state==='needs_attention'&&typeof r.job==='string');
+                if(failed)await this.mutation(`Retry recovery ${project}`,await this.client!.prepareRetry(identifier(failed.job,32)));
+                this.state.message='Recovery retry requested. Confirm progress and published readiness in this view.';break;
             }
             case 'startEmbedding':await this.rpc('start_embedding','embedding_starting');break;
             case 'stopEmbedding':case 'forceEmbedding':{
@@ -561,7 +609,17 @@ export class ServiceConsoleController {
             }
             case 'inspect':case 'index':case 'modelSetup':{
                 const kind=action.action==='inspect'?'inspect':action.action==='index'?'index':'model_setup';
-                await this.mutation(`${action.action} ${project}`,{enqueue:await this.client!.prepareJob(project,kind)});break;
+                const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===project);
+                const current=record(record(row?.progress??{}).job??{}),queued=record(row?.pending_job??{});
+                const matches=(job:RecordValue)=>['pending','running'].includes(String(job.state)) && (job.kind===kind || kind==='index'&&job.kind==='reconcile');
+                const existing=matches(queued)?queued:matches(current)?current:undefined;
+                if(existing){this.state.message=`Already ${String(existing.state)}: ${String(existing.kind)} (${String(existing.id).slice(0,12)}). Following the existing request.`;return;}
+                if(kind==='model_setup'&&row?.inspection&&record(record(row.inspection).snapshot).vectors_enabled===false){
+                    this.state.message='Semantic search is turned off. Use Enable semantic search to prepare the model and enable indexing together.';return;
+                }
+                const accepted=await this.mutation(`${action.action} ${project}`,{enqueue:await this.client!.prepareJob(project,kind)});
+                const job=record(accepted.job);
+                this.state.message=`${kind==='inspect'?'Index/settings check':kind==='index'?'Source indexing':'Selected-model preparation'} accepted: ${String(job.state??'queued')} (job ${String(job.id).slice(0,12)}). Acceptance does not mean completion. Recent activity records the outcome; work can wait behind an existing job or project pause.`;break;
             }
             case 'retryJob':await this.mutation(`Retry ${id}`,await this.client!.prepareRetry(id));break;
             case 'cancelJob':await this.rpc({cancel:{id}},'job');break;
@@ -572,8 +630,16 @@ export class ServiceConsoleController {
             case 'approvePlan':{
                 const plan=this.state.plan?.value;if(!plan)throw new ServiceError('repair_plan_not_observed');
                 if(this.state.plan?.after||this.state.plan?.items.length!==record(plan.counts).selected)throw new ServiceError('finish_repair_preview_pages_before_approval');
-                if(!await this.host.confirm('Execute this exact native repair preview? Unavailable projects retain their failure or skipped receipts.'))return;
-                await this.rpc({plan_execute:{id:identifier(plan.id,32),preview:identifier(plan.preview_digest,32),allow_fallback:action.allowFallback}},'plan');break;
+                const labels:Record<string,string>={reconcile:'Update the index from saved source files',recover:'Recover captured index changes',verify:'Verify retained index data',vectors:'Regenerate semantic vectors',rebuild:'Rebuild the index from sources'};
+                const actions=this.state.plan!.items.map(item=>{
+                    const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===item.project);
+                    const registration=record(record(row?.project).registration);
+                    const name=String(registration.root??'').split(/[\\/]/).filter(Boolean).at(-1)??String(item.project??'project');
+                    return `${name}: ${labels[String(item.action)]??String(item.action??'Check')}`;
+                }).join('\n');
+                if(!await this.host.confirm(`Start the reviewed repair?\n${actions}\nUnavailable projects retain their failure or skipped receipts.`,'Start repair'))return;
+                await this.rpc({plan_execute:{id:identifier(plan.id,32),preview:identifier(plan.preview_digest,32),allow_fallback:action.allowFallback}},'plan');
+                this.state.message='Repair accepted. Follow Indexing for current work; acceptance does not mean the repair has finished.';break;
             }
             case 'pausePlan':case 'resumePlan':
                 await this.rpc({plan_pause:{id:identifier(this.state.plan?.value.id,32),paused:action.action==='pausePlan'}},'plan');break;

@@ -266,6 +266,7 @@ mod tests {
     }
     fn request(enabled: bool) -> ConfigurationRequest {
         ConfigurationRequest {
+            prepare: false,
             incarnation: Incarnation::from_bytes([2; 16]),
             settings: Sha256Digest::from_bytes([3; 32]),
             configuration: ProjectConfiguration::Vectors { enabled },

@@ -2,7 +2,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { applyEdits, findNodeAtLocation, getNodeValue, modify, Node, ParseError, parseTree } from 'jsonc-parser';
-import { Client, LaunchSpec, ServerEntry, configFor, launchArgs, retrievalEntry, serializeServers } from './model';
+import { Client, LaunchSpec, ServerEntry, launchArgs, unifiedEntry, serializeServers } from './model';
 
 export type JsonClient = 'claude' | 'gemini' | 'antigravity';
 export function isJsonClient(client: Client): client is JsonClient {
@@ -31,7 +31,7 @@ function configurationTree(source: string): Node {
 }
 
 /** Insert only missing servers; retain comments, other settings and client approval policy. */
-export function mergeJsonConfig(client: JsonClient, spec: LaunchSpec, source: string, entries: readonly ServerEntry[] = [retrievalEntry(spec)]): string {
+export function mergeJsonConfig(client: JsonClient, spec: LaunchSpec, source: string, entries: readonly ServerEntry[] = [unifiedEntry(spec)]): string {
     const tree = configurationTree(source);
     const servers = findNodeAtLocation(tree, ['mcpServers']);
     if (servers && servers.type !== 'object') { throw new Error('mcpServers must be an object. Existing configuration was preserved.'); }
@@ -82,7 +82,7 @@ function legacyReplacement(client: JsonClient, spec: LaunchSpec, source: string)
         || JSON.stringify(args) !== JSON.stringify(launchArgs({ ...spec, service: undefined, dataDir: args[3] }))) {
         throw new Error('This entry does not match the bounded legacy AIRK launch for this root and collection. Review it manually.');
     }
-    const replacement = { ...entry, ...JSON.parse(configFor(client, spec)).mcpServers[name] };
+    const replacement = { ...entry, command: spec.command, args: launchArgs(spec) };
     const indent = source.match(/(?:^|\n)([\t ]+)"/u)?.[1];
     return applyEdits(source, modify(source, ['mcpServers', name], replacement, { formattingOptions: {
         insertSpaces: !indent?.includes('\t'), tabSize: indent?.length || 2, eol: source.includes('\r\n') ? '\r\n' : '\n'
@@ -141,11 +141,11 @@ export async function readJsonConfig(destination: string): Promise<string | unde
 /** Existing files are saved through the editor, which checks document versions and disk conflicts. */
 export async function installJsonConfig(client: JsonClient, spec: LaunchSpec,
     checkCurrent: () => void, save: (destination: string, before: string, after: string) => Promise<void>,
-    entries: readonly ServerEntry[] = [retrievalEntry(spec)]): Promise<string> {
+    entries: readonly ServerEntry[] = [unifiedEntry(spec)], transformExisting: (source: string) => string = source => source): Promise<string> {
     checkCurrent();
     const destination = await configurationFile(client, spec);
     const before = await readJsonConfig(destination);
-    const after = mergeJsonConfig(client, spec, before ?? '{}\n', entries);
+    const after = mergeJsonConfig(client, spec, transformExisting(before ?? '{}\n'), entries);
     checkCurrent();
     if (await configurationFile(client, spec) !== destination || await readJsonConfig(destination) !== before) {
         throw new Error('Configuration changed while preparing setup. Retry after reviewing the file.');

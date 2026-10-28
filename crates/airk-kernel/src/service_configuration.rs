@@ -92,7 +92,18 @@ impl Kernel {
                 anyhow::bail!("derived cleanup requires the service-owned inactive-project worker")
             }
             ProjectConfiguration::Vectors { enabled } => {
-                serde_json::to_value(self.configure_vectors(*enabled)?)?
+                // Prepare the offline model before changing policy. A helper
+                // failure must not silently enable a formerly disabled project.
+                if *enabled {
+                    ensure!(
+                        self.model_objects_for_vectors(true, true)?.is_some(),
+                        "semantic indexing requires an available offline model"
+                    );
+                }
+                let mut result = serde_json::to_value(self.configure_vectors(*enabled)?)?;
+                result["source_pass_requested"] = json!(true);
+                result["semantic_setup_requested"] = json!(*enabled);
+                result
             }
             ProjectConfiguration::Detail { level } => {
                 self.configure_index_detail(*level)?;
@@ -211,6 +222,7 @@ mod tests {
             crate::service_projects::registration(source.path(), data.path(), "scan-reset")?;
         let snapshot = kernel.inspect_service(project.binding)?;
         let request = ConfigurationRequest {
+            prepare: false,
             incarnation: snapshot.incarnation,
             settings: snapshot.settings_digest.context("settings missing")?,
             configuration: ProjectConfiguration::ResetScanLimits,
@@ -287,6 +299,7 @@ mod tests {
         };
         let snapshot = kernel.inspect_service(project.binding)?;
         let request = ConfigurationRequest {
+            prepare: false,
             incarnation: snapshot.incarnation,
             settings: snapshot.settings_digest.unwrap(),
             configuration: ProjectConfiguration::Calibrate {
@@ -336,6 +349,7 @@ mod tests {
         let kernel = Kernel::open_service_collection(&source, Some(data), "configuration-fixture")?;
         let snapshot = kernel.inspect_service(project.binding)?;
         let request = ConfigurationRequest {
+            prepare: false,
             incarnation: snapshot.incarnation,
             settings: snapshot.settings_digest.unwrap(),
             configuration: ProjectConfiguration::Vectors { enabled: false },

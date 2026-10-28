@@ -64,7 +64,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         }
         RuntimeCommand::Location { channel } => {
             let paths = crate::user_paths::UserPaths::discover(*channel)?;
-            serde_json::json!({"install_dir":paths.install,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"channel":channel,"protocol":1,"user_paths":paths})
+            serde_json::json!({"install_dir":paths.install,"os":std::env::consts::OS,"arch":std::env::consts::ARCH,"channel":channel,"protocol":1,"storage_formats":airk_core::storage_format::CURRENT,"user_paths":paths})
         }
         RuntimeCommand::Login {
             install_dir,
@@ -127,7 +127,10 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                     .arg(install_dir);
                 return crate::native_process::forward_stdio(command);
             }
-            let mut command = Command::new(executable);
+            let mut command = Command::new(crate::process_roles::executable(
+                &executable,
+                crate::process_roles::Role::Service,
+            )?);
             command
                 .arg("serve")
                 .arg("--runtime-dir")
@@ -451,6 +454,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             serde_json::to_value(activate(install_dir, &previous).await?)?
         }
         RuntimeCommand::Launch { install_dir, args } => {
+            crate::client_owner::watch()?;
             launcher_repair::require_settled(install_dir)?;
             let (_, executable, _) = selected(install_dir)?;
             let mut command = Command::new(executable);

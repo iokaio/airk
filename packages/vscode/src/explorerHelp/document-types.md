@@ -8,7 +8,7 @@ related_airk_help: documents, formats, indexing-choices, code, configuration
 ---
 # Document types and extraction
 
-Begin with airk_capabilities for the running engine's supported adapters and optional local providers. Inspect representative files with airk_file_info or Evidence > Inspector; a filename extension alone is not proof of successful or complete extraction.
+Begin with capabilities for the running engine's supported adapters and optional local providers. Inspect representative files with file_info or Evidence > Inspector; a filename extension alone is not proof of successful or complete extraction.
 
 ## Choose for the source
 
@@ -18,7 +18,7 @@ Begin with airk_capabilities for the running engine's supported adapters and opt
 - **DOCX**: retains supported paragraphs, built-in headings and table rows/cells with original block/table locations. Custom style inheritance and arbitrary layout semantics are not complete. Richer detail helps when the task needs broader table or document inventories.
 - **XLSX**: preserves worksheet/row/cell locations, stored formula text and cached values. Hidden data can remain searchable and is labeled. Cached formula results may be stale; AIRK does not recalculate, run macros or load linked workbooks. Inspect the worksheet as well as the A1 cell address. Large workbooks can hit fact/byte limits before every cell is returned.
 - **PPTX**: uses supported slide text and explicit title placeholders with original slide provenance. Do not infer complete visual reading order, chart meaning or image contents from extracted text alone.
-- **Scanned PDF and raster images**: ordinary indexing does not automatically OCR them. Explicit local OCR requires provisioned Tesseract/language assets and, for PDFs, a local renderer. Ask airk_help command=ocr and topic=documents for current requirements. Selected pages, confidence limitations and OCR-derived provenance must remain visible. Unselected pages remain unknown; later OCR can replace the selected extraction for the artifact.
+- **Scanned PDF and raster images**: ordinary indexing does not automatically OCR them. Explicit local OCR requires provisioned Tesseract/language assets and, for PDFs, a local renderer. Ask help command=ocr and topic=documents for current requirements. Selected pages, confidence limitations and OCR-derived provenance must remain visible. Unselected pages remain unknown; later OCR can replace the selected extraction for the artifact.
 
 ## Steps
 

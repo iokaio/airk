@@ -8,13 +8,14 @@ import { OutlineScreen, ReferencesScreen, SymbolsScreen } from './code';
 import { DocumentFactsScreen } from './docs';
 import { ChangesScreen, CheckerScreen, InspectorScreen } from './evidence';
 import { HelpScreen } from './help';
-import { ActivityScreen, AgentsScreen, IndexingScreen, LogsScreen, ProjectsScreen, RepairScreen, ServiceScreen, StorageScreen, UsageScreen } from './manage';
+import { ProjectsScreen } from './manage';
 import { RecipesScreen, SearchScreen } from './search';
 import { PlannerScreen } from './planner';
 import { ReviewChangesScreen, ReviewImpactScreen, ReviewTestsScreen } from './review';
 import { LibraryScreen, StudioScreen } from './strategies';
 
 export interface ScreenProps {
+    manageEmbedded?: boolean;
     route: Route;
     state: ExplorerViewState;
     go(route: Route): void;
@@ -31,17 +32,16 @@ export interface ScreenProps {
 
 /** Screens backed by real AIRK operations, keyed by route. Everything else is labeled, never simulated. */
 export const SCREENS: Record<string, (props: ScreenProps) => JSX.Element> = {
+    'manage/overview': ProjectsScreen,
     'search/query': SearchScreen,
     'search/recipes': RecipesScreen,
-    'manage/projects': ProjectsScreen,
-    'manage/activity': ActivityScreen,
-    'manage/repair': RepairScreen,
-    'manage/indexing': IndexingScreen,
-    'manage/storage': StorageScreen,
-    'manage/service': ServiceScreen,
-    'manage/agents': AgentsScreen,
-    'manage/usage': UsageScreen,
-    'manage/logs': LogsScreen,
+    'manage/activity': ProjectsScreen,
+    'manage/repair': ProjectsScreen,
+    'manage/storage': ProjectsScreen,
+    'manage/service': ProjectsScreen,
+    'manage/agents': ProjectsScreen,
+    'manage/usage': ProjectsScreen,
+    'manage/logs': ProjectsScreen,
     'code/symbols': SymbolsScreen,
     'code/references': ReferencesScreen,
     'code/outline': OutlineScreen,
@@ -62,22 +62,26 @@ export function WorkspaceView(props: ScreenProps) {
     const workspace = WORKSPACES.find(entry => entry.id === props.route.workspace)!;
     const key = routeKey(props.route);
     const Screen = props.state.features[key] === 'implemented' ? SCREENS[key] : undefined;
+    const management = workspace.id === 'manage';
+    const tabs = workspace.tabs;
+    const activeTab = props.route.tab;
     return (
         <section class="workspace">
             <div class="workspace-heading"><div><p class="eyebrow">AIRK workspace</p><h1>{workspace.title}</h1></div>
             </div>
-            {workspace.tabs.length > 0 && (
-                <div class="tabs" role="tablist" aria-label={`${workspace.title} views`}>
-                    {workspace.tabs.map(tab => {
-                        const selected = tab.id === props.route.tab;
+            <div>
+            {tabs.length > 0 && (
+                <div class="tabs" role="tablist" aria-orientation="horizontal" aria-label={`${workspace.title} views`}>
+                    {tabs.map(tab => {
+                        const selected = tab.id === activeTab;
                         const available = props.state.features[`${workspace.id}/${tab.id}`];
                         return (
                             <button type="button" role="tab" key={tab.id} id={`tab-${workspace.id}-${tab.id}`} aria-controls={`panel-${workspace.id}`} tabIndex={selected ? 0 : -1} aria-selected={selected} class={selected ? 'selected' : ''}
                                 onKeyDown={event => {
-                                    const at = workspace.tabs.findIndex(entry => entry.id === tab.id);
-                                    const next = event.key === 'ArrowRight' ? (at + 1) % workspace.tabs.length : event.key === 'ArrowLeft' ? (at + workspace.tabs.length - 1) % workspace.tabs.length
-                                        : event.key === 'Home' ? 0 : event.key === 'End' ? workspace.tabs.length - 1 : undefined;
-                                    if (next !== undefined) { event.preventDefault(); props.go({ workspace: workspace.id, tab: workspace.tabs[next].id }); document.getElementById(`tab-${workspace.id}-${workspace.tabs[next].id}`)?.focus(); }
+                                    const at = tabs.findIndex(entry => entry.id === tab.id);
+                                    const next = event.key === 'ArrowRight' ? (at + 1) % tabs.length : event.key === 'ArrowLeft' ? (at + tabs.length - 1) % tabs.length
+                                        : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : undefined;
+                                    if (next !== undefined) { event.preventDefault(); props.go({ workspace: workspace.id, tab: tabs[next].id }); document.getElementById(`tab-${workspace.id}-${tabs[next].id}`)?.focus(); }
                                 }}
                                 onClick={() => props.go({ workspace: workspace.id, tab: tab.id })}>
                                 {tab.title}{available !== 'implemented' && <span class="tag">preview</span>}
@@ -86,7 +90,8 @@ export function WorkspaceView(props: ScreenProps) {
                     })}
                 </div>
             )}
-            <div role="tabpanel" id={`panel-${workspace.id}`} aria-labelledby={props.route.tab ? `tab-${workspace.id}-${props.route.tab}` : undefined}>{Screen ? <Screen key={`${key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />}</div>
+            <div class="workspace-content" role={activeTab ? "tabpanel" : undefined} id={`panel-${workspace.id}`} aria-labelledby={activeTab ? `tab-${workspace.id}-${activeTab}` : undefined}>{Screen ? <Screen key={`${management ? 'manage' : key}:${props.state.selectedProject}:${props.state.selectionEpoch}:${!management && props.navigation?.route === key ? props.navigation.serial : ''}`} {...props} /> : <Planned routeKey={key} availability={props.state.features[key] ?? 'unsupported'} />}</div>
+            </div>
         </section>
     );
 }

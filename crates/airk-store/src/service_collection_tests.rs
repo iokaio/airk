@@ -8,6 +8,26 @@ use std::{
 };
 
 #[test]
+fn retirement_inventory_is_bounded_by_deletion_batch_not_total_old_files() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let objects = owner.path().join("objects/sources");
+    fs::create_dir_all(&objects)?;
+    for n in 0..4100u64 {
+        fs::write(objects.join(format!("{n:064x}")), b"old")?;
+    }
+    let (files, _) = retirement_inventory(owner.path())?;
+    assert_eq!(files.len(), 4097);
+    assert_eq!(fs::read_dir(&objects)?.count(), 4100);
+    for path in files.into_iter().take(4096) {
+        fs::remove_file(path)?;
+    }
+    let (files, directories) = retirement_inventory(owner.path())?;
+    assert_eq!(files.len(), 4);
+    assert_eq!(directories.len(), 3);
+    Ok(())
+}
+
+#[test]
 fn selection_waits_for_short_metadata_handoffs_and_marks_only_real_lock_contention() -> Result<()> {
     let owner = tempfile::tempdir()?;
     let mut lease = Some(acquire_file(owner.path(), "manifest.lock")?);
@@ -128,6 +148,7 @@ fn derived_cleanup_requires_inactive_fenced_approval_preserves_settings_and_resu
     assert!(collection.derived_cleanup_preview(&lease).is_err());
     let (ns, epoch) = registry.request_epoch()?;
     let request = ConfigurationRequest {
+        prepare: false,
         incarnation: slot,
         settings: engine,
         configuration: ProjectConfiguration::Unregister,
@@ -157,6 +178,7 @@ fn derived_cleanup_requires_inactive_fenced_approval_preserves_settings_and_resu
                 nonce: Incarnation::from_bytes([nonce; 16]),
             },
             &ConfigurationRequest {
+                prepare: false,
                 incarnation: namespace,
                 settings: project.binding,
                 configuration,

@@ -6,6 +6,64 @@ use airk_store::{blobs::MissingRetainedObject, current::postings::Lookup};
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 
+/// Fixed operation context for durable failure codes; never contains source paths.
+#[derive(Debug)]
+pub struct IndexFailureStage(pub &'static str);
+impl std::fmt::Display for IndexFailureStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for IndexFailureStage {}
+
+pub fn indexing_failure_code(error: &anyhow::Error) -> Option<String> {
+    let cause = airk_store::diagnostics::failure_code(error).or_else(|| {
+        if error.is::<airk_store::blobs::MissingRetainedObject>() {
+            return Some("retained_object_missing".into());
+        }
+        // Fixed messages/prefixes map to fixed codes. Dynamic suffixes, paths,
+        // raw SQL and arbitrary exception text never enter the service ring.
+        error.chain().find_map(|cause| {
+            Some(
+                match cause.to_string().as_str() {
+                    "current inventory artifact missing" => "inventory_artifact_missing",
+                    "current inventory overflow" => "inventory_overflow",
+                    "current inventory admission exceeded" => "inventory_admission_exceeded",
+                    "prior extraction profile missing" => "prior_extraction_profile_missing",
+                    "current FTS5 physical index digest mismatch" => {
+                        "lexical_physical_digest_mismatch"
+                    }
+                    "current lexical manifest digest or encoding mismatch" => {
+                        "lexical_manifest_mismatch"
+                    }
+                    message if message.starts_with("corpus exceeds configured byte limit: ") => {
+                        "source_byte_limit_exceeded"
+                    }
+                    message
+                        if message
+                            .starts_with("extracted corpus exceeds configured byte limit: ") =>
+                    {
+                        "extracted_byte_limit_exceeded"
+                    }
+                    message if message.starts_with("corpus exceeds configured file count: ") => {
+                        "source_file_limit_exceeded"
+                    }
+                    _ => return None,
+                }
+                .into(),
+            )
+        })
+    });
+    match error.downcast_ref::<IndexFailureStage>() {
+        Some(stage) => Some(format!(
+            "index_{}_{}",
+            stage.0,
+            cause.as_deref().unwrap_or("failed")
+        )),
+        None => cause,
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct IntegrityFailure {
     pub path: String,
@@ -177,6 +235,66 @@ impl Kernel {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn indexing_failure_codes_preserve_stage_and_safe_cause_only() {
+        let error = anyhow::Error::from(std::io::Error::from_raw_os_error(32))
+            .context("private source path and user name")
+            .context(IndexFailureStage("read_snapshot"));
+        assert_eq!(
+            indexing_failure_code(&error).as_deref(),
+            Some("index_read_snapshot_filesystem_error_32")
+        );
+        assert!(
+            error.is::<std::io::Error>(),
+            "diagnostic context must preserve typed recovery decisions"
+        );
+        let error = anyhow::anyhow!("current inventory admission exceeded")
+            .context(IndexFailureStage("read_snapshot"));
+        assert_eq!(
+            indexing_failure_code(&error).as_deref(),
+            Some("index_read_snapshot_inventory_admission_exceeded")
+        );
+        let error = anyhow::anyhow!("unknown private exception with source text")
+            .context(IndexFailureStage("scan_sources"));
+        assert_eq!(
+            indexing_failure_code(&error).as_deref(),
+            Some("index_scan_sources_failed")
+        );
+        assert_eq!(
+            indexing_failure_code(&anyhow::anyhow!("unrecognized private exception")),
+            None
+        );
+        for (prefix, code) in [
+            (
+                "corpus exceeds configured byte limit: ",
+                "source_byte_limit_exceeded",
+            ),
+            (
+                "extracted corpus exceeds configured byte limit: ",
+                "extracted_byte_limit_exceeded",
+            ),
+            (
+                "corpus exceeds configured file count: ",
+                "source_file_limit_exceeded",
+            ),
+        ] {
+            let error = anyhow::anyhow!("{prefix}private counts, source path and user name")
+                .context(IndexFailureStage("scan_sources"));
+            assert_eq!(
+                indexing_failure_code(&error),
+                Some(format!("index_scan_sources_{code}"))
+            );
+        }
+        let error = serde_json::from_slice::<serde_json::Value>(b"{").unwrap_err();
+        assert_eq!(
+            indexing_failure_code(
+                &anyhow::Error::from(error).context(IndexFailureStage("current_scope"))
+            )
+            .as_deref(),
+            Some("index_current_scope_metadata_incomplete")
+        );
+    }
 
     #[test]
     fn retained_diagnostics_verify_both_inputs_without_live_sources_and_expire_pages() -> Result<()>

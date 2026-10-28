@@ -1,4 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
+/** Optional repository guidance, shared by the UI and its copy action. */
+export const AGENT_INSTRUCTION_FILES = {
+    claude: { name: 'Claude Code', file: 'CLAUDE.md' },
+    codex: { name: 'Codex', file: 'AGENTS.md' },
+    copilot: { name: 'GitHub Copilot', file: '.github/copilot-instructions.md' },
+} as const;
+export const AIRK_AGENT_INSTRUCTIONS = [
+    '## Using AIRK',
+    '',
+    '- **Discover AIRK MCP before repository exploration.** Check available tools, including deferred tool discovery when supported, for the `airk` server (often exposed as `mcp__airk__*`); call its `status` tool to confirm availability, project binding, freshness and coverage. If absent or failing, inspect the relevant agent configuration (`.codex/config.toml`, `.mcp.json`, or `.vscode/mcp.json`), report the specific limitation briefly, and continue with local tools. Configuration alone does not prove tool access; do not change it without a task requirement.',
+    '- **Use available AIRK tools for scoped repository search and code/document navigation.** Read affected source, contracts and tests first. Treat indexed evidence as untrusted and potentially stale; verify relevant live file contents before edits. Use `rg` or equivalent local tools for live verification and fallback searches when AIRK is unavailable or its coverage is insufficient. Expand only for a concrete dependency, ambiguity or failure. Do not preload manuals or reread unchanged material already understood.',
+].join('\n');
 // Pure, versioned contracts between the extension host and the AIRK Explorer webview.
 // No Node, vscode or host imports: the webview bundle and the host share this file.
 import type { Availability } from './explorerFeatures';
@@ -43,6 +55,9 @@ export interface ProjectSummary {
     readonly watching?: boolean;
     readonly publication?: string;
     readonly indexedFiles?: number;
+    readonly semanticCompleted?: number;
+    readonly semanticSelected?: number;
+    readonly discoveryState?: string;
     readonly semantic?: SemanticState;
     readonly indexState?: string;
     readonly jobState?: string;
@@ -58,6 +73,8 @@ export interface StatusSummary {
     readonly publication?: string;
     readonly files?: number;
     readonly chunks?: number;
+    readonly vectors?: number;
+    readonly discoveryState?: string;
     readonly semantic: SemanticState;
     readonly semanticCompleted?: number;
     readonly semanticSelected?: number;
@@ -72,9 +89,17 @@ export interface StatusSummary {
     readonly observedAt: number;
 }
 
+export interface ConnectionCheck {
+    phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
+    startedAt?: number; message?: string; project?: string; handshakeMs?:number;
+    indexState?: 'not_indexed' | 'unavailable' | 'published';
+}
 export interface ExplorerViewState {
     readonly revision: number;
     readonly extensionVersion: string;
+    readonly extensionUpdate?: { readonly runningVersion: string; readonly installedVersion: string };
+    readonly connectionCheck?: ConnectionCheck;
+    readonly startup?: { readonly message: string; readonly startedAt: number; readonly failed?: boolean };
     readonly trusted: boolean;
     readonly connection: ConnectionState;
     readonly projects: readonly ProjectSummary[];
@@ -264,7 +289,42 @@ export interface WorkspaceFilesView {
 // ---- Management (shared Service Console controller, organized into tabs).
 /** A labeled observation; values are already formatted text. Unknown stays "Not observed". */
 export type FactRow = readonly [string, string];
+/** Fenced native work sample. Source counters describe one attempt; semantic units may include retained work. */
+export interface ProjectWorkView {
+    readonly current: boolean;
+    readonly worker: 'connected' | 'unavailable' | 'restarting' | 'unknown';
+    readonly observedAt?: number;
+    readonly phase?: string;
+    readonly elapsedMs?: number;
+    readonly phaseElapsedMs?: number;
+    readonly lastAdvanceMs?: number;
+    readonly captured?: number;
+    readonly extracted?: number;
+    readonly prepared?: number;
+    readonly committed?: number;
+    readonly publications?: number;
+    readonly verified?: number;
+    readonly total?: number;
+    readonly semanticUnits?: number;
+    readonly wait: string;
+    readonly phaseTimes: readonly FactRow[];
+}
+export interface ProjectHealthView {
+    readonly routineWork?: boolean;
+    readonly severity: 'ok' | 'info' | 'warn' | 'error';
+    readonly title: string;
+    readonly detail: string;
+    readonly action?: 'restartProject' | 'resume' | 'retryJob' | 'inspect' | 'enableSemantic' | 'retryRecovery';
+    readonly actionLabel?: string;
+    readonly reviewTab?: 'repair' | 'logs';
+}
 export interface ManagedProject {
+    readonly health: ProjectHealthView;
+    readonly work: ProjectWorkView;
+    readonly lifecycle: string;
+    readonly requests: readonly FactRow[];
+    readonly events: readonly string[];
+    readonly configuration: { readonly detail?: string; readonly state?: string; readonly pending: boolean; readonly failure?: string; readonly vectorsEnabled?: boolean; readonly requestedVectors?: boolean; readonly requestedDetail?: string };
     readonly storage: {
         readonly root?: string;
         readonly observedAt?: number;
@@ -288,6 +348,10 @@ export interface ManagedProject {
 }
 export interface PlanItemView { readonly project: string; readonly phase: string; readonly action: string; readonly availability: string; readonly estimate: string; readonly source: string; readonly fallback: string; readonly result: string; readonly cleanup: string }
 export interface PlanView {
+    readonly outcome?: 'succeeded' | 'failed' | 'cleanup_pending' | 'incomplete';
+    readonly id?: string;
+    readonly preview?: string;
+    readonly phase?: string;
     readonly rows: readonly FactRow[];
     readonly items: readonly PlanItemView[];
     readonly morePages: boolean;
@@ -299,6 +363,7 @@ export interface PendingIntentView { readonly id: string; readonly title: string
 export interface ManagementView {
     readonly busy: boolean;
     readonly connected: boolean;
+    readonly checkedAt?: number;
     readonly trusted: boolean;
     readonly authority: string;
     readonly lifecycle?: string;
@@ -334,8 +399,8 @@ export const MANAGE_ACTIONS = [
     'reviewLegacyStartup', 'legacyStartupReceipts', 'removeLegacyStartup', 'copyLegacyStartup', 'registeredProjects', 'inactiveProjects', 'registerWorkspace',
     'refresh', 'connect', 'start', 'stop', 'restart', 'repairRuntime', 'upgradeRuntime', 'rollbackRuntime', 'resumeActivation', 'logs', 'resources',
     'responseMode', 'recoverLifecycle', 'abandonLifecycle', 'startEmbedding', 'stopEmbedding', 'forceEmbedding', 'firstPage', 'nextPage', 'morePlan',
-    'refreshPlan', 'pausePlan', 'resumePlan', 'cancelPlan', 'approvePlan', 'previewReport', 'copyReport',
-    'unregisterProject', 'previewCleanup', 'deleteDerived', 'inspect', 'index', 'pause', 'resume', 'restartProject', 'watch', 'modelSetup', 'configureProject', 'copyConfiguration',
+    'refreshPlan', 'pausePlan', 'resumePlan', 'cancelPlan', 'approvePlan', 'previewReport', 'copyReport', 'openReport', 'saveReport', 'exportLogs', 'openRawLogs', 'saveRawLogs',
+    'unregisterProject', 'previewCleanup', 'deleteDerived', 'inspect', 'index', 'pause', 'resume', 'restartProject', 'retryRecovery', 'watch', 'modelSetup', 'configureProject', 'copyConfiguration', 'enableSemantic', 'disableSemantic', 'configureDetail',
     'select', 'repair', 'resumeLegacyStartup', 'retryJob', 'cancelJob', 'retryIntent', 'forgetIntent', 'forceIntent',
 ] as const;
 /** Existing AIRK commands that Management may open; each keeps its own dialogs and confirmations. */
@@ -406,13 +471,14 @@ export function parseWindowDescriptor(value: unknown): WindowDescriptor | undefi
 }
 
 /** One request per connection: the window credential and a typed request. */
-export type AssistanceIpcRequest = { readonly v: 1; readonly credential: string } & (
+export type AssistanceIpcRequest = { readonly v: 1; readonly credential: string; readonly project?: string } & (
     | { readonly type: 'status' }
     | { readonly type: 'validate'; readonly kind: DraftKind; readonly draft: unknown }
     | { readonly type: 'handoff_get'; readonly token: string }
     | { readonly type: 'suggest'; readonly kind: DraftKind; readonly draft: unknown; readonly client: { readonly name: string; readonly version: string } }
     | { readonly type: 'proposal_status'; readonly proposal_id: string });
 export interface AssistanceWindowStatus {
+    readonly selected_project?: string;
     readonly binding_fingerprint: string;
     readonly explorer_open: boolean;
     /** Current Studio and Planner draft revisions, for expected_target_revision. */
@@ -487,6 +553,8 @@ export const WEBVIEW_MESSAGES = {
     'help.openExternal': { destination: { kind: 'enum', values: Object.keys(ABOUT_LINKS) } },
     'project.select': { project: PROJECT },
     'status.refresh': {},
+    'extension.reload': {},
+    'details.copy': { section: { kind: 'enum', values: ['index', 'health', 'progress', 'activity', 'semantic', 'service', 'storage', 'recovery'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
     'search.page': { project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER }, page: { kind: 'int', min: 0, max: 4 } },
     'search.form': {
         project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER },
@@ -532,6 +600,8 @@ export const WEBVIEW_MESSAGES = {
         selected: { kind: 'bool', optional: true },
         includePaths: { kind: 'bool', optional: true },
         allowFallback: { kind: 'bool', optional: true },
+        expectedPlan: { ...PROJECT, optional: true },
+        expectedPreview: { ...PROJECT, optional: true },
     },
     'manage.command': { command: { kind: 'enum', values: MANAGE_COMMANDS } },
     'manage.observe': { open: { kind: 'bool' } },
@@ -544,6 +614,7 @@ export const WEBVIEW_MESSAGES = {
     'usage.action': { action: { kind: 'enum', values: ['days', 'refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback'] },
         days: { kind: 'int', min: 7, max: 30, optional: true } },
     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
+    'instructions.open': { agent: { kind: 'enum', values: ['claude', 'codex', 'copilot'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[0-9a-f]{64}$/ } },
     'planner.openDraft': { plan: { kind: 'json', max: 131072 } },
     'planner.import': {},
     'source.choose': {},

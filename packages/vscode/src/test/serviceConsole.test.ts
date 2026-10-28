@@ -9,6 +9,18 @@ import { managementView } from '../explorerManagement';
 const shown = (state: ServiceConsoleState): string => JSON.stringify(managementView(state));
 import { RecordValue, ServiceClient, ServiceError } from '../serviceClient';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+test('raw log actions use the trusted local host and never enter summary reports',async()=>{
+    const f=fixture(),calls:boolean[]=[];
+    f.host.rawLogs=async save=>{calls.push(save);};
+    await f.controller.refresh();
+    await f.action('openRawLogs');await f.action('saveRawLogs');
+    assert.deepEqual(calls,[false,true]);
+    await f.action('openRawLogs',{path:'/forged-log'});
+    assert.deepEqual(calls,[false,true]);
+    f.setTrusted(false);await f.action('openRawLogs');
+    assert.deepEqual(calls,[false,true]);
+    f.controller.dispose();
+});
 test('console workspace registration uses a trusted host action and highlights only native project bindings',async()=>{
     const f=fixture();let registrations=0;
     f.host.registerWorkspace=async()=>{registrations++;};f.host.currentProjects=()=>new Set([project]);
@@ -38,6 +50,28 @@ test('trusted rebuild commands create a saved guarded preview and never approve 
     assert.equal(f.controller.state.plan?.value.id,plan.id);assert.equal(calls.length,1);
     assert.equal((calls[0] as any).plan_create.request.operation,'rebuild');assert.deepEqual((calls[0] as any).plan_create.request.selection,{selected:[project]});
     f.setTrusted(false);await f.controller.projectPlan(project,'rebuild');assert.equal(calls.length,1);f.controller.dispose();
+});
+
+test('observation polling refreshes repair rows through queued running and finished without user actions',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any);
+    const id='de'.repeat(32),preview='ef'.repeat(32);
+    let phase='ready',itemPhase='ready',reads=0;
+    const header=()=>({id,preview_digest:preview,phase,paused:false,counts:{selected:1,ready:phase==='ready'?1:0,running:phase==='running'?1:0,succeeded:phase==='finished'?1:0}});
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        if(method&&typeof method==='object'&&'plan' in method)return {status:'plan',plan:header()};
+        if(method&&typeof method==='object'&&'plan_items' in method){reads++;return {status:'plan_items',page:{plan:header(),items:[{project,phase:itemPhase,action:'reconcile'}],after:null}};}
+        return base.rpc(method);
+    }});
+    try{
+        await f.controller.refresh();f.controller.state.plan={value:header(),items:[{project,phase:itemPhase,action:'reconcile'}],after:null};
+        for(const next of [['running','action_queued'],['running','running'],['finished','succeeded']]){
+            [phase,itemPhase]=next;await f.controller.refresh();
+            assert.equal(f.controller.state.plan!.items[0].phase,itemPhase);
+            assert.equal(f.controller.state.plan!.value.phase,phase);
+        }
+        assert.equal(reads,3);await f.controller.refresh();assert.equal(reads,3,'a stable finished plan needs no repeated row fetch');
+        assert.equal(f.sent.some(value=>typeof value==='object'&&value!==null&&('enqueue' in value||'plan_execute' in value)),false);
+    }finally{f.controller.dispose();}
 });
 function fixture(){
     let trusted=true,fail=false,lastKind='inspect';const sent:unknown[]=[],values=new Map<string,unknown>(),copied:string[]=[];
@@ -130,13 +164,39 @@ test('trust loss during a project setting dialog prevents native preparation and
     assert.equal(prepared,false);assert.equal(f.sent.length,before);assert.equal(f.controller.state.pending.length,0);f.controller.dispose();
 });
 
-test('configuration requires an inspection before opening host choices or preparing work',async()=>{
-    const f=fixture();let prompted=false,prepared=false;
-    f.host.configuration=async()=>{prompted=true;return {operation:'vectors',enabled:false};};
-    f.host.runtime.prepareConfiguration=async()=>{prepared=true;throw new Error('Must inspect first');};
+test('scalar preferences are accepted durably without extension inspection or preparation',async()=>{
+    const f=fixture();f.host.configuration=async()=>({operation:'vectors',enabled:false});
+    f.host.runtime.prepareConfiguration=async()=>{throw new Error('Native owner prepares this preference');};
     await f.controller.refresh();await f.action('configureProject',{project});
-    assert.equal(prompted,false);assert.equal(prepared,false);assert.equal(f.controller.state.pending.length,0);
-    assert.match(f.controller.state.message!,/Inspect this project/);f.controller.dispose();
+    const sent=f.sent.find(value=>value&&typeof value==='object'&&'configure_project' in value) as any;
+    assert.deepEqual(sent.configure_project.request,{incarnation:namespace,settings:project,configuration:{operation:'vectors',enabled:false},prepare:true});
+    assert.equal(f.sent.some(value=>value&&typeof value==='object'&&'enqueue' in value),false);
+    assert.match(f.controller.state.message!,/continues when VS Code closes/);f.controller.dispose();
+});
+
+test('semantic changes join pending settings and repeat index clicks follow existing source work',async()=>{
+    const f=fixture();await f.controller.refresh();
+    const row=f.controller.state.page!.projects[0];row.configuration={id:job,state:'pending'};
+    await f.action('enableSemantic',{project});
+    assert.match(f.controller.state.message!,/already queued/);
+    assert.equal(f.sent.some(value=>value&&typeof value==='object'&&'configure_project' in value),false);
+    row.configuration=null;row.progress={job:{id:job,kind:'reconcile',state:'running'}};
+    await f.action('index',{project});assert.match(f.controller.state.message!,/Following the existing request/);
+    assert.equal(f.sent.some(value=>value&&typeof value==='object'&&'enqueue' in value),false);f.controller.dispose();
+});
+
+test('semantic control refuses dispatch if trust is lost while obtaining its durable request key',async()=>{
+    for(const trusted of [true,false]){
+        const f=fixture(),base=f.host.runtime.client({} as any);let lose=false;
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            const result=await base.transport.request(method);
+            if(lose&&method==='request_epoch')f.setTrusted(trusted);
+            return result;
+        }});
+        await f.controller.refresh();lose=true;
+        await f.action('enableSemantic',{project});
+        assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value).length,trusted?1:0);f.controller.dispose();
+    }
 });
 
 test('direct removal inspects a missing-source project and requires approval before unregistering',async()=>{
@@ -324,7 +384,8 @@ test('an external service manager disables lifecycle actions and the full report
 test('bounded diagnostic export records truncation without source, credentials or raw errors',()=>{
     const f=fixture(),state=f.controller.state as ServiceConsoleState;
     state.events=Array.from({length:128},(_,sequence)=>({sequence,kind:'x'.repeat(512),code:'y'.repeat(512),query:'private query',token:'bearer-secret'}));
-    const report=diagnosticPreview(state,false);assert.ok(Buffer.byteLength(report)<=65536);assert.doesNotMatch(report,/private query|bearer-secret/);
+    const report=diagnosticPreview(state,false);assert.ok(Buffer.byteLength(report)<=256*1024);assert.doesNotMatch(report,/private query|bearer-secret/);
+    assert.equal(JSON.parse(report).events.length,128);
     f.controller.dispose();
 });
 test('background refresh preserves the exact report reviewed before Copy',async()=>{
@@ -332,6 +393,28 @@ test('background refresh preserves the exact report reviewed before Copy',async(
     const preview=f.controller.state.preview;assert.ok(preview);
     await f.controller.refresh();assert.equal(f.controller.state.preview,preview);
     await f.action('copyReport');assert.equal(f.copied[0],preview);f.controller.dispose();
+});
+
+test('report open and save preserve captured bytes and reject webview supplied destinations',async()=>{
+    const f=fixture(),opened:string[]=[],saved:string[]=[];
+    f.host.openReport=async text=>{opened.push(text);};f.host.saveReport=async text=>{saved.push(text);};
+    await f.controller.refresh();await f.action('previewReport',{includePaths:false});
+    const captured=f.controller.state.preview!;
+    await f.controller.refresh();await f.action('openReport');await f.action('saveReport');
+    assert.deepEqual(opened,[captured]);assert.deepEqual(saved,[captured]);
+    await f.action('saveReport',{path:'/forged'});assert.equal(saved.length,1);
+    f.controller.dispose();
+});
+
+test('diagnostic report retains the failing job outcome and recovery budget without copying raw error fields',async()=>{
+    const f=fixture();await f.controller.refresh();
+    const row=f.controller.state.page!.projects[0];
+    row.progress={job:{id:job,kind:'recover',state:'failed',outcome:{state:'failed',code:'quota_ledger_busy',error:'private raw error'}}};
+    row.recovery=[{reason:'quota_ledger_busy',state:'waiting',attempts:1,limit:3,next_check_unix_ms:10,started_unix_ms:1,job}];
+    const text=diagnosticPreview(f.controller.state,false),report=JSON.parse(text);
+    assert.equal(report.projects[0].job.outcome.code,'quota_ledger_busy');
+    assert.equal(report.projects[0].recovery[0].next_check_unix_ms,10);
+    assert.doesNotMatch(text,/private raw error/);f.controller.dispose();
 });
 
 test('damaged payload uses cached pages and persists an instance-fenced Stop without launching it',async()=>{
@@ -432,4 +515,22 @@ test('trust lost while native repair preview loads prevents approval and mutatio
     f.host.runtime.repair=async()=>{calls++;f.setTrusted(false);return {preview:'ab'.repeat(32)};};
     await f.controller.refresh();await f.action('repairRuntime');
     assert.equal(calls,1);assert.equal(confirmed,false);assert.equal(f.controller.state.message,'runtime_client_no_longer_authorized');f.controller.dispose();
+});
+
+test('preparation timeout distinguishes an unsubmitted change from an accepted native change',async context=>{
+    let now=Date.now();context.mock.method(Date,'now',()=>now+=100000);
+    for(const waitingKind of ['inspect','configure']){
+        const f=fixture(),base=f.host.runtime.client({} as any);
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            const response=await base.transport.request(method);
+            if(typeof method==='object'&&method!==null&&'job' in method){
+                const value=response as any;
+                if(value.job.kind===waitingKind){delete value.job.outcome;value.job.state='pending';}
+            }
+            return response;
+        }});
+        await assert.rejects(f.controller.projectConfiguration(project,{operation:'usage',mode:'aggregates_only'}),waitingKind==='inspect'?/has not been submitted/:/was accepted/);
+        assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value).length,waitingKind==='inspect'?0:1);
+        assert.equal(f.controller.state.pending.length,0,'acknowledged jobs retain native outcomes, not an unknown request');f.controller.dispose();
+    }
 });

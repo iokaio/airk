@@ -17,8 +17,10 @@ const MAX_MEMBERS: i64 = 1024;
 const MAX_ITEM: usize = 16_384;
 pub(super) const ELIGIBLE:&str="(j.kind NOT IN('plan_inspect','repair') OR EXISTS(
     SELECT 1 FROM service_plan_jobs l JOIN service_plans p2 ON p2.id=l.plan
+    JOIN service_plan_items m ON m.plan=l.plan AND m.project=l.project
     WHERE l.job=j.id AND p2.paused=0 AND p2.canceled=0
-    AND ((j.kind='plan_inspect' AND p2.phase='planning') OR (j.kind='repair' AND p2.phase='running'))))";
+    AND ((j.kind='plan_inspect' AND p2.phase='planning' AND m.phase IN('inspect_queued','inspecting'))
+      OR (j.kind='repair' AND p2.phase='running' AND m.phase IN('action_queued','running')))))";
 pub(super) fn clock_ms() -> Result<u64> {
     Ok(std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -241,6 +243,17 @@ pub(super) fn job_claimed(connection: &Connection, job: Sha256Digest) -> Result<
     }
     Ok(())
 }
+pub(super) fn job_recovers_publication(connection: &Connection, job: Sha256Digest) -> Result<bool> {
+    for (plan, project, step) in linked_items(connection, job)? {
+        if step == PlanStep::Action
+            && item(connection, plan, project)?.action
+                == Some(airk_core::service_maintenance::RepairOperation::Recover)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 fn propose(
     operation: airk_core::service_maintenance::RepairOperation,
     snapshot: &airk_core::service_inspection::InspectionSnapshot,
@@ -401,7 +414,11 @@ pub(super) fn job_completed(
                 // A cached earlier sample cannot prove cleanup for this action.
                 // An interrupted rebuild receipt proves publication, not retirement.
                 member.cleanup_pending = maintenance
-                    .map(|sample| sample.failed || sample.pending_incarnations != Some(0))
+                    .map(|sample| {
+                        sample.failed
+                            || sample.pending_incarnations != Some(0)
+                            || sample.pending_objects
+                    })
                     .unwrap_or(
                         member.action
                             == Some(airk_core::service_maintenance::RepairOperation::Rebuild),
@@ -636,6 +653,86 @@ pub(super) fn plan(connection: &Connection, id: Sha256Digest) -> Result<Maintena
 }
 
 impl ServiceRegistry {
+    /// Explain a queued maintenance request using its durable owner, without opening an index.
+    pub fn pending_job_gate(
+        &self,
+        project: ProjectBinding,
+    ) -> Result<Option<airk_core::service_console::PendingJobGate>> {
+        use airk_core::service::{JobKind, JobState};
+        let Some(job) = self.pending_job_observation(project)? else {
+            return Ok(None);
+        };
+        if job.state != JobState::Pending
+            || !matches!(job.kind, JobKind::PlanInspect | JobKind::Repair)
+        {
+            return Ok(None);
+        }
+        let owners = linked_items(&self.connection, job.id)?;
+        ensure!(owners.len() <= 1, "maintenance job has multiple owners");
+        let Some((id, binding, step)) = owners.first().copied() else {
+            return Ok(Some(airk_core::service_console::PendingJobGate {
+                job: job.id,
+                code: "maintenance_request_orphaned".into(),
+                plan: None,
+                plan_phase: None,
+            }));
+        };
+        ensure!(binding == project, "foreign maintenance owner");
+        let header = plan(&self.connection, id)?;
+        let member = item(&self.connection, id, project)?;
+        let code = if header.phase == PlanPhase::Finished || member.phase.terminal() {
+            Some("maintenance_request_obsolete")
+        } else if header.paused {
+            Some("maintenance_plan_paused")
+        } else if header.phase == PlanPhase::Canceling {
+            Some("maintenance_plan_canceling")
+        } else if !matches!(
+            (step, header.phase),
+            (PlanStep::Inspect, PlanPhase::Planning) | (PlanStep::Action, PlanPhase::Running)
+        ) {
+            Some("maintenance_plan_not_running")
+        } else {
+            None
+        };
+        let plan_phase = text(header.phase)?;
+        Ok(code.map(|code| airk_core::service_console::PendingJobGate {
+            job: job.id,
+            code: code.into(),
+            plan: Some(id),
+            plan_phase: Some(plan_phase),
+        }))
+    }
+
+    /// Old/inconsistent plan membership must not leave an unclaimable request blocking source work forever.
+    /// Only pending metadata with no live plan item is settled; pause and cancellation ownership remain intact.
+    fn settle_obsolete_maintenance_requests(&mut self) -> Result<bool> {
+        use airk_core::service::JobOutcome;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let ids = {
+            let mut statement=tx.prepare("SELECT j.id FROM service_jobs j WHERE j.state='pending' AND j.kind IN('plan_inspect','repair')
+                AND NOT EXISTS(SELECT 1 FROM service_plan_jobs l JOIN service_plans p ON p.id=l.plan
+                    JOIN service_plan_items m ON m.plan=l.plan AND m.project=l.project
+                    WHERE l.job=j.id AND l.project=j.project AND p.phase<>'finished'
+                    AND m.phase NOT IN('succeeded','failed','stale','skipped','canceled')) ORDER BY j.seq LIMIT 16")?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let outcome = serde_json::to_vec(&JobOutcome::Failed {
+            code: "maintenance_request_obsolete".into(),
+        })?;
+        for id in &ids {
+            tx.execute(
+                "UPDATE service_jobs SET state='failed',outcome=?1 WHERE id=?2 AND state='pending'",
+                params![outcome, id],
+            )?;
+        }
+        tx.commit()?;
+        Ok(!ids.is_empty())
+    }
+
     pub fn repair_work(
         &self,
         lease: &crate::service::ProjectLease,
@@ -696,6 +793,7 @@ impl ServiceRegistry {
     /// One bounded metadata turn. Index opening and work remain worker-owned.
     /// Every enqueue and its plan association commit in the same transaction.
     pub fn advance_maintenance_plans(&mut self, now_ms: u64) -> Result<bool> {
+        let settled = self.settle_obsolete_maintenance_requests()?;
         let plans = {
             let mut statement = self.connection.prepare(
                 "SELECT id FROM service_plans WHERE phase IN('planning','running','canceling')
@@ -706,7 +804,7 @@ impl ServiceRegistry {
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
         ensure!(plans.len() <= MAX_PLANS as usize, PlanError::Capacity);
-        let runnable = !plans.is_empty();
+        let runnable = settled || !plans.is_empty();
         let mut budget = 16;
         for raw in plans {
             let id = raw.parse()?;

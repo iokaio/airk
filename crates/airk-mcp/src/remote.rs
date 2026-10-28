@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Read-only stdio adapter: the native host supplies an authenticated direct connection.
 use rmcp::{
-    ErrorData, RoleServer, ServerHandler, ServiceExt,
+    ErrorData, RoleServer, ServerHandler,
     model::{
         CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
         PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -13,6 +13,18 @@ use std::{future::Future, pin::Pin, sync::Arc};
 pub type RemoteFuture<'a> =
     Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send + 'a>>;
 pub trait RemoteTools: Send + Sync + 'static {
+    fn catalog(&self) -> Vec<Tool> {
+        crate::local::tools()
+    }
+    fn guidance(&self) -> &'static str {
+        crate::response::GUIDANCE
+    }
+    fn local_help(&self) -> bool {
+        true
+    }
+    fn uses_response_mode(&self, _tool: &str) -> bool {
+        true
+    }
     fn client(&self, _client: airk_core::usage::ClientFamily) {}
     fn call(
         &self,
@@ -34,10 +46,11 @@ impl ServerHandler for Bridge {
                 "airk",
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions(crate::response::GUIDANCE)
+            .with_instructions(self.backend.guidance())
     }
     fn get_tool(&self, name: &str) -> Option<Tool> {
-        crate::local::tools()
+        self.backend
+            .catalog()
             .into_iter()
             .find(|tool| tool.name == name)
     }
@@ -47,7 +60,7 @@ impl ServerHandler for Bridge {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(ListToolsResult {
-            tools: crate::local::tools(),
+            tools: self.backend.catalog(),
             ..Default::default()
         })
     }
@@ -63,19 +76,20 @@ impl ServerHandler for Bridge {
             .into());
         };
         let mut arguments = request.arguments.unwrap_or_default();
-        if request.name == "airk_help" {
+        if request.name == "airk_help" && self.backend.local_help() {
             return Ok(crate::help::call(serde_json::Value::Object(arguments)).into());
         }
         let client = context
-            .peer
-            .peer_info()
+            .client_info()
             .map_or(airk_core::usage::ClientFamily::Unknown, |info| {
-                airk_core::usage::ClientFamily::from_label(&info.client_info.name)
+                airk_core::usage::ClientFamily::from_label(&info.name)
             });
         self.backend.client(client);
-        arguments.entry("response_mode").or_insert_with(|| {
-            serde_json::to_value(self.response_mode).expect("scalar display mode")
-        });
+        if self.backend.uses_response_mode(&request.name) {
+            arguments.entry("response_mode").or_insert_with(|| {
+                serde_json::to_value(self.response_mode).expect("scalar display mode")
+            });
+        }
         let result = self
             .backend
             .call(request.name.to_string(), arguments)
@@ -86,19 +100,22 @@ impl ServerHandler for Bridge {
 }
 
 pub async fn serve(backend: Arc<dyn RemoteTools>) -> anyhow::Result<()> {
-    Bridge {
+    let bridge = Bridge {
         backend,
         permits: Arc::new(tokio::sync::Semaphore::new(4)),
         response_mode: crate::response::ResponseMode::from_environment(),
-    }
-    .serve((
-        BoundedRead {
-            inner: tokio::io::stdin(),
-            line_bytes: 0,
-        },
-        tokio::io::stdout(),
-    ))
-    .await?
+    };
+    rmcp::service::serve_directly(
+        crate::lifecycle::StdioLifecycle::new(bridge),
+        (
+            BoundedRead {
+                inner: tokio::io::stdin(),
+                line_bytes: 0,
+            },
+            tokio::io::stdout(),
+        ),
+        None,
+    )
     .waiting()
     .await?;
     Ok(())
@@ -143,6 +160,7 @@ impl<R: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for BoundedRead<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmcp::ServiceExt;
     use tokio::io::AsyncReadExt;
 
     struct Echo;

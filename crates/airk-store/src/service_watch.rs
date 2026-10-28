@@ -160,7 +160,8 @@ impl ServiceRegistry {
         let mut statement=self.connection.prepare("SELECT w.project,w.requested FROM service_watch w JOIN projects p ON p.binding=w.project
             WHERE w.project>?1 AND w.enabled=1 AND p.paused=0 AND w.requested>w.indexed AND w.attempts<3
             AND (w.blocked_revision IS NULL OR w.blocked_revision<w.requested) AND w.next_ms<=?2
-            AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=w.project AND j.state IN('pending','running')) ORDER BY w.project LIMIT ?3")?;
+            AND NOT EXISTS(SELECT 1 FROM service_recovery_budget b WHERE b.scope='source:'||w.project AND (b.failures>=3 OR b.next_ms>?2))
+            AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=w.project AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')) ORDER BY w.project LIMIT ?3")?;
         let rows = statement.query_map(
             params![
                 after.map(|id| id.to_string()).unwrap_or_default(),
@@ -238,7 +239,9 @@ impl ServiceRegistry {
             enabled,
             requested_revision: u64::try_from(requested)?,
             completed_revision: u64::try_from(indexed)?,
-            automatic_retries_exhausted: enabled && requested > indexed && attempts >= 3,
+            automatic_retries_exhausted: enabled
+                && requested > indexed
+                && (attempts >= 3 || self.source_failure_blocked(project)?),
             automatic_retry_canceled: enabled
                 && requested > indexed
                 && blocked.is_some_and(|blocked| blocked >= requested),

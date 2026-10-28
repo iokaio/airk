@@ -1,5 +1,7 @@
 # The AIRK Explorer
 
+Historical design baseline from the pre-Explorer 1.4 planning cycle. The implementation has since shipped; use [current Explorer guidance](../vscode-extension.md), the [unified MCP catalog](../unified-mcp.md) and the [documentation index](../README.md) for current behavior. The baseline observations below retain their original scope.
+
 AIRK Explorer is the proposed replacement for the current AIRK VS Code panel, which is crowded and simplistic. It would be one navigable workbench for evidence search, code and document inspection, review, strategy and plan preparation, and index management.
 
 This folder holds the design inputs for that work. Each document was written in response to earlier ones. This README summarizes them in order of relevance, for an AI agent writing an Explorer design and implementation plan grounded in the code on `main`.

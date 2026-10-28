@@ -12,7 +12,7 @@ const MAX_DESCRIPTORS = 64;
 
 export function contains(root: string, target: string, platform: NodeJS.Platform = process.platform): boolean {
     const paths = platform === 'win32' ? path.win32 : path.posix;
-    const fold = (value: string) => platform === 'win32' ? value.toLowerCase() : value;
+    const fold = (value: string) => platform === 'win32' ? path.win32.toNamespacedPath(value).toLowerCase() : value;
     const relative = paths.relative(fold(root), fold(target));
     return relative === '' || (relative !== '..' && !relative.startsWith('..' + paths.sep) && !paths.isAbsolute(relative));
 }
@@ -62,7 +62,7 @@ export type WindowChannel = (body: Body) => Promise<WindowReply>;
  * a request that gets no reply is retried once with a fresh descriptor, because the window
  * rotates its credential. No directory (for example a server started by hand) means no window.
  */
-export function windowChannel(directory: string | undefined, cwd: string): WindowChannel {
+export function windowChannel(directory: string | undefined, cwd: string, project?: string): WindowChannel {
     return async body => {
         if (!directory) { return { ok: false, code: 'UI_NOT_ATTACHED' }; }
         for (let attempt = 0; attempt < 2; attempt++) {
@@ -75,7 +75,7 @@ export function windowChannel(directory: string | undefined, cwd: string): Windo
                 if (!matches.length) { continue; }
                 if (matches.length > 1) { return { ok: false, code: 'AMBIGUOUS_TARGET' }; }
             }
-            const reply = await send(matches[0], body);
+            const reply = await send(matches[0], { ...body, ...(project ? { project } : {}) });
             if (reply?.ok) { return { ok: true, reply }; }
             if (reply) { return { ok: false, code: reply.code, ...(reply.message ? { message: reply.message } : {}) }; }
         }

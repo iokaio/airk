@@ -32,6 +32,33 @@ fn record(time: u64) -> LogRecord {
     record
 }
 #[test]
+fn full_export_reads_every_retained_file_and_excludes_malformed_payloads() -> Result<()> {
+    let root = private_root()?;
+    let sink = Sink::open(root.path())?;
+    for (n, name) in FILES.iter().rev().enumerate() {
+        let mut bytes = Vec::new();
+        for i in 0..40 {
+            serde_json::to_writer(&mut bytes, &record((n * 40 + i) as u64))?;
+            bytes.push(b'\n');
+        }
+        if n == 3 {
+            bytes.extend_from_slice(b"{private-invalid-content}\n");
+        }
+        fs::write(sink.directory.join(name), bytes)?;
+    }
+    let full = export(root.path())?;
+    assert_eq!(full.records.len(), 160);
+    assert_eq!(full.records.first().unwrap().observed_unix_ms, 0);
+    assert_eq!(full.records.last().unwrap().observed_unix_ms, 159);
+    assert_eq!(full.malformed_records, 1);
+    assert!(!full.tail_truncated);
+    assert!(!serde_json::to_string(&full)?.contains("private-invalid-content"));
+    let recent = recent(root.path(), 32)?;
+    assert_eq!(recent.records.len(), 32);
+    assert!(recent.tail_truncated);
+    Ok(())
+}
+#[test]
 fn cached_reads_create_nothing_and_partial_records_are_preserved_but_never_exported() -> Result<()>
 {
     let owner = private_root()?;

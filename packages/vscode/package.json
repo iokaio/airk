@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents",
   "description": "Local indexed evidence for coding agents, with a native service, direct MCP retrieval and a shared offline model. No cloud service or API key.",
-  "version": "1.5.5",
+  "version": "1.5.12",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -82,11 +82,11 @@
     "mcpServerDefinitionProviders": [
       {
         "id": "airk.collections",
-        "label": "AIRK workspace collections"
+        "label": "AIRK"
       },
       {
         "id": "airk.explorerAssistance",
-        "label": "AIRK Explorer Assistance"
+        "label": "AIRK legacy Explorer connection (retired)"
       }
     ],
     "viewsContainers": {
@@ -506,7 +506,7 @@
           "airk.explorer.assistance.enabled": {
             "type": "boolean",
             "default": true,
-            "markdownDescription": "Offer the AIRK Explorer Assistance MCP server (help and Explorer status for coding agents) and publish this trusted window's private attachment endpoint. Assistance never searches code, runs commands or writes files."
+            "markdownDescription": "Enable Explorer help and reviewed UI drafts on the unified AIRK MCP connection, and publish this trusted window's private attachment endpoint. Native evidence tools remain available when this is off."
           },
           "airk.explorer.planner.directory": {
             "type": "string",

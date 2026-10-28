@@ -109,7 +109,10 @@ impl ChildWorker {
         service: Incarnation,
         derived: bool,
     ) -> Result<Self> {
-        let executable = std::env::current_exe()?.canonicalize()?;
+        let executable = crate::process_roles::executable(
+            &std::env::current_exe()?.canonicalize()?,
+            crate::process_roles::Role::Index,
+        )?;
         let worker = new_instance_id()?;
         let mut command = Command::new(executable);
         command
@@ -453,17 +456,67 @@ impl Drop for Supervisor {
 }
 
 fn worker_failed(
+    root: &Path,
     backoff: &mut BTreeMap<ProjectBinding, (Instant, u32)>,
     project: ProjectBinding,
     now: Instant,
 ) {
-    let attempts = backoff
-        .get(&project)
-        .map_or(1, |(_, attempts)| attempts.saturating_add(1).min(3));
+    let saved = (|| -> Result<_> {
+        let namespace = ServiceRegistry::open_saved(root)?.incarnation()?;
+        let mut registry = ServiceRegistry::open(root, namespace)?;
+        registry.recovery_failed(
+            &project.to_string(),
+            crate::runtime_pair::engine_identity()?,
+            unix_ms()?,
+        )
+    })();
+    // Missing durable accounting cannot authorize another automatic attempt.
+    let attempts = saved.map_or(3, |budget| budget.failures);
     backoff.insert(
         project,
         (now + Duration::from_secs(1 << attempts), attempts),
     );
+}
+fn unix_ms() -> Result<u64> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis()
+        .try_into()?)
+}
+fn check_recovery_conditions(registry: &mut ServiceRegistry, helper_available: bool) -> Result<()> {
+    use airk_store::service::registry::RecoveryCondition;
+    let now = unix_ms()?;
+    for waiting in registry.waiting_recoveries(now)? {
+        let project = registry.get(waiting.project)?.registration;
+        let ready = match waiting.condition {
+            RecoveryCondition::Delay => true,
+            RecoveryCondition::Helper => helper_available,
+            RecoveryCondition::Source => {
+                let roots = registry.watch(waiting.project)?.additional_roots;
+                std::iter::once(&project.root)
+                    .chain(roots.iter())
+                    .all(|root| {
+                        std::fs::symlink_metadata(root)
+                            .is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+                            && std::fs::canonicalize(root).is_ok_and(|p| p == Path::new(root))
+                    })
+            }
+            RecoveryCondition::Capacity { required } => {
+                airk_store::capacity::probe(Path::new(&project.data_root))
+                    .is_ok_and(|c| c.available_growth_bytes >= required)
+            }
+            RecoveryCondition::Quota { required, scope } => {
+                airk_store::quota::Quota::service_recovery_available(
+                    Path::new(&project.data_root),
+                    &project.collection,
+                    scope,
+                )
+                .is_ok_and(|available| available >= required)
+            }
+        };
+        registry.check_recovery(waiting.job, ready, now)?;
+    }
+    Ok(())
 }
 
 struct WorkerAdmission<'a> {
@@ -501,29 +554,61 @@ fn start_worker(
         ensure!(worker.derived == derived, "project owner role is draining");
         return Ok(());
     }
+    let saved = ServiceRegistry::open_saved(root)?.recovery_budget(
+        &project.to_string(),
+        crate::runtime_pair::engine_identity()?,
+    )?;
+    if saved.failures > 0 {
+        backoff.insert(
+            project,
+            (
+                Instant::now()
+                    + Duration::from_millis(saved.next_ms.saturating_sub(unix_ms()?).min(60_000)),
+                saved.failures,
+            ),
+        );
+    } else if !backoff
+        .get(&project)
+        .is_some_and(|(_, attempts)| *attempts >= 3)
+    {
+        backoff.remove(&project);
+    }
     ensure!(resources.may_start_resident(), "project capacity busy");
+    if backoff
+        .get(&project)
+        .is_some_and(|(_, attempts)| *attempts >= 3)
+    {
+        // New requests cannot remain pending behind an already exhausted circuit.
+        // This also covers an activated child that exited before accepting work.
+        settle_failed_start(root, instance, project);
+    }
     ensure!(
         backoff
             .get(&project)
             .is_none_or(|(until, attempts)| *attempts < 3 && Instant::now() >= *until),
         "project restart backoff"
     );
-    let mut worker = match ChildWorker::spawn(root, project, instance, derived) {
+    let spawn = || -> Result<ChildWorker> {
+        if !derived && ServiceRegistry::open_saved(root)?.project_setup_pending(project)? {
+            crate::service_registration::prepare_storage(root, project)?;
+        }
+        ChildWorker::spawn(root, project, instance, derived)
+    };
+    let mut worker = match spawn() {
         Ok(worker) => worker,
         Err(error) => {
-            let attempt = backoff
-                .get(&project)
-                .map_or(1, |(_, attempt)| attempt.saturating_add(1).min(3));
-            backoff.insert(
-                project,
-                (Instant::now() + Duration::from_secs(1 << attempt), attempt),
-            );
+            worker_failed(root, backoff, project, Instant::now());
             log.record(
                 airk_core::service_logs::LogKind::WorkerFailed,
                 Some(project),
                 None,
             );
-            settle_failed_start(root, instance, project);
+            if backoff
+                .get(&project)
+                .is_some_and(|(_, attempts)| *attempts >= 3)
+            {
+                settle_failed_start(root, instance, project);
+            }
             return Err(error);
         }
     };
@@ -556,19 +641,18 @@ fn start_worker(
             .lock()
             .map_err(|_| anyhow::anyhow!("service policy unavailable"))?
             .process_exited(identity)?;
-        let attempt = backoff
-            .get(&project)
-            .map_or(1, |(_, attempt)| attempt.saturating_add(1).min(3));
-        backoff.insert(
-            project,
-            (Instant::now() + Duration::from_secs(1 << attempt), attempt),
-        );
+        worker_failed(root, backoff, project, Instant::now());
         log.record(
             airk_core::service_logs::LogKind::WorkerFailed,
             Some(project),
             None,
         );
-        settle_failed_start(root, instance, project);
+        if backoff
+            .get(&project)
+            .is_some_and(|(_, attempts)| *attempts >= 3)
+        {
+            settle_failed_start(root, instance, project);
+        }
         return Err(error);
     }
     workers.insert(project, worker);
@@ -622,9 +706,24 @@ impl Supervisor {
                 let mut source_after = None;
                 let mut background_after = None;
                 let mut endpoints_ready = false;
+                let mut next_recovery_check=Instant::now();
                 loop {
                     if registry.is_none() {
                         registry = ServiceRegistry::open(&root, instance).ok();
+                    }
+                    if Instant::now()>=next_recovery_check {
+                        if let Some(registry)=registry.as_mut(){let _=check_recovery_conditions(registry,pool.is_some());}
+                        next_recovery_check=Instant::now()+Duration::from_secs(1);
+                    }
+                    if pool.is_none() {
+                        match registry.as_ref().and_then(|r|r.recovery_budget("helper",crate::runtime_pair::engine_identity().ok()?).ok()) {
+                            Some(budget)=>{
+                                pool_recovery.attempts=budget.failures;
+                                pool_recovery.suppressed|=budget.suppressed;
+                                if let Ok(now)=unix_ms(){pool_recovery.retry_at=Instant::now()+Duration::from_millis(budget.next_ms.saturating_sub(now).min(60_000));}
+                            }
+                            None=>pool_recovery.suppressed=true,
+                        }
                     }
                     // A committed unregister closes fresh brokerage immediately.
                     // Drain only our exact child before releasing resident/query
@@ -749,6 +848,7 @@ impl Supervisor {
                         && !provider_error && pending_providers == 0
                         && registry.as_ref().is_some_and(|registry| {
                             registry.pending_projects(1).is_ok_and(|page| page.is_empty())
+                                && registry.has_recovery_waits().is_ok_and(|pending|!pending)
                                 && registry.has_background_work().is_ok_and(|pending| !pending)
                                 && registry.due_source_projects(None, i64::MAX as u64, 1).is_ok_and(|page| page.is_empty())
                         });
@@ -785,6 +885,7 @@ impl Supervisor {
                         log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
                         drop(pool.take());
                         pool_recovery.failed(Instant::now());
+                        if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
                     }
                     if predecessors.is_none()
                         && let Some(registry) = registry.as_ref()
@@ -831,6 +932,7 @@ impl Supervisor {
                         .ok();
                         if pool.is_none() {
                             pool_recovery.failed(Instant::now());
+                        if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
                             log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
                         }
                     }
@@ -859,7 +961,7 @@ impl Supervisor {
                         }) {
                             backoff.remove(&project);
                         } else {
-                            worker_failed(&mut backoff, project, Instant::now());
+                            worker_failed(&root, &mut backoff, project, Instant::now());
                         }
                         if let Some(worker) = workers.remove(&project) {
                             let identity = worker.identity;
@@ -952,6 +1054,7 @@ impl Supervisor {
                     if pool_control_failed {
                         drop(pool.take());
                         pool_recovery.failed(Instant::now());
+                        if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
                         log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
                     }
                     for project in failed_renewals {
@@ -959,7 +1062,7 @@ impl Supervisor {
                         if clean {
                             backoff.remove(&project);
                         } else {
-                            worker_failed(&mut backoff, project, Instant::now());
+                            worker_failed(&root, &mut backoff, project, Instant::now());
                         }
                         log.record(
                             if clean {
@@ -1117,6 +1220,9 @@ impl Supervisor {
                                 if let std::collections::btree_map::Entry::Vacant(entry) =
                                     restarting.entry(project)
                                 {
+                                    if registry.as_mut().is_none_or(|r|r.reset_recovery_budget(&project.to_string()).is_err()) {
+                                        let _=reply.send(ControlResponse::Failure{code:"recovery_retry_not_saved".into()});continue;
+                                    }
                                     entry.insert(expected);
                                     backoff.remove(&project);
                                 }
@@ -1136,6 +1242,9 @@ impl Supervisor {
                                     code: "embedding_already_running".into(),
                                 }
                             } else {
+                                if registry.as_mut().is_none_or(|r|r.reset_recovery_budget("helper").is_err()) {
+                                    let _=reply.send(ControlResponse::Failure{code:"recovery_retry_not_saved".into()});continue;
+                                }
                                 pool_recovery = PoolRecovery::new(Instant::now());
                                 pool_recovery.requested = true;
                                 ControlResponse::EmbeddingStarting
@@ -1153,6 +1262,9 @@ impl Supervisor {
                             {
                                 // The actual native owner drains its child/job.
                                 // Caller-supplied numerical PIDs never authorize a signal.
+                                if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.suppress_helper_recovery(engine)).is_err()) {
+                                    let _=reply.send(ControlResponse::Failure{code:"embedding_stop_not_saved".into()});continue;
+                                }
                                 pool_recovery.suppressed = true;
                                 let failed = force
                                     && pool.as_mut().is_some_and(|pool| pool.terminate().is_err());
@@ -1425,6 +1537,28 @@ impl Supervisor {
                                         .is_some_and(|grant| grant.id == finished)
                                     && let Some(identity) = worker.identity
                                 {
+                                    // A job can fail while its worker remains healthy.
+                                    // Preserve its exact durable result before releasing
+                                    // the grant; process-exit logs alone miss this case.
+                                    if let Some(grant) = resources.running(*project)
+                                        && let Some(registry) = registry.as_ref()
+                                        && let Ok(job) = registry.job(grant.job)
+                                        && job.project == *project
+                                    {
+                                        if let Some(failure) = observation.failure.as_ref().filter(|failure|
+                                            failure.job == job.id && failure.grant == finished && failure.worker == identity.worker && failure.operation == job.kind && failure.validate().is_ok()) {
+                                            // Deferred retries have no terminal failed receipt
+                                            // yet. Keep this attempt's error before releasing
+                                            // the grant as well as terminal job failures.
+                                            log.job_failure(*project, failure.clone());
+                                        } else if let Some(airk_core::service::JobOutcome::Failed { code }) = &job.outcome {
+                                            log.record_code(
+                                            airk_core::service_logs::LogKind::JobFailed,
+                                            Some(*project), Some(job.id),
+                                            Some(code),
+                                        );
+                                        }
+                                    }
                                     let _ = resources.finished(identity, finished);
                                 }
                             }
@@ -1458,7 +1592,7 @@ impl Supervisor {
                         if clean {
                             backoff.remove(&project);
                         } else {
-                            worker_failed(&mut backoff, project, Instant::now());
+                            worker_failed(&root, &mut backoff, project, Instant::now());
                         }
                         log.record(
                             if clean {
@@ -1788,20 +1922,6 @@ mod tests {
             ));
         }
         Ok(())
-    }
-    #[test]
-    fn project_failure_budget_stays_exhausted_until_explicit_reset() {
-        let now = Instant::now();
-        let project = airk_core::identity::Sha256Digest::from_bytes([1; 32]);
-        let mut failures = BTreeMap::new();
-        for expected in [1, 2, 3, 3] {
-            worker_failed(&mut failures, project, now);
-            assert_eq!(failures[&project].1, expected);
-            assert!(failures[&project].0 > now);
-        }
-        failures.remove(&project);
-        worker_failed(&mut failures, project, now);
-        assert_eq!(failures[&project].1, 1);
     }
     #[test]
     fn helper_recovery_is_bounded_and_manual_stop_remains_stopped() {

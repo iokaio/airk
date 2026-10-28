@@ -363,9 +363,20 @@ fn source_cancellation_pause_and_retry_exhaustion_survive_restart_without_losing
             .due_source_projects(None, 1_000_000, 32)?
             .is_empty()
     );
-    // A deliberate new source event reopens bounded retries; an explicit manual
-    // request can also settle the desired revision without depending on auto mode.
+    // A filesystem hint cannot replenish a project failure budget. A deliberate
+    // manual request can still settle the desired revision without auto mode.
     registry.source_changed(project, epoch)?;
+    assert!(
+        registry
+            .due_source_projects(None, 2_000_000, 32)?
+            .is_empty()
+    );
+    assert!(
+        registry
+            .watch(project)?
+            .observation
+            .automatic_retries_exhausted
+    );
     registry.configure_watch(project, false)?;
     let manual = registry.enqueue_internal(project, nonce(6), JobKind::Index, nonce(7))?;
     registry

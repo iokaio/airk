@@ -100,7 +100,7 @@ test('the server answers help offline with no process, socket or file effects', 
 
     const topic = structured(responses, 4);
     assert.equal(topic.applicability, FEATURES['manage/repair']);
-    assert.equal(topic.location, 'AIRK Explorer › Management › Repair');
+    assert.equal(topic.location, 'AIRK Explorer › Management › Recovery');
     assert.match(topic.topic_revision, /^[0-9a-f]{16}$/);
     assert.equal(topic.source_id, 'packages/vscode/src/explorerHelp/manage-repair.md');
     assert.ok(topic.steps.length >= 3 && topic.steps[1].includes('Create repair preview'));

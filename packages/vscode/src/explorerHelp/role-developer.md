@@ -12,10 +12,10 @@ Use AIRK to investigate bugs, explain a component or prepare an API change with 
 
 ## Steps
 
-1. Select the registered project and check Overview. An agent checks airk_status and airk_capabilities before assuming the publication, language support or semantics are ready.
+1. Select the registered project and check Overview. An agent checks status and capabilities before assuming the publication, language support or semantics are ready.
 2. Search the error message or symbol with a literal path scope. Use Code > Symbols, References and Outline to inspect declarations, written imports and candidate callers; References includes comments and strings.
 3. Inspect the strongest hits and expand revision/hash-bound context. Read tests and specifications alongside implementation. A candidate edge is a lead, not a resolved call graph.
-4. In Strategies > Library, choose a currently Runnable bug/API/component template. Agents discover the actual installed templates and contracts with airk_explorer_templates_list and airk_explorer_template_get; do not assume every template is runnable.
+4. In Strategies > Library, choose a currently Runnable bug/API/component template. Agents discover the actual installed templates and contracts with list_templates and get_template; do not assume every template is runnable.
 5. Run the evidence strategy, inspect partial/truncated outcomes and rebuild stale prompts. Share a complete Studio snapshot explicitly, or add tasks to Planner, save and hand off one task.
 6. Before editing, the agent verifies live files against cited hashes/revisions. After changes, run the project's own checks outside AIRK, refresh indexing as appropriate and review changed evidence. AIRK never runs the coding agent or completes tasks automatically.
 

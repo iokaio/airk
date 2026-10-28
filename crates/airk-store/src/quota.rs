@@ -24,10 +24,55 @@ const POLICY_MAX: u64 = 65_536;
 const RECORD_MAX: u64 = 1024;
 const MAX_RESERVATIONS: usize = 1024;
 const MAX_ENTRIES: usize = 1_000_000;
+
+#[derive(Debug)]
+pub struct QuotaInventoryLimit {
+    pub visited: usize,
+    pub limit: usize,
+}
+impl std::fmt::Display for QuotaInventoryLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "quota inventory visited {} entries; limit is {}; refusing allocation",
+            self.visited, self.limit
+        )
+    }
+}
+impl std::error::Error for QuotaInventoryLimit {}
+
+fn check_inventory_count(visited: usize) -> Result<()> {
+    ensure!(
+        visited <= MAX_ENTRIES,
+        QuotaInventoryLimit {
+            visited,
+            limit: MAX_ENTRIES
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn inventory_limit_preserves_count_and_fixed_diagnostic_code() -> Result<()> {
+    check_inventory_count(MAX_ENTRIES)?;
+    let error = check_inventory_count(MAX_ENTRIES + 1)
+        .unwrap_err()
+        .context("quota census");
+    let limit = error.downcast_ref::<QuotaInventoryLimit>().unwrap();
+    assert_eq!(limit.visited, 1_000_001);
+    assert_eq!(
+        crate::diagnostics::failure_code(&error).as_deref(),
+        Some("quota_inventory_limit_exceeded")
+    );
+    assert!(format!("{error:#}").contains("1000001"));
+    Ok(())
+}
 pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
 const PREPARED_PUBLICATION: &str = "prepared-publication.json";
 mod current;
 pub use current::{CurrentGrant, CurrentGrantScope};
+mod admission;
+pub use admission::{QuotaContention, with_lock_admission};
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -323,6 +368,37 @@ fn inventory_read<T>(
 }
 
 impl Quota {
+    /// Bounded metadata-only observation; creates nothing and retires no reservations.
+    pub fn service_recovery_available(
+        root: &Path,
+        collection: &str,
+        scope: PressureScope,
+    ) -> Result<u64> {
+        let root = root.canonicalize()?;
+        ensure_current_root(&root)?;
+        let quota = Self {
+            root,
+            namespace: Namespace::Service,
+        };
+        let deadline = Some(Instant::now() + Duration::from_millis(50));
+        let _lock = quota.lock_before(deadline)?;
+        let records = quota.records_without_recovery(deadline)?;
+        let policy = quota.read_policy()?;
+        let report = quota.measure(&policy, &records, deadline)?;
+        Ok(match scope {
+            PressureScope::Root => report
+                .root_limit_bytes
+                .saturating_sub(report.used_bytes.saturating_add(report.reserved_bytes)),
+            PressureScope::Collection | PressureScope::Reservation => report
+                .collections
+                .get(collection)
+                .map(|c| {
+                    c.limit_bytes
+                        .saturating_sub(c.used_bytes.saturating_add(c.reserved_bytes))
+                })
+                .unwrap_or(policy.limit(collection)),
+        })
+    }
     /// Canonicalizing aliases ensures all cooperating processes share one ledger.
     pub fn open(root: impl AsRef<Path>) -> Result<Self> {
         Self::open_namespace(root.as_ref(), Namespace::Legacy)
@@ -401,18 +477,7 @@ impl Quota {
             .create(true)
             .truncate(false)
             .open(path)?;
-        let started = Instant::now();
-        loop {
-            match file.try_lock() {
-                Ok(()) => break,
-                Err(std::fs::TryLockError::WouldBlock)
-                    if deadline.is_none() && started.elapsed() < Duration::from_secs(2) =>
-                {
-                    std::thread::sleep(Duration::from_millis(10))
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
+        admission::acquire(&file, deadline)?;
         for entry in fs::read_dir(self.control_path())? {
             within_deadline(deadline)?;
             let entry = entry?;
@@ -824,10 +889,7 @@ impl Quota {
                 within_deadline(deadline)?;
                 let entry = entry?;
                 visited += 1;
-                ensure!(
-                    visited <= MAX_ENTRIES,
-                    "quota inventory entry limit exhausted; refusing allocation"
-                );
+                check_inventory_count(visited)?;
                 let path = entry.path();
                 if path == self.control_path()
                     || (directory == self.root

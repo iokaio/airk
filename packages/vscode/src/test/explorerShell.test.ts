@@ -11,6 +11,7 @@ import { HandoffStore } from '../explorerHandoffs';
 const disposable = { dispose() {} };
 const panels: any[] = [];
 const vscodeStub = {
+    env: {clipboard:{writeText:async(_text:string)=>{}}},
     workspace: { textDocuments: [] as any[] },
     Uri: { file: (fsPath: string) => ({ scheme: 'file', fsPath }), joinPath: (base: any, ...parts: string[]) => ({ path: [base.path, ...parts].join('/'), toString() { return `vscode-resource:${this.path}`; } }) },
     ViewColumn: { Active: 1 },
@@ -65,6 +66,8 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
     const statusBar: string[] = [];
     const runs: unknown[] = [];
     const consoleState: any = { trusted, connected: true, busy: false, health: { state: 'live', checkedAt: 1, value: { observation: { policy: { accepting: true } } } },
+        version:'1.5.0-test',authority:'Local execution host',responseMode:'terse',selected:new Set([project]),pending:[],events:[],historyOmitted:false,
+        resources:{state:'unavailable',checkedAt:1},model:{state:'unavailable',checkedAt:1},sources:{state:'unavailable',checkedAt:1},
         bootstrap: { state: 'live', checkedAt: 1, value: {} }, currentProjects: new Set([project]),
         page: { revision: 1, cached: true, observed_unix_ms: 7, after: null, projects: [{ project: { registration: { binding: project, root: '/src/demo', collection: 'demo' } } }] } };
     const host = {
@@ -93,6 +96,63 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
     return { explorer: new TestController(host as any), statusBar, runs, suggestions, host };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+
+test('refresh confirms unchanged observations and reports disconnection instead of silent success',async()=>{
+    const f=controller();
+    try{
+        let result=await (f.explorer as any).dispatch({type:'manage.action',action:'refresh'});
+        assert.match(result.message,/Status checked at/);assert.match(result.message,/No change in project work or settings/);
+        assert.match(result.message,/does not restart or repair/);assert.equal(f.runs.length,1);
+        f.host.control.controller.state.connected=false;
+        result=await (f.explorer as any).dispatch({type:'manage.action',action:'refresh'});
+        assert.match(result.message,/Could not refresh/);assert.match(result.message,/Retained observations/);
+    }finally{f.explorer.dispose();}
+});
+
+test('copy panel details uses cached metadata, rejects foreign projects and requires trust',async t=>{
+    const copied:string[]=[];t.mock.method(vscodeStub.env.clipboard,'writeText',async (text:string)=>{copied.push(text);});
+    const f=controller();
+    try{
+        await (f.explorer as any).dispatch({type:'details.copy',section:'activity',project});
+        assert.equal(copied.length,1);assert.match(copied[0],/Worker progress/);assert.equal(f.runs.length,0);
+        await assert.rejects((f.explorer as any).dispatch({type:'details.copy',section:'activity',project:'ff'.repeat(32)}),/no longer available/);
+        assert.equal(copied.length,1);
+        f.host.trusted=()=>false;
+        await assert.rejects((f.explorer as any).dispatch({type:'details.copy',section:'service'}));assert.equal(copied.length,1);
+    }finally{f.explorer.dispose();}
+});
+
+test('pending update is included in the view and reload dispatch is restricted to a pending update',async()=>{
+    const f=controller(),host=f.host as any;let reloads=0;
+    host.reloadUpdatedExtension=async()=>{reloads++;};
+    try{
+        await (f.explorer as any).dispatch({type:'extension.reload'});assert.equal(reloads,0);
+        host.extensionUpdate=()=>({runningVersion:'1.5.8',installedVersion:'1.5.9'});
+        assert.deepEqual(f.explorer.snapshot().extensionUpdate,{runningVersion:'1.5.8',installedVersion:'1.5.9'});
+        await (f.explorer as any).dispatch({type:'extension.reload'});assert.equal(reloads,1);
+    }finally{f.explorer.dispose();}
+});
+
+test('visible Explorer observations refresh readiness even when the publication token has not changed',()=>{
+    const instance=Object.create(ExplorerController.prototype) as any;let reads=0,publishes=0;
+    Object.assign(instance,{retained:disposable,panel:{open:true},selected:project,status:{publication:'same'},lastAutomaticStatusCheck:0,
+        control:{projects:()=>[{project,publication:'same'}]},loadStatus:async()=>{reads++;},publish:()=>{publishes++;}});
+    instance.observedControl();instance.observedControl();assert.equal(reads,1);
+    instance.lastAutomaticStatusCheck=Date.now()-6000;instance.observedControl();assert.equal(reads,2);
+    instance.retained=undefined;instance.lastAutomaticStatusCheck=0;instance.observedControl();assert.equal(reads,2);
+    assert.equal(publishes,4);
+});
+
+test('repair approval uses the exact preview shown by the webview and never silently accepts a replacement',async()=>{
+    const f=controller(),id='de'.repeat(32),preview='ef'.repeat(32);
+    try{
+        f.host.control.controller.state.plan={value:{id,preview_digest:preview},items:[],after:null};
+        const stale=await (f.explorer as any).dispatch({type:'manage.action',action:'approvePlan',allowFallback:false,expectedPlan:id,expectedPreview:'ff'.repeat(32)});
+        assert.match(stale.message,/preview changed/);assert.equal(f.runs.length,0);
+        await (f.explorer as any).dispatch({type:'manage.action',action:'approvePlan',allowFallback:false,expectedPlan:id,expectedPreview:preview});
+        assert.deepEqual(f.runs,[['approvePlan',{allowFallback:false}]]);
+    }finally{f.explorer.dispose();}
+});
 
 test('embedded usage pins its project session and rejects invalid actions and obsolete bindings', async () => {
     const { explorer, host } = controller(); let opens = 0, disposals = 0;

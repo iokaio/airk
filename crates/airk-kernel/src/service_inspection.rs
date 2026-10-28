@@ -117,6 +117,7 @@ impl Kernel {
             indexed_files: None,
             indexed_vectors: None,
             vectors_enabled: None,
+            index_detail: None,
             semantic: None,
             discovery: None,
             failure: Some(InspectionFailure::IndexObservationFailed),
@@ -127,6 +128,10 @@ impl Kernel {
             snapshot.indexed_files = Some(status.files.try_into()?);
             snapshot.indexed_vectors = Some(status.indexed_vectors.try_into()?);
             snapshot.vectors_enabled = Some(status.vectors_enabled);
+            snapshot.index_detail = selected
+                .extraction_policy()
+                .ok()
+                .map(|policy| policy.configured_detail);
             snapshot.semantic = Some(SemanticSummary {
                 state: status.semantic_readiness.state,
                 selected_artifacts: status.semantic_readiness.selected_artifacts,

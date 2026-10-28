@@ -31,7 +31,9 @@ pub mod service_manager;
 
 mod child_job;
 
+pub mod client_owner;
 mod native_process;
+mod process_roles;
 
 pub mod source_protocol;
 
@@ -45,5 +47,6 @@ mod user_paths;
 pub mod client_requests;
 pub mod console_client;
 pub mod explorer_assistance;
+pub mod unified_mcp;
 pub mod universal_launcher;
 pub mod usage_client;

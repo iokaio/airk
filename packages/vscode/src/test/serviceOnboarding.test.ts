@@ -4,40 +4,103 @@ import { test } from 'node:test';
 import { serviceTestHost } from './serviceTestHost';
 import { renderServiceDashboard } from '../serviceDashboard';
 import { RuntimeHost } from '../serviceBootstrap';
+import { ServiceError } from '../serviceClient';
+
+test('an installed update keeps one reload action visible and fences older installation attempts',async context=>{
+    const f=await serviceTestHost(context,{automatic:true});
+    try{
+        const writes=f.writes.length,progress=f.progressRuns.length,ensures=f.state.ensured;
+        f.state.installedVersion='1.4.1';f.extensionsChanged();
+        await new Promise(resolve=>setImmediate(resolve));
+        const notice=f.notices.at(-1)!;
+        assert.match(notice.message,/1.4.1 is installed.*running 1.4.0/);
+        assert.deepEqual(notice.actions,['Reload to finish update']);
+        assert.equal(f.statusBar.command,'airk.reloadUpdatedExtension');
+        assert.match(f.statusBar.text,/Reload to finish update/);
+        assert.equal(f.calls.includes('workbench.action.reloadWindow'),false,'never reload without the user click');
+        f.focus();f.extensionsChanged();await f.refreshFolders();
+        assert.equal(f.notices.length,1,'dismissal and refocus do not repeat the toast');
+        assert.deepEqual(await f.api.getServerDefinitions(),[],'old host must not create another MCP definition');
+        assert.equal(f.writes.length,writes);assert.equal(f.progressRuns.length,progress);assert.equal(f.state.ensured,ensures);
+        await f.commands.get('airk.installCli')!();assert.equal(f.progressRuns.length,progress);
+        assert.equal(f.calls.some(line=>line.startsWith('AIRK: extension_reload_required')),false);
+        await f.commands.get('airk.reloadUpdatedExtension')!();
+        assert.equal(f.calls.filter(value=>value==='workbench.action.reloadWindow').length,1);
+    }finally{await f.close();}
+});
+
+test('a pending update found at activation prevents runtime setup and preserves saved registrations',async context=>{
+    const f=await serviceTestHost(context,{automatic:true,installedVersion:'1.4.1'});
+    try{
+        assert.equal(f.progressRuns.length,0);assert.equal(f.state.ensured,0);assert.equal(f.writes.length,0);
+        assert.equal(f.registrations.size,1);assert.equal(f.notices.length,1);
+        assert.match(f.statusBar.tooltip,/1.4.1 installed; 1.4.0 running/);
+        assert.equal(f.calls.includes('workbench.action.reloadWindow'),false);
+    }finally{await f.close();}
+});
+
+test('ordinary focus and extension-list changes keep a matching active version quiet',async context=>{
+    const f=await serviceTestHost(context,{automatic:true});
+    try{
+        f.focus();f.extensionsChanged();await f.commands.get('airk.reloadUpdatedExtension')!();
+        assert.equal(f.notices.length,0);assert.equal(f.calls.includes('workbench.action.reloadWindow'),false);
+        assert.doesNotMatch(f.statusBar.text,/Reload to finish update/);
+    }finally{await f.close();}
+});
+
+test('failed first project preparation preserves completed runtime installation and quiet reopen',async context=>{
+    const f=await serviceTestHost(context,{registered:false});
+    try{
+        context.mock.method(RuntimeHost.prototype,'reviewProject',async()=>{throw new ServiceError('source_unavailable');});
+        f.settings.set('cli.autoInstall',true);
+        await f.refreshFolders();
+        assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.1.')));
+        assert.ok(f.warnings.some(message=>message.startsWith('AIRK is installed. Project preparation needs attention')));
+        assert.equal(f.calls.some(message=>message.startsWith('Automatic installation failed:')),false);
+        assert.equal(f.calls.some(message=>message.startsWith('Installation did not complete.')),false);
+        const progress=f.progressRuns.length,notices=f.warnings.length,retirements=f.calls.filter(message=>message==='previous-runtime-retired').length;
+        await f.refreshFolders();
+        assert.equal(f.progressRuns.length,progress,'project failure does not repeat setup progress');
+        assert.equal(f.calls.filter(message=>message==='previous-runtime-retired').length,retirements);
+        assert.equal(f.warnings.length,notices,'unchanged project warning is not repeated');
+        assert.equal(f.writes.length,0,'failed registration never invents an index request');
+    }finally{await f.close();}
+});
 
 test('trusted activation installs and registers all folders once with model/index jobs and no setup prompts',async context=>{
     const f=await serviceTestHost(context,{automatic:true,registered:false,roots:2});
     try{
         assert.equal(f.registrations.size,2);assert.equal(f.state.picks,0);assert.equal(f.warnings.length,0);
         assert.ok(f.calls.includes('previous-runtime-retired'));
-        assert.equal(f.notices.length,1);
-        assert.deepEqual(f.notices[0].actions,['MCP Servers','Reload Window','Show Details']);
-        assert.match(f.notices[0].message,/Copilot/);
+        assert.equal(f.notices.length,0,'successful activation needs no notification decision');
+        assert.ok(f.calls.some(message=>message.includes('This window is running the updated interface')));
         assert.equal(f.calls.includes('workbench.action.reloadWindow'),false);
         assert.equal(f.progressRuns.length,1);
-        assert.match(f.progressRuns[0].title,/AIRK .* setup/);
-        assert.ok(f.progressRuns[0].messages.some(value=>value.includes('Checking runtime files')));
-        assert.ok(f.progressRuns[0].messages.some(value=>value.includes('Installation complete')));
-        assert.equal(f.writes.filter(value=>value.configure_watch?.enabled===true).length,2);
-        assert.deepEqual(f.writes.filter(value=>value.enqueue).map(value=>value.enqueue.kind),['model_setup','index','model_setup','index']);
-        assert.equal((await f.api.getServerDefinitions()).length,2);
-        const writes=f.writes.length;await f.refreshFolders();assert.equal(f.writes.length,writes);
-        assert.equal(f.notices.length,1,'routine reopen must not repeat the install notice');
+        assert.match(f.progressRuns[0].title,/Checking AIRK .* installation/);
+        assert.doesNotMatch(f.progressRuns[0].title,/setup/);
+        assert.ok(f.progressRuns[0].messages.some(value=>value.includes('Checking selected runtime')));
+        assert.ok(f.progressRuns[0].messages.some(value=>value.includes('Runtime ready. Project indexing continues in Management.')));
+        assert.equal(f.writes.filter(value=>value.reserve_project?.setup_watch===true).length,2);
+        assert.equal(f.writes.filter(value=>value.enqueue).length,0,'initial setup is owned by the native registration transaction');
+        const servers=await f.api.getServerDefinitions();assert.equal(servers.length,1);assert.ok(servers[0].args.includes('--no-default-project'));assert.ok(servers[0].args.includes('--additional-project'));
+        const writes=f.writes.length,retirements=f.calls.filter(value=>value==='previous-runtime-retired').length,ensures=f.state.ensured;
+        await f.refreshFolders();assert.equal(f.writes.length,writes);
+        assert.equal(f.state.ensured,ensures,'healthy reopen uses authenticated health without another native start/ensure');
+        assert.equal(f.progressRuns.length,1,'verified reopen must not display installation progress');
+        assert.equal(f.calls.filter(value=>value==='previous-runtime-retired').length,retirements,'verified reopen must not reinstall the terminal command or retire runtimes');
+        assert.equal(f.notices.length,0,'routine reopen must remain quiet');
         f.state.stopped=true;await f.refreshFolders();assert.equal(f.writes.length,writes);
         assert.ok(f.calls.some(value=>value.includes('service_explicitly_stopped')));
     }finally{await f.close();}
 });
 
-test('installation notification opens MCP controls, reloads only on click, and exposes restart details',async context=>{
+test('completed activation and explicit repair finish without a reload or completion popup',async context=>{
     const f=await serviceTestHost(context);
     try{
-        for(const [action,expected] of [['MCP Servers','workbench.mcp.listServer'],['Reload Window','workbench.action.reloadWindow'],['Show Details','output-shown']]){
-            f.state.noticeAction=action;
-            await f.commands.get('airk.installCli')!();
-            await new Promise(resolve=>setImmediate(resolve));
-            assert.ok(f.calls.includes(expected));
-        }
-        assert.equal(f.notices.length,3,'one notice per explicit repair');
+        await f.commands.get('airk.installCli')!();
+        assert.equal(f.notices.length,0);
+        assert.ok(f.calls.some(message=>message.startsWith('AIRK 1.4.0 ready.')));
+        assert.equal(f.calls.includes('workbench.action.reloadWindow'),false);
         assert.ok(f.calls.some(value=>value.includes('fully exit all VS Code windows')));
         assert.match(renderServiceDashboard(true,1,1),/command:airk.manageVscodeMcp/);
         assert.match(renderServiceDashboard(true,1,1),/Restart external Codex and Claude Code sessions separately/);
@@ -59,11 +122,13 @@ test('a launcher held by clients offers retry and does not report successful act
         assert.ok(notice);assert.deepEqual(notice.actions,['MCP Servers','Retry Update','Show Details']);
         assert.equal(f.notices.some(value=>value.message.startsWith('AIRK 1.4.1 installed.')),false);
         assert.ok(f.progressRuns[0].messages.some(value=>value.startsWith('Upgrading 1.4.0 → 1.4.1')));
-        assert.ok(f.progressRuns[0].messages.some(value=>value.startsWith('Upgrade paused')));
+        assert.equal(f.progressRuns[0].title,'Updating AIRK 1.4.1 runtime');
+        assert.ok(f.calls.some(value=>value.startsWith('Upgrade paused')));
         await f.commands.get('airk.retryUpdate')!();
         assert.equal(attempts,2);assert.equal(f.binding.version,'1.4.1');
         assert.equal((await f.api.getServerDefinitions()).length,1);
-        assert.ok(f.notices.some(value=>value.message.startsWith('AIRK 1.4.1 installed.')));
+        assert.ok(f.calls.some(value=>value.startsWith('AIRK 1.4.1 ready.')));
+        assert.equal(f.notices.some(value=>value.message.startsWith('AIRK 1.4.1 installed.')),false);
     }finally{await f.close();}
 });
 

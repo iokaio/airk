@@ -16,6 +16,7 @@ pub mod catalog_experiment;
 pub mod checkpoints;
 pub mod compression;
 pub mod current;
+pub mod diagnostics;
 mod durability;
 pub mod extraction_policy;
 pub mod history;

@@ -227,6 +227,8 @@ fn payload_root_for_layout(main: &Path, app_layout: bool) -> Result<&Path> {
 
 /// A stable launcher can validate a later selected runtime without adopting its version.
 pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<PathBuf> {
+    let image = crate::process_roles::main_image(main)?;
+    let main = image.as_path();
     let parent = main.parent().context("runtime directory missing")?;
     for ancestor in parent.ancestors() {
         let metadata = fs::symlink_metadata(ancestor)?;

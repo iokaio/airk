@@ -69,6 +69,7 @@ pub fn run() -> Result<()> {
     service_ipc::write_frame(&mut std::io::stdout().lock(), &Reply::Activated)?;
     let status = Arc::new(Mutex::new(protocol::WorkObservation {
         waiting_for: None,
+        failure: None,
         active: None,
         finished: None,
         maintenance: None,
@@ -112,6 +113,7 @@ pub fn run() -> Result<()> {
                             .map_err(|_| anyhow::anyhow!("cleanup status unavailable"))?;
                         status.active = Some(allowance.id);
                         status.finished = None;
+                        status.failure = None;
                     }
                     let runtime = init.runtime.clone();
                     let lease = lease.clone();
@@ -122,6 +124,7 @@ pub fn run() -> Result<()> {
                     task = Some(std::thread::spawn(move || {
                         let mut registry = ServiceRegistry::open(&runtime, identity.service)?;
                         if let Some(job) = registry.claim_job_id(&lease, allowance.job)? {
+                            let mut failure_detail = None;
                             let outcome =
                                 airk_kernel::service_execution::run(allowance.clone(), || {
                                     registry.validate_inactive_worker(&lease)?;
@@ -178,6 +181,9 @@ pub fn run() -> Result<()> {
                                     if error.is::<airk_kernel::service_execution::Canceled>() {
                                         JobOutcome::Canceled
                                     } else {
+                                        failure_detail = Some(
+                                            crate::service_logs::FailureDetail::capture(&error),
+                                        );
                                         JobOutcome::Failed {
                                             code: "derived_cleanup_failed_reinspect".into(),
                                         }
@@ -186,6 +192,21 @@ pub fn run() -> Result<()> {
                             // Parent EOF is not user cancellation or a failed completed effect.
                             // Leave running work for the next fenced owner to recover.
                             if !closing.load(Ordering::Acquire) {
+                                if let (JobOutcome::Failed { code }, Some(detail)) =
+                                    (&outcome, failure_detail)
+                                {
+                                    status
+                                        .lock()
+                                        .map_err(|_| anyhow::anyhow!("cleanup status unavailable"))?
+                                        .failure = Some(crate::service_logs::JobFailure {
+                                        job: job.id,
+                                        grant: allowance.id,
+                                        worker: identity.worker,
+                                        operation: job.kind,
+                                        code: code.clone(),
+                                        detail,
+                                    });
+                                }
                                 registry.complete_job(&lease, job.id, outcome)?;
                             }
                         }

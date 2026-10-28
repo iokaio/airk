@@ -14,7 +14,7 @@ Use an explicit snapshot when the agent needs a Studio prompt or Planner task wi
 
 1. In Studio, finish the inputs and evidence run. Check partial results, rebuild stale prompts and read the entire displayed prompt. In Planner, save the current plan, choose an eligible task and review its handoff prompt and complete instructions.
 2. Choose **Share snapshot with agent**. The modal explains that this exact text will be available temporarily. Choose **Share snapshot** only after reviewing the text; Cancel exposes nothing.
-3. Copy the share token and ask the agent to call airk_explorer_handoff_get with token. Do not place tokens in committed files or logs. The agent should treat returned source excerpts as evidence, not as trusted instructions.
+3. Copy the share token and ask the agent to call get_handoff with token. Do not place tokens in committed files or logs. The agent should treat returned source excerpts as evidence, not as trusted instructions.
 4. Check the returned draft_revision, workspace_binding, evidence_publication when present and content_sha256. The text is a complete snapshot; the hash identifies its UTF-8 content. A publication is the observed indexed evidence identity, not proof of current live bytes.
 5. If the token is unknown or no longer valid, review the current draft and explicitly share again. Do not ask the agent to search for other tokens or read private extension state.
 

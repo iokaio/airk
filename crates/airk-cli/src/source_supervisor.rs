@@ -93,7 +93,10 @@ impl WatchChild {
         // Unknown predecessor capacity stays reserved until its OS lease releases.
         drop(SourceWatchLease::acquire(root)?);
         let worker = new_instance_id()?;
-        let mut command = ProcessCommand::new(std::env::current_exe()?);
+        let mut command = ProcessCommand::new(crate::process_roles::executable(
+            &std::env::current_exe()?,
+            crate::process_roles::Role::Source,
+        )?);
         command
             .arg("source-worker")
             .stdin(Stdio::piped())

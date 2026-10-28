@@ -449,8 +449,7 @@ fn manually_changed_extra_roots_cannot_capture_another_projects_private_data() -
 }
 
 #[test]
-fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed_job_failure()
--> Result<()> {
+fn missing_registered_source_keeps_retained_evidence_and_cancelable_typed_recovery() -> Result<()> {
     use airk_core::service::{
         ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, RequestKey,
     };
@@ -555,35 +554,22 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
             let Response::Job { job: observed } = request(Method::Job { id: job.id }).await? else {
                 anyhow::bail!("job receipt missing")
             };
-            if let Some(outcome) = observed.outcome {
-                ensure!(
-                    matches!(outcome, JobOutcome::Failed { code } if code == "source_unavailable"),
-                    "missing root did not report typed source failure"
-                );
-                let fresh_until = tokio::time::Instant::now() + Duration::from_secs(10);
+            let registry = airk_store::service::registry::ServiceRegistry::open_saved(&runtime)?;
+            if registry.recovery_observations(project.binding)?.iter().any(|recovery|
+                recovery.job == Some(job.id) && recovery.reason == "source_unavailable" && recovery.state == "waiting") {
+                ensure!(observed.state == airk_core::service::JobState::Pending && observed.outcome.is_none(),
+                    "missing source must wait without losing the accepted request");
                 let mut cached = airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
-                loop {
-                    let sampled = body(cached.read_retry("airk_search".into(), serde_json::json!({"query":"copper harbor","mode":"lexical","include_status":true}).as_object().unwrap().clone()).await?)?;
-                    if sampled["freshness"]["state"] == "failed" {
-                        ensure!(sampled["freshness"]["source_job"] == job.id.to_string() && sampled["freshness"]["error"] == "source_unavailable", "source failure lost attempt identity: {sampled}");
-                        break;
-                    }
-                    ensure!(tokio::time::Instant::now() < fresh_until, "source failure was not cached: {sampled}");
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
+                let sampled = body(cached.read_retry("airk_search".into(), serde_json::json!({"query":"copper harbor","mode":"lexical"}).as_object().unwrap().clone()).await?)?;
+                ensure!(sampled["publication"]["token"] == token.to_string() && sampled.to_string().contains("memo.md"),
+                    "waiting recovery lost retained evidence: {sampled}");
                 break;
             }
-            ensure!(
-                tokio::time::Instant::now() < until,
-                "missing-root job failed to settle"
-            );
+            ensure!(tokio::time::Instant::now() < until, "missing-root job did not enter typed recovery");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        request(Method::Pause {
-            project: project.binding,
-            paused: true,
-        })
-        .await?;
+        request(Method::Pause { project: project.binding, paused: true }).await?;
+        request(Method::CancelPending { id: job.id }).await?;
         let retry_key = RequestKey {
             namespace,
             epoch,
@@ -639,7 +625,7 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
                     event.project == project.binding,
                     "foreign event entered project page"
                 );
-                if event.job == Some(job.id) && event.code.as_deref() == Some("source_unavailable")
+                if event.job == Some(job.id) && event.kind == airk_core::service_events::EventKind::JobCanceled
                 {
                     found_failure = true;
                 }
@@ -656,7 +642,7 @@ fn missing_registered_source_still_brokers_retained_evidence_and_reports_a_typed
         }
         ensure!(
             found_failure,
-            "failed scan lost its content-free durable event"
+            "canceling recovery lost its content-free durable event"
         );
         ensure!(found_retry, "explicit retry lost its durable event");
         ensure!(matches!(request(Method::Events { project: Some(project.binding),cursor:None,limit:0 }).await?,
@@ -758,7 +744,15 @@ fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events()
             }
             ensure!(
                 tokio::time::Instant::now() < until,
-                "initial automatic reconciliation/native watch did not become current"
+                "initial automatic reconciliation/native watch did not become current: {}",
+                serde_json::to_string(
+                    &request(Method::Console {
+                        after: None,
+                        revision: None,
+                        limit: 1
+                    })
+                    .await?
+                )?
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         };
@@ -1113,14 +1107,29 @@ fn enabled_background_watch_retains_idle_service_until_explicitly_disabled() -> 
     Ok(())
 }
 
-fn probe_stdio_bridge(root: &Path, project: airk_core::service::ProjectBinding) -> Result<()> {
+fn probe_stdio_bridge(
+    root: &Path,
+    project: airk_core::service::ProjectBinding,
+    unified: bool,
+) -> Result<()> {
     use std::io::{BufRead, Read, Write};
-    let mut child = command()
-        .arg("bridge")
-        .arg("--runtime-dir")
-        .arg(root)
-        .arg("--project")
-        .arg(project.to_string())
+    let mut launch = command();
+    if unified {
+        launch
+            .arg("--service-runtime-dir")
+            .arg(root)
+            .arg("--service-project")
+            .arg(project.to_string())
+            .arg("mcp");
+    } else {
+        launch
+            .arg("bridge")
+            .arg("--runtime-dir")
+            .arg(root)
+            .arg("--project")
+            .arg(project.to_string());
+    }
+    let mut child = launch
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -1167,14 +1176,25 @@ fn probe_stdio_bridge(root: &Path, project: airk_core::service::ProjectBinding) 
         let tools = listed["result"]["tools"]
             .as_array()
             .context("bridge tool list missing")?;
-        ensure!(
-            tools.len() == 16
-                && tools
-                    .iter()
-                    .all(|tool| tool["annotations"]["readOnlyHint"] == true),
-            "bridge exposed a management tool"
-        );
-        let query = serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"airk_search","arguments":{"query":"cobalt harbor","mode":"lexical","max_bytes":4096}}});
+        if unified {
+            ensure!(
+                tools.len() == 26
+                    && tools
+                        .iter()
+                        .all(|tool| !tool["name"].as_str().unwrap_or("").starts_with("airk_")),
+                "public MCP catalog is not unified"
+            );
+        } else {
+            ensure!(
+                tools.len() == 16
+                    && tools
+                        .iter()
+                        .all(|tool| tool["annotations"]["readOnlyHint"] == true),
+                "bridge exposed a management tool"
+            );
+        }
+        let name = if unified { "search" } else { "airk_search" };
+        let query = serde_json::json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":name,"arguments":{"query":"cobalt harbor","mode":"lexical","max_bytes":4096}}});
         let deadline = Instant::now() + Duration::from_secs(10);
         let evidence = loop {
             send(&query)?;
@@ -1559,7 +1579,8 @@ fn supervised_jobs_and_direct_queries_preserve_grants_and_stop_on_service_loss()
                 && result.to_string().contains("cobalt harbor"),
             "direct response lost original citation"
         );
-        probe_stdio_bridge(&root, project.binding)?;
+        probe_stdio_bridge(&root, project.binding, false)?;
+        probe_stdio_bridge(&root, project.binding, true)?;
         let pinned = airk_kernel::Kernel::open_service_collection_for_diagnostics(
             Path::new(&project.root),
             Some(data.clone()),
@@ -2767,7 +2788,18 @@ fn failed_project_start_circuit_requires_explicit_restart_and_preserves_unknown_
                     if job.state == JobState::Failed {
                         break;
                     }
-                    ensure!(Instant::now() < deadline, "failed startup was not settled");
+                    ensure!(
+                        Instant::now() < deadline,
+                        "failed startup was not settled: {}",
+                        serde_json::to_string(
+                            &request(Method::Console {
+                                after: None,
+                                revision: None,
+                                limit: 1
+                            })
+                            .await?
+                        )?
+                    );
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
             }

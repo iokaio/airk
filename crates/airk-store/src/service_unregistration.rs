@@ -58,6 +58,10 @@ pub(super) fn finish_if_requested(
         [project.to_string()],
     )?;
     connection.execute(
+        "DELETE FROM service_setup_pending WHERE project=?1",
+        [project.to_string()],
+    )?;
+    connection.execute(
         "UPDATE service_background SET source_pending=0,semantic_pending=0 WHERE project=?1",
         [project.to_string()],
     )?;

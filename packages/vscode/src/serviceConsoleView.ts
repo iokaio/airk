@@ -19,8 +19,8 @@ export interface ServiceConsoleState {
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
-export const CONSOLE_SIMPLE_ACTIONS=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport'];
-export const CONSOLE_PROJECT_ACTIONS=['unregisterProject','previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','watch','modelSetup','configureProject','copyConfiguration'];
+export const CONSOLE_SIMPLE_ACTIONS=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport','openReport','saveReport','exportLogs','openRawLogs','saveRawLogs'];
+export const CONSOLE_PROJECT_ACTIONS=['unregisterProject','previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','retryRecovery','watch','modelSetup','configureProject','copyConfiguration','enableSemantic','disableSemantic','configureDetail'];
 export const CONSOLE_OPERATIONS=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
 export function consoleAction(value:unknown,current:ServiceConsoleState):ConsoleAction|undefined {
@@ -81,6 +81,8 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
     const report:RecordValue={schemaVersion:1,capturedAt:new Date().toISOString(),authority:includePaths?state.authority:'selected execution host',extensionVersion:state.version,
         observations:Object.fromEntries(['health','resources','model','sources','bootstrap'].map(name=>{const observation=state[name as 'health'];return [name,{state:observation.state,checkedAt:observation.checkedAt,code:observation.code}];})),
         service:fields(health,['instance','version','protocol','process_id','executable_sha256','runtime_sha256','uptime_ms',...(includePaths?['user']:[])]),
+        storageFormats:fields(obj(health.storage_formats),['index','service_state','logs']),
+        logging:fields(obj(health.logs),['available','dropped_records','write_failures']),
         bootstrap:fields(obj(state.bootstrap.value),['installed','payloadVerified','registryError','error','platform','bundleDigest','selectedRuntime','selectedVersion','verificationBasis',...(includePaths?['installDir']:[])]),
         startupManager:fields(obj(state.bootstrap.value?.startupManager),['mode','id','platform','installed','loaded','running','registered_definition_matches','verification_failed']),
         runtimeRepair:fields(obj(state.bootstrap.value?.payloadRepair),['phase','runtime','preview',...(includePaths?['preserved_directory']:[])]),
@@ -97,17 +99,22 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
             fencingGeneration:project.fencing_generation,paused:project.paused,inspectionObservedAt:inspection.observed_unix_ms,
             inspection:fields(snapshot,['incarnation','publication','index_state','source_state','recovery_required','indexed_files','indexed_vectors','vectors_enabled','failure']),
             progress:fields(work,['phase','paused','stalled','elapsed_ms','phase_elapsed_ms','last_advance_age_ms','unpaused_idle_ms','captured_files','extracted_files','prepared_changes','committed_changes','publications','total_files','completed_semantic_units','publication']),
-            job:fields(job,['id','kind','state','attempts','fencing_generation']),
-            configuration:fields(obj(row.configuration),['id','kind','state','attempts','fencing_generation']),
+            job:{...fields(job,['id','kind','state','attempts','fencing_generation']),outcome:fields(obj(job.outcome),['state','code','revision'])},
+            configuration:{...fields(obj(row.configuration),['id','kind','state','attempts','fencing_generation']),outcome:fields(obj(obj(row.configuration).outcome),['state','code','revision'])},
+            pendingJob:{...fields(obj(row.pending_job),['id','kind','state','attempts','fencing_generation']),outcome:fields(obj(obj(row.pending_job).outcome),['state','code','revision'])},
+            pendingGate:fields(obj(row.pending_gate),['job','code','plan','plan_phase']),
+            maintenance:fields(obj(row.maintenance),['pending_incarnations','pending_objects','objects_checked','removed_files','failed','observed_unix_ms']),
+            recovery:(Array.isArray(row.recovery)?row.recovery:[]).map(value=>fields(obj(value),['state','reason','attempts','limit','next_check_unix_ms','started_unix_ms','job'])),
+            watch:fields(obj(row.watch),['enabled','requested_revision','completed_revision','automatic_retries_exhausted','automatic_retry_canceled','backend','failure']),
             configurationResult:fields(obj(state.configurationResults?.get(String(registration.binding))),['job','jobState','code','checkedAt']),
             failedObservations:row.failed_observations};}),
-        events:state.events.slice(-32).map(event=>fields(event,['sequence','observed_unix_ms','project','kind','job','job_kind','fencing_generation','attempts','code'])),
+        events:state.events.slice(-128).map(event=>fields(event,['sequence','observed_unix_ms','project','kind','job','job_kind','fencing_generation','attempts','code'])),
         processLogs:{state:state.serviceEvents?.state??'unavailable',checkedAt:state.serviceEvents?.checkedAt,
             malformedRecords:state.serviceEvents?.value?.malformed_records,tailTruncated:state.serviceEvents?.value?.tail_truncated,
-            records:(Array.isArray(state.serviceEvents?.value?.records)?state.serviceEvents!.value!.records:[]).slice(-32).map(value=>fields(obj(value),['instance','kind','project','job','count','observed_unix_ms']))},
+            records:(Array.isArray(state.serviceEvents?.value?.records)?state.serviceEvents!.value!.records:[]).slice(-32).map(value=>fields(obj(value),['instance','kind','project','job','count','observed_unix_ms','code']))},
         historyOmitted:state.historyOmitted,configurationResultsOmitted:state.configurationResultsOmitted??false,moreProjects:!!state.page?.after,pendingRequestCount:state.pending.length,pathsRedacted:!includePaths,truncated:false};
     let text=JSON.stringify(report,null,2);
-    while(Buffer.byteLength(text)>65536){report.truncated=true;const projects=report.projects as unknown[],events=report.events as unknown[];
+    while(Buffer.byteLength(text)>256*1024){report.truncated=true;const projects=report.projects as unknown[],events=report.events as unknown[];
         if(events.length)events.shift();else if(projects.length)projects.pop();else break;text=JSON.stringify(report,null,2);}
     return text;
 }

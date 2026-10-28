@@ -12,6 +12,7 @@ import { AssistanceIpcHost, sweepExpired, windowsDirectory } from '../explorerAs
 import { assistanceDirectory, LAUNCH_SCHEMA, launchDescriptorPath, serverInvocation, writeLaunchDescriptor } from '../explorerAssistanceLaunch';
 import { SuggestionStore } from '../explorerSuggestions';
 import { serviceTestHost } from './serviceTestHost';
+import { contains } from '../explorerAssistance/attach';
 
 const bundle = path.resolve(__dirname, '..', 'explorerAssistance.js');
 
@@ -144,20 +145,17 @@ test('window descriptors are strict and stale ones are swept', t => {
     assert.deepEqual(fs.readdirSync(windowsDirectory(directory)).sort(), [path.basename(fresh), 'unrelated.txt']);
 });
 
-test('trusted activation offers the Assistance provider and publishes a window endpoint; untrusted windows publish nothing', { timeout: 30000 }, async t => {
+test('trusted activation withdraws the old provider and attaches UI to one native endpoint; untrusted windows publish nothing', { timeout: 30000 }, async t => {
     const f = await serviceTestHost(t, { assistance: true });
     try {
         const provider = f.assistance.get('airk.explorerAssistance');
         assert.ok(provider, 'a separate provider id from airk.collections');
-        const [definition] = await provider.provideMcpServerDefinitions();
+        assert.deepEqual(await provider.provideMcpServerDefinitions(),[],'retired provider withdraws cached legacy definitions');
+        const [definition]=await f.api.getServerDefinitions();
+        assert.equal(definition.label,'AIRK');assert.equal(definition.command,f.binding.launcher);
+        assert.ok(definition.args.includes('--explorer-descriptor'));
         const directory = path.join(f.root, 'editor-storage', 'explorer-assistance');
-        assert.equal(definition.label, 'AIRK Explorer Assistance');
-        assert.equal(definition.command, process.execPath);
-        assert.deepEqual(definition.args, [path.join(f.root, 'out', 'explorerAssistance.js'), '--assistance-dir', directory]);
-        assert.equal(definition.env.NODE_OPTIONS, null);
-        assert.equal(definition.cwd, f.folders[0].uri);
-        assert.equal(await provider.resolveMcpServerDefinition(definition), definition);
-        await assert.rejects(async () => provider.resolveMcpServerDefinition({ ...definition, args: ['other.js'] }), /workspace_registration_changed/);
+        await assert.rejects(async()=>provider.resolveMcpServerDefinition(definition),/legacy_mcp_definition_retired/);
         await f.refreshFolders();
         await new Promise(resolve => setTimeout(resolve, 200));
         assert.equal(descriptorFiles(directory).length, 1, 'one descriptor per window, replaced when folders change');
@@ -215,4 +213,11 @@ test('drafts travel over the window endpoint into the Inbox store, idempotently,
     const [after] = await calls(root, directory, [{ name: 'airk_explorer_proposal_status', args: { proposal_id: first.proposal_id } }]);
     assert.deepEqual({ status: after.status, applied: after.applied, executed: after.executed }, { status: 'applied', applied: true, executed: false });
     assert.equal(after.query, undefined, 'status never returns the body');
+});
+
+test('native Windows namespace roots match editor paths without admitting sibling projects',()=>{
+    assert.equal(contains('D:\\work\\Book','\\\\?\\D:\\work\\book\\src','win32'),true);
+    assert.equal(contains('\\\\?\\D:\\work\\book','D:\\work\\Book','win32'),true);
+    assert.equal(contains('D:\\work\\book','D:\\work\\book-other','win32'),false);
+    assert.equal(contains('/work/book','/work/book-other','linux'),false);
 });

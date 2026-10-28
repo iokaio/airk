@@ -1,34 +1,31 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
-import { FactRow, MANAGE_ACTIONS, MANAGE_COMMANDS, ManagedProject, ManagementView } from '../explorerContracts';
+import { AGENT_INSTRUCTION_FILES, AIRK_AGENT_INSTRUCTIONS, FactRow, MANAGE_ACTIONS, MANAGE_COMMANDS, ManagedProject, ManagementView, ProjectSummary, StatusSummary } from '../explorerContracts';
 import { request } from './api';
-import { Facts } from './components';
-import { ago, byteSize, observed, shortToken } from './format';
+import { CopyDetails, Facts } from './components';
+import type { Route } from '../explorerRoutes';
+import { ago, byteSize, duration, observed, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
 import { UsageReport } from './usage';
+import { indexContents, semanticExplanation, sourceWorkExplanation, workProgressDisplay } from '../explorerStatus';
+import { Markdown } from './help';
 
 type Action = typeof MANAGE_ACTIONS[number];
 type Command = typeof MANAGE_COMMANDS[number];
-interface ActionFields { project?: string; id?: string; scope?: 'one' | 'selected' | 'all'; operation?: 'auto' | 'verify' | 'recover' | 'reconcile' | 'vectors' | 'rebuild'; selected?: boolean; includePaths?: boolean; allowFallback?: boolean }
+interface ActionFields { project?: string; id?: string; scope?: 'one' | 'selected' | 'all'; operation?: 'auto' | 'verify' | 'recover' | 'reconcile' | 'vectors' | 'rebuild'; selected?: boolean; includePaths?: boolean; allowFallback?: boolean; expectedPlan?:string; expectedPreview?:string }
 
-/** Management tabs ask the host to include the shared console view while they are shown. */
-function useManagement(state: ScreenProps['state']): ManagementView | undefined {
-    useEffect(() => {
-        void request('manage.observe', { open: true }).catch(() => undefined);
-        return () => { void request('manage.observe', { open: false }).catch(() => undefined); };
-    }, []);
-    return state.management;
-}
+/** App owns the single observation subscription, including nested project views. */
+function useManagement(state: ScreenProps['state']): ManagementView | undefined { return state.management; }
 
-function useActions() {
+export function useActions() {
     const [busy, setBusy] = useState<string>();
     const [outcome, setOutcome] = useState<string>();
     const act = async (action: Action, fields: ActionFields = {}, label = action) => {
         setBusy(label); setOutcome(undefined);
         try {
             const result = await request<{ message: string | null }>('manage.action', { action, ...fields });
-            setOutcome(result.message ? `AIRK reported: ${result.message}` : undefined);
+            setOutcome(result.message ? result.message : undefined);
         } catch (failure) { setOutcome(failure instanceof Error ? failure.message : String(failure)); }
         finally { setBusy(undefined); }
     };
@@ -38,9 +35,9 @@ function useActions() {
     return { busy, outcome, act, command };
 }
 
-function Act(props: { actions: ReturnType<typeof useActions>; action: Action; fields?: ActionFields; enabled?: boolean; ghost?: boolean; children: ComponentChildren }) {
+export function Act(props: { actions: ReturnType<typeof useActions>; action: Action; fields?: ActionFields; enabled?: boolean; ghost?: boolean; children: ComponentChildren }) {
     const disabled = props.enabled === false || props.actions.busy !== undefined;
-    return <button type="button" class={props.ghost ? 'ghost' : ''} disabled={disabled} onClick={() => { void props.actions.act(props.action, props.fields); }}>{props.children}</button>;
+    return <button type="button" class={props.ghost ? 'ghost' : ''} disabled={disabled} onClick={() => { void props.actions.act(props.action, props.fields); }}>{props.actions.busy===props.action?props.action==='refresh'?'Refreshing status…':'Working…':props.children}</button>;
 }
 
 function Frame(props: { view?: ManagementView; trusted: boolean; actions: ReturnType<typeof useActions>; intro: string; children: ComponentChildren }) {
@@ -48,7 +45,7 @@ function Frame(props: { view?: ManagementView; trusted: boolean; actions: Return
     if (!props.view) { return <p class="muted">Reading the AIRK service state…</p>; }
     return (
         <div class="manage">
-            <p class="muted">{props.intro} {props.view.authority} · {props.view.connected ? 'connected' : 'disconnected'}{props.view.busy ? ' · working' : ''}</p>
+            <p class="muted">{props.intro} {props.view.authority} · {props.view.connected ? 'connected' : props.view.busy?'connecting':'disconnected'}{props.view.busy&&props.view.connected ? ' · checking status' : ''} · Last service check: {ago(props.view.checkedAt)}</p>
             {props.actions.outcome && <p class="callout" role="status">{props.actions.outcome}</p>}
             {props.view.message && !props.actions.outcome && <p class="muted" role="status">Last control outcome: <code>{props.view.message}</code></p>}
             {props.children}
@@ -86,103 +83,180 @@ function ProjectPicker(props: { view: ManagementView; value?: string; onChange(p
 }
 
 function Paging(props: { view: ManagementView; actions: ReturnType<typeof useActions> }) {
-    return (
-        <div class="actions">
-            <Act actions={props.actions} action="registeredProjects" enabled={props.view.enabled.projectActions} ghost>Registered projects</Act>
-            <Act actions={props.actions} action="inactiveProjects" enabled={props.view.enabled.projectActions} ghost>Unregistered projects / cleanup</Act>
-            <Act actions={props.actions} action="firstPage" ghost>First page</Act>
-            <Act actions={props.actions} action="nextPage" enabled={props.view.morePages} ghost>Next page</Act>
-            <span class="muted">{props.view.pageNote}</span>
+    return <div class="actions project-paging">
+        <div class="project-filters" role="group" aria-label="Project list filter">
+            <button type="button" class={!props.view.inactive ? 'selected' : 'ghost'} aria-pressed={!props.view.inactive}
+                disabled={!props.view.enabled.projectActions || props.actions.busy !== undefined || !props.view.inactive}
+                onClick={() => void props.actions.act('registeredProjects')}>Active projects</button>
+            <button type="button" class={props.view.inactive ? 'selected' : 'ghost'} aria-pressed={props.view.inactive}
+                disabled={!props.view.enabled.projectActions || props.actions.busy !== undefined || props.view.inactive}
+                onClick={() => void props.actions.act('inactiveProjects')}>Removed projects</button>
         </div>
-    );
+        <Act actions={props.actions} action="firstPage" enabled={props.view.enabled.refresh} ghost>First page</Act>
+        <Act actions={props.actions} action="nextPage" enabled={props.view.morePages && props.view.enabled.refresh} ghost>Next page</Act>
+        <span class="muted">{props.view.pageNote}</span>
+    </div>;
 }
 
+export function ProjectHealth(props: { entry: ManagedProject; view: ManagementView; actions: ReturnType<typeof useActions>; compact?:boolean; go?(route:Route):void }) {
+    const { entry, view, actions } = props, health = entry.health;
+    // Ordinary live work is explained by the adjacent progress card. Keep failures,
+    // pauses, recovery and waits prominent instead of repeating a generic running banner.
+    if(props.compact&&health.routineWork)return null;
+    return <section class={`project-health health-${health.severity}`} aria-label={`${entry.summary.name} health`}>
+        <div class="section-head"><h3>{health.title}</h3><CopyDetails section="health" project={entry.summary.project} /></div><p>{health.detail}</p>
+        {health.severity==='error'&&<Act actions={actions} action="openRawLogs" ghost>Open raw diagnostic log</Act>}
+        {health.reviewTab&&props.go&&<button type="button" class="ghost" onClick={()=>props.go!({workspace:'manage',tab:health.reviewTab})}>{health.reviewTab==='repair'?'Review recovery plan':'Review diagnostics'}</button>}
+        {health.action && <div class="actions"><Act actions={actions} action={health.action}
+            fields={health.action === 'retryJob' ? { id: entry.jobId } : { project: entry.summary.project }}
+            enabled={view.enabled.projectActions && !view.inactive && (health.action !== 'retryJob' || !!entry.jobId)}>{health.actionLabel}</Act></div>}
+        {health.action === 'restartProject' && <p class="muted">After restart, confirm that a worker connects and new progress is observed. The original failure cause may be unavailable.</p>}
+    </section>;
+}
+
+/** The same publication summary leads Overview and Management; work counters never replace it. */
+export function IndexContents(props:{project:ProjectSummary;status?:StatusSummary;connected:boolean}) {
+    const saved=indexContents(props.project,props.status);
+    const coverageKnown=saved.semanticCompleted!==undefined&&saved.semanticSelected!==undefined&&saved.semanticSelected>0&&saved.semanticCompleted<=saved.semanticSelected;
+    const available=saved.indexState==='available'||saved.indexState==='ready';
+    return <section class="card index-contents" aria-label="Published index contents">
+        <div class="section-head"><h2>In your index</h2><CopyDetails section="index" project={props.project.project}/></div>
+        <p><strong>{available?'Published for search':saved.indexState==='unavailable'?'Published index unavailable':'Waiting for a published index observation'}</strong> · observed {ago(saved.observedAt)}{!props.connected?' · disconnected; showing retained observations':''}</p>
+        <dl class="project-metrics progress-metrics">
+            <div><dt>Files indexed</dt><dd>{observed(saved.files)}</dd></div>
+            <div><dt>Searchable text chunks</dt><dd>{observed(saved.chunks)}</dd></div>
+            <div><dt>Semantic vectors published</dt><dd>{observed(saved.vectors)}</dd></div>
+        </dl>
+        <div class="semantic-coverage">
+            <p><strong>Semantic coverage</strong> · {saved.semanticCompleted===undefined&&saved.semanticSelected===undefined?'Not reported yet':`${observed(saved.semanticCompleted)} of ${saved.semanticSelected===undefined?'an unknown number of':observed(saved.semanticSelected)} selected files`}</p>
+            {coverageKnown&&<progress value={saved.semanticCompleted} max={saved.semanticSelected} aria-label="Selected files with published semantic data"/>}
+            <p class="muted">{saved.semantic==='ready'?'Semantic coverage is ready.':saved.semantic==='partial'?'Some selected files have published semantic data. Current work and waits are shown below.':saved.semantic==='disabled'?'This publication has no semantic coverage. Saved setup and current work are separate.':saved.semantic==='failed'?'Semantic indexing reported a failure; review Activity for its outcome.':`Semantic readiness: ${saved.semantic}.`} {saved.discoveryState==='ready'?'Source discovery completed for this snapshot.':saved.discoveryState==='partial'?'Source discovery is still partial.':''}</p>
+        </div>
+        <p>{sourceWorkExplanation(saved.freshness)}</p>
+        <details><summary>Publication details</summary><p>These are saved results, separate from the current attempt below. Updates appear automatically. File coverage is not a time estimate.</p><Facts rows={[
+            ['Publication',shortToken(saved.publication)],['Observed',saved.observedAt===undefined?'Not observed':new Date(saved.observedAt).toISOString()],
+            ['Source discovery',saved.discoveryState??'Not observed'],['Source updates',saved.freshness??'Not observed'],
+        ]}/></details>
+    </section>;
+}
+
+/** Shared dashboard for one exact native attempt. Previous-worker counters remain labeled. */
+export function WorkProgress(props: { entry: ManagedProject }) {
+    const work = props.entry.work;
+    const display=workProgressDisplay(work,props.entry.summary.jobKind,props.entry.jobState);
+    const sample=<section class="card work-progress" aria-label="Indexing progress">
+        <div class="section-head"><h2>{work.current&&props.entry.jobState==='running'?'Working now':'Latest work attempt'}</h2><span class="muted">Updated {ago(work.observedAt)}</span><CopyDetails section="progress" project={props.entry.summary.project} /></div>
+        <h3>{display.title}</h3>
+        <p class="muted">{work.current ? 'Worker connected · matching job sample' : 'Retained sample · current progress unconfirmed'}.
+            {' '}Last advancement: {work.lastAdvanceMs===undefined?'not reported':`${duration(work.lastAdvanceMs)} ago at sample`} · This attempt: {duration(work.elapsedMs)}.</p>
+        {display.explanation&&<p>{display.explanation}</p>}
+        <div class="progress-stages" aria-label="Indexing stages">{display.stages.map(stage => <span key={stage.phase} class={stage.active ? 'active' : ''}>{stage.label}</span>)}</div>
+        {work.wait !== 'No matching native wait observation' && <p class="callout">{work.wait}</p>}
+        <dl class="project-metrics progress-metrics">
+            {display.metrics.map(([label,value])=><div key={label}><dt>{label}</dt><dd>{value===undefined?'Not reported':observed(value)}</dd></div>)}
+        </dl>
+        <details><summary>More progress details</summary>
+            <p class="muted">Capture, extraction and publication counters describe this attempt. Captured includes reused results. Semantic units describe retained semantic work and are not a file count. Stages can repeat by batch; no overall percentage or ETA is inferred.</p>
+            <Facts rows={[
+                ['Current phase at sample', duration(work.phaseElapsedMs)],
+                ['Prepared / committed work items', `${observed(work.prepared)} / ${observed(work.committed)}`],
+                ['Verified retained objects', observed(work.verified)], ['Completed semantic units', observed(work.semanticUnits)],
+            ]} />
+            <details><summary>Native progress observations</summary><Rows rows={props.entry.activity} /><Rows rows={work.phaseTimes} /></details>
+        </details>
+    </section>;
+    return props.entry.pendingJobId&&!['running','pending'].includes(props.entry.jobState??'')?<section class="card work-progress" aria-label="Queued indexing request">
+        <div class="section-head"><h2>Waiting for the queued request to start</h2><CopyDetails section="progress" project={props.entry.summary.project} /></div>
+        <p>No progress for this queued request has been observed. The previous job's counters do not describe the queued work.</p>
+        {work.wait!=='No matching native wait observation'&&<p class="callout">{work.wait}</p>}
+        <details><summary>Previous {props.entry.summary.jobKind??'job'} result and counters</summary>{sample}</details>
+    </section>:sample;
+}
+
+/** Each Management tab mounts only its section; project selection survives tab changes. */
 export function ProjectsScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
-    return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Registered projects from the service's cached project page.">
-            {view && <>
-                <div class="actions">
-                    <Act actions={actions} action="registerWorkspace" enabled={view.enabled.registerWorkspace}>Review workspace registration</Act>
-                    <Act actions={actions} action="refresh" enabled={view.enabled.refresh} ghost>Refresh</Act>
-                </div>
-                <Paging view={view} actions={actions} />
-                {!view.projects.length && <p class="callout">No project is visible on this page.</p>}
-                <ul class="project-list" aria-label="Registered projects">
-                    {view.projects.map(entry => {
-                        const project = entry.summary;
-                        return (
-                            <li key={project.project} class={`project-card${project.project === props.state.selectedProject ? ' selected' : ''}`}>
-                                <div class="project-heading">
-                                    <input type="checkbox" aria-label={`Select ${project.collection} for repair`} checked={entry.selected} disabled={view.inactive || !view.enabled.projectActions || actions.busy !== undefined}
-                                        onChange={event => { void actions.act('select', { project: project.project, selected: (event.target as HTMLInputElement).checked }); }} />
-                                    <h2 title={project.collection}>{project.name}</h2>
-                                    {project.current && <span class="tag">open here</span>}
-                                    {project.project === props.state.selectedProject && <span class="tag ok">selected</span>}
-                                </div>
-                                <code class="project-path" title={project.root}>{project.root || 'Source root not observed'}</code>
-                                <p class="muted storage-location">Index storage root <code class="path">{entry.storage.root ?? 'not observed'}</code></p>
-                                <dl class="project-metrics">
-                                    <div><dt>Index (cached)</dt><dd>{project.indexState ?? 'not observed'}</dd></div>
-                                    <div><dt>Watching</dt><dd>{observed(project.watching)}</dd></div>
-                                    <div><dt>Paused</dt><dd>{observed(project.paused)}</dd></div>
-                                    <div><dt>Files <span class="muted">(cached)</span></dt><dd>{observed(project.indexedFiles)}</dd></div>
-                                    <div><dt>Semantic <span class="muted">(cached)</span></dt><dd>{project.semantic ?? 'not observed'}</dd></div>
-                                    <div><dt>Accounted index size</dt><dd>{byteSize(entry.storage.usedBytes)}</dd></div>
-                                </dl>
-                                <p class="muted">Inspected {ago(project.observedAt)}. {project.jobState ? `Latest job: ${project.jobKind ?? 'unknown'} · ${project.jobState}.` : 'No job observed.'} Inspect to update index counts and storage measurements.</p>
-                                <WatchDiagnostics entry={entry} />
-                                <details><summary>Index and source details</summary><Facts rows={[
-                                    ['Collection', project.collection], ['Publication (cached)', <code>{project.publication ?? 'not observed'}</code>],
-                                    ['Inspected', ago(project.observedAt)], ...entry.rows.map(([name, value]): [string, ComponentChildren] => [name, value]),
-                                ]} /></details>
-                                <details><summary>Work and worker details</summary><Rows rows={entry.activity} /></details>
-                                <div class="project-footer">
-                                <div class="actions">{!view.inactive && <>
-                                    <Act actions={actions} action="inspect" fields={{ project: project.project }} enabled={view.enabled.projectActions}>Inspect index &amp; storage</Act>
-                                    {project.project !== props.state.selectedProject && <button type="button" class="ghost" disabled={!project.current} title="Evidence selection requires this project to be open in the workspace" onClick={() => { void request('project.select', { project: project.project }).catch(() => undefined); }}>Select</button>}
-                                    <Act actions={actions} action="index" fields={{ project: project.project }} enabled={view.enabled.projectActions}>Index now</Act>
-                                    <Act actions={actions} action="unregisterProject" fields={{ project: project.project }} enabled={view.enabled.projectActions} ghost>Remove project…</Act>
-                                </>}{view.inactive && <>
-                                    <Act actions={actions} action="previewCleanup" fields={{ project: project.project }} enabled={view.enabled.projectActions}>Preview / resume index cleanup</Act>
-                                    <Act actions={actions} action="deleteDerived" fields={{ project: project.project }} enabled={view.enabled.projectActions && entry.canDeleteDerived}>Delete reviewed index state</Act>
-                                </>}</div></div>
-                            </li>
-                        );
-                    })}
-                </ul>
-                <p class="muted">{view.selectedCount} selected across pages for repair. Refresh reads cached observations; Inspect queues a native observation without rebuilding the index. Counts describe the inspected publication, not unsaved source files.</p>
-                <RuntimeVersions state={props.state} view={view} />
+    const [opened, setOpened] = useState<string | undefined>(props.state.selectedProject);
+    const entry = view?.projects.find(item => item.summary.project === opened) ?? view?.projects[0];
+    const scoped = entry && view ? { ...props, manageEmbedded: true, state: { ...props.state, selectedProject: entry.summary.project, management: { ...view, projects: [entry] } } } : undefined;
+    const tab = props.route.tab ?? 'overview';
+    if (tab === 'service') return <><ServiceScreen {...props} />{view && props.state.trusted && <RuntimeVersions state={props.state} view={view} />}</>;
+    if (tab === 'agents') return <AgentsScreen {...props} />;
+    if (tab === 'usage') return <UsageScreen {...props} />;
+    if (tab === 'logs') return <LogsScreen {...props} />;
+    return <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Manage indexing on">
+        {view && <>
+            <div class="section-head"><div class="inline-form"><label>Project <ProjectPicker view={view} value={entry?.summary.project} onChange={setOpened} /></label>
+                <Act actions={actions} action="registerWorkspace" enabled={view.enabled.registerWorkspace} ghost>Add project…</Act></div>
+                <span class="muted">Updates automatically</span></div>
+            <details><summary>Browse active or removed projects</summary><Paging view={view} actions={actions} /></details>
+            {!view.connected && !view.busy && <p class="callout">The service connection is unavailable. Automatic checks will retry; view connection details in the Service tab.</p>}
+            {view.pending.length > 0 && <section class="project-health health-warn" role="status"><h3>Requests need confirmation</h3>
+                <p>A connection ended before an outcome was confirmed. Check the saved request before submitting another.</p>
+                {view.pending.map(intent => <div class="actions" key={intent.id}><span>{intent.title}</span><Act actions={actions} action="retryIntent" fields={{ id: intent.id }} enabled={view.enabled.projectActions}>Check exact request</Act></div>)}
+            </section>}
+            {!entry && <p class="callout" role="status">{!view.connected?view.busy?'Connecting to AIRK and loading saved project details…':'Project registrations could not be checked. Retained work has not been reported as removed.':`No ${view.inactive?'removed':'active'} projects on this page. Add project reviews an open folder.`}</p>}
+            {entry && scoped && <>
+                <h2>{entry.summary.name}</h2><p class="path">{entry.summary.root}</p>
+                {tab==='overview'&&<IndexContents project={entry.summary} status={entry.summary.project===props.state.selectedProject?props.state.status:undefined} connected={view.connected}/>}
+                <ProjectHealth entry={entry} view={view} actions={actions} go={props.go} compact={tab==='overview'||tab==='activity'} />
+                {tab === 'overview' && !view.inactive && !entry.health.action && <div class="actions">
+                    <Act actions={actions} action={entry.jobState === 'running' || entry.jobState === 'pending' || entry.pendingJobId ? 'pause' : 'index'} fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions}>
+                        {entry.jobState === 'running' || entry.jobState === 'pending' || entry.pendingJobId ? 'Pause indexing' : 'Update index'}</Act>
+                </div>}
+                {view.inactive && <p class="callout">{entry.lifecycle}. Removal stops indexing and retains settings and index data. Add project reviews registration again; pending cleanup must finish first.</p>}
+                {tab === 'overview' && <>
+                {!view.inactive && <>
+                    {(entry.jobId || entry.pendingJobId || entry.configuration.pending) && <WorkProgress entry={entry} />}
+                    <ProjectSettings entry={entry} view={view} actions={actions} />
+                </>}
+                </>}
+                {tab === 'activity' && <section class="card" aria-label="Recent activity and requests"><div class="section-head"><h3>Recent activity and requests</h3><CopyDetails section="activity" project={entry.summary.project} /></div>
+                    {(entry.jobId || entry.pendingJobId || entry.configuration.pending) && <WorkProgress entry={entry} />}
+                    <p class="muted">Native outcomes survive closing this window. Applied settings and search coverage are separate steps. Recent history is bounded.</p>
+                    <Rows rows={entry.requests} />
+                    <ol class="log">{entry.events.map((event, index) => <li key={index}>{event}</li>)}</ol>
+                    {view.historyOmitted && <p class="muted">Earlier events are omitted.</p>}
+                    {entry.jobId && ['running','pending'].includes(entry.jobState ?? '') && <Act actions={actions} action="cancelJob" fields={{ id: entry.jobId }} enabled={view.enabled.projectActions} ghost>Cancel current request</Act>}
+                    {entry.pendingJobId && <Act actions={actions} action="cancelJob" fields={{ id: entry.pendingJobId }} enabled={view.enabled.projectActions} ghost>Cancel queued request</Act>}
+                </section>}
+                {tab === 'storage' && <section aria-label="Storage and removal"><h3>Storage and removal</h3>
+                    <StorageScreen {...scoped} />
+                    {!view.inactive && <Act actions={actions} action="unregisterProject" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions} ghost>Remove project from AIRK…</Act>}
+                </section>}
+                {tab === 'repair' && <section class="card" aria-label="Advanced diagnostics and recovery"><div class="section-head"><h3>Advanced diagnostics and recovery</h3><CopyDetails section="recovery" project={entry.summary.project} /></div>
+                    <div class="actions"><Act actions={actions} action="inspect" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions && !view.inactive} ghost>Check index and settings</Act>
+                        <Act actions={actions} action="restartProject" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions && !view.inactive} ghost>Restart project worker</Act>
+                        <Act actions={actions} action="configureProject" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions && !view.inactive && !entry.configuration.pending} ghost>Advanced settings…</Act>
+                        {entry.configurationResult && <Act actions={actions} action="copyConfiguration" fields={{ project: entry.summary.project }} ghost>Copy settings result</Act>}</div>
+                    <Rows rows={entry.rows} /><WatchDiagnostics entry={entry} />
+                    {!view.inactive && <RepairScreen key={entry.summary.project} {...scoped} />}
+                </section>}
             </>}
-        </Frame>
-    );
+        </>}
+    </Frame>;
 }
+function ProjectSettings({ entry, view, actions }: { entry: ManagedProject; view: ManagementView; actions: ReturnType<typeof useActions> }) {
+    const project = entry.summary.project, enabled = view.enabled.projectActions && !entry.configuration.pending && actions.busy === undefined;
+    const semantic = entry.configuration.requestedVectors ?? entry.configuration.vectorsEnabled;
+    const detailNames: Record<string,string> = { agent_lean: 'Agent Lean', essential: 'Search Only', balanced: 'Rich Structure', detailed: 'Detailed' };
+    return <section class="card project-settings"><h3>Index settings</h3>
+        <label>Search mode <select aria-label="Search mode" value={semantic === undefined ? 'unknown' : semantic ? 'semantic' : 'text'} disabled={!enabled}
+            onChange={event => void actions.act((event.target as HTMLSelectElement).value === 'semantic' ? 'enableSemantic' : 'disableSemantic', { project })}>
+            {semantic === undefined && <option value="unknown" disabled>Not checked</option>}<option value="text">Text only</option><option value="semantic">Text + semantic</option></select></label>
+        <p class="muted">Semantic mode prepares the offline model and schedules indexing. The saved mode changes after it applies; search becomes ready after publication.</p>
+        {entry.configuration.requestedVectors!==undefined&&<p role="status">Requested: {semantic?'Text + semantic':'Text only'}. Saved mode: {entry.configuration.vectorsEnabled===undefined?'not observed':entry.configuration.vectorsEnabled?'Text + semantic':'Text only'}. AIRK will finish applying the request.</p>}
+        {entry.configuration.requestedDetail&&<p role="status">Requested detail: {detailNames[entry.configuration.requestedDetail]??entry.configuration.requestedDetail}.</p>}
 
-export function ActivityScreen(props: ScreenProps) {
-    const view = useManagement(props.state), actions = useActions();
-    return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Current and queued native work. Ages are real advancement observations; there is no ETA.">
-            {view && <>
-                <Paging view={view} actions={actions} />
-                {view.projects.map(entry => (
-                    <article class="card" key={entry.summary.project}>
-                        <h2 title={entry.summary.collection}>{entry.summary.name}</h2>
-                        <Rows rows={entry.activity} />
-                        <div class="actions">
-                            {entry.jobId && (entry.jobState === 'failed' || entry.jobState === 'canceled') && <Act actions={actions} action="retryJob" fields={{ id: entry.jobId }}>Retry job</Act>}
-                            {entry.jobId && (entry.jobState === 'running' || entry.jobState === 'pending') && <Act actions={actions} action="cancelJob" fields={{ id: entry.jobId }} ghost>Cancel job</Act>}
-                            {entry.pendingJobId && <Act actions={actions} action="cancelJob" fields={{ id: entry.pendingJobId }} ghost>Cancel queued job</Act>}
-                        </div>
-                    </article>
-                ))}
-                <h2>Recent transitions</h2>
-                {view.historyOmitted && <p class="muted">Older transitions are omitted from this recent-history view.</p>}
-                <ol class="log">{view.events.map((line, index) => <li key={index}><code>{line}</code></li>)}</ol>
-                <h2>Recent process transitions</h2>
-                <ol class="log">{view.processEvents.map((line, index) => <li key={index}><code>{line}</code></li>)}</ol>
-            </>}
-        </Frame>
-    );
+        {semantic === true && entry.summary.semantic === 'disabled' && entry.health.action !== 'enableSemantic' && !['running','pending'].includes(entry.jobState ?? '') && !entry.pendingJobId && <Act actions={actions} action="enableSemantic" fields={{ project }} enabled={enabled}>Complete semantic setup</Act>}
+        <label>Updates <select aria-label="Updates" value={entry.summary.watching === undefined ? 'unknown' : entry.summary.watching ? 'automatic' : 'manual'} disabled={!view.enabled.projectActions || actions.busy !== undefined}
+            onChange={event => void actions.act('watch', { project, selected: (event.target as HTMLSelectElement).value === 'automatic' })}>
+            {entry.summary.watching === undefined && <option value="unknown" disabled>Not checked</option>}<option value="automatic">Automatic</option><option value="manual">Manual</option></select></label>
+        <p class="muted">Automatic watches saved files even after VS Code closes. Pause temporarily stops work and preserves this preference.</p>
+        <div class="inline-form"><span>Evidence detail: {detailNames[entry.configuration.detail ?? ''] ?? entry.configuration.detail ?? 'not checked'}</span><Act actions={actions} action="configureDetail" fields={{ project }} enabled={enabled} ghost>Change detail…</Act></div>
+        <p class="muted">Evidence detail controls supported source structure, independently of semantic search.</p>
+        {entry.configuration.pending && <p role="status">Settings change {entry.configuration.state}. Current work finishes first; its outcome appears in Recent activity.</p>}
+    </section>;
 }
 
 const OPERATIONS: [NonNullable<ActionFields['operation']>, string][] = [['auto', 'Automatic (inspect, then choose)'], ['verify', 'Verify retained data'],
@@ -193,8 +267,12 @@ export function RepairScreen(props: ScreenProps) {
     const [operation, setOperation] = useState<NonNullable<ActionFields['operation']>>('auto');
     const [scope, setScope] = useState<'one' | 'selected' | 'all'>('one');
     const [project, setProject] = useState<string | undefined>(props.state.selectedProject);
-    const [fallback, setFallback] = useState(false);
+    const [fallbackReview, setFallbackReview] = useState<{plan?:string;preview?:string;checked:boolean}>({checked:false});
     const plan = view?.plan;
+    const fallback=!!plan?.preview&&fallbackReview.plan===plan.id&&fallbackReview.preview===plan.preview&&fallbackReview.checked;
+    const needsFallback=plan?.items.some(item=>item.fallback==='Yes')??false;
+    const planTitle=plan?.paused?'Repair plan paused':plan?.phase==='ready'?'Review and start repair':plan?.phase==='planning'?'Checking the project before repair'
+        :plan?.phase==='running'?plan.items.some(item=>item.phase==='running')?'Repair running':'Repair queued':plan?.phase==='finished'?plan.outcome==='failed'?'Repair failed':plan.outcome==='succeeded'?'Repair succeeded':plan.outcome==='cleanup_pending'?'Repair succeeded; cleanup pending':'Repair ended without completing all projects':plan?.phase==='canceling'?'Canceling repair':'Repair status';
     return (
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Repair plans inspect state before choosing actions. Nothing runs until you approve the exact preview.">
             {view && <>
@@ -202,15 +280,36 @@ export function RepairScreen(props: ScreenProps) {
                     <label>Operation <select value={operation} onChange={event => setOperation((event.target as HTMLSelectElement).value as typeof operation)}>
                         {OPERATIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                     <label>Scope <select value={scope} onChange={event => setScope((event.target as HTMLSelectElement).value as typeof scope)}>
-                        <option value="one">One project</option><option value="selected">Selected projects ({view.selectedCount})</option><option value="all">All registered projects</option></select></label>
+                        <option value="one">One project</option>{!props.manageEmbedded && <><option value="selected">Selected projects ({view.selectedCount})</option><option value="all">All registered projects</option></>}</select></label>
                     {scope === 'one' && <ProjectPicker view={view} value={project} onChange={setProject} />}
                     <Act actions={actions} action="repair" enabled={view.enabled.projectActions && !view.inactive && (scope !== 'one' || !!project) && (scope !== 'selected' || view.selectedCount > 0)}
                         fields={{ scope, operation, ...(scope === 'one' && project ? { project } : {}) }}>Create repair preview</Act>
                 </div>
                 {!plan && <p class="muted">Create a plan for one project, the selected projects, or all registered projects.</p>}
                 {plan && <article class="card">
-                    <h2>Repair preview and receipts</h2>
-                    <Rows rows={plan.rows} />
+                    <div class="section-head"><h2>{planTitle}</h2>{project&&<CopyDetails section="recovery" project={project} />}</div>
+                    <p>{plan.phase==='ready'?'The check is complete. Review the proposed work below, then choose Start repair. No repair starts until you confirm.'
+                        :plan.phase==='planning'?'AIRK is inspecting the selected project to choose a repair. This is the preview stage.'
+                        :plan.phase==='running'?'Your repair was accepted. Project progress and the current plan rows show whether it is queued or running.'
+                        :plan.phase==='finished'?plan.outcome==='failed'?'One or more repair operations failed. Open the raw diagnostic log for the retained error details.':plan.outcome==='succeeded'?'All repair operations succeeded. Source freshness and semantic coverage are shown in Indexing.':plan.outcome==='cleanup_pending'?'Repair operations succeeded, but cleanup was not complete at the end of this plan. Storage shows the latest cleanup status.':'Some repair operations were canceled, skipped or became stale. Review the results below.'
+                        :'The latest native repair state is shown below.'}</p>
+                    {plan.outcome==='failed'&&<Act actions={actions} action="openRawLogs" ghost>Open raw diagnostic log</Act>}
+                    <ul>{plan.items.map((item,index)=><li key={index}><strong>{view.projects.find(entry=>entry.summary.project===item.project)?.summary.name??`Project ${item.project.slice(0,12)}`}</strong>: {OPERATIONS.find(([value])=>value===item.action)?.[1]??item.action} · {item.phase}.
+                        {item.action==='reconcile'&&' Update indexed evidence from saved source files while keeping the published evidence available.'}
+                        {item.action==='recover'&&' Recover captured index changes; this can temporarily affect search availability.'}
+                        {item.action==='rebuild'&&' Rebuild the index from sources. Review availability, temporary storage and any required fallback approval.'}
+                    </li>)}</ul>
+                    <div class="actions">
+                        {plan.morePages&&<Act actions={actions} action="morePlan" enabled={view.enabled.projectActions}>Review remaining projects</Act>}
+                        {plan.phase==='ready'&&needsFallback&&<label class="check"><input type="checkbox" checked={fallback} onChange={event=>setFallbackReview({plan:plan.id,preview:plan.preview,checked:(event.target as HTMLInputElement).checked})} /> Allow the fresh/offline fallback identified in this exact plan</label>}
+                        {plan.phase==='ready'&&<Act actions={actions} action="approvePlan" fields={{allowFallback:fallback,expectedPlan:plan.id,expectedPreview:plan.preview}}
+                            enabled={plan.approvable&&view.enabled.projectActions&&(!needsFallback||fallback)}>Start repair</Act>}
+                        {plan.paused&&plan.phase!=='finished'&&<Act actions={actions} action="resumePlan" enabled={view.enabled.projectActions}>Resume repair</Act>}
+                        {!plan.paused&&plan.phase==='running'&&<Act actions={actions} action="pausePlan" enabled={view.enabled.projectActions} ghost>Pause repair</Act>}
+                        {plan.phase!=='finished'&&plan.phase!=='canceling'&&<Act actions={actions} action="cancelPlan" enabled={view.enabled.projectActions} ghost>Cancel repair</Act>}
+                    </div>
+                    {plan.phase==='ready'&&!plan.approvable&&<p class="callout">Review all remaining project pages before starting this repair.</p>}
+                    <details><summary>Technical preview, results and storage estimates</summary><Rows rows={plan.rows} />
                     <div class="table-wrap"><table class="grid">
                         <thead><tr><th>Project</th><th>Phase</th><th>Action</th><th>Availability impact</th><th>Temporary disk estimate (bytes)</th><th>Source</th><th>Fallback approval required</th><th>Result</th><th>Cleanup pending</th></tr></thead>
                         <tbody>{plan.items.map((item, index) => <tr key={index}><td><code>{item.project}</code></td><td>{item.phase}</td><td>{item.action}</td><td>{item.availability}</td>
@@ -220,12 +319,8 @@ export function RepairScreen(props: ScreenProps) {
                     <div class="actions">
                         <Act actions={actions} action="morePlan" enabled={plan.morePages && view.enabled.projectActions} ghost>More plan projects</Act>
                         <Act actions={actions} action="refreshPlan" enabled={view.enabled.projectActions} ghost>Refresh cached plan rows</Act>
-                        <label class="check"><input type="checkbox" checked={fallback} onChange={event => setFallback((event.target as HTMLInputElement).checked)} /> Approve any explicitly identified fresh/offline fallback in this exact plan</label>
-                        <Act actions={actions} action="approvePlan" fields={{ allowFallback: fallback }} enabled={plan.approvable && view.enabled.projectActions}>Approve this exact preview</Act>
-                        <Act actions={actions} action={plan.paused ? 'resumePlan' : 'pausePlan'} enabled={view.enabled.projectActions} ghost>{plan.paused ? 'Resume plan' : 'Pause plan'}</Act>
-                        <Act actions={actions} action="cancelPlan" enabled={view.enabled.projectActions} ghost>Cancel plan</Act>
                     </div>
-                    {!plan.approvable && <p class="muted">Approval becomes available when the plan is ready and every preview page has been read.</p>}
+                    </details>
                 </article>}
                 <h2>Requests awaiting confirmation</h2>
                 <p class="muted">An unknown outcome keeps its original request key. Rechecking sends that exact request; forgetting it does not cancel native work.</p>
@@ -241,49 +336,6 @@ export function RepairScreen(props: ScreenProps) {
     );
 }
 
-function ProjectCards(props: { view: ManagementView; actions: ReturnType<typeof useActions>; children(entry: ManagedProject): ComponentChildren; showRows?: boolean }) {
-    return <>{props.view.projects.map(entry => (
-        <article class="card" key={entry.summary.project}>
-            <h2 title={entry.summary.collection}>{entry.summary.name} <span class="muted">{entry.summary.root}</span></h2>
-            {props.showRows && <Rows rows={entry.rows} />}
-            {props.showRows && <WatchDiagnostics entry={entry} />}
-            {entry.uncertainConfiguration && <p class="callout">The configuration effect is uncertain. Inspect the current settings before requesting another change.</p>}
-            <div class="actions">{props.children(entry)}</div>
-        </article>
-    ))}</>;
-}
-
-export function IndexingScreen(props: ScreenProps) {
-    const view = useManagement(props.state), actions = useActions();
-    return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Per-project indexing controls. Project settings open the native settings picker (vectors, detail, models, extraction policy, scan limits and more).">
-            {view && <RuntimeVersions state={props.state} view={view} />}
-            <div class="callout"><p>Choose evidence detail, vectors and extraction settings for your purpose and source formats before changing this project.</p>
-                <button class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'indexing-choices' })}>Indexing choices explained</button>
-                <button class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'document-types' })}>Document types and OCR</button></div>
-            {view && <>
-                <div class="actions"><button type="button" class="ghost" onClick={() => { void actions.command('airk.indexMode'); }}>Choose default automatic watching…</button></div>
-                <Paging view={view} actions={actions} />
-                {view.configurationResultsOmitted && <p class="muted">Some configuration results were omitted from this bounded snapshot. Reconnect to retrieve an individual result.</p>}
-                {view.inactive ? <p class="callout">Unregistered projects are listed in Storage.</p> : <ProjectCards view={view} actions={actions} showRows>{entry => {
-                    const project = entry.summary.project, on = view.enabled.projectActions;
-                    return <>
-                        <Act actions={actions} action="inspect" fields={{ project }} enabled={on}>Inspect</Act>
-                        <Act actions={actions} action="index" fields={{ project }} enabled={on}>Index now</Act>
-                        <Act actions={actions} action={entry.summary.paused ? 'resume' : 'pause'} fields={{ project }} enabled={on} ghost>{entry.summary.paused ? 'Resume project' : 'Pause project'}</Act>
-                        <Act actions={actions} action="watch" fields={{ project, selected: !entry.summary.watching }} enabled={on} ghost>{entry.summary.watching ? 'Stop automatic watching' : 'Watch automatically'}</Act>
-                        <Act actions={actions} action="restartProject" fields={{ project }} enabled={on} ghost>Restart project worker</Act>
-                        <Act actions={actions} action="modelSetup" fields={{ project }} enabled={on} ghost>Install bundled model</Act>
-                        <Act actions={actions} action="configureProject" fields={{ project }} enabled={on}>Project settings…</Act>
-                        <Act actions={actions} action="unregisterProject" fields={{ project }} enabled={on} ghost>Remove project…</Act>
-                        {entry.configurationResult && <Act actions={actions} action="copyConfiguration" fields={{ project }} ghost>Copy configuration result</Act>}
-                    </>;
-                }}</ProjectCards>}
-            </>}
-        </Frame>
-    );
-}
-
 export function StorageScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
@@ -294,10 +346,10 @@ export function StorageScreen(props: ScreenProps) {
                     <button type="button" onClick={() => { void actions.command('airk.chooseStorage'); }}>Choose index storage folder…</button>
                 </div>
                 <p class="muted">Storage below belongs to the listed projects. Choosing a folder affects new registrations; it does not move existing indexes. Sizes are cached native quota accounting, not a scan of the source folder or a promise of free disk space.</p>
-                <Paging view={view} actions={actions} />
+                {!props.manageEmbedded && <Paging view={view} actions={actions} />}
                 {!view.projects.length && <p class="callout">No projects are visible on this page. Choose Registered projects or refresh the service state.</p>}
                 {view.projects.map(entry => <article class="card storage-card" key={entry.summary.project}>
-                    <h2>{entry.summary.name} {view.inactive && <span class="tag">unregistered · retained index</span>}</h2>
+                    <div class="section-head"><h2>{entry.summary.name} {view.inactive && <span class="tag">unregistered · retained index</span>}</h2><CopyDetails section="storage" project={entry.summary.project} /></div>
                     <p class="storage-location">Index storage root <code class="path">{entry.storage.root ?? 'not observed'}</code></p>
                     <p class="muted">Collection <code class="path">{entry.summary.collection}</code> · Source <code class="path">{entry.summary.root || 'not observed'}</code></p>
                     <dl class="project-metrics">
@@ -320,7 +372,7 @@ export function StorageScreen(props: ScreenProps) {
                         {entry.configurationResult && <Act actions={actions} action="copyConfiguration" fields={{ project: entry.summary.project }} ghost>Copy cleanup preview</Act>}
                     </div>}
                 </article>)}
-                <p class="muted">Remove a project from Management › Projects, even if its source folder is gone. Then preview and delete its retained index here. Quotas and extra roots are in Indexing › Project settings….</p>
+                <p class="muted">Remove a project from Storage and removal, even if its source folder is gone. Then preview and delete its retained index here. Quotas and extra roots are in Advanced settings.</p>
                 {view.inactive && <p class="muted">Unregistered projects keep sources and saved settings. Deletion needs a separate exact preview and confirmation.</p>}
                 {view.legacy && <details class="card legacy-startup">
                     <summary>Legacy 1.3 startup review</summary>
@@ -348,6 +400,7 @@ export function ServiceScreen(props: ScreenProps) {
             {view && <>
                 <div class="actions">
                     <Act actions={actions} action="connect" enabled={on('connect')}>Connect / reconnect</Act>
+                    <Act actions={actions} action="refresh" enabled={on('refresh')} ghost>Check status now</Act>
                     <Act actions={actions} action="start" enabled={on('start')} ghost>Start service</Act>
                     <Act actions={actions} action="restart" enabled={on('restart')} ghost>Restart service</Act>
                     <Act actions={actions} action="stop" enabled={on('stop')} ghost>Stop service</Act>
@@ -355,7 +408,7 @@ export function ServiceScreen(props: ScreenProps) {
                 </div>
                 {view.lifecycle === 'external' && <p class="muted">Startup, stop, restart, upgrades and rollback are controlled by the external service manager.</p>}
                 <div class="cards two">
-                    <article class="card"><h2>Service</h2><Rows rows={view.service} />
+                    <article class="card"><div class="section-head"><h2>Service</h2><CopyDetails section="service" /></div><Rows rows={view.service} />
                         <p class="muted">Health confirms responsiveness. It does not prove indexing progress, source freshness or complete semantic coverage.</p></article>
                     <article class="card"><h2>Runtime</h2><Rows rows={view.runtime} />
                         <div class="actions">
@@ -379,20 +432,64 @@ export function ServiceScreen(props: ScreenProps) {
     );
 }
 
+function AgentInstructions(props: ScreenProps) {
+    const [busy, setBusy] = useState<string>(), [result, setResult] = useState<string>();
+    const project = props.state.selectedProject;
+    const run = async (label: string, action: () => Promise<string>) => {
+        setBusy(label); setResult(undefined);
+        try { setResult(await action()); } catch (error) { setResult(error instanceof Error ? error.message : String(error)); }
+        finally { setBusy(undefined); }
+    };
+    return <article class="card agent-instructions">
+        <h2>Help your agent discover and use AIRK</h2>
+        <p>Add this suggestion to your project instructions so the agent checks its tools before claiming AIRK is unavailable, uses focused indexed evidence and verifies live files before edits.</p>
+        <div class="instruction-suggestion"><Markdown text={AIRK_AGENT_INSTRUCTIONS}/></div>
+        <div class="actions">
+            <button type="button" disabled={!!busy} onClick={() => void run('copy', async () => {
+                await request('clipboard.write', { text: AIRK_AGENT_INSTRUCTIONS + '\n' }); return 'Instructions copied. Open an instruction file, paste and review them, then save.';
+            })}>{busy === 'copy' ? 'Copying…' : 'Copy instructions'}</button>
+            <button type="button" class="ghost" onClick={() => props.go({ workspace: 'help', focus: 'agent-instructions' })}>Instruction file help</button>
+        </div>
+        <p>Open instructions for <strong>{props.state.projects.find(entry => entry.project === project)?.name ?? 'the selected project'}</strong>:</p>
+        <div class="actions">
+            {(Object.keys(AGENT_INSTRUCTION_FILES) as (keyof typeof AGENT_INSTRUCTION_FILES)[]).map(agent => <button key={agent} type="button" class="ghost" disabled={!!busy || !project || !props.state.trusted}
+                title={AGENT_INSTRUCTION_FILES[agent].file} onClick={() => void run(agent, async () => (await request<{ message: string }>('instructions.open', { agent, project: project! })).message)}>
+                {busy === agent ? 'Opening…' : `Open ${AGENT_INSTRUCTION_FILES[agent].name} instructions`}</button>)}
+        </div>
+        {busy && <p role="status">{busy === 'copy' ? 'Copying instructions…' : `Opening ${AGENT_INSTRUCTION_FILES[busy as keyof typeof AGENT_INSTRUCTION_FILES].file}…`}</p>}
+        {result && <p class="callout" role="status">{result}</p>}
+        <p class="muted">Claude Code: <code>CLAUDE.md</code> · Codex: <code>AGENTS.md</code> · Copilot: <code>.github/copilot-instructions.md</code>. Existing files open without changes; missing files open as unsaved drafts. Review with your existing rules before saving. Other assistants can use the copied text in their supported project instruction or rules file. Instructions guide the agent; they do not configure MCP or guarantee tool access.</p>
+    </article>;
+}
+
 export function AgentsScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
+    const check=props.state.connectionCheck;
+    const checking=check?.phase==='preparing'||check?.phase==='checking';
+    const [now,setNow]=useState(Date.now()),[copied,setCopied]=useState<string>();
+    useEffect(()=>setCopied(undefined),[check?.startedAt]);
+    useEffect(()=>{if(!checking)return;const timer=setInterval(()=>setNow(Date.now()),1000);return ()=>clearInterval(timer);},[checking]);
     return (
-        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Connect coding agents to AIRK Retrieval (cited evidence) on">
+        <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Connect coding agents to AIRK on">
             {view && <>
                 <div class="cards two">
-                    <article class="card"><h2>AIRK Retrieval</h2>
-                        <p>The 16 read-only <code>airk_*</code> tools, scoped to one project. Agents use them for cited evidence.</p>
+                    <article class="card"><h2>AIRK agent connection</h2>
+                        <p>One connection provides 26 tools for indexed evidence, help and Explorer drafts. Drafts wait for your review.</p>
                         <div class="actions">
                             <button type="button" onClick={() => { void actions.command('airk.setupAgent'); }}>Connect a coding agent…</button>
-                            <button type="button" class="ghost" onClick={() => { void actions.command('airk.verifyMcp'); }}>Check the AIRK MCP helper</button>
+                            <button type="button" class="ghost" disabled={checking||!props.state.selectedProject} onClick={() => { void actions.command('airk.verifyMcp'); }}>{checking?'Checking AIRK…':'Check AIRK connection'}</button>
                             <button type="button" class="ghost" onClick={() => { void actions.command('airk.manageVscodeMcp'); }}>VS Code / Copilot MCP controls</button>
                         </div>
-                        <p class="muted">Helper verification proves the launcher starts and lists tools. Whether an agent loaded it is checked in that agent.</p></article>
+                        {check&&<div class="callout" role="status">
+                            <strong>{checking?'Checking connection':check.phase==='verified'?'AIRK connection verified':'AIRK connection check failed'}</strong>
+                            {check.project&&<p>Project: {props.state.projects.find(project=>project.project===check.project)?.name??check.project}</p>}
+                            <p>{check.message??check.error}</p>
+                            {check.startedAt&&<p>{checking?'Elapsed':'Duration'}: {duration(Math.max(0,(checking?now:check.checkedAt??now)-check.startedAt))}</p>}
+                            {check.checkedAt&&<p>Checked: {new Date(check.checkedAt).toLocaleString()}</p>}
+                            <button class="ghost" onClick={async()=>{try{await request('clipboard.write',{text:`AIRK ${props.state.extensionVersion} — MCP connection check\n${JSON.stringify(check,null,2)}`});setCopied('Details copied.');}catch(error){setCopied(String(error));}}}>Copy connection details</button>
+                            {copied&&<p>{copied}</p>}
+                        </div>}
+                        <p class="muted">This checks the installed launcher, MCP handshake, tool list and index status. It does not establish that Claude Code, Codex or Copilot loaded their configuration. If AIRK passes but an agent has no tools, inspect that agent’s MCP connection error.</p></article>
                     <article class="card"><h2>Responses and terminal</h2>
                         <p>MCP response mode: <strong>{view.responseMode}</strong>.</p>
                         <p><strong>Terse (default)</strong> suits routine code searches and navigation. It keeps focused evidence and citations while reducing repeated metadata, leaving more of the agent’s context budget for the task.</p>
@@ -404,6 +501,7 @@ export function AgentsScreen(props: ScreenProps) {
                             <button type="button" class="ghost" onClick={() => { void actions.command('airk.openTools'); }}>Open AIRK Tools terminal</button>
                         </div></article>
                 </div>
+                <AgentInstructions key={props.state.selectedProject} {...props}/>
             </>}
         </Frame>
     );
@@ -413,6 +511,7 @@ export function UsageScreen(props: ScreenProps) {
     const view = useManagement(props.state), actions = useActions();
     return (
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Local usage records on">
+            <p class="muted">Usage follows the project selected in the Explorer header.</p>
             <UsageReport available={props.state.trusted && !!props.state.selectedProject} />
         </Frame>
     );
@@ -424,8 +523,17 @@ export function LogsScreen(props: ScreenProps) {
     return (
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Bounded native logs and a metadata-only diagnostic report from">
             {view && <>
+                <article class="card">
+                    <h2>Raw job error log</h2>
+                    <p>Retained error chains with timestamps and job IDs. Long errors are marked as truncated. These local logs can include file paths and error values; review them before sharing. Nothing is uploaded.</p>
+                    <div class="actions">
+                        <Act actions={actions} action="openRawLogs">Open raw diagnostic log</Act>
+                        <Act actions={actions} action="saveRawLogs" ghost>Save raw diagnostic log…</Act>
+                    </div>
+                </article>
                 <div class="actions">
                     <Act actions={actions} action="logs" ghost>Open service logs</Act>
+                    <Act actions={actions} action="exportLogs" ghost>Save retained service logs…</Act>
                     <button type="button" class="ghost" onClick={() => { void actions.command('airk.showExtensionOutput'); }}>Show extension output</button>
                     <Act actions={actions} action="refresh" enabled={view.enabled.refresh} ghost>Refresh recent events</Act>
                 </div>
@@ -434,15 +542,17 @@ export function LogsScreen(props: ScreenProps) {
                     <p class="muted">{view.processLogStatus}{!view.connected ? ' · disconnected; retained observations only' : ''}</p>
                     {view.processEvents.length ? <ol class="log" tabIndex={0} aria-label="Recent service events">{view.processEvents.map((event, index) => <li key={index}><code class="path">{event}</code></li>)}</ol>
                         : <p class="muted">No service events are present in this observation. This does not prove the service has never logged an event.</p>}
-                    <p class="muted">Up to 32 recent process events are shown. Open service logs writes the bounded native log page to the AIRK Service output channel; Show extension output opens AIRK’s separate extension output channel.</p>
+                    <p class="muted">Up to 32 recent service and job events are shown, including available job IDs and failure reasons. Open service logs writes this bounded native log page to AIRK Service output. Save retained service logs exports the full available history.</p>
                 </article>
                 <article class="card">
-                    <h2>Diagnostic preview</h2>
-                    <p class="muted">Reports contain metadata only and are never uploaded. Paths and user names are redacted unless you include them. Copy keeps this exact captured preview.</p>
+                    <h2>Diagnostic report</h2>
+                    <p class="muted">Capture the observed project state, failure outcomes and recent job history. Reports contain metadata only and are never uploaded. Paths and user names are redacted unless you include them. Open, Copy and Save use the same captured report; generate again to refresh it. Missing history and size limits are marked in the report. Save retained service logs exports the longer process history separately.</p>
                     <label class="check"><input type="checkbox" checked={paths} onChange={event => setPaths((event.target as HTMLInputElement).checked)} /> Include paths and user/machine names</label>
                     <div class="actions">
-                        <Act actions={actions} action="previewReport" fields={{ includePaths: paths }}>Preview report</Act>
-                        <Act actions={actions} action="copyReport" enabled={!!view.preview} ghost>Copy this preview</Act>
+                        <Act actions={actions} action="previewReport" fields={{ includePaths: paths }}>Generate report</Act>
+                        <Act actions={actions} action="openReport" enabled={!!view.preview} ghost>Open report</Act>
+                        <Act actions={actions} action="copyReport" enabled={!!view.preview} ghost>Copy report</Act>
+                        <Act actions={actions} action="saveReport" enabled={!!view.preview} ghost>Save report…</Act>
                     </div>
                     {view.preview && <pre class="excerpt" tabIndex={0}>{view.preview}</pre>}
                 </article>

@@ -338,9 +338,6 @@ pub async fn bridge_installed(
 
 /// Verify the selected runtime and elected service without opening a collection.
 pub async fn installed_control(root: &Path) -> Result<PathBuf> {
-    // External policy can be pinned before its supervisor starts the service.
-    // Selection is published only after matching health, so the first client
-    // must validate the pin before asking ensure to observe that health.
     let approval = match managed::read(root)? {
         Some(policy) => policy.verify()?.1,
         None => selected(root)?.2,
@@ -354,6 +351,22 @@ pub async fn installed_control(root: &Path) -> Result<PathBuf> {
         health.version == approval.version
             && health.runtime_sha256.as_deref() == Some(approval.manifest_sha256.as_str()),
         "installed service changed; reconnect through the selected launcher"
+    );
+    layout::control(root)
+}
+
+/// Verify the selected payload without electing a service or starting project work.
+pub fn installed_metadata_control(root: &Path) -> Result<PathBuf> {
+    // External policy can be pinned before its supervisor starts the service.
+    // Selection is published only after matching health, so the first client
+    // must validate the pin before asking ensure to observe that health.
+    let approval = match managed::read(root)? {
+        Some(policy) => policy.verify()?.1,
+        None => selected(root)?.2,
+    };
+    ensure!(
+        approval.version == env!("CARGO_PKG_VERSION"),
+        "matching runtime version required"
     );
     layout::control(root)
 }
@@ -1142,7 +1155,9 @@ async fn start(
     if enforce_backoff {
         startup_attempt(root, &approval.manifest_sha256, unix_ms()?)?;
     }
-    let mut command = Command::new(main);
+    let service_executable =
+        crate::process_roles::executable(main, crate::process_roles::Role::Service)?;
+    let mut command = Command::new(&service_executable);
     command
         .arg("serve")
         .arg("--runtime-dir")
@@ -1169,7 +1184,7 @@ async fn start(
     bootstrap(root, "starting", None, None)?;
     #[cfg(windows)]
     let launched = crate::native_process::spawn_detached(
-        main,
+        &service_executable,
         &[
             "serve".into(),
             "--runtime-dir".into(),

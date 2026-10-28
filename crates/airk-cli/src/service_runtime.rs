@@ -69,6 +69,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     .status(now);
                 ControlResponse::Health {
                     observation: Box::new(ServiceHealth {
+                        storage_formats: Some(airk_core::storage_format::CURRENT),
                         build: crate::runtime_metadata::process().build,
                         build_error: crate::runtime_metadata::process().metadata_error,
                         logs: state.log.telemetry(),
@@ -104,13 +105,20 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             method => state.management.request(method).await,
         }
     };
-    if matches!(
-        response,
-        ControlResponse::Failure { .. } | ControlResponse::Incompatible { .. }
-    ) {
-        state
-            .log
-            .record(airk_core::service_logs::LogKind::ControlFailed, None, None);
+    if let ControlResponse::Failure { code, .. } = &response {
+        state.log.record_code(
+            airk_core::service_logs::LogKind::ControlFailed,
+            None,
+            None,
+            Some(code),
+        );
+    } else if matches!(response, ControlResponse::Incompatible { .. }) {
+        state.log.record_code(
+            airk_core::service_logs::LogKind::ControlFailed,
+            None,
+            None,
+            Some("runtime_incompatible"),
+        );
     }
     local_ipc::write_message(&mut stream, &response, Duration::from_secs(5)).await?;
     if shutdown {

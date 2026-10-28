@@ -78,6 +78,18 @@ export class IntentJournal {
             return id;
         });
     }
+    async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>):Promise<void>{
+        for(const saved of this.list().slice(0,8)){
+            const intent=saved.value.intent;
+            if('lifecycle' in intent||'plan_create' in intent)continue;
+            const request='enqueue' in intent?intent.enqueue:'configure_project' in intent?intent.configure_project:intent.retry;
+            const result=await client.rpc({request_receipt:{caller:request.caller,key:request.key}},'request_receipt');
+            if(result.job===null)continue; // Missing/expired receipts never authorize another write.
+            const job=record(result.job);identifier(job.id,32);
+            if('project' in request&&job.project!==request.project)throw new ServiceError('crossed_job_receipt');
+            await onReceipt({status:'job',job});await this.forget(saved.id);
+        }
+    }
     async submit(client:ServiceClient|undefined,id:string,onReceipt?:(response:Record<string,unknown>)=>Promise<void>,
         lifecycle?:(intent:LifecycleIntent)=>Promise<Record<string,unknown>>):Promise<Record<string,unknown>> {
         const saved=this.list().find(entry=>entry.id===id);

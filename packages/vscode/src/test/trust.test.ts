@@ -5,6 +5,31 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { serviceTestHost } from './serviceTestHost';
 import * as cliInstall from '../cliInstall';
+import { assistanceEntry, retrievalEntry, serializeServers, type LaunchSpec } from '../model';
+import { launchDescriptorPath } from '../explorerAssistanceLaunch';
+
+test('verified reopen migrates both old definitions quietly before publishing the connection',async context=>{
+    const f=await serviceTestHost(context,{automatic:true});
+    try{
+        const project=[...f.registrations.values()][0];
+        const spec:LaunchSpec={command:f.binding.launcher,root:project.root,dataDir:project.data_root,collection:project.collection,name:'fixture',service:{installDir:f.binding.installDir,project:project.binding}};
+        const storage=path.join(f.root,'editor-storage');
+        const before=serializeServers('claude',[retrievalEntry(spec),assistanceEntry(spec,launchDescriptorPath(storage))!]);
+        const destination=path.join(project.root,'.mcp.json');await fs.writeFile(destination,before);
+        let saves=0;
+        const document={uri:{fsPath:destination},isDirty:false,version:1,text:before,getText(){return this.text;},positionAt:(offset:number)=>offset,
+            async save(){saves++;await fs.writeFile(destination,this.text);return true;}};
+        f.stub.workspace.openTextDocument=async()=>document;
+        f.stub.workspace.applyEdit=async(edit:any)=>{document.text=edit.after;document.version++;return true;};
+        const progress=f.progressRuns.length,writes=f.writes.length;
+        await f.refreshFolders();
+        const after=JSON.parse(await fs.readFile(destination,'utf8'));
+        assert.deepEqual(Object.keys(after.mcpServers),['airk']);assert.equal(saves,1);
+        assert.equal(f.progressRuns.length,progress,'completed setup remains quiet');
+        assert.equal(f.writes.length,writes,'connection migration never queues another index');
+        await f.refreshFolders();assert.equal(saves,1,'the next reopen does not rewrite the file');
+    }finally{await f.close();}
+});
 
 test('missing Explorer assets fail explicitly and a later open retries after repair',async context=>{
     const f=await serviceTestHost(context,{trusted:false});
@@ -40,10 +65,12 @@ test('Install or Repair CLI migrates all three existing local agent connections 
         };
         f.stub.workspace.applyEdit=async(edit:any)=>{const document=documents.get(edit.uri.fsPath);document.text=edit.after;document.version++;return true;};
         await f.commands.get('airk.installCli')!();
-        for(const file of files){const text=await fs.readFile(file,'utf8');assert.ok(text.includes(project.binding),f.calls.join('\n'));assert.ok(text.includes('runtime'));assert.ok(text.includes('airk_explorer')&&text.includes('explorer-assistance'),'installation backfills Assistance for this project');}
-        assert.equal(JSON.parse(await fs.readFile(files[1],'utf8')).mcpServers[name].disabled,true);
+        for(const file of files){const text=await fs.readFile(file,'utf8');assert.ok(text.includes(project.binding),f.calls.join('\n'));assert.ok(text.includes('runtime'));assert.ok(!text.includes('airk_explorer')&&text.includes('--explorer-descriptor'),'installation replaces legacy definitions with one endpoint');}
+        assert.equal(JSON.parse(await fs.readFile(files[1],'utf8')).mcpServers.airk.disabled,true);
         assert.equal(f.calls.filter(value=>value.startsWith('Updated ')).length,3);
-        assert.ok(f.warnings.some(value=>value.includes('Old CLI is locked')));
+        assert.ok(f.calls.some(value=>value.includes('Old CLI is locked')),'the underlying cleanup cause remains in the output');
+        const warning=f.notices.find(value=>value.message.includes('connection or cleanup issues'));
+        assert.ok(warning);assert.deepEqual(warning.actions,['Review details']);
         // Unsaved content must block an installer rewrite.
         const before=`[mcp_servers.${name}]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\n`;
         await fs.writeFile(files[0],before);
@@ -51,6 +78,25 @@ test('Install or Repair CLI migrates all three existing local agent connections 
         await f.commands.get('airk.installCli')!();
         assert.equal(await fs.readFile(files[0],'utf8'),before);
         assert.ok(f.calls.some(value=>value.includes('unsaved edits')));
+    }finally{await f.close();}
+});
+
+test('startup connection migration respects Windows document line endings for compact JSON',async context=>{
+    const f=await serviceTestHost(context);
+    try{
+        const registration=[...f.registrations.values()][0],key=`airk-${registration.collection}`;
+        const command=path.join(f.root,'editor-storage','cli','bin',process.platform==='win32'?'airk.exe':'airk');
+        const args=['--root',registration.root,'--data-dir',path.join(f.root,'old-data'),'--collection',registration.collection,'mcp'];
+        const destination=path.join(registration.root,'.mcp.json');
+        await fs.writeFile(destination,JSON.stringify({mcpServers:{[key]:{command,args,disabled:true},other:{command:'keep-other'}}}));
+        let doc:any;
+        f.stub.workspace.openTextDocument=async(uri:any)=>doc={uri,eol:2,isDirty:false,version:1,text:await fs.readFile(uri.fsPath,'utf8'),getText(){return this.text;},positionAt:(offset:number)=>offset,
+            async save(){await fs.writeFile(uri.fsPath,this.text);this.isDirty=false;return true;}};
+        f.stub.workspace.applyEdit=async(edit:any)=>{doc.text=edit.after.replace(/\r?\n/g,'\r\n');doc.version++;doc.isDirty=true;return true;};
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        const saved=await fs.readFile(destination,'utf8'),servers=JSON.parse(saved).mcpServers;
+        assert.equal(servers[key],undefined);assert.equal(servers.airk.disabled,true);assert.equal(servers.other.command,'keep-other');
+        assert.ok(saved.includes('\r\n'));assert.equal(f.calls.some(line=>line.includes('Could not update claude')),false);
     }finally{await f.close();}
 });
 
@@ -92,7 +138,7 @@ test('MCP definitions use reviewed native storage and user response settings whi
 
 test('multi-root Index Now selects the active native binding and metadata refresh does not restart MCP definitions',async context=>{
     const f=await serviceTestHost(context,{roots:2});
-    try{const before=await f.api.getServerDefinitions();assert.equal(before.length,2);let changed=0;f.providers[0].onDidChangeMcpServerDefinitions(()=>changed++);
+    try{const before=await f.api.getServerDefinitions();assert.equal(before.length,1);assert.ok(before[0].args.includes('--no-default-project'));let changed=0;f.providers[0].onDidChangeMcpServerDefinitions(()=>changed++);
         await f.api.getServerDefinitions();assert.equal(changed,0);
         f.stub.window.activeTextEditor={document:{uri:f.folders[1].uri}};const picks=f.state.picks;
         await f.commands.get('airk.index')!();assert.equal(f.state.picks,picks);
@@ -133,7 +179,7 @@ test('agent setup uses the stable launcher, writes only on request and refuses s
     }finally{await f.close();}
 });
 
-test('Codex setup updates an existing project Retrieval connection with Assistance through guarded editor saves',async context=>{
+test('Codex setup consolidates an existing legacy connection through guarded editor saves',async context=>{
     const f=await serviceTestHost(context,{assistance:true});
     try{
         if(process.platform==='win32'){
@@ -144,15 +190,16 @@ test('Codex setup updates an existing project Retrieval connection with Assistan
         const panel=f.panels.find(panel=>panel.viewType==='airk.agentSetup')??f.panels[0];
         await panel.send({action:'createCodex'});
         const destination=path.join(f.folders[0].uri.fsPath,'.codex','config.toml');
-        const created=await fs.readFile(destination,'utf8');assert.ok(created.includes('airk_explorer'));
-        const retrievalOnly=created.slice(0,created.indexOf('[mcp_servers.airk_explorer]')).trimEnd()+'\n';await fs.writeFile(destination,retrievalOnly);
+        const created=await fs.readFile(destination,'utf8');assert.ok(created.includes('[mcp_servers.airk]')&&!created.includes('airk_explorer'));
+        const project=[...f.registrations.values()][0];
+        const retrievalOnly=`[mcp_servers.airk-${project.collection}]\ncommand = ${JSON.stringify(f.binding.launcher)}\nargs = ${JSON.stringify(['runtime','launch','--install-dir',f.binding.installDir,'--','--root',project.root,'--data-dir',project.data_root,'--collection',project.collection,'--service-project',project.binding,'mcp'])}\n`;await fs.writeFile(destination,retrievalOnly);
         let saved=0;
         const document={uri:{fsPath:destination},isDirty:false,version:1,text:retrievalOnly,getText(){return this.text;},positionAt:(offset:number)=>offset,
             async save(){saved++;await fs.writeFile(destination,this.text);return true;}};
         f.stub.workspace.openTextDocument=async()=>document;
         f.stub.workspace.applyEdit=async(edit:any)=>{document.text=edit.after;document.version++;return true;};
         await panel.send({action:'updateCodex'});
-        const updated=await fs.readFile(destination,'utf8');assert.ok(updated.includes('airk_explorer')&&updated.includes('explorer-assistance'),panel.webview.html);assert.equal(saved,1);
+        const updated=await fs.readFile(destination,'utf8');assert.ok(updated.includes('[mcp_servers.airk]')&&updated.includes('--explorer-descriptor')&&!updated.includes('airk_explorer'),panel.webview.html);assert.equal(saved,1);
         await panel.send({action:'updateCodex'});assert.equal(saved,1,'current connections require no repeat edit');
         f.stub.workspace.textDocuments=[{uri:{fsPath:destination},isDirty:true}];await panel.send({action:'updateCodex'});
         assert.match(panel.webview.html,/unsaved/i);assert.equal(saved,1);

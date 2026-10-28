@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { LiveCheck, OpenSourceResult, WorkspaceFileKind, WorkspaceFilesView } from './explorerContracts';
+import { AGENT_INSTRUCTION_FILES } from './explorerContracts';
 import { caseFold, displayPath, inside, liveCheck, sourceFile } from './explorerSource';
 import { explorerError } from './explorerErrors';
 import { EvidenceFailure } from './explorerEvidence';
@@ -50,6 +51,35 @@ export async function liveAt(root: string, relative: string, contentHash: string
 }
 
 const STRATEGY_FILTERS = { 'AIRK strategy': ['json'] };
+
+/** Open instructions for review; missing files become named, unsaved drafts. Never write or append. */
+export async function openAgentInstructions(root: string, agent: keyof typeof AGENT_INSTRUCTION_FILES, authorized: () => boolean): Promise<{ message: string }> {
+    if (!Object.hasOwn(AGENT_INSTRUCTION_FILES, agent)) { throw new Error('Choose a supported instruction file.'); }
+    const folder = vscode.workspace.workspaceFolders?.find(entry => entry.uri.scheme === 'file'
+        && caseFold(path.resolve(entry.uri.fsPath)) === caseFold(path.resolve(displayPath(root))));
+    const check = () => {
+        if (!authorized() || !vscode.workspace.isTrusted) { throw new Error('Workspace or selected project changed; open the instructions again.'); }
+        if (!folder || !vscode.workspace.workspaceFolders?.some(entry => entry.uri.toString() === folder.uri.toString())) { throw new Error('Open this project as a workspace folder before editing its instructions.'); }
+    };
+    check();
+    const relative = AGENT_INSTRUCTION_FILES[agent].file;
+    const base = fs.realpathSync.native(folder!.uri.fsPath);
+    let current = folder!.uri.fsPath, missing = false;
+    const parts = relative.split('/');
+    for (const [index, part] of parts.entries()) {
+        current = path.join(current, part);
+        try {
+            const stat = fs.lstatSync(current);
+            if (stat.isSymbolicLink() || !inside(base, fs.realpathSync.native(current))) { throw new Error('Linked or redirected instruction paths must be opened manually.'); }
+            if (index === parts.length - 1 ? !stat.isFile() : !stat.isDirectory()) { throw new Error('The instruction path is not a regular file or folder.'); }
+        } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { missing = true; } else { throw error; } }
+    }
+    const target = vscode.Uri.file(current);
+    const document = await vscode.workspace.openTextDocument(missing ? target.with({ scheme: 'untitled' }) : target);
+    check();
+    await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside, preview: false });
+    return { message: missing ? `${relative} opened as a new unsaved file. Paste the instructions, review and save.` : `${relative} opened. Add the suggestion alongside your existing instructions, then save.` };
+}
 
 /** Export through the save dialog, which is the user's consent; nothing is written without it. */
 export async function exportStrategy(strategy: Strategy): Promise<{ saved: boolean; name?: string }> {

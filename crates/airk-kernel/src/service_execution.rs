@@ -53,6 +53,7 @@ pub fn progress_phase(phase: airk_core::service_progress::WorkPhase) {
 }
 /// Metadata only: a wait observation must never reset work advancement clocks.
 pub fn progress_waiting(reason: Option<airk_core::service_resources::WaitReason>) {
+    observe(|progress, now| progress.wait(reason.is_some(), now));
     if let Some(owner) = OWNER.get()
         && let Ok(mut waiting) = owner.waiting.lock()
     {
@@ -252,7 +253,16 @@ pub fn run<T>(grant: WorkAllowance, work: impl FnOnce() -> Result<T>) -> Result<
         }
     }
     let _reset = Reset;
-    with_database_admission(work)
+    airk_store::quota::with_lock_admission(
+        Duration::from_secs(30),
+        checkpoint,
+        |waiting| {
+            progress_waiting(
+                waiting.then_some(airk_core::service_resources::WaitReason::NativeLock),
+            )
+        },
+        || with_database_admission(work),
+    )
 }
 pub(crate) fn plan(root: &Path) -> Result<Option<ExecutionPlan>> {
     checkpoint()?;
@@ -328,6 +338,6 @@ pub(crate) fn status(root: &Path) -> Result<Option<ExecutionPlan>> {
         working_memory_bytes: 0,
         resource_slots: 0,
         coordination:
-            "service work grant required; no background work admitted on this thread".into(),
+            "read-only request context: zero workers here are not service capacity; the service scheduler grants background work to jobs automatically".into(),
     })))
 }

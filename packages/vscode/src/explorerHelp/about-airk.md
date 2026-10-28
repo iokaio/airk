@@ -22,7 +22,7 @@ Ioka's public history records that VCP was paused on October 6, 2026 as its scop
 
 AIRK is independently implemented and builds independently. Munarium and VCP are acknowledged design inspiration; their source and orchestration stacks are not incorporated into AIRK. The inspiration record and NOTICE preserve this distinction and do not imply endorsement.
 
-The project has evolved into a native per-user service, isolated project collections, local inference, read-only evidence MCP tools and the AIRK Explorer. Version 1.5 adds the Explorer workbench, role journeys, Strategies/Planner and a separate Explorer Assistance connection. The version shown in this Help screen identifies the bundled extension; Overview and Management > Service report observed runtime identities separately.
+The project has evolved into a native per-user service, isolated project collections, local inference, read-only evidence MCP tools and the AIRK Explorer. Version 1.5 adds the Explorer workbench, role journeys and Strategies/Planner. Version 1.5.7 unifies indexed evidence, help and reviewed UI drafts under one AIRK MCP connection. The version shown in this Help screen identifies the bundled extension; Overview and Management > Service report observed runtime identities separately.
 
 ## Public links
 

@@ -18,12 +18,10 @@ impl Kernel {
             self.service_collection.is_some(),
             "service collection required"
         );
-        if self
-            .store
-            .directory()
-            .join("current-bootstrap.json")
-            .try_exists()?
-        {
+        // current-bootstrap.json is a permanent database initialization receipt,
+        // including after complete=true. Only the unfinished runtime recipe
+        // or a non-Ready publication phase calls for recovery.
+        if self.store.runtime_bootstrap()?.is_some() {
             return Ok(true);
         }
         let Some(scope) = self.current_scope()? else {
@@ -60,7 +58,19 @@ impl Kernel {
             .context("service collection required")?;
         crate::service_execution::checkpoint()?;
         collection.recover_abandoned_replacement()?;
-        self.retire_service_incarnations()
+        let mut report = self.retire_service_incarnations()?;
+        if report.pending > 0 {
+            // Share the same deletion budget with active-object reclamation.
+            report.pending_objects = true;
+        } else {
+            let remaining = 4096u32
+                .checked_sub(report.removed_files)
+                .context("retirement batch exceeded")?;
+            let current = collection.reclaim_current_objects(remaining as usize)?;
+            report.removed_files += u32::try_from(current.removed_files)?;
+            report.pending_objects = current.pending;
+        }
+        Ok(report)
     }
     pub fn service_rebuild_receipt(&self) -> Result<Option<collection::RebuildReceipt>> {
         self.service_collection
@@ -179,6 +189,44 @@ mod tests {
     use super::*;
     use airk_core::SearchQuery;
     use std::path::Path;
+
+    #[test]
+    fn service_object_cleanup_releases_its_own_selection_but_respects_other_readers() -> Result<()>
+    {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(root.path().join("note.txt"), "retained source")?;
+        let kernel =
+            Kernel::open_service_collection(root.path(), Some(data.path().into()), "fixture")?;
+        kernel.configure_vectors(false)?;
+        kernel.index_service_sources()?;
+        let selected = kernel.refresh_service_snapshot()?;
+        let orphan = selected
+            .store
+            .directory()
+            .join("objects/sources")
+            .join("0".repeat(64));
+        std::fs::write(&orphan, b"abandoned capture")?;
+        let pinned = kernel.maintain_service_collection()?;
+        assert!(pinned.pending_objects);
+        assert_eq!(pinned.removed_files, 0);
+        assert!(orphan.exists());
+        drop(selected);
+        let cleaned = kernel.maintain_service_collection()?;
+        assert!(!cleaned.pending_objects);
+        assert!(cleaned.removed_files > 0);
+        assert!(!orphan.exists());
+        assert!(
+            kernel.read_file("note.txt", 1, 1, 4096)?.hits[0]
+                .text
+                .contains("retained source")
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("note.txt"))?,
+            "retained source"
+        );
+        Ok(())
+    }
     fn query(text: &str) -> SearchQuery {
         SearchQuery {
             text: text.into(),
@@ -186,6 +234,51 @@ mod tests {
             limit: 5,
             max_bytes: 4096,
         }
+    }
+
+    #[test]
+    fn completed_bootstrap_does_not_queue_recovery_on_every_reopen() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let source = owner.path().join("source");
+        let data = owner.path().join("data");
+        std::fs::create_dir(&source)?;
+        std::fs::create_dir(&data)?;
+        std::fs::write(
+            source.join("memo.txt"),
+            "retained evidence remains searchable",
+        )?;
+        let kernel = Kernel::open_service_collection(&source, Some(data.clone()), "fixture")?;
+        kernel.configure_vectors(false)?;
+        kernel.index_service_sources()?;
+        assert!(
+            kernel
+                .store
+                .directory()
+                .join("current-bootstrap.json")
+                .exists()
+        );
+        assert!(!kernel.service_recovery_required()?);
+        let token = kernel.status()?.publication.unwrap().token;
+        let reopened =
+            Kernel::open_service_collection_for_diagnostics(&source, Some(data), "fixture")?;
+        assert!(!reopened.service_recovery_required()?);
+        assert_eq!(reopened.recover_service_publication()?, Some(token));
+        assert!(!reopened.service_recovery_required()?);
+        std::fs::write(
+            source.join("memo.txt"),
+            "updated evidence resumes normal indexing",
+        )?;
+        reopened.index_service_sources()?;
+        assert_ne!(reopened.status()?.publication.unwrap().token, token);
+        assert!(!reopened.service_recovery_required()?);
+        // A real unfinished runtime marker must still be reported, even while
+        // the previous publication is readable; malformed recipes fail closed.
+        let lock = reopened.store.lock()?;
+        reopened.store.write_runtime_bootstrap(&lock, b"{}")?;
+        drop(lock);
+        assert!(reopened.service_recovery_required()?);
+        assert!(reopened.recover_service_publication().is_err());
+        Ok(())
     }
 
     #[test]

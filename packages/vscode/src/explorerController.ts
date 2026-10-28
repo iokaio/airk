@@ -10,7 +10,7 @@ import { ExplorerPanel } from './explorerPanel';
 import { formatRoute, parseRoute, WORKSPACES } from './explorerRoutes';
 import { continueFacts, FactHandles, runFacts, scoped } from './explorerFacts';
 import { changesSince, checkCitations, inspect } from './explorerInspect';
-import { managementView } from './explorerManagement';
+import { managementView, panelDetails } from './explorerManagement';
 import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary } from './explorerStatus';
 import { displayPath } from './explorerSource';
@@ -21,6 +21,7 @@ import { SuggestionStore, suggestionsView } from './explorerSuggestions';
 import { ReviewContext, reviewChanges, reviewImpact, reviewTests } from './explorerReview';
 import { LaunchSpec } from './model';
 import { saveStudioInWorkspace } from './explorerWorkspaceIO';
+import { openAgentInstructions } from './explorerWorkspaceIO';
 import { validateStudio } from './explorerStrategies';
 import { usageAction } from './usageReport';
 import { HandoffStore } from './explorerHandoffs';
@@ -31,6 +32,10 @@ export interface ExplorerHost {
     usage?(spec: LaunchSpec, valid: () => boolean): Promise<EmbeddedUsage>;
     readonly extensionUri: vscode.Uri;
     readonly version: string;
+    extensionUpdate?(): ExplorerViewState['extensionUpdate'];
+    connectionCheck?(): ExplorerViewState['connectionCheck'];
+    startup?(): ExplorerViewState['startup'];
+    reloadUpdatedExtension?(): Promise<void>;
     trusted(): boolean;
     specs(): readonly LaunchSpec[];
     /** Registered project for the active editor's workspace folder, if any. */
@@ -83,6 +88,7 @@ export class ExplorerController implements vscode.Disposable {
     private route = '#overview';
     private retained?: { dispose(): void };
     private managementOpen = false;
+    private lastAutomaticStatusCheck = 0;
     private disposed = false;
 
     constructor(private readonly host: ExplorerHost) {
@@ -114,8 +120,8 @@ export class ExplorerController implements vscode.Disposable {
     draftRevisions: { studio?: number; planner?: number } = {};
     /** Publication of the selected project's last status, if observed. */
     get publication(): string | undefined { return this.status?.publication; }
-    get assistanceStatus(): Pick<AssistanceWindowStatus, 'active_route' | 'binding_generation' | 'blockers'> {
-        return { active_route: this.route.replace(/^#/, ''), binding_generation: this.selectionEpoch,
+    get assistanceStatus(): Pick<AssistanceWindowStatus, 'active_route' | 'binding_generation' | 'blockers' | 'selected_project'> {
+        return { active_route: this.route.replace(/^#/, ''), binding_generation: this.selectionEpoch, selected_project: this.selected,
             blockers: [...(!this.host.trusted() ? ['WORKSPACE_UNTRUSTED'] : []), ...(!this.selected ? ['NO_PROJECT'] : []),
                 ...(!this.panelOpen ? ['EXPLORER_CLOSED'] : []), ...(this.notice ? [this.notice.code] : [])] };
     }
@@ -145,6 +151,9 @@ export class ExplorerController implements vscode.Disposable {
         return {
             revision: this.revision,
             extensionVersion: this.host.version,
+            ...(this.host.extensionUpdate?.() ? { extensionUpdate: this.host.extensionUpdate() } : {}),
+            connectionCheck: this.host.connectionCheck?.(),
+            startup: this.host.startup?.(),
             trusted: this.host.trusted(),
             connection: this.control.connection(),
             projects,
@@ -213,7 +222,10 @@ export class ExplorerController implements vscode.Disposable {
     private observedControl(): void {
         // Refresh published status when the cached console reports a different publication.
         const row = this.control.projects().find(entry => entry.project === this.selected);
-        if (this.panel.open && row?.publication && this.status?.publication && row.publication !== this.status.publication) { void this.loadStatus(); }
+        if (this.retained&&this.panel.open&&(Date.now()-this.lastAutomaticStatusCheck>=5000
+            ||row?.publication&&this.status?.publication&&row.publication!==this.status.publication)) {
+            this.lastAutomaticStatusCheck=Date.now();void this.loadStatus();
+        }
         this.publish();
     }
 
@@ -299,6 +311,22 @@ export class ExplorerController implements vscode.Disposable {
 
     protected async dispatch(message: WebviewMessage): Promise<unknown> {
         switch (message.type) {
+            case 'instructions.open': {
+                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                if (message.project !== this.requireProject()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+                const spec = this.host.specs().find(entry => entry.service?.project === message.project), epoch = this.selectionEpoch;
+                if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
+                return openAgentInstructions(spec.root, message.agent, () => !this.disposed && this.host.trusted() && epoch === this.selectionEpoch);
+            }
+            case 'details.copy': {
+                if(!this.host.trusted())throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED'));
+                const status=message.project===this.selected&&this.statusFor===this.selected?this.status:undefined;
+                const text=panelDetails(managementView(this.control.state),message.section,this.host.version,message.project,status);
+                await vscode.env.clipboard.writeText(text);return {copied:true};
+            }
+            case 'extension.reload':
+                if(this.host.extensionUpdate?.())await this.host.reloadUpdatedExtension?.();
+                return;
             case 'help.choose': {
                 const route = parseRoute(message.route)!;
                 const workspace = WORKSPACES.find(entry => entry.id === route.workspace)!;
@@ -363,16 +391,25 @@ export class ExplorerController implements vscode.Disposable {
                 this.publish(); return;
             }
             case 'manage.action': {
-                const { action, v: _v, type: _type, requestId: _id, ...rest } = message as WebviewMessageOf<'manage.action'>;
+                const { action, expectedPlan, expectedPreview, v: _v, type: _type, requestId: _id, ...rest } = message as WebviewMessageOf<'manage.action'>;
                 if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                if(action==='approvePlan'&&(!expectedPlan||!expectedPreview||this.control.state.plan?.value.id!==expectedPlan||this.control.state.plan?.value.preview_digest!==expectedPreview)){
+                    return {message:'Repair preview changed. Review the current proposed actions before starting repair.'};
+                }
                 const fields = Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined));
+                const fingerprint=()=>JSON.stringify(managementView(this.control.state).projects.map(entry=>[entry.summary.project,entry.health,entry.jobId,entry.jobState,entry.pendingJobId,entry.work.phase,entry.work.captured,entry.work.extracted,entry.work.publications,entry.configuration]));
+                const before=action==='refresh'?fingerprint():undefined;
                 // The shared console validates the action, its fields and page membership again before acting.
                 await this.control.run(action, fields);
+                if(action==='refresh')return {message:this.control.state.connected
+                    ?`Status checked at ${new Date().toLocaleTimeString()}. ${before===fingerprint()?'No change in project work or settings.':'Project observations updated.'} This checks service observations; it does not restart or repair indexing.`
+                    :'Could not refresh the service connection. Retained observations are shown; current project progress is unconfirmed.'};
                 return { message: this.control.message() ?? null };
             }
             case 'manage.command': {
                 if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
-                await vscode.commands.executeCommand((message as WebviewMessageOf<'manage.command'>).command);
+                const command=(message as WebviewMessageOf<'manage.command'>).command;
+                await vscode.commands.executeCommand(command, ...(command==='airk.verifyMcp'?[this.selected]:[]));
                 return;
             }
             case 'search.form': {

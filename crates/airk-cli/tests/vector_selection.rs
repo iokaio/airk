@@ -14,6 +14,9 @@ fn native_selection_preserves_opt_out_and_publishes_through_source_jobs() -> Res
     let source = root.path().join("original.rs");
     let original = b"pub fn original_selection_fixture() -> u32 { 7 }\n";
     fs::write(&source, original)?;
+    #[cfg(feature = "embedding-worker")]
+    let service = common::Service::with_helper(root.path(), state.path(), "default");
+    #[cfg(not(feature = "embedding-worker"))]
     let service = common::Service::start(root.path(), state.path(), "default");
     service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
     common::call(root.path(), state.path(), "default", &["index"])?;
@@ -94,7 +97,32 @@ fn native_selection_preserves_opt_out_and_publishes_through_source_jobs() -> Res
         )?["vector_selection"]["excluded_by"],
         "selected-rust"
     );
-    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: true });
+    let enabled = common::configure_cli(
+        &service,
+        root.path(),
+        state.path(),
+        "default",
+        json!({"operation":"vectors","enabled":true}),
+    )?;
+    #[cfg(feature = "embedding-worker")]
+    assert_eq!(enabled.state, JobState::Succeeded);
+    #[cfg(not(feature = "embedding-worker"))]
+    {
+        assert_eq!(
+            enabled.state,
+            JobState::Failed,
+            "a missing model/helper must not report successful enablement"
+        );
+        assert_eq!(
+            common::call(
+                root.path(),
+                state.path(),
+                "default",
+                &["settings", "vector_status"]
+            )?["enabled"],
+            false
+        );
+    }
     assert_eq!(
         common::call(
             root.path(),

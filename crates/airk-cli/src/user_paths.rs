@@ -14,10 +14,17 @@ pub enum Channel {
     Preview,
 }
 impl Channel {
-    fn leaf(self) -> &'static str {
+    fn legacy_leaf(self) -> &'static str {
         match self {
             Self::Stable => "service-1.4",
             Self::Preview => "service-1.4-preview",
+        }
+    }
+    fn leaf(self, role: &str) -> String {
+        if self == Self::Preview {
+            format!("{role}-preview")
+        } else {
+            role.into()
         }
     }
     /// Version-free sibling of the install root for the universal launcher.
@@ -32,6 +39,9 @@ impl Channel {
 #[derive(Serialize)]
 pub(crate) struct UserPaths {
     pub channel: Channel,
+    /// Existing ownership records contain absolute paths. Reuse those locations
+    /// until an explicit owned handover; never silently create a second service.
+    pub legacy_locations: bool,
     pub install: PathBuf,
     /// Unversioned directory of the universal launcher that agent configurations name.
     pub launcher: PathBuf,
@@ -251,7 +261,7 @@ impl UserPaths {
     pub(crate) fn discover(channel: Channel) -> Result<Self> {
         #[cfg(unix)]
         let home = home()?;
-        let leaf = channel.leaf();
+        let leaf = channel.legacy_leaf();
         #[cfg(windows)]
         let (install, configuration, data, state, cache, logs) = {
             let local =
@@ -289,8 +299,9 @@ impl UserPaths {
         }
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
-            Ok(Self {
+            let mut paths = Self {
                 channel,
+                legacy_locations: true,
                 launcher: checked(
                     install
                         .parent()
@@ -303,14 +314,125 @@ impl UserPaths {
                 state: checked(state)?,
                 cache: checked(cache)?,
                 logs: checked(logs)?,
-            })
+            };
+            paths.select_layout()?;
+            Ok(paths)
         }
+    }
+
+    fn select_layout(&mut self) -> Result<()> {
+        let install = self.install.with_file_name(self.channel.leaf("runtime"));
+        // Preserve existing ownership locations. If both layouts exist, a
+        // verified universal launcher already selecting the new installation
+        // takes precedence over leftovers from an older one.
+        let new_selected = self.install.try_exists()?
+            && install.try_exists()?
+            && self
+                .launcher
+                .join(crate::universal_launcher::CONFIG)
+                .try_exists()?
+            && crate::universal_launcher::resolve(
+                &self
+                    .launcher
+                    .join(crate::universal_launcher::launcher_name()),
+            )? == install.canonicalize()?;
+        if self.install.try_exists()? && !new_selected {
+            return Ok(());
+        }
+        self.install = checked(install)?;
+        self.configuration = checked(
+            self.configuration
+                .with_file_name(self.channel.leaf("settings")),
+        )?;
+        self.data = checked(self.data.with_file_name(self.channel.leaf("index-v1")))?;
+        let previous_state = self.state.clone();
+        self.state = checked(self.state.with_file_name(self.channel.leaf("service-v1")))?;
+        self.cache = checked(self.cache.with_file_name(self.channel.leaf("cache-v1")))?;
+        self.logs = checked(if self.logs.starts_with(&previous_state) {
+            self.state.join(self.logs.strip_prefix(&previous_state)?)
+        } else {
+            self.logs.with_file_name(self.channel.leaf("logs-v1"))
+        })?;
+        self.legacy_locations = false;
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn fixture_paths(base: &Path, channel: Channel) -> UserPaths {
+        let leaf = channel.legacy_leaf();
+        UserPaths {
+            channel,
+            legacy_locations: true,
+            install: base.join(leaf),
+            launcher: base.join(channel.launcher_leaf()),
+            configuration: base.join("configuration").join(leaf),
+            data: base.join("data").join(leaf),
+            state: base.join("state").join(leaf),
+            cache: base.join("cache").join(leaf),
+            logs: base.join("state").join(leaf).join("logs"),
+        }
+    }
+
+    #[test]
+    fn fresh_layout_separates_formats_from_runtime_and_preserves_existing_ownership_paths()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        for channel in [Channel::Stable, Channel::Preview] {
+            let mut fresh = fixture_paths(owner.path(), channel);
+            fresh.select_layout()?;
+            assert!(!fresh.legacy_locations);
+            assert_eq!(
+                fresh.install.file_name().unwrap(),
+                channel.leaf("runtime").as_str()
+            );
+            assert_eq!(
+                fresh.data.file_name().unwrap(),
+                channel.leaf("index-v1").as_str()
+            );
+            assert_eq!(
+                fresh.state.file_name().unwrap(),
+                channel.leaf("service-v1").as_str()
+            );
+            assert_eq!(fresh.logs, fresh.state.join("logs"));
+            assert!(!fresh.install.exists() && !fresh.data.exists());
+            let mut existing = fixture_paths(owner.path(), channel);
+            std::fs::create_dir(&existing.install)?;
+            let before = serde_json::to_value(&existing)?;
+            existing.select_layout()?;
+            assert_eq!(serde_json::to_value(existing)?, before);
+        }
+        Ok(())
+    }
+    #[test]
+    fn selected_new_layout_is_not_shadowed_by_old_install_leftovers() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let mut paths = fixture_paths(owner.path(), Channel::Stable);
+        std::fs::create_dir(&paths.install)?;
+        let new_install = owner.path().join("runtime");
+        std::fs::create_dir(&new_install)?;
+        std::fs::create_dir(&paths.launcher)?;
+        let executable = paths
+            .launcher
+            .join(crate::universal_launcher::launcher_name());
+        std::fs::write(&executable, b"owned launcher fixture")?;
+        std::fs::write(
+            paths.launcher.join(crate::universal_launcher::CONFIG),
+            serde_json::to_vec(&crate::universal_launcher::Pointer {
+                schema: 1,
+                install: new_install.canonicalize()?,
+                launcher_sha256: crate::runtime_pair::digest_file(&executable)?,
+            })?,
+        )?;
+        paths.select_layout()?;
+        assert!(!paths.legacy_locations);
+        assert_eq!(paths.install, new_install);
+        assert_eq!(paths.data, owner.path().join("data/index-v1"));
+        Ok(())
+    }
+
     #[test]
     fn mac_defaults_keep_collection_data_outside_installer_and_control_ownership() -> Result<()> {
         let owner = tempfile::tempdir()?;

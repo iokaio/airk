@@ -33,7 +33,7 @@ multi.collections.push({ collection: 'sample-docs', name: 'Sample Docs', root: '
 const verified = structuredClone(base); verified.collections[0].state = 'current';
 verified.collections[0].coverage.report = { ...coverage, current: coverage.eligible, stale: 0, missing: 0, percent: 100 };
 verified.collections[0].mcp = { phase: 'verified', checkedAt: Date.parse('2026-10-17T16:30:00Z'),
-    tools: Array.from({ length: 16 }, (_, i) => `fixture_tool_${i}`) };
+    tools: Array.from({ length: 26 }, (_, i) => `fixture_tool_${i}`) };
 const checking = structuredClone(verified); checking.collections[0].mcp = { phase: 'checking' };
 const mcpFailed = structuredClone(verified); mcpFailed.collections[0].mcp = { phase: 'failed',
     checkedAt: Date.parse('2026-10-17T16:32:00Z'), error: 'The helper did not complete the MCP handshake within the allowed time.' };

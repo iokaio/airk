@@ -11,6 +11,7 @@ pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS service_background(
  revision INTEGER NOT NULL CHECK(revision>=0),
  source_pending INTEGER NOT NULL CHECK(source_pending IN(0,1)),
  semantic_pending INTEGER NOT NULL CHECK(semantic_pending IN(0,1))) WITHOUT ROWID;";
+pub(super) const SETUP_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS service_setup_pending(project TEXT PRIMARY KEY REFERENCES projects(binding)) WITHOUT ROWID;";
 
 fn column(kind: JobKind) -> Result<&'static str> {
     match kind {
@@ -26,6 +27,27 @@ pub(super) fn set(
     kind: JobKind,
     pending: bool,
 ) -> Result<()> {
+    if kind == JobKind::ModelSetup {
+        connection.execute(
+            "INSERT OR IGNORE INTO service_background VALUES(?1,0,0,0)",
+            [project.to_string()],
+        )?;
+        let changed = if pending {
+            connection.execute(
+                "INSERT OR IGNORE INTO service_setup_pending VALUES(?1)",
+                [project.to_string()],
+            )?
+        } else {
+            connection.execute(
+                "DELETE FROM service_setup_pending WHERE project=?1",
+                [project.to_string()],
+            )?
+        };
+        if changed > 0 {
+            ensure!(connection.execute("UPDATE service_background SET revision=revision+1 WHERE project=?1 AND revision<9223372036854775807",[project.to_string()])?==1,"background continuation revision exhausted");
+        }
+        return Ok(());
+    }
     let column = column(kind)?;
     connection.execute(
         "INSERT OR IGNORE INTO service_background VALUES(?1,0,0,0)",
@@ -55,19 +77,28 @@ pub(super) fn debit(
     revision: u64,
     job: airk_core::identity::Sha256Digest,
 ) -> Result<()> {
-    let column = column(kind)?;
+    let predicate = if kind == JobKind::ModelSetup {
+        "EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=b.project)".to_owned()
+    } else {
+        format!("b.{}=1", column(kind)?)
+    };
     let expected = i64::try_from(revision)?;
     ensure!(
         expected < i64::MAX,
         "background continuation revision exhausted"
     );
-    let eligible:bool=connection.query_row(&format!("SELECT EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project WHERE b.project=?1 AND b.revision=?2 AND b.{column}=1 AND p.paused=0 AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=b.project AND j.id<>?3 AND j.state IN('pending','running')))"),params![project.to_string(),expected,job.to_string()],|row|row.get(0))?;
+    let eligible:bool=connection.query_row(&format!("SELECT EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project WHERE b.project=?1 AND b.revision=?2 AND {predicate} AND p.paused=0 AND p.registered=1 AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=b.project AND j.id<>?3 AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')))"),params![project.to_string(),expected,job.to_string()],|row|row.get(0))?;
     ensure!(eligible, "background continuation is no longer eligible");
-    ensure!(connection.execute(&format!("UPDATE service_background SET {column}=0,revision=revision+1 WHERE project=?1 AND revision=?2"),params![project.to_string(),expected])?==1,"background continuation changed");
+    set(connection, project, kind, false)?;
     Ok(())
 }
 
 impl ServiceRegistry {
+    /// Only reviewed native setup may create reserved storage during worker startup.
+    pub fn project_setup_pending(&self, project: ProjectBinding) -> Result<bool> {
+        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_setup_pending WHERE project=?1) OR EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND kind='model_setup' AND state IN('pending','running'))",[project.to_string()],|row|row.get(0))?)
+    }
+
     /// The lock-bearing native owner records the next phase before completing
     /// its current job. Queue saturation cannot discard this bounded intent.
     pub fn set_background_pending(
@@ -93,7 +124,7 @@ impl ServiceRegistry {
             (1..=32).contains(&limit),
             "invalid background continuation page bound"
         );
-        let mut statement=self.connection.prepare("SELECT b.project,b.revision,b.source_pending FROM service_background b JOIN projects p ON p.binding=b.project WHERE b.project>?1 AND p.paused=0 AND (b.source_pending=1 OR b.semantic_pending=1) AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=b.project AND j.state IN('pending','running')) ORDER BY b.project LIMIT ?2")?;
+        let mut statement=self.connection.prepare("SELECT b.project,b.revision,b.source_pending,EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=b.project) FROM service_background b JOIN projects p ON p.binding=b.project WHERE b.project>?1 AND p.paused=0 AND p.registered=1 AND (b.source_pending=1 OR b.semantic_pending=1 OR EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=b.project)) AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=b.project AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')) ORDER BY b.project LIMIT ?2")?;
         let rows = statement.query_map(
             params![
                 after.map(|id| id.to_string()).unwrap_or_default(),
@@ -104,15 +135,18 @@ impl ServiceRegistry {
                     row.get::<_, String>(0)?,
                     row.get::<_, i64>(1)?,
                     row.get::<_, bool>(2)?,
+                    row.get::<_, bool>(3)?,
                 ))
             },
         )?;
         rows.map(|row| {
-            let (project, revision, source) = row?;
+            let (project, revision, source, setup) = row?;
             Ok((
                 project.parse()?,
                 u64::try_from(revision).context("invalid background continuation revision")?,
-                if source {
+                if setup {
+                    JobKind::ModelSetup
+                } else if source {
                     JobKind::Index
                 } else {
                     JobKind::Vectors
@@ -122,7 +156,7 @@ impl ServiceRegistry {
         .collect()
     }
     pub fn has_background_work(&self) -> Result<bool> {
-        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project WHERE p.paused=0 AND (b.source_pending=1 OR b.semantic_pending=1))",[],|row|row.get(0))?)
+        Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project WHERE p.paused=0 AND p.registered=1 AND (b.source_pending=1 OR b.semantic_pending=1 OR EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=b.project)))",[],|row|row.get(0))?)
     }
 }
 
@@ -150,6 +184,66 @@ mod tests {
         let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
         registry.admit_worker(&mut lease)?;
         Ok((root, registry, lease))
+    }
+    #[test]
+    fn reviewed_registration_persists_setup_and_source_fallback_without_duplicate_work()
+    -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let mut registry = ServiceRegistry::open(root.path(), nonce(1))?;
+        let registration =
+            ProjectRegistration::new("/setup-source".into(), "/setup-data".into(), "setup".into())?;
+        let project = registration.binding;
+        registry.register_with_setup(&registration, Some(false))?;
+        assert!(!registry.watch(project)?.observation.enabled);
+        assert!(registry.project_setup_pending(project)?);
+        registry.register_with_setup(&registration, Some(true))?;
+        assert!(
+            !registry.watch(project)?.observation.enabled,
+            "repeat registration preserves settings"
+        );
+        registry.pause(project, true)?;
+        assert!(registry.due_background_jobs(None, 32)?.is_empty());
+        registry.pause(project, false)?;
+        drop(registry);
+        let mut registry = ServiceRegistry::open(root.path(), nonce(2))?;
+        let due = registry.due_background_jobs(None, 32)?;
+        assert_eq!(due.len(), 1);
+        let (bound, revision, kind) = due[0];
+        assert_eq!((bound, kind), (project, JobKind::ModelSetup));
+        let setup = registry.enqueue_background_job(project, revision, kind, nonce(3), nonce(4))?;
+        assert_eq!(
+            registry
+                .enqueue_background_job(project, revision, kind, nonce(3), nonce(4))?
+                .id,
+            setup.id
+        );
+        assert!(registry.due_background_jobs(None, 32)?.is_empty());
+        let mut lease = ProjectLease::acquire(root.path(), project)?;
+        registry.admit_worker(&mut lease)?;
+        registry
+            .claim_job_id(&lease, setup.id)?
+            .context("setup claim")?;
+        registry.complete_job(
+            &lease,
+            setup.id,
+            JobOutcome::Failed {
+                code: "model_unavailable".into(),
+            },
+        )?;
+        let due = registry.due_background_jobs(None, 32)?;
+        assert_eq!(due.len(), 1);
+        assert_eq!(
+            due[0].2,
+            JobKind::Index,
+            "text indexing survives model failure"
+        );
+        assert!(!registry.project_setup_pending(project)?);
+        registry.register_with_setup(&registration, Some(false))?;
+        assert!(
+            !registry.project_setup_pending(project)?,
+            "reopening cannot restart completed setup"
+        );
+        Ok(())
     }
     #[test]
     fn continuation_survives_restart_and_acceptance_debits_it_atomically() -> Result<()> {

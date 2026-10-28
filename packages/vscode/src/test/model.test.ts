@@ -17,14 +17,14 @@ test('workspace escapes, state, secrets and generated files cannot schedule inde
     assert.equal(eligibleEvent(path.join(root, 'src', 'a.ts'), root, data), true);
     assert.equal(eligibleEvent(path.join(root, '.gitignore'), root, data), true);
 });
-test('all agent fragments preserve separate absolute paths and unique collection server names', () => {
+test('all agent fragments preserve separate absolute paths and one unified server name', () => {
     const spec: LaunchSpec = { command: 'C:\\Program Files\\AIRK\\airk.exe', root: 'D:\\Project A', dataDir: 'E:\\Index Files', collection: 'project-a', name: 'A' };
     for (const client of clients) {
         const text = configFor(client, spec);
-        if (client === 'codex') { assert.ok(text.includes('[mcp_servers.airk-project-a]')); assert.ok(text.includes(JSON.stringify(launchArgs(spec)))); }
+        if (client === 'codex') { assert.ok(text.includes('[mcp_servers.airk]')); assert.ok(text.includes(JSON.stringify(launchArgs(spec)))); }
         else {
             const object = JSON.parse(text);
-            const entry = object.servers?.['airk-project-a'] || object.mcpServers?.['airk-project-a'] || object.mcp?.servers?.['airk-project-a'] || object.mcp?.['airk-project-a'] || (object.transport === 'stdio' ? object : undefined);
+            const entry = object.servers?.['airk'] || object.mcpServers?.['airk'] || object.mcp?.servers?.['airk'] || object.mcp?.['airk'] || (object.transport === 'stdio' ? object : undefined);
             const args = Array.isArray(entry.command) ? entry.command.slice(1) : entry.args;
             assert.deepEqual(args, launchArgs(spec));
             assert.equal(Array.isArray(entry.command) ? entry.command[0] : entry.command, spec.command);

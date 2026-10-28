@@ -13,9 +13,9 @@ Choose for the evidence you need, the source formats you actually have and the m
 ## Steps
 
 1. Identify the purpose: exact text lookup, code investigation, requirements/testing, architecture analysis or writing. Identify source languages and Markdown, PDF, DOCX, XLSX, PPTX or scanned/image material. Ask the user when these are unknown; do not choose a richer index merely because a role is selected.
-2. Check Overview and Management > Indexing. Inspect the project before changing it. An agent can use airk_status and airk_capabilities to check published detail, adapters, lexical readiness and independent semantic readiness.
-3. In Management > Indexing, choose **Project settings… > Index detail**. The native picker uses essential, agent_lean, balanced and detailed. Review and approve a change; observe the resulting native job and new publication before assuming it took effect.
-4. Choose vectors separately under **Vector search**. Review **Vector eligibility** when selected files should stay lexical-only. Adapter overrides, source scan limits, watching and storage quotas are separate settings.
+2. Check Overview and Management. Missing prerequisite inspections are requested automatically when changing settings. An agent can use status and capabilities to check published detail, adapters, lexical readiness and independent semantic readiness.
+3. In Management, choose **Change detail…**. The native picker uses essential, agent_lean, balanced and detailed. Review and approve a change; observe the resulting native job and new publication before assuming it took effect.
+4. Choose vectors separately with **Search mode**. Review **Vector eligibility** when selected files should stay lexical-only. Adapter overrides, source scan limits, watching and storage quotas are separate settings.
 5. Check representative files with Evidence > Inspector and Documents > Facts or Code > Symbols. Compare useful answers, retained coverage and costs before raising detail or budgets further.
 
 ## Evidence detail
@@ -35,4 +35,4 @@ Native watching maintains observed source intent. Manual watching suits a delibe
 
 ## Limits
 
-Configured settings can differ from the published index until work succeeds. Job acceptance is not completion. Source freshness, lexical readiness and semantic coverage are independent. Never present unchanged source bytes, complete format coverage or successful semantics without observations. Use the Document types guide for extraction and OCR choices; exact native flags come from airk_help command selectors.
+Configured settings can differ from the published index until work succeeds. Job acceptance is not completion. Source freshness, lexical readiness and semantic coverage are independent. Never present unchanged source bytes, complete format coverage or successful semantics without observations. Use the Document types guide for extraction and OCR choices; exact native flags come from help command selectors.

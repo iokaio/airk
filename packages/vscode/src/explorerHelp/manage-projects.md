@@ -1,29 +1,17 @@
 ---
 id: management.projects
 title: Registered projects and Index now
-route: manage/projects
+route:
 area: management
 aliases: index now, reindex, registered projects, collections, remove project, unregister, deleted source, root_unavailable, unreadable directories, watcher recovery
 related_airk_help: indexing, jobs, job-management
 ---
-# Registered projects and Index now
+# Manage projects
 
-Management › Projects lists the projects registered with the AIRK service. Values come from the service's cached project page; the Overview shows the selected project's live published status.
+Management uses tabs across the top of the content panel. The Indexing tab contains the project overview and everyday settings. Choose a project in its selector, then read its health banner, published search availability and current work. Update index queues source work; repeated clicks follow an observed active request. Pause indexing temporarily stops work without changing Automatic/Manual updates.
 
-## Steps
+Add project reviews an open folder and exact index storage. Native registration saves initial setup durably. Browse active or removed projects changes the list filter; it does not register anything.
 
-1. Choose **Select** to make a project the Explorer's current project.
-2. Choose **Index now** to queue a native index job.
-3. Choose **Remove project…** to stop indexing a registered project, including one whose source folder has been deleted. AIRK inspects retained settings and asks before unregistering it.
-4. After removal, choose **Preview / resume index cleanup**, then **Delete reviewed index state** to reclaim the retained index. These controls also appear in Management › Storage. Sources and saved settings are preserved.
-5. Expand **Unreadable directories** to see observed watcher paths and error categories. The list also appears in Management › Indexing. It is bounded and may be incomplete: each root walk stops at its first failure. Retries run about every ten seconds; entries clear after their root can be fully traversed. The log records unavailable/recovered transitions without repeating each failed retry, including across service restarts. Restored access does not mean indexing has finished.
+Recent activity shows native outcomes. Storage and removal can remove a missing-source project while preserving sources, settings and retained data. Cleanup needs a separate exact preview and confirmation. Complete a captured cleanup before registering again.
 
-## Limits
-
-Accepting a job means the work is queued; it does not mean indexing is finished. The request is saved before it is sent, so an uncertain outcome can be checked again without creating a second job.
-
-## Index and storage observations
-
-Project cards show the registered index storage root, cached index state, file count, semantic coverage, accounted index size and latest job. **Inspect index & storage** queues a native inspection without rebuilding the index; **Refresh** reads the cached service page. Missing measurements remain not observed, including when inspection has never completed. Expand Index and source details or Work and worker details for the complete bounded observations.
-
-The executable-version table below the cards distinguishes the extension, selected CLI and inference-helper payloads, running service, and the selected project's MCP frontend and index worker. A verified payload version is not proof of the running helper version. Missing process observations remain not observed.
+Advanced diagnostics and recovery shows identities, unreadable directories and repair controls. Directory diagnostics are bounded, clear after successful root traversal and do not prove indexing completed. Service details distinguishes selected payload versions from observed running processes.
