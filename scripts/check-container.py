@@ -78,15 +78,10 @@ def check_stdio(name):
         send({"jsonrpc": "2.0", "method": "notifications/initialized"})
         send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
         tools = receive(2)["result"]["tools"]
-        expected = {
-            "airk_capabilities", "airk_changes", "airk_code_facts", "airk_context",
-            "airk_document_facts", "airk_file_info", "airk_help", "airk_imports", "airk_list_files",
-            "airk_outline", "airk_read_file", "airk_references", "airk_relationships",
-            "airk_search", "airk_status", "airk_symbols",
-        }
-        assert len(tools) == len(expected) and {tool["name"] for tool in tools} == expected
+        names = [tool["name"] for tool in tools]
+        assert len(names) == len(clients.MCP_TOOLS) and set(names) == clients.MCP_TOOLS, names
         request = {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
-            "name": "airk_symbols", "arguments": {"name": "authenticate", "response_mode": "full"}}}
+            "name": "symbols", "arguments": {"name": "authenticate", "response_mode": "full"}}}
         def read(until):
             send(request)
             reply = receive(3, clients.remaining(until, 10))

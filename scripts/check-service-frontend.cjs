@@ -51,7 +51,7 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
         }
         const spec={command:binding.launcher,root:review.root,dataDir:review.data_root,collection:review.collection,name:'Frontend fixture',
             service:{installDir:install,project:review.binding}};
-        const first=await probeMcp(spec,16,inventory.version);assert.equal(first.tools.length,16);assert.notEqual(first.status.state,'not_indexed');
+        const first=await probeMcp(spec,26,inventory.version);assert.equal(first.tools.length,26);assert.notEqual(first.status.state,'not_indexed');
         const observed=JSON.parse(first.status.content.find(part=>part.type==='text').text);
         assert.equal(observed.runtime.service.version,inventory.version);assert.equal(observed.runtime.versions_match,true);
         assert.equal(observed.runtime.service.responsive,true);assert.equal(observed.work.serving_worker.project,review.binding);
@@ -83,7 +83,7 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
         }
         assert.equal(await fs.readFile(path.join(source,'memo.txt'),'utf8'),original);
         await fs.rename(source,path.join(fixture,'temporarily-offline-source'));
-        const retained=await probeMcp(spec,16,inventory.version);assert.notEqual(retained.status.state,'not_indexed');
+        const retained=await probeMcp(spec,26,inventory.version);assert.notEqual(retained.status.state,'not_indexed');
         console.log('Stable-launcher MCP served the registered publication with sources present and unavailable.');
     }finally{
         client?.dispose();

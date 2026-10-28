@@ -1,6 +1,6 @@
 # AIRK documentation
 
-The [1.5.12 development record](release-1.5.12.md) tracks optional agent instructions with copy/open-file actions, responsive Explorer startup, shared runtime discovery, live reconnect checks, visible MCP diagnostics and agent configuration updates against current native registrations. The full inline agent setup guide remains proposed; previous release records retain their original validation scope.
+The [1.5.12 release record](release-1.5.12.md) tracks optional agent instructions with copy/open-file actions, responsive Explorer startup, shared runtime discovery, live reconnect checks, visible MCP diagnostics and agent configuration updates against current native registrations. It also covers client-owned MCP process cleanup and recognizable installed worker names. The full inline agent setup guide remains proposed; previous release records retain their original validation scope.
 
 Overview and Management share the [index dashboard](index-management.md): published content and semantic coverage first, followed by current source, semantic or cleanup work. Job counters and saved index totals remain distinct and update automatically.
 

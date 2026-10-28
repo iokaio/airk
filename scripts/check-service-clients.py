@@ -21,6 +21,11 @@ TOOLS = {"airk_" + name for name in (
     "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
     "list_files", "outline", "read_file", "references", "relationships", "search", "status", "symbols")}
 
+# The public MCP catalog is distinct from the native CLI's compatible aliases.
+MCP_TOOLS = {name.removeprefix("airk_") for name in TOOLS} | {
+    "projects", "draft_search", "draft_strategy", "draft_plan", "suggest_view",
+    "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
+
 # Match service_management::execute_request's registry-contention contract.
 # RequestEpoch prunes receipts and is deliberately not a read-only observation.
 REGISTRY_READS = {"job", "configuration_result", "plan", "plan_items", "projects", "events",
@@ -454,10 +459,7 @@ class Fixture:
             params = {"_meta": meta} if lifecycle == "inline" else {}
             send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": params})
             catalog = receive(2)["result"]["tools"]
-            public = {name.removeprefix("airk_") for name in TOOLS} | {
-                "projects", "draft_search", "draft_strategy", "draft_plan", "suggest_view",
-                "list_templates", "get_template", "validate_draft", "proposal_status", "get_handoff"}
-            assert len(catalog) == len(public) and {item["name"] for item in catalog} == public
+            assert len(catalog) == len(MCP_TOOLS) and {item["name"] for item in catalog} == MCP_TOOLS
             assert all(not any(key in item["inputSchema"] for key in
                                ("oneOf", "anyOf", "allOf", "not", "if", "then", "else"))
                        for item in catalog), "Assistant-facing tool schemas must use plain object roots"

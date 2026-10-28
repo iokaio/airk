@@ -17,6 +17,26 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def check_login_plan(plan, install, platform=sys.platform):
+    if not plan["id"].startswith("airksvc-"):
+        raise RuntimeError("Optional startup plan reused a legacy scheduler identity")
+    arguments = plan["arguments"]
+    if platform == "darwin":
+        # SMAppService dispatches the sealed app through its fixed channel entry.
+        # It intentionally does not use the Windows/systemd launcher arguments.
+        valid = (plan["platform"] == "smappservice_user"
+                 and arguments == ["runtime", "login-foreground", "--channel", "stable"])
+    else:
+        valid = len(arguments) == 4 and arguments[:3] == ["runtime", "foreground", "--install-dir"]
+        if valid:
+            try:
+                valid = Path(arguments[3]).samefile(install)
+            except OSError:
+                valid = False
+    if not valid:
+        raise RuntimeError(f"Optional startup plan has an unexpected platform entry: {plan}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, required=True)
@@ -127,8 +147,7 @@ def main():
             if actual != f"airk {version}":
                 raise RuntimeError("Stable launcher changed stdio or executable identity")
             plan = run("login", "--install-dir", install, "plan")
-            if not plan["id"].startswith("airksvc-") or plan["arguments"][0:2] != ["runtime", "foreground"]:
-                raise RuntimeError("Optional startup plan reused a legacy scheduler identity")
+            check_login_plan(plan, install)
             print("Checking stopped-owner launcher repair and modified-file preservation...", flush=True)
             before_launcher = sha256(launcher)
             run("repair-launcher", "--install-dir", install, rejected=True)
