@@ -601,10 +601,13 @@ impl Kernel {
         paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<airk_ingest::IndexReport> {
         use crate::diagnostics::IndexFailureStage as Stage;
-        self.require_service_sources()?;
-        let execution_lease = crate::execution::acquire(&self.data_root)?;
+        self.require_service_sources()
+            .context(Stage("source_access"))?;
+        let execution_lease =
+            crate::execution::acquire(&self.data_root).context(Stage("execution_admission"))?;
         if full {
-            self.prepare_full_rebuild()?;
+            self.prepare_full_rebuild()
+                .context(Stage("rebuild_admission"))?;
         }
         let index_started = std::time::Instant::now();
         self.emit_progress(airk_core::readiness::IndexProgress {
@@ -615,22 +618,27 @@ impl Kernel {
         self.recover_runtime_bootstrap()
             .context(Stage("bootstrap"))?;
         let mut execution = if self.service_collection.is_some() {
-            crate::limits::execution_from_grant(&execution_lease.plan)?
+            crate::limits::execution_from_grant(&execution_lease.plan)
+                .context(Stage("extraction_admission"))?
         } else {
-            crate::limits::configured_extraction_execution()?
+            crate::limits::configured_extraction_execution()
+                .context(Stage("extraction_admission"))?
         };
         execution.requested = execution_lease.plan.requested_extraction_workers;
         execution.execution.workers = execution_lease.plan.extraction_workers;
         execution.execution.max_in_flight_source_bytes = execution.execution.workers
             * airk_ingest::ExtractionExecution::MAX_PARALLEL_SOURCE_BYTES;
-        execution.execution.validate()?;
+        execution
+            .execution
+            .validate()
+            .context(Stage("extraction_admission"))?;
         // Recovery takes its own writer lock, before this scan owns one.
         if let Some(scope) = self.current_scope().context(Stage("current_scope"))? {
             super::recover_current(&self.store, &self.collection_quota()?, &scope)
                 .context(Stage("recover_current"))?;
         }
-        let writer = self.store.lock()?;
-        let quota = self.collection_quota()?;
+        let writer = self.store.lock().context(Stage("writer_admission"))?;
+        let quota = self.collection_quota().context(Stage("quota_open"))?;
         ensure!(
             !self.root.starts_with(quota.root()),
             "index storage must not contain sources"
@@ -646,15 +654,20 @@ impl Kernel {
             .rebuild_extraction_policy()
             .context(Stage("extraction_settings"))?;
         let policy = configured.policy;
-        let compression = self.store.compression_mode(&self.root_id())?;
-        let roots = self.configured_roots()?;
-        let selection = self.vector_selection()?;
+        let compression = self
+            .store
+            .compression_mode(&self.root_id())
+            .context(Stage("compression_settings"))?;
+        let roots = self.configured_roots().context(Stage("source_settings"))?;
+        let selection = self.vector_selection().context(Stage("vector_settings"))?;
         // Keep a small independent allowance alive before capture/publication
         // can exhaust quota. Failure reporting must not require a fresh grant.
-        let failure_reservation = self.publication_reservation_with_limit(2 << 20)?;
+        let failure_reservation = self
+            .publication_reservation_with_limit(2 << 20)
+            .context(Stage("failure_reservation"))?;
         // Do not reserve all remaining capacity: durable SQL growth/replay owns
         // an independent grant while preparation is still alive.
-        let available = quota.status()?;
+        let available = quota.status().context(Stage("quota_inventory"))?;
         let root_free = available
             .root_limit_bytes
             .saturating_sub(available.used_bytes)
@@ -667,10 +680,12 @@ impl Kernel {
                     .saturating_sub(c.used_bytes)
                     .saturating_sub(c.reserved_bytes)
             });
-        let reservation = quota.reserve_available(
-            &self.collection,
-            (root_free.min(collection_free) / 2).min(MAX_INDEX_RESERVATION_BYTES),
-        )?;
+        let reservation = quota
+            .reserve_available(
+                &self.collection,
+                (root_free.min(collection_free) / 2).min(MAX_INDEX_RESERVATION_BYTES),
+            )
+            .context(Stage("capture_reservation"))?;
         let model_started = std::time::Instant::now();
         let objects = self
             .configured_model_objects(false)

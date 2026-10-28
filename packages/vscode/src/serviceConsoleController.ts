@@ -15,6 +15,7 @@ export interface ConsoleHost {
     openReport?(text:string):Promise<void>;
     saveReport?(text:string):Promise<void>;
     exportLogs?(observation?:BootstrapObservation):Promise<void>;
+    rawLogs?(save:boolean,observation?:BootstrapObservation):Promise<void>;
     logs(observation?:BootstrapObservation):Promise<void>;
     resources(current:RecordValue):Promise<RecordValue|undefined>;
     configuration?(row:RecordValue,operation?:'detail'|'advanced'):Promise<RecordValue|undefined>;
@@ -316,6 +317,7 @@ export class ServiceConsoleController {
                 await operation(requestedPreview);this.state.preview=requestedPreview;return;
             }
             if(action.action==='exportLogs'){this.authorized();if(!this.host.exportLogs)throw new ServiceError('diagnostic_export_unavailable');await this.host.exportLogs(this.bootstrap);return;}
+            if(action.action==='openRawLogs'||action.action==='saveRawLogs'){this.authorized();if(!this.host.rawLogs)throw new ServiceError('diagnostic_export_unavailable');await this.host.rawLogs(action.action==='saveRawLogs',this.bootstrap);return;}
             if(action.action==='logs'){await this.host.logs(this.bootstrap);return;}
             if(action.action==='copyConfiguration'){
                 const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===action.project);

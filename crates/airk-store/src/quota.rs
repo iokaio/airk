@@ -24,6 +24,49 @@ const POLICY_MAX: u64 = 65_536;
 const RECORD_MAX: u64 = 1024;
 const MAX_RESERVATIONS: usize = 1024;
 const MAX_ENTRIES: usize = 1_000_000;
+
+#[derive(Debug)]
+pub struct QuotaInventoryLimit {
+    pub visited: usize,
+    pub limit: usize,
+}
+impl std::fmt::Display for QuotaInventoryLimit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "quota inventory visited {} entries; limit is {}; refusing allocation",
+            self.visited, self.limit
+        )
+    }
+}
+impl std::error::Error for QuotaInventoryLimit {}
+
+fn check_inventory_count(visited: usize) -> Result<()> {
+    ensure!(
+        visited <= MAX_ENTRIES,
+        QuotaInventoryLimit {
+            visited,
+            limit: MAX_ENTRIES
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn inventory_limit_preserves_count_and_fixed_diagnostic_code() -> Result<()> {
+    check_inventory_count(MAX_ENTRIES)?;
+    let error = check_inventory_count(MAX_ENTRIES + 1)
+        .unwrap_err()
+        .context("quota census");
+    let limit = error.downcast_ref::<QuotaInventoryLimit>().unwrap();
+    assert_eq!(limit.visited, 1_000_001);
+    assert_eq!(
+        crate::diagnostics::failure_code(&error).as_deref(),
+        Some("quota_inventory_limit_exceeded")
+    );
+    assert!(format!("{error:#}").contains("1000001"));
+    Ok(())
+}
 pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
 const PREPARED_PUBLICATION: &str = "prepared-publication.json";
 mod current;
@@ -846,10 +889,7 @@ impl Quota {
                 within_deadline(deadline)?;
                 let entry = entry?;
                 visited += 1;
-                ensure!(
-                    visited <= MAX_ENTRIES,
-                    "quota inventory entry limit exhausted; refusing allocation"
-                );
+                check_inventory_count(visited)?;
                 let path = entry.path();
                 if path == self.control_path()
                     || (directory == self.root

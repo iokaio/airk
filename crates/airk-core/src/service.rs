@@ -165,6 +165,8 @@ pub struct ControlRequest {
 #[serde(deny_unknown_fields)]
 pub struct ServiceHealth {
     #[serde(default)]
+    pub storage_formats: Option<crate::storage_format::StorageFormats>,
+    #[serde(default)]
     pub build: Option<RuntimeBuild>,
     #[serde(default)]
     pub build_error: Option<String>,
@@ -596,6 +598,10 @@ impl std::error::Error for AdmissionError {}
 #[serde(deny_unknown_fields)]
 pub struct MaintenanceObservation {
     pub pending_incarnations: Option<usize>,
+    #[serde(default)]
+    pub pending_objects: bool,
+    #[serde(default)]
+    pub objects_checked: bool,
     pub removed_files: u32,
     pub failed: bool,
     pub observed_unix_ms: u64,

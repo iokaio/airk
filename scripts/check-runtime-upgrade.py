@@ -142,8 +142,14 @@ def main():
         with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
             version = connection.execute("PRAGMA user_version").fetchone()[0]
             count = connection.execute("SELECT count(*) FROM projects WHERE binding=?", (project["binding"],)).fetchone()[0]
-        if version != 7 or count != 1 or (source / "README.md").read_bytes() != original:
-            raise RuntimeError("Upgrade lost metadata or fictional source")
+        # Registry schema 8 includes durable setup and recovery budgets. This
+        # SQL schema is independent of the public service-state format label.
+        if version != 8:
+            raise RuntimeError(f"Upgraded registry schema is {version}; expected 8 (previous {old_format})")
+        if count != 1:
+            raise RuntimeError(f"Upgrade did not preserve the exact project registration: count={count}")
+        if (source / "README.md").read_bytes() != original:
+            raise RuntimeError("Upgrade changed the fictional source bytes")
         receipt = {"passed": True, "previous_version": json.loads((old / "airk-install.json").read_text(encoding="utf-8"))["version"],
                    "version": expected_version, "previous_format": old_format, "format": version,
                    "activation_elapsed_seconds": elapsed, "connected_client_terminated": True,

@@ -523,6 +523,12 @@ def retained_job_failure(fixture, project):
             if matching:
                 assert len(matching) == 1 and matching[0]["code"] == code, matching
                 assert matching[0]["project"] == fixture.projects[project]["binding"]
+                raw = fixture.run("service", "logs", "--runtime-dir", fixture.control, "--raw").stdout
+                failures = [json.loads(line) for line in raw.splitlines()]
+                detailed = [value for value in failures if value["summary"]["job"] == failed["id"]]
+                assert len(detailed) == 1 and detailed[0]["failure"]["code"] == code
+                assert "EOF" in detailed[0]["failure"]["detail"]["chain"]
+                assert "detail" not in matching[0], "Raw causes leaked into the summary API"
                 break
             assert time.monotonic() < deadline, "Failed job never reached the retained service log"
             time.sleep(0.05)

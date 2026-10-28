@@ -46,6 +46,10 @@ pub struct CurrentRead {
 }
 
 impl CurrentRead {
+    pub(super) fn reclaim_exclusive(&mut self) -> Result<bool> {
+        self._gate.try_exclusive()
+    }
+
     #[cfg(test)]
     pub(super) fn elapse_for_test(&mut self, elapsed: std::time::Duration) {
         self.deadline = self.deadline.map(|deadline| deadline - elapsed);

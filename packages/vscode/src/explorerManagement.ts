@@ -62,6 +62,9 @@ const observed = (name: string, value: ConsoleObservation): FactRow =>
     [name, `${value.state}${value.code ? ` · ${value.code}` : ''} · checked ${new Date(value.checkedAt).toISOString()}`];
 
 function failureDetail(code: unknown): string {
+    if (typeof code === 'string' && code.endsWith('quota_inventory_limit_exceeded')) {
+        return `Storage accounting reached its file-count limit before indexing could start. Storage shows cleanup progress; the raw diagnostic log records the measured count and limit. This does not mean a source file is too large. Native reason: ${code}.`;
+    }
     const explanations: Record<string,string> = {
         storage_quota_root: 'The shared storage quota is full. Review Storage and removal or raise the quota in Advanced settings.',
         storage_quota_collection: 'This project reached its storage quota. Review Storage and removal or its quota setting.',
@@ -82,6 +85,7 @@ function failureDetail(code: unknown): string {
 }
 
 function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[]; activity: FactRow[]; extra: Omit<ManagedProject, 'summary' | 'rows' | 'activity'> } {
+    const formats = obj(obj(state.health.value?.observation).storage_formats);
     const registration = obj(obj(row.project).registration), binding = String(registration.binding);
     const inspection = obj(row.inspection), snapshot = obj(inspection.snapshot), progress = obj(row.progress), work = obj(progress.progress), job = obj(progress.job), watch = obj(row.watch);
     const workers = Array.isArray(state.workers?.observations) ? state.workers!.observations : [];
@@ -152,7 +156,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         ? { severity: 'ok', title: 'Published index available', detail: 'A published index is available. This does not prove that saved source files still match it.' }
         : { severity: 'info', title: 'Index status not checked', detail: 'Check index and storage to collect a native inspection. Refresh only reloads cached observations.', action: 'inspect', actionLabel: 'Check index & storage' };
     return {
-        rows: rows([['Index data', registration.data_root], ['Project identity', binding], ['Source observation', watch.failure === 'root_unavailable'
+        rows: rows([['Index format', formats.index === 1 ? 'Index format 1 (index-v1)' : undefined], ['Index data', registration.data_root], ['Project identity', binding], ['Source observation', watch.failure === 'root_unavailable'
             ? 'Source watching is unavailable: a configured root or directory is missing, unreadable or redirected. Remove a deleted project from Management › Projects.'
             : watch.failure ?? watch.backend],
             ['Pending source changes', typeof watch.requested_revision === 'number' && typeof watch.completed_revision === 'number' ? Math.max(0, watch.requested_revision - watch.completed_revision) : undefined],
@@ -204,6 +208,11 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
                 observedAt: bytes(inspection.observed_unix_ms),
                 availableBytes: used !== undefined && reserved !== undefined && limit !== undefined ? Math.max(0, limit - used - reserved) : undefined,
                 rows: rows([
+                    ['Index format', formats.index === 1 ? 'Index format 1 (index-v1)' : undefined],
+                    ['Cleanup files removed (latest pass)', obj(row.maintenance).removed_files],
+                    ['Old index instances awaiting cleanup', obj(row.maintenance).pending_incarnations],
+                    ['Unused objects awaiting cleanup', obj(row.maintenance).pending_objects],
+                    ['Cleanup failed', obj(row.maintenance).failed],
                     ['Accounted index bytes', used], ['Reserved bytes', reserved], ['Collection quota (bytes)', limit],
                     ['Storage-root quota remaining (bytes)', bytes(storage.root_available_bytes)],
                     ['Physical growth allowance (bytes)', bytes(storage.physical_available_growth_bytes)],
@@ -233,6 +242,9 @@ function plan(state: ServiceConsoleState): PlanView | undefined {
     if (!state.plan) { return undefined; }
     const value = state.plan.value, counts = obj(value.counts);
     return {
+        ...(value.phase==='finished'?{outcome:typeof counts.failed==='number'&&counts.failed>0?'failed' as const
+            :typeof counts.selected==='number'&&counts.selected>0&&counts.succeeded===counts.selected
+                ?typeof counts.cleanup_pending==='number'&&counts.cleanup_pending>0?'cleanup_pending' as const:'succeeded' as const:'incomplete' as const}:{}),
         id:typeof value.id==='string'?value.id:undefined,preview:typeof value.preview_digest==='string'?value.preview_digest:undefined,phase:typeof value.phase==='string'?value.phase:undefined,
         rows: rows([['Plan', value.id], ['Operation', value.operation], ['All registered projects', value.all_registered], ['Phase', value.phase], ['Paused', value.paused],
             ['Total projects', counts.selected], ['Ready', counts.ready], ['Running', counts.running], ['Succeeded', counts.succeeded], ['Failed', counts.failed],
@@ -284,10 +296,10 @@ export function managementView(state: ServiceConsoleState): ManagementView {
     return {
         busy: state.busy, connected: state.connected, checkedAt:state.health?.state==='unavailable'?undefined:state.health?.checkedAt, trusted: state.trusted, authority: state.authority,
         ...(state.lifecycle ? { lifecycle: state.lifecycle } : {}), responseMode: state.responseMode ?? 'terse', ...(state.message ? { message: state.message } : {}),
-        service: [observed('Service', state.health), ...rows([['Service instance', health.instance], ['Native version', health.version], ['Protocol', health.protocol],
+        service: [observed('Service', state.health), ...rows([['Service instance', health.instance], ['Native version', health.version], ['Index format', obj(health.storage_formats).index === 1 ? 'Index format 1 (index-v1)' : undefined], ['Service-state format', obj(health.storage_formats).service_state], ['Protocol', health.protocol],
             ['Service process', health.process_id], ['Uptime (ms)', health.uptime_ms], ['Accepting work', obj(health.policy).accepting],
             ['Executable identity', health.executable_sha256], ['Runtime identity', health.runtime_sha256], ['Native log available', obj(health.logs).available],
-            ['Dropped diagnostic records', obj(health.logs).dropped_records]])],
+            ['Dropped diagnostic records', obj(health.logs).dropped_records], ['Diagnostic write failures', obj(health.logs).write_failures]])],
         runtime: [observed('Bootstrap', state.bootstrap), ...rows([['Lifecycle', state.lifecycle], ['Installation', bootstrap.installDir], ['Bundled runtime', bootstrap.bundleDigest],
             ['Execution platform', bootstrap.platform], ['Bootstrap failure', bootstrap.error], ['Selected runtime', bootstrap.selectedRuntime],
             ['Selected runtime version', bootstrap.selectedVersion], ['Payload approval basis', bootstrap.verificationBasis], ['Selected payload verified', bootstrap.payloadVerified],

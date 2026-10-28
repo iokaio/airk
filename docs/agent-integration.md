@@ -1,6 +1,6 @@
 # Coding-agent MCP setup research
 
-Current 1.5.9 source exposes one unified endpoint; see the [catalog and startup migration](unified-mcp.md). The native evidence adapter retains sixteen compatibility aliases, including airk_help. The fifteen-tool 1.3 statements below describe that historical source.
+Current source exposes one unified endpoint; see the [catalog and startup migration](unified-mcp.md). The native evidence adapter retains sixteen compatibility aliases, including airk_help. The fifteen-tool 1.3 statements below describe that historical source.
 
 The [1.5.9 stdio correction](release-1.5.9.md) covers discovery, legacy initialization and a delayed-discovery fallback on independent simultaneous connections. Do not infer successful tool discovery from an initialization/connected badge alone: require `tools/list` and a successful scoped call. A model's initial claim that no tools are visible may reflect delayed client discovery; it is not a transport log. An index with blocked freshness is a separate condition from MCP tool availability. Client-private approval/deferral settings remain client-owned.
 

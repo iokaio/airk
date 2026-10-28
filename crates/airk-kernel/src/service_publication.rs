@@ -58,7 +58,19 @@ impl Kernel {
             .context("service collection required")?;
         crate::service_execution::checkpoint()?;
         collection.recover_abandoned_replacement()?;
-        self.retire_service_incarnations()
+        let mut report = self.retire_service_incarnations()?;
+        if report.pending > 0 {
+            // Share the same deletion budget with active-object reclamation.
+            report.pending_objects = true;
+        } else {
+            let remaining = 4096u32
+                .checked_sub(report.removed_files)
+                .context("retirement batch exceeded")?;
+            let current = collection.reclaim_current_objects(remaining as usize)?;
+            report.removed_files += u32::try_from(current.removed_files)?;
+            report.pending_objects = current.pending;
+        }
+        Ok(report)
     }
     pub fn service_rebuild_receipt(&self) -> Result<Option<collection::RebuildReceipt>> {
         self.service_collection
@@ -177,6 +189,44 @@ mod tests {
     use super::*;
     use airk_core::SearchQuery;
     use std::path::Path;
+
+    #[test]
+    fn service_object_cleanup_releases_its_own_selection_but_respects_other_readers() -> Result<()>
+    {
+        let root = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(root.path().join("note.txt"), "retained source")?;
+        let kernel =
+            Kernel::open_service_collection(root.path(), Some(data.path().into()), "fixture")?;
+        kernel.configure_vectors(false)?;
+        kernel.index_service_sources()?;
+        let selected = kernel.refresh_service_snapshot()?;
+        let orphan = selected
+            .store
+            .directory()
+            .join("objects/sources")
+            .join("0".repeat(64));
+        std::fs::write(&orphan, b"abandoned capture")?;
+        let pinned = kernel.maintain_service_collection()?;
+        assert!(pinned.pending_objects);
+        assert_eq!(pinned.removed_files, 0);
+        assert!(orphan.exists());
+        drop(selected);
+        let cleaned = kernel.maintain_service_collection()?;
+        assert!(!cleaned.pending_objects);
+        assert!(cleaned.removed_files > 0);
+        assert!(!orphan.exists());
+        assert!(
+            kernel.read_file("note.txt", 1, 1, 4096)?.hits[0]
+                .text
+                .contains("retained source")
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("note.txt"))?,
+            "retained source"
+        );
+        Ok(())
+    }
     fn query(text: &str) -> SearchQuery {
         SearchQuery {
             text: text.into(),

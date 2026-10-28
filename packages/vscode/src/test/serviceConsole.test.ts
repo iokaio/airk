@@ -9,6 +9,18 @@ import { managementView } from '../explorerManagement';
 const shown = (state: ServiceConsoleState): string => JSON.stringify(managementView(state));
 import { RecordValue, ServiceClient, ServiceError } from '../serviceClient';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+test('raw log actions use the trusted local host and never enter summary reports',async()=>{
+    const f=fixture(),calls:boolean[]=[];
+    f.host.rawLogs=async save=>{calls.push(save);};
+    await f.controller.refresh();
+    await f.action('openRawLogs');await f.action('saveRawLogs');
+    assert.deepEqual(calls,[false,true]);
+    await f.action('openRawLogs',{path:'/forged-log'});
+    assert.deepEqual(calls,[false,true]);
+    f.setTrusted(false);await f.action('openRawLogs');
+    assert.deepEqual(calls,[false,true]);
+    f.controller.dispose();
+});
 test('console workspace registration uses a trusted host action and highlights only native project bindings',async()=>{
     const f=fixture();let registrations=0;
     f.host.registerWorkspace=async()=>{registrations++;};f.host.currentProjects=()=>new Set([project]);

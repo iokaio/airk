@@ -26,17 +26,8 @@ pub(crate) fn envelope(read: &CurrentRead) -> Result<RevisionEnvelope> {
 impl Kernel {
     pub fn maintain_current(&self) -> Result<airk_store::current::maintenance::ReclamationReport> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
-        let quota = self.collection_quota()?;
-        super::recover_current(&self.store, &quota, &scope)?;
         let writer = self.store.lock()?;
-        let read = self.store.current_read(&scope)?;
-        let plan = read.reclamation_plan(&self.store)?;
-        drop(read);
-        let capacity = self.store.current_database_capacity(&scope)?;
-        let mut current = self
-            .store
-            .current_write(&writer, &quota, &scope, capacity)?;
-        current.reclaim_objects(&plan)
+        self.store.reclaim_current_objects(&writer, &scope)
     }
 
     pub(crate) fn current_scope(&self) -> Result<Option<CurrentScope>> {

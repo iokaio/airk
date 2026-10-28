@@ -113,6 +113,7 @@ struct WorkState {
     active: Option<airk_core::identity::Incarnation>,
     finished: Option<airk_core::identity::Incarnation>,
     maintenance: Option<airk_core::service::MaintenanceObservation>,
+    failure: Option<crate::service_logs::JobFailure>,
 }
 fn record_watch_roots(kernel: &Kernel, registry: &mut ServiceRegistry, lease: &ProjectLease) {
     let roots = kernel
@@ -126,16 +127,30 @@ fn record_watch_roots(kernel: &Kernel, registry: &mut ServiceRegistry, lease: &P
     }
 }
 
-fn observe_maintenance(kernel: &Kernel) -> airk_core::service::MaintenanceObservation {
+fn observe_maintenance(
+    kernel: &Kernel,
+) -> (
+    airk_core::service::MaintenanceObservation,
+    Option<crate::service_logs::FailureDetail>,
+) {
     let result = kernel.maintain_service_collection();
-    airk_core::service::MaintenanceObservation {
-        pending_incarnations: result.as_ref().ok().map(|report| report.pending),
-        removed_files: result.as_ref().map_or(0, |report| report.removed_files),
-        failed: result.is_err(),
-        observed_unix_ms: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
-    }
+    let detail = result
+        .as_ref()
+        .err()
+        .map(crate::service_logs::FailureDetail::capture);
+    (
+        airk_core::service::MaintenanceObservation {
+            pending_incarnations: result.as_ref().ok().map(|report| report.pending),
+            pending_objects: result.as_ref().is_ok_and(|report| report.pending_objects),
+            objects_checked: true,
+            removed_files: result.as_ref().map_or(0, |report| report.removed_files),
+            failed: result.is_err(),
+            observed_unix_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
+        },
+        detail,
+    )
 }
 async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     let Some(grant): Option<ConnectionGrant> =
@@ -474,13 +489,22 @@ pub async fn run() -> Result<()> {
         )?;
     }
     let pending_retirements = kernel.pending_service_retirements()?;
-    if pending_retirements > 0 {
+    let previous_maintenance = registry.maintenance_observation(init.project)?;
+    if pending_retirements > 0
+        || previous_maintenance
+            .as_ref()
+            .is_none_or(|value| !value.objects_checked)
+    {
         registry.record_maintenance(
             &lease,
             &airk_core::service::MaintenanceObservation {
                 pending_incarnations: Some(pending_retirements),
+                pending_objects: true,
+                objects_checked: false,
                 removed_files: 0,
-                failed: false,
+                failed: previous_maintenance
+                    .as_ref()
+                    .is_some_and(|value| value.failed),
                 observed_unix_ms: std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64),
@@ -555,6 +579,7 @@ pub async fn run() -> Result<()> {
             );
             if let Some(job) = registry.claim_job_id(&job_lease, allowance.job)? {
                 let mut completed_maintenance = None;
+                let mut failure_detail = None;
                 use airk_store::service::registry::RecoveryCondition;
                 let mut recovery_condition = RecoveryCondition::Delay;
                 let outcome = if registry.cancellation_requested(job.id)? {
@@ -696,12 +721,31 @@ pub async fn run() -> Result<()> {
                                 &job_lease, identity, job.id, observed, &snapshot,
                             );
                         }
+                        // Inspection and plan preview must not turn a status
+                        // request into a complete current-object census. A
+                        // dedicated admitted maintenance job continues cleanup.
+                        if !matches!(
+                            kind,
+                            JobKind::Maintain
+                                | JobKind::Index
+                                | JobKind::Reconcile
+                                | JobKind::Rebuild
+                                | JobKind::Repair
+                                | JobKind::Recover
+                                | JobKind::Vectors
+                                | JobKind::ModelSetup
+                        ) {
+                            return Ok(outcome);
+                        }
                         airk_kernel::service_execution::progress_phase(
                             airk_core::service_progress::WorkPhase::Retiring,
                         );
-                        let maintenance = observe_maintenance(&kernel);
+                        let (maintenance, maintenance_detail) = observe_maintenance(&kernel);
                         let _ = registry.record_maintenance(&job_lease, &maintenance);
                         let failed = kind == JobKind::Maintain && maintenance.failed;
+                        if failed {
+                            failure_detail = maintenance_detail;
+                        }
                         completed_maintenance = Some(maintenance.clone());
                         job_status
                             .lock()
@@ -717,6 +761,7 @@ pub async fn run() -> Result<()> {
                     })
                 }
                 .unwrap_or_else(|error| {
+                    failure_detail = Some(crate::service_logs::FailureDetail::capture(&error));
                     for cause in error.chain() {
                         if let Some(pressure) =
                             cause.downcast_ref::<airk_store::quota::QuotaPressure>()
@@ -821,6 +866,24 @@ pub async fn run() -> Result<()> {
                         }
                     }
                 });
+                if let JobOutcome::Failed { code } = &outcome {
+                    let detail = failure_detail.unwrap_or_else(|| {
+                        crate::service_logs::FailureDetail::capture(&anyhow::anyhow!(
+                            "operation returned failure code: {code}"
+                        ))
+                    });
+                    job_status
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("work status unavailable"))?
+                        .failure = Some(crate::service_logs::JobFailure {
+                        job: job.id,
+                        grant: allowance.id,
+                        worker: identity.worker,
+                        operation: job.kind,
+                        code: code.clone(),
+                        detail,
+                    });
+                }
                 // Persist the next phase before acknowledging this one. These
                 // bounded flags survive public queue saturation and owner exit.
                 if matches!(outcome, JobOutcome::Succeeded { .. }) {
@@ -872,6 +935,37 @@ pub async fn run() -> Result<()> {
                     .duration_since(std::time::UNIX_EPOCH)?
                     .as_millis()
                     .try_into()?;
+                if matches!(outcome, JobOutcome::Failed { .. })
+                    && matches!(
+                        job.kind,
+                        JobKind::Index
+                            | JobKind::Reconcile
+                            | JobKind::Rebuild
+                            | JobKind::Repair
+                            | JobKind::Vectors
+                            | JobKind::ModelSetup
+                    )
+                {
+                    // Failed captures can leave unreferenced objects even if
+                    // the preceding cleanup was complete. Schedule a bounded
+                    // check without resetting cleanup cancellation/backoff or
+                    // replacing this job's original failure with cleanup work.
+                    let mut pending = registry
+                        .maintenance_observation(identity.project)?
+                        .unwrap_or(airk_core::service::MaintenanceObservation {
+                            pending_incarnations: Some(0),
+                            pending_objects: true,
+                            objects_checked: false,
+                            removed_files: 0,
+                            failed: false,
+                            observed_unix_ms: now_ms,
+                        });
+                    pending.pending_objects = true;
+                    pending.objects_checked = false;
+                    pending.removed_files = 0;
+                    pending.observed_unix_ms = now_ms;
+                    registry.record_maintenance(&job_lease, &pending)?;
+                }
                 let deferred = if let JobOutcome::Failed { code } = &outcome {
                     registry.defer_job_failure(
                         &job_lease,
@@ -961,7 +1055,7 @@ pub async fn run() -> Result<()> {
                             && !busy.swap(true, Ordering::AcqRel);
                         let accepted=if accepted {
                             airk_kernel::service_execution::activate(&allowance)?;
-                            {let mut status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;status.active=Some(allowance.id);status.finished=None;}
+                            {let mut status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;status.active=Some(allowance.id);status.finished=None;status.failure=None;}
                             work_sender.try_send(allowance).is_ok()
                         }else{false};
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::WorkAccepted}else{Reply::Failed})?;
@@ -972,7 +1066,7 @@ pub async fn run() -> Result<()> {
                         if expected==identity {maintenance_waiting.store(keep_for_maintenance,Ordering::Release);}
                         if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled)?;}
                         let status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
-                        let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone(),progress:airk_kernel::service_execution::progress().map(Box::new),waiting_for:status.active.and_then(|_|airk_kernel::service_execution::waiting_for())}}}else{Reply::Failed};
+                        let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone(),failure:status.failure.clone(),progress:airk_kernel::service_execution::progress().map(Box::new),waiting_for:status.active.and_then(|_|airk_kernel::service_execution::waiting_for())}}}else{Reply::Failed};
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
                     },
                     Some(Command::Grant{caller})=>{

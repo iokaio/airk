@@ -69,6 +69,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     .status(now);
                 ControlResponse::Health {
                     observation: Box::new(ServiceHealth {
+                        storage_formats: Some(airk_core::storage_format::CURRENT),
                         build: crate::runtime_metadata::process().build,
                         build_error: crate::runtime_metadata::process().metadata_error,
                         logs: state.log.telemetry(),

@@ -101,6 +101,7 @@ export function ProjectHealth(props: { entry: ManagedProject; view: ManagementVi
     const { entry, view, actions } = props, health = entry.health;
     return <section class={`project-health health-${health.severity}`} aria-label={`${entry.summary.name} health`}>
         <div class="section-head"><h3>{health.title}</h3><CopyDetails section="health" project={entry.summary.project} /></div><p>{health.detail}</p>
+        {health.severity==='error'&&<Act actions={actions} action="openRawLogs" ghost>Open raw diagnostic log</Act>}
         {health.reviewTab&&props.go&&<button type="button" class="ghost" onClick={()=>props.go!({workspace:'manage',tab:health.reviewTab})}>{health.reviewTab==='repair'?'Review recovery plan':'Review diagnostics'}</button>}
         {health.action && <div class="actions"><Act actions={actions} action={health.action}
             fields={health.action === 'retryJob' ? { id: entry.jobId } : { project: entry.summary.project }}
@@ -249,7 +250,7 @@ export function RepairScreen(props: ScreenProps) {
     const fallback=!!plan?.preview&&fallbackReview.plan===plan.id&&fallbackReview.preview===plan.preview&&fallbackReview.checked;
     const needsFallback=plan?.items.some(item=>item.fallback==='Yes')??false;
     const planTitle=plan?.paused?'Repair plan paused':plan?.phase==='ready'?'Review and start repair':plan?.phase==='planning'?'Checking the project before repair'
-        :plan?.phase==='running'?plan.items.some(item=>item.phase==='running')?'Repair running':'Repair queued':plan?.phase==='finished'?'Repair finished':plan?.phase==='canceling'?'Canceling repair':'Repair status';
+        :plan?.phase==='running'?plan.items.some(item=>item.phase==='running')?'Repair running':'Repair queued':plan?.phase==='finished'?plan.outcome==='failed'?'Repair failed':plan.outcome==='succeeded'?'Repair succeeded':plan.outcome==='cleanup_pending'?'Repair succeeded; cleanup pending':'Repair ended without completing all projects':plan?.phase==='canceling'?'Canceling repair':'Repair status';
     return (
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Repair plans inspect state before choosing actions. Nothing runs until you approve the exact preview.">
             {view && <>
@@ -268,8 +269,9 @@ export function RepairScreen(props: ScreenProps) {
                     <p>{plan.phase==='ready'?'The check is complete. Review the proposed work below, then choose Start repair. No repair starts until you confirm.'
                         :plan.phase==='planning'?'AIRK is inspecting the selected project to choose a repair. This is the preview stage.'
                         :plan.phase==='running'?'Your repair was accepted. Project progress and the current plan rows show whether it is queued or running.'
-                        :plan.phase==='finished'?'This repair has finished. Review its results below. Published source freshness and semantic coverage are checked separately.'
+                        :plan.phase==='finished'?plan.outcome==='failed'?'One or more repair operations failed. Open the raw diagnostic log for the retained error details.':plan.outcome==='succeeded'?'All repair operations succeeded. Source freshness and semantic coverage are shown in Indexing.':plan.outcome==='cleanup_pending'?'Repair operations succeeded, but cleanup was not complete at the end of this plan. Storage shows the latest cleanup status.':'Some repair operations were canceled, skipped or became stale. Review the results below.'
                         :'The latest native repair state is shown below.'}</p>
+                    {plan.outcome==='failed'&&<Act actions={actions} action="openRawLogs" ghost>Open raw diagnostic log</Act>}
                     <ul>{plan.items.map((item,index)=><li key={index}><strong>{view.projects.find(entry=>entry.summary.project===item.project)?.summary.name??`Project ${item.project.slice(0,12)}`}</strong>: {OPERATIONS.find(([value])=>value===item.action)?.[1]??item.action} · {item.phase}.
                         {item.action==='reconcile'&&' Update indexed evidence from saved source files while keeping the published evidence available.'}
                         {item.action==='recover'&&' Recover captured index changes; this can temporarily affect search availability.'}
@@ -454,6 +456,14 @@ export function LogsScreen(props: ScreenProps) {
     return (
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Bounded native logs and a metadata-only diagnostic report from">
             {view && <>
+                <article class="card">
+                    <h2>Raw job error log</h2>
+                    <p>Retained error chains with timestamps and job IDs. Long errors are marked as truncated. These local logs can include file paths and error values; review them before sharing. Nothing is uploaded.</p>
+                    <div class="actions">
+                        <Act actions={actions} action="openRawLogs">Open raw diagnostic log</Act>
+                        <Act actions={actions} action="saveRawLogs" ghost>Save raw diagnostic log…</Act>
+                    </div>
+                </article>
                 <div class="actions">
                     <Act actions={actions} action="logs" ghost>Open service logs</Act>
                     <Act actions={actions} action="exportLogs" ghost>Save retained service logs…</Act>

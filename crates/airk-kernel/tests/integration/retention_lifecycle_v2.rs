@@ -88,7 +88,9 @@ fn corrupt_live_ownership_refuses_cleanup_without_deleting_unowned_objects() -> 
         observation.token.generation
     );
     let read = read_current(&store)?;
-    assert!(kernel.maintain_current().is_err());
+    let deferred = kernel.maintain_current()?;
+    assert!(deferred.pending);
+    assert_eq!(deferred.removed_files, 0);
     assert!(orphan.exists());
     drop(read);
     assert_eq!(kernel.maintain_current()?.removed_files, 1);

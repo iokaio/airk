@@ -57,6 +57,7 @@ export class ServiceConsole implements vscode.Disposable {
             openReport:async text=>{await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({content:text,language:'json'}),{preview:false});},
             saveReport:text=>this.saveDiagnostic(text,'airk-diagnostic-report'),
             exportLogs:observation=>this.exportLogs(observation),
+            rawLogs:(save,observation)=>this.rawLogs(save,observation),
             configuration:(row,operation)=>this.configuration(row,operation),
             ...(this.runtime.reviewLegacyStartup&&this.runtime.loadLegacyStartup&&this.runtime.legacyStartupReceipts&&this.runtime.removeLegacyStartup?{legacy:{
                 choose:()=>this.legacyTarget(),review:(binding:import('./serviceBootstrap').RuntimeBinding,target:LegacyStartupTarget)=>this.runtime.reviewLegacyStartup!(binding,target),
@@ -116,9 +117,9 @@ export class ServiceConsole implements vscode.Disposable {
     async configureProject(project:string,draft:RecordValue,valid:()=>boolean):Promise<void>{
         await this.controller.projectConfiguration(project,draft,valid);
     }
-    private async saveDiagnostic(text:string,name:string):Promise<void>{
-        const target=await vscode.window.showSaveDialog({title:'Save AIRK diagnostics',saveLabel:'Save',filters:{JSON:['json']},
-            defaultUri:vscode.Uri.file(path.join(homedir(),`${name}-${new Date().toISOString().replace(/[:.]/g,'-')}.json`))});
+    private async saveDiagnostic(text:string,name:string,extension='json'):Promise<void>{
+        const target=await vscode.window.showSaveDialog({title:'Save AIRK diagnostics',saveLabel:'Save',filters:{'Diagnostic log':[extension]},
+            defaultUri:vscode.Uri.file(path.join(homedir(),`${name}-${new Date().toISOString().replace(/[:.]/g,'-')}.${extension}`))});
         if(!target||this.disposed)return;
         await vscode.workspace.fs.writeFile(target,Buffer.from(text,'utf8'));
     }
@@ -130,6 +131,20 @@ export class ServiceConsole implements vscode.Disposable {
         const text=await runText(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--all','--format','json'],path.dirname(bootstrap.bundle.main),60000);
         if(!vscode.workspace.isTrusted||this.disposed)return;
         await this.saveDiagnostic(text,'airk-retained-service-logs');
+    }
+    private async rawLogs(save:boolean,observation?:BootstrapObservation):Promise<void>{
+        if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');
+        const bootstrap=observation??await this.runtime.discover();
+        const control=bootstrap.inspection?.log_control_dir??bootstrap.inspection?.control_dir;
+        if(typeof control!=='string'||!path.isAbsolute(control)||control.length>4096||/[\u0000-\u001f\u007f]/.test(control))throw new ServiceError('log_control_binding_unavailable');
+        const text=await runText(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--raw'],path.dirname(bootstrap.bundle.main),60000);
+        if(!vscode.workspace.isTrusted||this.disposed)return;
+        if(!text.trim()){
+            await vscode.window.showInformationMessage('No raw job errors have been retained by this runtime. Older summary-only failures cannot be reconstructed.');
+            return;
+        }
+        if(save)await this.saveDiagnostic(text,'airk-raw-job-errors','jsonl');
+        else await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({content:text,language:'jsonl'}),{preview:false});
     }
     private async logs(observation?:BootstrapObservation):Promise<void>{
         if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Content-free cause codes for durable job receipts. Never format raw exceptions.
 pub fn failure_code(error: &anyhow::Error) -> Option<String> {
+    if error.is::<crate::quota::QuotaInventoryLimit>() {
+        return Some("quota_inventory_limit_exceeded".into());
+    }
     if error.is::<crate::quota::QuotaContention>() {
         return Some("quota_ledger_busy".into());
     }

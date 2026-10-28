@@ -4,6 +4,50 @@ use super::*;
 type CaptureFault = Box<dyn FnMut(&airk_store::FileStore, &Artifact) -> Result<()>>;
 
 #[test]
+fn current_cleanup_batches_under_quota_pressure_preserve_readers_and_sources() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let source = root.path().join("source.txt");
+    std::fs::write(&source, "retained evidence\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let publication = kernel.status()?.publication;
+    let objects = kernel.store.directory().join("objects/sources");
+    for n in 0..4100u64 {
+        std::fs::write(objects.join(format!("{n:064x}")), b"abandoned capture")?;
+    }
+    let unknown = objects.join("user-note.txt");
+    std::fs::write(&unknown, b"preserve unknown file")?;
+    let quota = kernel.collection_quota()?;
+    let mut policy = quota.policy()?;
+    let occupied = quota.status()?;
+    policy.root_bytes = occupied.used_bytes + occupied.reserved_bytes;
+    quota.configure(policy)?;
+    assert!(quota.reserve(kernel.collection(), 1).is_err());
+    let read = kernel.current_reader()?;
+    let pinned = kernel.maintain_current()?;
+    assert!(pinned.pending);
+    assert_eq!(pinned.removed_files, 0);
+    drop(read);
+    let first = kernel.maintain_current()?;
+    assert_eq!(first.removed_files, 4096);
+    assert!(first.pending);
+    let second = kernel.maintain_current()?;
+    assert_eq!(second.removed_files, 4);
+    assert!(!second.pending);
+    assert_eq!(std::fs::read(&unknown)?, b"preserve unknown file");
+    assert_eq!(std::fs::read(source)?, b"retained evidence\n");
+    assert_eq!(kernel.status()?.publication, publication);
+    assert!(
+        kernel.read_file("source.txt", 1, 1, 4096)?.hits[0]
+            .text
+            .contains("retained evidence")
+    );
+    Ok(())
+}
+
+#[test]
 fn direct_path_update_does_not_run_another_collections_queued_scan() -> Result<()> {
     let root = tempfile::tempdir()?;
     let foreign_root = tempfile::tempdir()?;

@@ -323,6 +323,7 @@ export interface ManagedProject {
 }
 export interface PlanItemView { readonly project: string; readonly phase: string; readonly action: string; readonly availability: string; readonly estimate: string; readonly source: string; readonly fallback: string; readonly result: string; readonly cleanup: string }
 export interface PlanView {
+    readonly outcome?: 'succeeded' | 'failed' | 'cleanup_pending' | 'incomplete';
     readonly id?: string;
     readonly preview?: string;
     readonly phase?: string;
@@ -373,7 +374,7 @@ export const MANAGE_ACTIONS = [
     'reviewLegacyStartup', 'legacyStartupReceipts', 'removeLegacyStartup', 'copyLegacyStartup', 'registeredProjects', 'inactiveProjects', 'registerWorkspace',
     'refresh', 'connect', 'start', 'stop', 'restart', 'repairRuntime', 'upgradeRuntime', 'rollbackRuntime', 'resumeActivation', 'logs', 'resources',
     'responseMode', 'recoverLifecycle', 'abandonLifecycle', 'startEmbedding', 'stopEmbedding', 'forceEmbedding', 'firstPage', 'nextPage', 'morePlan',
-    'refreshPlan', 'pausePlan', 'resumePlan', 'cancelPlan', 'approvePlan', 'previewReport', 'copyReport', 'openReport', 'saveReport', 'exportLogs',
+    'refreshPlan', 'pausePlan', 'resumePlan', 'cancelPlan', 'approvePlan', 'previewReport', 'copyReport', 'openReport', 'saveReport', 'exportLogs', 'openRawLogs', 'saveRawLogs',
     'unregisterProject', 'previewCleanup', 'deleteDerived', 'inspect', 'index', 'pause', 'resume', 'restartProject', 'retryRecovery', 'watch', 'modelSetup', 'configureProject', 'copyConfiguration', 'enableSemantic', 'disableSemantic', 'configureDetail',
     'select', 'repair', 'resumeLegacyStartup', 'retryJob', 'cancelJob', 'retryIntent', 'forgetIntent', 'forceIntent',
 ] as const;

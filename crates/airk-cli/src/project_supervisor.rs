@@ -1541,13 +1541,20 @@ impl Supervisor {
                                         && let Some(registry) = registry.as_ref()
                                         && let Ok(job) = registry.job(grant.job)
                                         && job.project == *project
-                                        && let Some(airk_core::service::JobOutcome::Failed { code }) = &job.outcome
                                     {
-                                        log.record_code(
+                                        if let Some(failure) = observation.failure.as_ref().filter(|failure|
+                                            failure.job == job.id && failure.grant == finished && failure.worker == identity.worker && failure.operation == job.kind && failure.validate().is_ok()) {
+                                            // Deferred retries have no terminal failed receipt
+                                            // yet. Keep this attempt's error before releasing
+                                            // the grant as well as terminal job failures.
+                                            log.job_failure(*project, failure.clone());
+                                        } else if let Some(airk_core::service::JobOutcome::Failed { code }) = &job.outcome {
+                                            log.record_code(
                                             airk_core::service_logs::LogKind::JobFailed,
                                             Some(*project), Some(job.id),
                                             Some(code),
                                         );
+                                        }
                                     }
                                     let _ = resources.finished(identity, finished);
                                 }

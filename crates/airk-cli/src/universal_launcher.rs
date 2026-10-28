@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! The universal launcher: a version-free entry point that agent configurations name.
 //!
-//! The per-installation stable launcher lives inside a versioned install root
-//! (`…/AIRK/service-1.4/airk-launcher`). The universal launcher lives in an unversioned
+//! The per-installation stable launcher lives inside its owned install root
+//! (`…/AIRK/runtime/airk-launcher`, or a historical location). The universal launcher lives in an unversioned
 //! sibling (`…/AIRK/launcher/airk-launcher`) next to `airk-launcher.json`, which names
 //! the current install root. Every invocation reads that file again and hands its
 //! arguments and stdio to the named installation's own pinned launcher, so a later

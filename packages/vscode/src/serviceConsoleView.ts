@@ -19,7 +19,7 @@ export interface ServiceConsoleState {
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
-export const CONSOLE_SIMPLE_ACTIONS=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport','openReport','saveReport','exportLogs'];
+export const CONSOLE_SIMPLE_ACTIONS=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport','openReport','saveReport','exportLogs','openRawLogs','saveRawLogs'];
 export const CONSOLE_PROJECT_ACTIONS=['unregisterProject','previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','retryRecovery','watch','modelSetup','configureProject','copyConfiguration','enableSemantic','disableSemantic','configureDetail'];
 export const CONSOLE_OPERATIONS=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
@@ -81,6 +81,8 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
     const report:RecordValue={schemaVersion:1,capturedAt:new Date().toISOString(),authority:includePaths?state.authority:'selected execution host',extensionVersion:state.version,
         observations:Object.fromEntries(['health','resources','model','sources','bootstrap'].map(name=>{const observation=state[name as 'health'];return [name,{state:observation.state,checkedAt:observation.checkedAt,code:observation.code}];})),
         service:fields(health,['instance','version','protocol','process_id','executable_sha256','runtime_sha256','uptime_ms',...(includePaths?['user']:[])]),
+        storageFormats:fields(obj(health.storage_formats),['index','service_state','logs']),
+        logging:fields(obj(health.logs),['available','dropped_records','write_failures']),
         bootstrap:fields(obj(state.bootstrap.value),['installed','payloadVerified','registryError','error','platform','bundleDigest','selectedRuntime','selectedVersion','verificationBasis',...(includePaths?['installDir']:[])]),
         startupManager:fields(obj(state.bootstrap.value?.startupManager),['mode','id','platform','installed','loaded','running','registered_definition_matches','verification_failed']),
         runtimeRepair:fields(obj(state.bootstrap.value?.payloadRepair),['phase','runtime','preview',...(includePaths?['preserved_directory']:[])]),
@@ -101,6 +103,7 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
             configuration:{...fields(obj(row.configuration),['id','kind','state','attempts','fencing_generation']),outcome:fields(obj(obj(row.configuration).outcome),['state','code','revision'])},
             pendingJob:{...fields(obj(row.pending_job),['id','kind','state','attempts','fencing_generation']),outcome:fields(obj(obj(row.pending_job).outcome),['state','code','revision'])},
             pendingGate:fields(obj(row.pending_gate),['job','code','plan','plan_phase']),
+            maintenance:fields(obj(row.maintenance),['pending_incarnations','pending_objects','objects_checked','removed_files','failed','observed_unix_ms']),
             recovery:(Array.isArray(row.recovery)?row.recovery:[]).map(value=>fields(obj(value),['state','reason','attempts','limit','next_check_unix_ms','started_unix_ms','job'])),
             watch:fields(obj(row.watch),['enabled','requested_revision','completed_revision','automatic_retries_exhausted','automatic_retry_canceled','backend','failure']),
             configurationResult:fields(obj(state.configurationResults?.get(String(registration.binding))),['job','jobState','code','checkedAt']),

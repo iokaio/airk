@@ -392,6 +392,9 @@ enum ServiceCommand {
         /// Export all retained rotated logs locally (at most four MiB of input).
         #[arg(long, conflicts_with = "limit")]
         all: bool,
+        /// Open the separate local raw job-error ring (may contain paths/error values).
+        #[arg(long, conflicts_with_all = ["all", "limit", "format"])]
+        raw: bool,
         #[arg(long,default_value="json",value_parser=["json","text"])]
         format: String,
     },
@@ -1093,8 +1096,16 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
             runtime_dir,
             limit,
             all,
+            raw,
             format,
         } => {
+            if *raw {
+                std::io::Write::write_all(
+                    &mut std::io::stdout().lock(),
+                    &airk_cli::service_logs::export_raw(runtime_dir)?,
+                )?;
+                return Ok(());
+            }
             anyhow::ensure!(
                 !all || format == "json",
                 "full log export requires JSON format"

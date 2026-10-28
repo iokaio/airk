@@ -692,11 +692,19 @@ impl ServiceRegistry {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         worker_epoch(&tx, &self.root, lease)?;
-        let clean = observation.pending_incarnations == Some(0) && !observation.failed;
+        let clean = observation.pending_incarnations == Some(0)
+            && !observation.pending_objects
+            && !observation.failed;
+        // The retry budget limits consecutive passes without progress, not the
+        // number of successful batches needed to retire a large index.
+        let progressed = !observation.failed && observation.removed_files > 0;
+        let pending = observation
+            .pending_incarnations
+            .map(|count| count as i64 + i64::from(observation.pending_objects));
         tx.execute("INSERT INTO service_maintenance(project,observation,pending,failed,retries,next_ms) VALUES(?1,?2,?3,?4,0,0)
             ON CONFLICT(project) DO UPDATE SET observation=excluded.observation,pending=excluded.pending,failed=excluded.failed,
             retries=CASE WHEN ?5 THEN 0 ELSE service_maintenance.retries END,next_ms=CASE WHEN ?5 THEN 0 ELSE service_maintenance.next_ms END",
-            params![lease.binding.to_string(),bytes,observation.pending_incarnations.map(|count|count as i64),observation.failed,clean])?;
+            params![lease.binding.to_string(),bytes,pending,observation.failed,clean || progressed])?;
         tx.commit()?;
         Ok(())
     }
@@ -1520,6 +1528,8 @@ mod tests {
             &lease,
             &airk_core::service::MaintenanceObservation {
                 pending_incarnations: Some(1),
+                pending_objects: false,
+                objects_checked: true,
                 removed_files: 0,
                 failed: true,
                 observed_unix_ms: 1,
@@ -1574,6 +1584,8 @@ mod tests {
         registry.admit_worker(&mut lease)?;
         let mut observation = airk_core::service::MaintenanceObservation {
             pending_incarnations: Some(1),
+            pending_objects: false,
+            objects_checked: true,
             removed_files: 0,
             failed: false,
             observed_unix_ms: 1000,
@@ -1681,6 +1693,49 @@ mod tests {
             )?;
             registry.record_maintenance(&lease, &observation)?;
         }
+        assert!(registry.due_maintenance(100_000_000)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn maintenance_continues_successful_batches_beyond_retry_limit_and_restart() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let instance = Incarnation::from_bytes([7; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), instance)?;
+        let project =
+            ProjectRegistration::new("/source".into(), "/state".into(), "fixture".into())?;
+        registry.register(&project)?;
+        let mut lease = ProjectLease::acquire(root.path(), project.binding)?;
+        registry.admit_worker(&mut lease)?;
+        let mut observation = airk_core::service::MaintenanceObservation {
+            pending_incarnations: Some(0),
+            pending_objects: true,
+            objects_checked: true,
+            removed_files: 0,
+            failed: false,
+            observed_unix_ms: 1000,
+        };
+        registry.record_maintenance(&lease, &observation)?;
+        for n in 1..=12u8 {
+            let now = u64::from(n) * 1_000_000;
+            assert_eq!(registry.due_maintenance(now)?, vec![project.binding]);
+            let job = registry.enqueue_due_maintenance(
+                project.binding,
+                instance,
+                Incarnation::from_bytes([n; 16]),
+                now,
+            )?;
+            registry.claim_job_id(&lease, job.id)?;
+            registry.complete_job(&lease, job.id, JobOutcome::Succeeded { revision: None })?;
+            observation.removed_files = 4096;
+            registry.record_maintenance(&lease, &observation)?;
+            drop(registry);
+            registry = ServiceRegistry::open(root.path(), instance)?;
+        }
+        assert!(registry.maintenance_retrying(project.binding)?);
+        observation.pending_objects = false;
+        observation.removed_files = 1;
+        registry.record_maintenance(&lease, &observation)?;
         assert!(registry.due_maintenance(100_000_000)?.is_empty());
         Ok(())
     }

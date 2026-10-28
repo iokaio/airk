@@ -5,6 +5,31 @@ import { managementView, panelDetails } from '../explorerManagement';
 import { ServiceConsoleState } from '../serviceConsoleView';
 
 const project = '12'.repeat(32), job = '34'.repeat(32), pending = '56'.repeat(32), plan = '78'.repeat(32), intent = '9a'.repeat(16);
+test('storage format and cleanup progress do not infer compatibility from application version',()=>{
+    const current=state();
+    current.health.value={observation:{version:'9.8.7',storage_formats:{index:1,service_state:1,logs:1}}};
+    (current.page!.projects[0] as any).maintenance={pending_incarnations:0,pending_objects:true,removed_files:4096,failed:false};
+    const view=managementView(current);
+    assert.equal(view.service.find(([label])=>label==='Index format')?.[1],'Index format 1 (index-v1)');
+    const storage=view.projects[0].storage.rows;
+    assert.equal(storage.find(([label])=>label==='Cleanup files removed (latest pass)')?.[1],'4,096');
+    assert.equal(storage.find(([label])=>label==='Unused objects awaiting cleanup')?.[1],'Yes');
+});
+test('finished repair plans report aggregate outcome even when the failed row is on another page',()=>{
+    const current=state();
+    for(const [counts,outcome] of [[{selected:2,succeeded:1,failed:1},'failed'],[{selected:2,succeeded:2,failed:0},'succeeded'],[{selected:2,succeeded:2,failed:0,cleanup_pending:1},'cleanup_pending'],[{selected:2,succeeded:1,failed:0},'incomplete']] as const){
+        current.plan={value:{phase:'finished',counts},items:[]} as any;
+        assert.equal(managementView(current).plan?.outcome,outcome);
+    }
+});
+test('storage inventory exhaustion explains the index-storage restriction',()=>{
+    const current=state(),row=current.page!.projects[0] as any;
+    row.progress.job={id:job,kind:'reconcile',state:'failed',outcome:{state:'failed',code:'index_quota_inventory_quota_inventory_limit_exceeded'}};
+    delete row.pending_job;
+    const health=managementView(current).projects[0].health;
+    assert.match(health.detail,/Storage accounting reached its file-count limit/);
+    assert.match(health.detail,/raw diagnostic log/);
+});
 test('service events retain the failed job and reason in displayed and copied details',()=>{
     const code='index_current_scope_metadata_incomplete';
     const current=state({serviceEvents:{state:'live',checkedAt:1,value:{records:[

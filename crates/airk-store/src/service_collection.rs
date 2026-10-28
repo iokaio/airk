@@ -134,6 +134,7 @@ pub struct RetirementReport {
     pub removed_directories: u32,
     pub removed_files: u32,
     pub pending: usize,
+    pub pending_objects: bool,
 }
 
 fn retirement_inventory(directory: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
@@ -204,6 +205,13 @@ fn retirement_inventory(directory: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>)
                 pending.push((path, depth + 1));
             } else {
                 files.push(path);
+                if files.len() > 4096 {
+                    // The retired receipt and exclusion already prove this
+                    // incarnation is unused. Validate one bounded batch rather
+                    // than refusing cleanup when old objects exceed the census
+                    // budget. Directories are removed only after a full pass.
+                    return Ok((files, directories));
+                }
             }
         }
     }
@@ -560,6 +568,23 @@ impl Collection {
     }
     pub fn selected_store(&self) -> Result<FileStore> {
         Ok(self.select()?.store)
+    }
+    /// Pin the active slot with replacement ownership and its writer, then
+    /// release our selection's shared object lease before attempting cleanup.
+    /// Other selections/readers still defer deletion through that same gate.
+    pub fn reclaim_current_objects(
+        &self,
+        limit: usize,
+    ) -> Result<crate::current::maintenance::ReclamationReport> {
+        let _replacement = acquire_file(&self.directory, "replacement.lock")?;
+        let selection = self.select()?;
+        let store = selection.store.clone();
+        let writer = store.lock()?;
+        drop(selection);
+        let Some(scope) = store.current_scope(&self.owner.root, &self.owner.collection)? else {
+            return Ok(Default::default());
+        };
+        store.reclaim_current_objects_with_limit(&writer, &scope, limit)
     }
     pub fn completed_rebuild(&self, job: Sha256Digest) -> Result<bool> {
         let _lock = manifest_lock(&self.directory)?;

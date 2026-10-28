@@ -414,7 +414,11 @@ pub(super) fn job_completed(
                 // A cached earlier sample cannot prove cleanup for this action.
                 // An interrupted rebuild receipt proves publication, not retirement.
                 member.cleanup_pending = maintenance
-                    .map(|sample| sample.failed || sample.pending_incarnations != Some(0))
+                    .map(|sample| {
+                        sample.failed
+                            || sample.pending_incarnations != Some(0)
+                            || sample.pending_objects
+                    })
                     .unwrap_or(
                         member.action
                             == Some(airk_core::service_maintenance::RepairOperation::Rebuild),

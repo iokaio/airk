@@ -118,4 +118,6 @@ pub struct WorkObservation {
     pub progress: Option<Box<airk_core::service_progress::WorkProgress>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_for: Option<airk_core::service_resources::WaitReason>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) failure: Option<crate::service_logs::JobFailure>,
 }
