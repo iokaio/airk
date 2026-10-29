@@ -260,9 +260,105 @@ pub fn current_for(install: &Path, channel: crate::user_paths::Channel) -> Resul
         .map(|_| executable))
 }
 
+/// Remove only the verified universal entry point for this installation. A saved
+/// receipt resumes interruption between deleting the executable and its pointer.
+pub(crate) fn retire_for(install: &Path, channel: crate::user_paths::Channel) -> Result<()> {
+    let paths = crate::user_paths::UserPaths::discover(channel)?;
+    retire_at(&paths.launcher, install)
+}
+
+fn retire_at(directory: &Path, install: &Path) -> Result<()> {
+    let receipt = install.join("universal-uninstall.json");
+    let executable = directory.join(launcher_name());
+    let config = directory.join(CONFIG);
+    let pointer: Pointer = if receipt.try_exists()? {
+        crate::runtime_install::safe_file(&receipt)?;
+        serde_json::from_slice(&read_bounded(&receipt)?)?
+    } else {
+        if !executable.try_exists()? || !config.try_exists()? {
+            return Ok(());
+        }
+        if resolve(&executable)? != install.canonicalize()? {
+            return Ok(());
+        }
+        crate::runtime_install::safe_file(&config)?;
+        let bytes = read_bounded(&config)?;
+        let pointer: Pointer = serde_json::from_slice(&bytes)?;
+        use std::io::Write;
+        let mut saved = tempfile::NamedTempFile::new_in(install)?;
+        saved.write_all(&bytes)?;
+        saved.as_file().sync_all()?;
+        saved.persist_noclobber(&receipt)?;
+        pointer
+    };
+    ensure!(
+        pointer.schema == 1 && pointer.install == install.canonicalize()?,
+        "universal uninstall receipt names another installation"
+    );
+    if config.try_exists()? {
+        crate::runtime_install::safe_file(&config)?;
+        ensure!(
+            serde_json::from_slice::<Pointer>(&read_bounded(&config)?)? == pointer,
+            "changed universal launcher configuration preserved during uninstall"
+        );
+    }
+    if executable.try_exists()? {
+        crate::runtime_install::safe_file(&executable)?;
+        ensure!(
+            digest(&executable)? == pointer.launcher_sha256,
+            "changed universal launcher preserved during uninstall"
+        );
+        fs::remove_file(&executable)?;
+    }
+    if config.try_exists()? {
+        fs::remove_file(config)?;
+    }
+    fs::remove_file(receipt)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn uninstall_removes_only_the_owned_entry_point_and_resumes_partial_removal() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let install = owner.path().canonicalize()?.join("install");
+        let directory = owner.path().canonicalize()?.join("launcher");
+        crate::local_ipc::prepare_root(&install)?;
+        crate::local_ipc::prepare_root(&directory)?;
+        let executable = directory.join(launcher_name());
+        fs::write(&executable, b"owned fixture launcher")?;
+        let pointer = Pointer {
+            schema: 1,
+            install: install.clone(),
+            launcher_sha256: digest(&executable)?,
+        };
+        write_pointer(&directory, &pointer)?;
+        let other = owner.path().canonicalize()?.join("other-install");
+        crate::local_ipc::prepare_root(&other)?;
+        retire_at(&directory, &other)?;
+        assert!(executable.is_file());
+        retire_at(&directory, &install)?;
+        assert!(!executable.exists() && !directory.join(CONFIG).exists());
+        assert!(!install.join("universal-uninstall.json").exists());
+        retire_at(&directory, &install)?;
+        // An interruption after deleting the binary retains proof for the pointer.
+        write_pointer(&directory, &pointer)?;
+        fs::write(
+            install.join("universal-uninstall.json"),
+            serde_json::to_vec(&pointer)?,
+        )?;
+        retire_at(&directory, &install)?;
+        assert!(!directory.join(CONFIG).exists());
+        // Changed binaries never inherit the original receipt's removal authority.
+        write_pointer(&directory, &pointer)?;
+        fs::write(&executable, b"changed fixture launcher")?;
+        assert!(retire_at(&directory, &install).is_err());
+        assert_eq!(fs::read(&executable)?, b"changed fixture launcher");
+        Ok(())
+    }
 
     fn write_pointer(directory: &Path, pointer: &Pointer) -> Result<()> {
         fs::write(directory.join(CONFIG), serde_json::to_vec(pointer)?)?;

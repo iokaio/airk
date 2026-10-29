@@ -4,6 +4,58 @@ import { test } from 'node:test';
 import { serviceTestHost } from './serviceTestHost';
 import * as native from '../native';
 import { UNIFIED_TOOLS } from '../model';
+import { RuntimeHost } from '../serviceBootstrap';
+import * as bootstrap from '../serviceBootstrap';
+import * as fs from 'node:fs/promises';
+
+test('opening an empty raw log opens an editor and releases Working without waiting for a notification',async context=>{
+    const f=await serviceTestHost(context);let dismiss!:()=>void;
+    const notification=new Promise<void>(resolve=>{dismiss=resolve;});
+    f.stub.window.showInformationMessage=()=>notification;
+    context.mock.method(bootstrap,'nativeRunner',async(...[_command,args,timeout]:Parameters<typeof bootstrap.nativeRunner>)=>{
+        assert.ok(args.includes('--raw'));assert.equal(timeout,30000);await fs.writeFile(args[args.indexOf('--output')+1],'');return {written_bytes:0};
+    });
+    const {ServiceConsole}=require('../serviceConsole');
+    const console=new ServiceConsole(f.context,new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:f.binding.installDir}));
+    const action=console.run('openRawLogs');let finished=false;void action.then(()=>{finished=true;});
+    try{
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        await Promise.race([action,new Promise(resolve=>{timer=setTimeout(resolve,2000);})]);
+        if(timer)clearTimeout(timer);
+        assert.equal(finished,true,'no notification dismissal is required to finish the action');
+        assert.equal(console.controller.state.busy,false);
+        assert.match(f.openedDocuments.at(-1).content,/No detailed errors/);
+        assert.equal(f.openedDocuments.at(-1).language,'plaintext');
+    }finally{dismiss();await action;console.dispose();await f.close();}
+});
+
+test('raw log failure clears Working and retains the concrete read failure in output',async context=>{
+    const f=await serviceTestHost(context);
+    context.mock.method(bootstrap,'nativeRunner',async()=>{throw new Error('fixture raw log read deadline exceeded');});
+    const {ServiceConsole}=require('../serviceConsole');
+    const console=new ServiceConsole(f.context,new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:f.binding.installDir}));
+    try{
+        await console.run('openRawLogs');assert.equal(console.controller.state.busy,false);
+        assert.equal(console.controller.state.message,'raw_diagnostic_log_read_failed_see_airk_service_output');
+        assert.ok(f.calls.some(message=>message.includes('fixture raw log read deadline exceeded')));
+    }finally{console.dispose();await f.close();}
+});
+test('saving an empty raw log opens the save dialog and writes the selected file',async context=>{
+    const f=await serviceTestHost(context);let dismiss!:()=>void;
+    const notification=new Promise<void>(resolve=>{dismiss=resolve;});f.stub.window.showInformationMessage=()=>notification;
+    const saved:{target:unknown;text:string}[]=[],destination={scheme:'file',fsPath:'chosen-raw-log.jsonl'};let dialogs=0;
+    f.stub.window.showSaveDialog=async()=>{dialogs++;return destination;};
+    f.stub.workspace.fs={copy:async(source:{fsPath:string},target:unknown)=>{saved.push({target,text:await fs.readFile(source.fsPath,'utf8')});}};
+    context.mock.method(bootstrap,'nativeRunner',async(...[_command,args]:Parameters<typeof bootstrap.nativeRunner>)=>{
+        await fs.writeFile(args[args.indexOf('--output')+1],'');return {written_bytes:0};
+    });
+    const {ServiceConsole}=require('../serviceConsole');
+    const console=new ServiceConsole(f.context,new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:f.binding.installDir}));
+    try{
+        await console.run('saveRawLogs');assert.equal(console.controller.state.busy,false);assert.equal(dialogs,1);
+        assert.deepEqual(saved,[{target:destination,text:''}]);
+    }finally{dismiss();console.dispose();await f.close();}
+});
 
 test('checking MCP without a registered project cannot register or start indexing',async context=>{
     const f=await serviceTestHost(context,{registered:false});
@@ -70,7 +122,7 @@ test('connection check publishes preparation, progress and failure, coalesces cl
         assert.equal(probes,2);
         const check=panel.posted.filter((entry:any)=>entry.state?.connectionCheck).at(-1) as any;
         assert.equal(check.state.connectionCheck.phase,'verified');
-        assert.equal(check.state.connectionCheck.tools.length,26);
+        assert.equal(check.state.connectionCheck.tools.length,27);
         assert.equal(check.state.connectionCheck.project,project);
         assert.equal(f.writes.length,0,'checking a connection cannot enqueue indexing or repair');
     }finally{release();await f.close();}

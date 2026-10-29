@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents",
   "description": "Local indexed evidence for coding agents, with a native service, direct MCP retrieval and a shared offline model. No cloud service or API key.",
-  "version": "1.6.0",
+  "version": "1.6.4",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -557,6 +557,7 @@
     ]
   },
   "scripts": {
+    "vscode:uninstall": "node ./out/uninstallHook.js",
     "compile": "tsc -p . && tsc -p tsconfig.webview.json && tsc -p tsconfig.assistance.json && node scripts/build-explorer.cjs",
     "test": "npm run compile && node --test out/test/*.test.js"
   },

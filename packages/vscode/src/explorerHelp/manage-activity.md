@@ -14,7 +14,7 @@ The main progress card shows phase, observation age, last advancement at the sam
 
 Retained samples from a previous worker, service, generation or job are labeled. A stopped worker can leave a saved job marked running; its health banner offers the appropriate restart. Recovery requires a connected worker and real advancement, not just a successful restart request.
 
-Cancel current or queued requests from Recent activity. An unknown transport outcome retains its exact request key; check that saved request before submitting new work. Forgetting a local receipt does not cancel native work.
+Cancel current or queued requests from Recent activity. Unknown transport outcomes remain in the internal journal and diagnostic logs. AIRK checks receipts in the background without showing confirmation notices, replaying work or globally blocking new actions.
 
 In 1.5.8, a queued request keeps the old completed sample under Previous job result and counters. The worker/gate rows identify an owning maintenance plan and its pause/phase when observed. An absent wait reason is explicitly unknown, not confirmation that work is progressing. Copy details exports the cached request identities, wait/gate fields and observation times as labeled text.
 

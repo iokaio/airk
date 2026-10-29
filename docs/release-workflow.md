@@ -1,8 +1,8 @@
 # Protected PRs, GitHub downloads and extension release
 
-The current package version is **1.6.0**; see [its candidate record](release-1.6.0.md). Prior build and qualification records below retain their original scope.
+The current package version is **1.6.4**; see [its release record](release-1.6.4.md). Prior build and qualification records below retain their original scope.
 
-For current behavior and upgrade guidance, see the [1.6.0 candidate notes](release-1.6.0.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](release-1.3.2.md); the [1.3.0 release notes](release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
+For current behavior and upgrade guidance, see the [1.6.4 release notes](release-1.6.4.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](release-1.3.2.md); the [1.3.0 release notes](release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
 
 ## Versioned GitHub Releases
 
@@ -10,7 +10,7 @@ The [GitHub release workflow](../.github/workflows/github-release.yml) promotes 
 
 Changes to the release workflow or its release/signing contracts on `main` also run a short validation job without signing credentials. This explicit push event registers and validates the workflow independently of manual dispatch. Push runs skip release preflight and all dependent build, signing, publication and deployment jobs; those remain available only through manual dispatch.
 
-New release tags match the checked-in package version (for this branch, **`v1.6.0`**), with no workflow build suffix. Cargo, the extension and both lockfiles must agree. Workflow run IDs/attempts stay in provenance records, not public version names. Existing `-build.N` releases remain supported by tag validation and the downloads page; they are never renamed or overwritten.
+New release tags match the checked-in package version (for this branch, **`v1.6.4`**), with no workflow build suffix. Cargo, the extension and both lockfiles must agree. Workflow run IDs/attempts stay in provenance records, not public version names. Existing `-build.N` releases remain supported by tag validation and the downloads page; they are never renamed or overwritten.
 
 Both manual release workflows check Marketplace and GitHub before promotion when **publish** is enabled:
 
@@ -110,7 +110,7 @@ The new required check names become available when a PR runs these workflow chan
 
 ## Build manually
 
-Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (`1.6.0`), select `stable` (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
+Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (`1.6.4`), select `stable` (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
 
 The [release workflow](../.github/workflows/extension-release.yml) authenticates a successful main [CI workflow](../.github/workflows/ci.yml) containing native tests, actual-helper extension tests, packaging checks and container validation. It rebuilds only the small TypeScript/VSIX layer for the selected channel using those tested native packages. Candidate artifacts expire after seven days; `candidate_run_id` selects an explicit successful manual CI rebuild when needed.
 
@@ -119,7 +119,7 @@ After reviewing a successful rehearsal, publish its exact VSIX files by supplyin
 For example, substitute the reviewed rehearsal's actual run ID:
 
 ~~~console
-gh workflow run extension-release.yml --ref main -f version=1.6.0 -f channel=stable -f publish=true -f rehearsal_run_id=123456789
+gh workflow run extension-release.yml --ref main -f version=1.6.4 -f channel=stable -f publish=true -f rehearsal_run_id=123456789
 ~~~
 
 Only successful, non-publishing rehearsals qualify: preflight and all four packaging jobs must succeed, while publication and identity-only jobs must be skipped. Artifact upload times must belong to those successful jobs in the selected attempt. Preflight records the attempt, artifact IDs and server digests; publication rechecks that record before and after downloading. Rerunning the rehearsal, expired/missing artifacts, another commit, or a mismatched package version/channel stops publication without silently repackaging. Create and review a new rehearsal if needed. Leaving **rehearsal_run_id** empty preserves the existing build-and-publish path. Supplying it for a non-publishing or identity-only run is rejected.

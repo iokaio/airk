@@ -23,6 +23,8 @@ const MAX_RETIRED: usize = 8;
 
 #[path = "service_collection_cleanup.rs"]
 mod cleanup;
+#[path = "service_collection_purge.rs"]
+mod purge;
 
 #[derive(Clone, Copy, Debug)]
 pub struct SelectionContention;
@@ -69,6 +71,93 @@ struct Owner {
     root: String,
     data_root: String,
     collection: String,
+    /// Relocation changes the physical root without changing published ownership.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    identity_data_root: Option<String>,
+}
+
+fn owner_digest(owner: &Owner) -> Result<Sha256Digest> {
+    let mut identity = owner.clone();
+    if let Some(original) = identity.identity_data_root.take() {
+        identity.data_root = original;
+    }
+    digest(&identity)
+}
+
+pub(crate) fn relocated_owner(
+    data: &Path,
+    destination: &Path,
+    root: &str,
+    collection: &str,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    let existing = Collection::existing(data, root, collection)?;
+    existing.manifest()?;
+    let before = serde_json::to_vec(&existing.owner)?;
+    let mut owner = existing.owner;
+    if owner.identity_data_root.is_none() {
+        owner.identity_data_root = Some(owner.data_root.clone());
+    }
+    owner.data_root = destination
+        .to_str()
+        .context("non-UTF-8 relocated data root")?
+        .into();
+    ensure!(
+        owner_digest(&owner)? == existing.binding,
+        "relocation changed collection identity"
+    );
+    Ok((before, serde_json::to_vec(&owner)?))
+}
+
+type RelocatedOwner = (PathBuf, Vec<u8>, Vec<u8>);
+pub(crate) fn relocation_owners(data: &Path, destination: &Path) -> Result<Vec<RelocatedOwner>> {
+    let namespace = data.join("collections-1.4");
+    if !namespace.try_exists()? {
+        return Ok(Vec::new());
+    }
+    ensure!(
+        plain(&namespace)?.is_dir(),
+        "invalid collection namespace during relocation"
+    );
+    let entries = fs::read_dir(&namespace)?
+        .take(1028)
+        .collect::<std::io::Result<Vec<_>>>()?;
+    ensure!(
+        entries.len() <= 1027,
+        "index migration collection allowance exceeded"
+    );
+    let mut owners = Vec::new();
+    for entry in entries {
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("non-UTF-8 collection name"))?;
+        if matches!(
+            name.as_str(),
+            ".writer-locks" | ".reader-locks" | ".current-gates"
+        ) {
+            ensure!(
+                plain(&entry.path())?.is_dir(),
+                "invalid shared lock namespace"
+            );
+            continue;
+        }
+        crate::validate_collection(&name)?;
+        let path = entry.path().join("service-owner.json");
+        let owner: Owner = json(&path)?;
+        let (before, after) = relocated_owner(data, destination, &owner.root, &name)?;
+        owners.push((
+            PathBuf::from("collections-1.4")
+                .join(name)
+                .join("service-owner.json"),
+            before,
+            after,
+        ));
+    }
+    ensure!(
+        owners.len() <= 1024,
+        "index migration collection allowance exceeded"
+    );
+    Ok(owners)
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -323,8 +412,9 @@ impl Collection {
                     .is_ok_and(|value| value.version == 140 && value.owner == self.binding)
                 || json::<Initial>(&path)
                     .is_ok_and(|value| value.version == 140 && value.owner == self.binding)
-                || json::<Owner>(&path)
-                    .is_ok_and(|value| digest(&value).is_ok_and(|binding| binding == self.binding));
+                || json::<Owner>(&path).is_ok_and(|value| {
+                    owner_digest(&value).is_ok_and(|binding| binding == self.binding)
+                });
             if owned {
                 fs::remove_file(path)?;
                 removed += 1;
@@ -435,9 +525,10 @@ impl Collection {
             root: root.into(),
             data_root: data_root.to_str().context("non-UTF-8 data root")?.into(),
             collection: collection.into(),
+            identity_data_root: None,
         };
-        let selected = Self {
-            binding: digest(&owner)?,
+        let mut selected = Self {
+            binding: owner_digest(&owner)?,
             directory,
             owner,
         };
@@ -446,9 +537,14 @@ impl Collection {
         if owner_path.try_exists()? {
             let existing: Owner = json(&owner_path)?;
             ensure!(
-                digest(&existing)? == selected.binding,
+                existing.version == 140
+                    && existing.root == selected.owner.root
+                    && existing.data_root == selected.owner.data_root
+                    && existing.collection == selected.owner.collection,
                 "foreign service collection owner"
             );
+            selected.binding = owner_digest(&existing)?;
+            selected.owner = existing;
         } else {
             for entry in fs::read_dir(&selected.directory)? {
                 let entry = entry?;
@@ -527,11 +623,15 @@ impl Collection {
             "foreign service collection binding"
         );
         Ok(Self {
-            binding: digest(&owner)?,
+            binding: owner_digest(&owner)?,
             owner,
             directory,
         })
     }
+    pub(crate) fn validate_metadata(&self) -> Result<()> {
+        self.manifest().map(|_| ())
+    }
+
     fn slot(&self, slot: Incarnation) -> PathBuf {
         self.directory.join("incarnations").join(slot.to_string())
     }

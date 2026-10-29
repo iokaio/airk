@@ -65,7 +65,7 @@ test('Install or Repair CLI migrates all three existing local agent connections 
         };
         f.stub.workspace.applyEdit=async(edit:any)=>{const document=documents.get(edit.uri.fsPath);document.text=edit.after;document.version++;return true;};
         await f.commands.get('airk.installCli')!();
-        for(const file of files){const text=await fs.readFile(file,'utf8');assert.ok(text.includes(project.binding),f.calls.join('\n'));assert.ok(text.includes('runtime'));assert.ok(!text.includes('airk_explorer')&&text.includes('--explorer-descriptor'),'installation replaces legacy definitions with one endpoint');}
+        for(const file of files){const text=await fs.readFile(file,'utf8');assert.ok(!text.includes('--service-project'),f.calls.join('\n'));assert.ok(text.includes('runtime'));assert.ok(!text.includes('airk_explorer')&&text.includes('--explorer-descriptor'),'installation replaces legacy definitions with one endpoint');}
         assert.equal(JSON.parse(await fs.readFile(files[1],'utf8')).mcpServers.airk.disabled,true);
         assert.equal(f.calls.filter(value=>value.startsWith('Updated ')).length,3);
         assert.ok(f.calls.some(value=>value.includes('Old CLI is locked')),'the underlying cleanup cause remains in the output');
@@ -130,7 +130,7 @@ test('MCP definitions use reviewed native storage and user response settings whi
     const f=await serviceTestHost(context);
     try{f.settings.set('mcp.responseMode','full');const definitions=await f.api.getServerDefinitions();assert.equal(definitions.length,1);
         assert.equal(definitions[0].command,f.binding.launcher);assert.equal(definitions[0].env.AIRK_MCP_RESPONSE_MODE,'full');
-        assert.ok(definitions[0].args.includes(f.binding.installDir));assert.ok(definitions[0].args.includes([...f.registrations.keys()][0]));
+        assert.ok(definitions[0].args.includes(f.binding.installDir));assert.ok(definitions[0].args.includes([...f.registrations.values()][0].root));
         assert.ok(!definitions[0].args.some((value:string)=>value.includes('untrusted-storage')));assert.equal(f.state.ensured,0);assert.equal(f.writes.length,0);
         f.settings.set('mcp.registrationEnabled',false);assert.deepEqual(await f.api.getServerDefinitions(),[]);
     }finally{await f.close();}
@@ -171,8 +171,8 @@ test('agent setup uses the stable launcher, writes only on request and refuses s
     const f=await serviceTestHost(context);
     try{f.state.pick=items=>items.find(item=>item.client==='codex')??items[0];await f.commands.get('airk.setupAgent')!();assert.equal(f.panels.length,1);
         const destination=path.join(f.folders[0].uri.fsPath,'.codex','config.toml');await assert.rejects(fs.stat(destination),{code:'ENOENT'});
-        await f.panels[0].send({action:'copy'});assert.match(f.clipboard[0],/runtime/);assert.ok(f.clipboard[0].includes([...f.registrations.keys()][0]));
-        await f.panels[0].send({action:'createCodex'});const before=await fs.readFile(destination,'utf8');assert.match(before,/service-project/);
+        await f.panels[0].send({action:'copy'});assert.match(f.clipboard[0],/runtime/);assert.ok(!f.clipboard[0].includes('--service-project'));
+        await f.panels[0].send({action:'createCodex'});const before=await fs.readFile(destination,'utf8');assert.doesNotMatch(before,/service-project/);
         f.stub.workspace.workspaceFolders=[];await f.api.getServerDefinitions();await f.panels[0].send({action:'createCodex'});
         assert.match(f.panels[0].webview.html,/Workspace or storage changed/);assert.equal(await fs.readFile(destination,'utf8'),before);
         f.stub.workspace.isTrusted=false;const copied=f.clipboard.length;await f.panels[0].send({action:'copy'});assert.equal(f.clipboard.length,copied);

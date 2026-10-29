@@ -449,3 +449,116 @@ fn watch_root_failure_is_conservative_idempotent_and_recovery_invalidates_native
     );
     Ok(())
 }
+
+#[test]
+fn retire_missing_source_cancels_work_preserves_other_projects_and_fences_stale_reports()
+-> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let mut registry = ServiceRegistry::open(owner.path(), nonce(1))?;
+    let registration =
+        ProjectRegistration::new("/original".into(), "/derived".into(), "missing".into())?;
+    let other = ProjectRegistration::new("/other".into(), "/other-data".into(), "other".into())?;
+    let project = registration.binding;
+    registry.register(&registration)?;
+    registry.register(&other)?;
+    registry.configure_watch(project, true)?;
+    let mut lease = ProjectLease::acquire(owner.path(), project)?;
+    registry.admit_worker(&mut lease)?;
+    let running = registry.enqueue_internal(project, nonce(1), JobKind::Index, nonce(2))?;
+    registry
+        .claim_job_id(&lease, running.id)?
+        .context("source job not claimed")?;
+    let queued = registry.enqueue_internal(project, nonce(1), JobKind::Vectors, nonce(3))?;
+    let sibling = registry.enqueue_internal(other.binding, nonce(1), JobKind::Index, nonce(4))?;
+    let observed = registry.watch(project)?;
+    // A configuration change invalidates the prior observation.
+    registry.configure_watch(project, false)?;
+    assert!(!registry.retire_missing_source(
+        project,
+        observed.project.fencing_generation,
+        observed.configuration_epoch
+    )?);
+    let observed = registry.watch(project)?;
+    assert!(!registry.retire_missing_source(
+        project,
+        observed.project.fencing_generation + 1,
+        observed.configuration_epoch
+    )?);
+    assert!(registry.retire_missing_source(
+        project,
+        observed.project.fencing_generation,
+        observed.configuration_epoch
+    )?);
+    assert!(!registry.is_registered(project)?);
+    assert!(registry.retained_project(project)?.paused);
+    assert!(!registry.connection.query_row(
+        "SELECT enabled FROM service_watch WHERE project=?1",
+        [project.to_string()],
+        |row| row.get::<_, bool>(0)
+    )?);
+    for id in [running.id, queued.id] {
+        assert_eq!(registry.job(id)?.outcome, Some(JobOutcome::Canceled));
+    }
+    assert!(registry.is_registered(other.binding)?);
+    assert_eq!(
+        registry.job(sibling.id)?.state,
+        airk_core::service::JobState::Pending
+    );
+    assert_eq!(
+        registry.retained_project(project)?.registration,
+        registration
+    );
+    assert!(!registry.retire_missing_source(
+        project,
+        observed.project.fencing_generation,
+        observed.configuration_epoch
+    )?);
+    drop(registry);
+    let mut registry = ServiceRegistry::open(owner.path(), nonce(1))?;
+    assert!(!registry.is_registered(project)?);
+    assert!(
+        registry.register(&registration).is_err(),
+        "full removal must finish before re-registration"
+    );
+    drop(lease);
+    assert!(registry.purge_removed_project_turn(project)?);
+    assert!(registry.project_was_removed(project)?);
+    assert!(registry.retained_project(project).is_err());
+    assert!(registry.job(running.id).is_err());
+    assert!(registry.is_registered(other.binding)?);
+    registry.register(&registration)?;
+    assert!(!registry.retire_missing_source(
+        project,
+        observed.project.fencing_generation,
+        observed.configuration_epoch
+    )?);
+    assert!(registry.is_registered(project)?);
+    Ok(())
+}
+
+#[test]
+fn completed_removal_never_reuses_an_unadmitted_registration_epoch() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let mut registry = ServiceRegistry::open(owner.path(), nonce(1))?;
+    let project = ProjectRegistration::new(
+        owner.path().join("source").to_str().unwrap().into(),
+        owner.path().join("data").to_str().unwrap().into(),
+        "epoch".into(),
+    )?;
+    registry.register(&project)?;
+    let old = registry.watch(project.binding)?;
+    assert!(registry.retire_missing_source(
+        project.binding,
+        old.project.fencing_generation,
+        old.configuration_epoch
+    )?);
+    assert!(registry.purge_removed_project_turn(project.binding)?);
+    registry.register(&project)?;
+    assert!(!registry.retire_missing_source(
+        project.binding,
+        old.project.fencing_generation,
+        old.configuration_epoch
+    )?);
+    assert!(registry.is_registered(project.binding)?);
+    Ok(())
+}

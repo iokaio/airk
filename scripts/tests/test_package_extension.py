@@ -15,6 +15,18 @@ spec.loader.exec_module(package)
 
 
 class VsixContracts(unittest.TestCase):
+    def test_uninstall_hook_survives_packaging_without_development_scripts(self):
+        source = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
+        staged = package.runtime_package(source)
+        self.assertEqual(staged["scripts"], {"vscode:uninstall": "node ./out/uninstallHook.js"})
+        self.assertIn("extensionUninstall.js", package.MODULES)
+        self.assertIn("uninstallHook.js", package.MODULES)
+        self.assertNotIn("devDependencies", staged)
+        self.assertIn("test", source["scripts"])
+        source["scripts"]["vscode:uninstall"] = "node ./missing.js"
+        with self.assertRaisesRegex(ValueError, "uninstall hook"):
+            package.runtime_package(source)
+
     @unittest.skipUnless((package.EXTENSION / "node_modules" / "jsonc-parser").is_dir(), "npm dependencies unavailable")
     def test_packaged_parser_closure_and_license(self):
         with tempfile.TemporaryDirectory() as directory:

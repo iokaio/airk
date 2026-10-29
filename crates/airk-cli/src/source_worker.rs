@@ -80,6 +80,7 @@ pub fn run() -> Result<()> {
         airk_core::service::ProjectBinding,
         (u64, Option<airk_core::identity::Sha256Digest>, bool),
     > = BTreeMap::new();
+    let mut missing = BTreeMap::new();
     let mut last_pulse = Instant::now();
     while !closing.load(Ordering::Acquire) {
         for _ in 0..32 {
@@ -89,6 +90,58 @@ pub fn run() -> Result<()> {
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
             };
             match command {
+                Command::CleanupRemoved { project } => {
+                    watcher.remove(project);
+                    missing.remove(&project);
+                    epochs.remove(&project);
+                    // Full removal never resolves or enumerates the old source.
+                    // A busy project lease or filesystem failure retains the durable
+                    // guard; the next coordinator sweep resumes the same removal.
+                    let mut registry = airk_store::service::registry::ServiceRegistry::open(
+                        &init.runtime,
+                        init.service,
+                    )?;
+                    let result = registry.purge_removed_project_turn(project);
+                    reply(&Reply::RemovalResult {
+                        project,
+                        complete: matches!(result, Ok(true)),
+                        failed: result.is_err(),
+                    })?;
+                }
+                Command::CheckSource {
+                    registration,
+                    registration_epoch,
+                    configuration_epoch,
+                } => {
+                    registration.validate()?;
+                    let project = registration.binding;
+                    let stamp = (registration_epoch, configuration_epoch);
+                    if confirmed_absent(std::path::Path::new(&registration.root)) {
+                        let now = Instant::now();
+                        if let Some((prior, since)) = missing.get(&project)
+                            && *prior == stamp
+                            && now.duration_since(*since) >= Duration::from_secs(10)
+                        {
+                            reply(&Reply::MissingSource {
+                                project,
+                                registration_epoch,
+                                configuration_epoch,
+                            })?;
+                            missing.remove(&project);
+                        } else if missing
+                            .get(&project)
+                            .is_none_or(|(prior, _)| *prior != stamp)
+                        {
+                            ensure!(
+                                missing.contains_key(&project) || missing.len() < 1024,
+                                "missing-source probe capacity exhausted"
+                            );
+                            missing.insert(project, (stamp, now));
+                        }
+                    } else {
+                        missing.remove(&project);
+                    }
+                }
                 Command::Stop => return Ok(()),
                 Command::Activate { .. } => anyhow::bail!("watcher already active"),
                 Command::Begin {
@@ -226,4 +279,51 @@ pub fn run() -> Result<()> {
         std::thread::sleep(Duration::from_millis(250));
     }
     Ok(())
+}
+
+/// A missing leaf under an accessible, canonical parent is positive evidence.
+/// An absent drive/ancestor, denied access, redirected parent or replacement file
+/// is unavailable instead. No source content is opened and nothing is created.
+fn confirmed_absent(root: &std::path::Path) -> bool {
+    use std::{fs, io::ErrorKind};
+    if !matches!(fs::symlink_metadata(root), Err(error) if error.kind() == ErrorKind::NotFound) {
+        return false;
+    }
+    let Some(parent) = root.parent() else {
+        return false;
+    };
+    parent
+        .canonicalize()
+        .is_ok_and(|canonical| canonical == parent)
+        && fs::read_dir(parent).is_ok()
+}
+
+#[cfg(test)]
+mod missing_source_tests {
+    use super::*;
+    #[test]
+    fn only_missing_leaf_with_accessible_parent_is_confirmed() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let parent = owner.path().canonicalize()?;
+        let root = parent.join("source");
+        assert!(confirmed_absent(&root));
+        std::fs::create_dir(&root)?;
+        assert!(!confirmed_absent(&root));
+        std::fs::remove_dir(&root)?;
+        assert!(confirmed_absent(&root));
+        assert!(!confirmed_absent(&root.join("nested")));
+        std::fs::write(&root, b"preserved replacement")?;
+        assert!(!confirmed_absent(&root));
+        assert_eq!(std::fs::read(&root)?, b"preserved replacement");
+        Ok(())
+    }
+    #[cfg(unix)]
+    #[test]
+    fn redirected_parent_does_not_confirm_deletion() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let parent = owner.path().canonicalize()?;
+        std::os::unix::fs::symlink(&parent, parent.join("alias"))?;
+        assert!(!confirmed_absent(&parent.join("alias/missing")));
+        Ok(())
+    }
 }

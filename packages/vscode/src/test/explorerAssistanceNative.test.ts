@@ -33,7 +33,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         const result = await probeAssistance(legacy, spec.root, 'native-test');
         assert.deepEqual(result.tools, [...ASSISTANCE_TOOLS]);
         assert.equal(result.version, version);
-        assert.deepEqual(new Set((await probeMcp(spec,26,version,entry)).tools),new Set(UNIFIED_TOOLS));
+        assert.deepEqual(new Set((await probeMcp(spec,27,version,entry)).tools),new Set(UNIFIED_TOOLS));
         fs.writeFileSync(path.join(spec.root,'fixture.txt'),'cobaltmarker native evidence');
         await fixture.configure(spec,{operation:'vectors',enabled:false});await fixture.job(spec);
         let selected=spec.service!.project;
@@ -53,14 +53,15 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         const call = async (name: string, args = {}) => {
             const result = await session!.request('tools/call', { name, arguments: args }); assert.ok(!result.isError, JSON.stringify(result)); return result.structuredContent ?? JSON.parse(result.content[0].text);
         };
-        assert.equal((await session.request('tools/list',{})).tools.length,26,'catalog discovery respects explicit Stop');
+        assert.equal((await session.request('tools/list',{})).tools.length,27,'catalog discovery respects explicit Stop');
         assert.ok((await call('help',{topic:'jobs'})).content.includes('job'));
         assert.ok((await call('help',{query:'repair'})).results.length>0);
-        const stopped=await call('status');assert.equal(stopped.index_state,'unavailable');
+        const sourceScope=(await call('projects')).default_project;
+        const stopped=await call('diagnostics');assert.equal(stopped.index_state,'unavailable');
         assert.equal(stopped.index_error.code,'service_explicitly_stopped');
         assert.equal(stopped.explorer.ui.attached,true,'native Stop does not hide the attached editor');
         await fixture.run(['runtime','start','--install-dir',fixture.install]);
-        assert.equal((await call('status')).explorer.ui.active_route, 'strategies/studio');
+        assert.equal((await call('diagnostics')).explorer.ui.active_route, 'strategies/studio');
         assert.ok((await call('search',{query:'cobaltmarker',mode:'lexical',response_mode:'full'})).hits.length>0);
         assert.ok((await call('help',{query:'repair'})).results.length>0);
         assert.ok((await call('help',{topic:'jobs'})).content.includes('job'));
@@ -75,14 +76,14 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         selected='cd'.repeat(32);
         const wrong=await session.request('tools/call',{name:'draft_search',arguments:{schema_version:'1.0',idempotency_key:'wrong-project',title:'Must reject',draft:{query:'x'}}});
         assert.equal(wrong.isError,true);assert.equal(wrong.structuredContent.error.code,'STALE_BINDING');
-        assert.equal((await call('status')).project,spec.service!.project,'UI selection never switches the indexed project');
+        assert.equal((await call('status')).project,sourceScope,'UI selection never switches the indexed project');
         host.dispose();host=undefined;
         assert.ok((await call('search',{query:'cobaltmarker',mode:'lexical'})).hits.length>0,'editor closure does not block retrieval');
-        assert.equal((await call('status')).explorer.ui.attached,false);
+        assert.equal((await call('diagnostics')).explorer.ui.attached,false);
         const descriptor = JSON.parse(fs.readFileSync(launchDescriptorPath(storage), 'utf8'));
         fs.writeFileSync(launchDescriptorPath(storage), JSON.stringify({ ...descriptor, server_sha256: '0'.repeat(64) }));
         await assert.rejects(probeAssistance(legacy, spec.root, 'native-test'), 'a descriptor whose digest does not match never starts the server');
-        assert.equal((await call('status')).explorer.error.code,'UI_UNAVAILABLE');
+        assert.equal((await call('diagnostics')).explorer.error.code,'UI_UNAVAILABLE');
         assert.ok((await call('airk_search',{query:'cobaltmarker',mode:'lexical'})).hits.length>0,'hidden native alias remains callable');
         assert.equal(inbox.list().length,1,'only the approved navigation proposal reached the Inbox');
 
@@ -96,7 +97,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
             assert.equal(scopes.structuredContent.projects.length,2);assert.equal(scopes.structuredContent.default_project,null);
             const ambiguous=await multi.request('tools/call',{name:'search',arguments:{query:'cobaltmarker',mode:'lexical'}});
             assert.equal(ambiguous.isError,true);assert.equal(ambiguous.structuredContent.error.code,'PROJECT_REQUIRED');
-            for(const [project,query,file] of [[spec.service!.project,'cobaltmarker','fixture.txt'],[other.service!.project,'berylmarker','other.txt']]){
+            for(const [project,query,file] of [[scopes.structuredContent.projects.find((p:any)=>p.name===spec.root).project,'cobaltmarker','fixture.txt'],[scopes.structuredContent.projects.find((p:any)=>p.name===other.root).project,'berylmarker','other.txt']]){
                 const result=await multi.request('tools/call',{name:'search',arguments:{project,query,mode:'lexical'}});
                 assert.notEqual(result.isError,true);assert.ok(JSON.stringify(result).includes(file));
             }

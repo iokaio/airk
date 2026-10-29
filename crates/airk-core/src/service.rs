@@ -25,6 +25,9 @@ pub enum ControlMethod {
         /// Atomically request native storage/model/source setup with this watch preference.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         setup_watch: Option<bool>,
+        /// Startup recovery cannot undo a project removal racing its metadata read.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        only_if_missing: bool,
     },
     Projects {
         after: Option<ProjectBinding>,
@@ -35,6 +38,8 @@ pub enum ControlMethod {
     RequestReceipt {
         caller: Incarnation,
         key: RequestKey,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        project: Option<ProjectBinding>,
     },
     PlanCreate {
         caller: Incarnation,
@@ -282,6 +287,8 @@ pub enum ControlResponse {
     RequestReceipt {
         job: Option<JobRecord>,
         expired: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        removed_project: Option<ProjectBinding>,
     },
     Events {
         page: crate::service_events::EventPage,

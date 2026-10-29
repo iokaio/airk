@@ -19,7 +19,7 @@ import sys
 
 TOOLS = {"airk_" + name for name in (
     "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
-    "list_files", "outline", "read_file", "references", "relationships", "search", "status", "symbols")}
+    "list_files", "outline", "read_file", "references", "relationships", "search", "status", "diagnostics", "symbols")}
 
 # The public MCP catalog is distinct from the native CLI's compatible aliases.
 MCP_TOOLS = {name.removeprefix("airk_") for name in TOOLS} | {
@@ -28,7 +28,7 @@ MCP_TOOLS = {name.removeprefix("airk_") for name in TOOLS} | {
 
 # Match service_management::execute_request's registry-contention contract.
 # RequestEpoch prunes receipts and is deliberately not a read-only observation.
-REGISTRY_READS = {"job", "configuration_result", "plan", "plan_items", "projects", "events",
+REGISTRY_READS = {"job", "request_receipt", "configuration_result", "plan", "plan_items", "projects", "events",
                   "maintenance", "watch", "progress", "inspection", "console", "inactive_console"}
 
 
@@ -307,7 +307,7 @@ class Fixture:
     def published_status(self, project, deadline=None):
         deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 90)
         registration = self.projects[project]
-        return observe_publication(lambda until: self.query(project, "tools", "call", "airk_status", "--args",
+        return observe_publication(lambda until: self.query(project, "tools", "call", "airk_diagnostics", "--args",
                                                            '{"response_mode":"full"}', deadline=until),
                                    registration["collection"], registration["binding"], deadline)
 
@@ -396,11 +396,33 @@ class Fixture:
         self.wait(self.enqueue(project, "inspect"))
         return self.submit_configuration(project, draft, expected)
 
-    def configure_inactive(self, project, draft, expected="succeeded"):
-        assert draft.get("operation") in ("prepare_derived_cleanup", "delete_derived")
-        return self.submit_configuration(project, draft, expected)
+    def remove(self, project):
+        """Submit once; removal proof survives pruning of detailed job receipts."""
+        self.wait(self.enqueue(project, "inspect"))
+        prepared = self.prepare_configuration(project, {"operation": "unregister"})
+        saved = json.loads((self.control / "client-requests" / (prepared["prepared"] + ".json")).read_text(encoding="utf-8"))
+        request = saved["request"]["configure_project"]
+        binding = self.projects[project]["binding"]
+        assert request["project"] == binding
+        receipt = json.loads(self.run("service", "requests", "--runtime-dir", self.control,
+                                      "retry", prepared["prepared"]).stdout)
+        assert receipt["status"] == "job" and receipt["job"]["project"] == binding
+        query = {"request_receipt": {"caller": request["caller"], "key": request["key"], "project": binding}}
+        deadline = time.monotonic() + self.job_timeout
+        while time.monotonic() < deadline:
+            observed = self.rpc(query, deadline=deadline)
+            assert observed["status"] == "request_receipt"
+            job = observed.get("job")
+            if job is not None:
+                assert job["project"] == binding and job["id"] == receipt["job"]["id"]
+                assert job["state"] in ("pending", "running", "succeeded"), job
+            if observed.get("removed_project") is not None:
+                assert observed["removed_project"] == binding, "Crossed removal proof"
+                return query, observed
+            time.sleep(0.05)
+        raise AssertionError("Native removal was not confirmed; the original request was not replayed")
 
-    def submit_configuration(self, project, draft, expected="succeeded"):
+    def prepare_configuration(self, project, draft):
         path = self.control.parent / f"cleanup-draft-{uuid.uuid4().hex}.json"
         with path.open("x", encoding="utf-8") as stream:
             json.dump(draft, stream)
@@ -411,6 +433,10 @@ class Fixture:
         finally:
             path.unlink()
         assert prepared["submitted"] is False
+        return prepared
+
+    def submit_configuration(self, project, draft, expected="succeeded"):
+        prepared = self.prepare_configuration(project, draft)
         # One exact saved request submission; an unknown outcome is never re-created.
         receipt = json.loads(self.run("service", "requests", "--runtime-dir", self.control,
                                       "retry", prepared["prepared"]).stdout)
@@ -494,8 +520,8 @@ def mixed_mcp_clients(fixture, project):
     for _ in range(2):
         with ThreadPoolExecutor(max_workers=3) as pool:
             checks = [pool.submit(fixture.stdio, project, lifecycle, client) for lifecycle, client in modes]
-            assert all(check.result() == 26 for check in checks)
-    return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": 26,
+            assert all(check.result() == 27 for check in checks)
+    return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": 27,
             "lifecycles": [mode for mode, _ in modes], "reconnect": True, "same_project_reads": True}
 
 

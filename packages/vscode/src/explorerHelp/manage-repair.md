@@ -19,8 +19,8 @@ Management › Advanced diagnostics and recovery creates a native repair plan, s
 3. Read every page with **More plan projects**. Approval stays disabled until all pages are read and the plan is ready.
 4. Choose **Approve this exact preview**, optionally approving an explicitly identified fallback.
 
-## Requests awaiting confirmation
+## Interrupted acknowledgements
 
-A request whose outcome is unknown keeps its original key. **Check / retry exact request** sends that same request again; forgetting it does not cancel native work.
+AIRK retains unacknowledged requests internally with their original keys and logs unresolved outcomes. Background receipt checks do not replay work. These records do not produce confirmation notices or retry/forget controls.
 
 In 1.5.8, the preview shows a plain-language project/action summary and Start repair above its technical details. An explicit fallback checkbox appears only when that plan requires one and resets for a new plan or digest. Approved submission gets an accepted/queued/running/finished distinction. Plan rows update automatically while work runs. This advanced reviewed workflow is separate from the native service's routine automatic recovery.

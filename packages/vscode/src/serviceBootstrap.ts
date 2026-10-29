@@ -8,14 +8,15 @@ import type { LifecycleIntent } from './serviceIntents';
 
 /**
  * Whether activation may upgrade the installed runtime to the bundled one without asking:
- * patch upgrades within 1.4 or 1.5, and 1.4.x → 1.5.x (same service namespace). Downgrades
- * and other version lines need an explicit, reviewed transition.
+ * Forward upgrades within the explicitly supported 1.4–1.6 service-compatible
+ * lines. Downgrades and unknown lines need an explicit, reviewed transition.
+ * The onboarding tests target the package version so each release checks this policy.
  */
 export function automaticUpgrade(installed: string, bundled: string): boolean {
+    if(!/^\d+\.\d+\.\d+$/.test(installed)||!/^\d+\.\d+\.\d+$/.test(bundled))return false;
     const from = installed.split('.').map(Number), to = bundled.split('.').map(Number);
     if (from.length !== 3 || to.length !== 3 || [...from, ...to].some(part => !Number.isSafeInteger(part) || part < 0) || from[0] !== 1 || to[0] !== 1) { return false; }
-    if (from[1] === to[1]) { return (from[1] === 4 || from[1] === 5) && from[2] <= to[2]; }
-    return from[1] === 4 && to[1] === 5;
+    return from[1]>=4&&to[1]<=6&&(from[1]<to[1]||from[1]===to[1]&&from[2]<=to[2]);
 }
 export type RuntimeChannel = 'stable' | 'preview';
 export interface RuntimeOptions {
@@ -338,14 +339,14 @@ export class RuntimeHost {
         const review:ProjectRegistrationReview=Object.freeze({installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,...registration});
         this.projectReviews.add(review);return review;
     }
-    async registerProject(binding:RuntimeBinding,review:ProjectRegistrationReview,setupWatch?:boolean):Promise<ProjectRegistrationReview>{
+    async registerProject(binding:RuntimeBinding,review:ProjectRegistrationReview,setupWatch?:boolean,onlyIfMissing=false):Promise<ProjectRegistrationReview>{
         this.active();
         if(!this.projectReviews.has(review)||review.installDir!==binding.installDir||review.controlDir!==binding.controlDir
             ||review.runtimeSha256!==binding.runtimeSha256)throw new ServiceError('project_registration_not_reviewed');
         const registration={binding:review.binding,root:review.root,data_root:review.data_root,collection:review.collection};
         const client=this.client(binding);
         try {
-            const response=await client.rpc({reserve_project:{project:registration,...(setupWatch===undefined?{}:{setup_watch:setupWatch})}},'registered');this.active();
+            const response=await client.rpc({reserve_project:{project:registration,...(setupWatch===undefined?{}:{setup_watch:setupWatch}),...(onlyIfMissing?{only_if_missing:true}:{})}},'registered');this.active();
             if(JSON.stringify(projectRegistration(record(response.project).registration))!==JSON.stringify(registration))throw new ServiceError('crossed_project_registration');
         }finally{client.dispose();}
         if(setupWatch!==undefined){this.projectReviews.delete(review);return review;}
@@ -406,6 +407,9 @@ export class RuntimeHost {
         this.legacyReviews.delete(review);return result;
     }
     async reviewTransition(binding:RuntimeBinding,action:RuntimeTransitionReview['action']):Promise<RuntimeTransitionReview>{
+        return this.inspectTransition(binding,action,false);
+    }
+    private async inspectTransition(binding:RuntimeBinding,action:RuntimeTransitionReview['action'],superseding:boolean):Promise<RuntimeTransitionReview>{
         this.active();
         if(binding.lifecycle!=='on-demand'||this.options.managed)throw new ServiceError('runtime_payload_managed_externally');
         if(!['upgrade','rollback','resume'].includes(action))throw new ServiceError('invalid_runtime_transition');
@@ -433,13 +437,17 @@ export class RuntimeHost {
             const candidate=await this.invoke(observed.bundle.main,['runtime','inspect-candidate','--install-dir',binding.installDir,'--runtime-sha256',target]);
             const approval=record(candidate.approval);
             version=runtimeVersion(approval.version);
+            // An older pending candidate may be inspected to abort its pre-probe
+            // activation, but must never receive authority to run under this extension.
+            const compatible=superseding?automaticUpgrade(version,this.version)
+                :version.split('.').slice(0,2).join('.')===this.version.split('.').slice(0,2).join('.');
             if(candidate.metadata_only!==true||candidate.selection_changed!==false||candidate.executed!==false||candidate.runtime_sha256!==target||approval.manifest_sha256!==target
-                ||version.split('.').slice(0,2).join('.')!==this.version.split('.').slice(0,2).join('.')
+                ||!compatible
                 ||!['trusted_distribution','organization_digest'].includes(String(approval.verification_basis)))throw new ServiceError('candidate_not_compatible_with_this_extension');
         }
         const review:RuntimeTransitionReview=Object.freeze({action,installDir:binding.installDir,controlDir:binding.controlDir,
             observedActive:current.runtimeSha256,expectedActive,target,version});
-        this.transitionReviews.add(review);return review;
+        if(!superseding)this.transitionReviews.add(review);return review;
     }
     async transition(binding:RuntimeBinding,review:RuntimeTransitionReview,progress?:(message:string)=>void):Promise<RecordValue>{
         this.active();
@@ -465,7 +473,7 @@ export class RuntimeHost {
         if(!saved.candidate)return false;
         const bundle=await this.verified();
         if(saved.candidate===bundle.digest||!['drain','launcher'].includes(String(saved.phase)))return false;
-        const review=await this.reviewTransition(binding,'resume');
+        const review=await this.inspectTransition(binding,'resume',true);
         if(!automaticUpgrade(review.version,this.version))return false;
         const result=await this.invoke(bundle.main,['runtime','abort-activation','--install-dir',binding.installDir,
             '--expected-candidate',review.target,'--expected-active',review.expectedActive],180000);

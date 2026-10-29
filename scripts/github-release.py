@@ -265,6 +265,7 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
              "with its file path, content hash and original location, instead of whole files. Your agent "
              "does the reasoning; you can check exactly what it used.\n\n"
              f"Package version: {version}. Source commit: {commit}.\n"
+             f"Changes and upgrade guidance: https://github.com/{REPOSITORY}/blob/{commit}/docs/release-{version}.md\n"
              f"Build and checks: https://github.com/{REPOSITORY}/actions/runs/{build_run}/attempts/{build_attempt}\n"
              f"Signing and assembly: https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}\n\n"
              "Downloads include native ZIPs and matching platform VSIX files. Windows uses Ioka LLC "

@@ -608,6 +608,43 @@ impl Quota {
         }
         Ok(())
     }
+    /// Service/project owners and lifecycle EX are held by the rename adapter.
+    /// Durable current grants survive a rename and remain fully accounted;
+    /// unlike legacy relocation, their presence does not imply a live writer.
+    pub(crate) fn service_rename_capacity(
+        &self,
+        additional_root_bytes: u64,
+        copies: &BTreeMap<String, u64>,
+    ) -> Result<()> {
+        ensure!(
+            self.namespace == Namespace::Service,
+            "service rename requires service quota"
+        );
+        let policy = self.read_policy()?;
+        let records = self.live_records()?;
+        let status = self.measure(&policy, &records, None)?;
+        ensure!(
+            checked_add(
+                checked_add(status.used_bytes, status.reserved_bytes)?,
+                additional_root_bytes
+            )? <= policy.root_bytes,
+            "index rename exceeds root quota headroom"
+        );
+        for (collection, bytes) in copies {
+            crate::validate_collection(collection)?;
+            let existing = status
+                .collections
+                .get(collection)
+                .map(|item| checked_add(item.used_bytes, item.reserved_bytes))
+                .transpose()?
+                .unwrap_or(0);
+            ensure!(
+                checked_add(existing, *bytes)? <= policy.limit(collection),
+                "index rename exceeds collection quota headroom"
+            );
+        }
+        Ok(())
+    }
     /// Best-effort recording uses no lock wait and a deadline between filesystem
     /// observations. Individual operating-system I/O calls cannot be preempted.
     pub fn try_reserve(

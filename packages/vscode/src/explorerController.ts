@@ -276,7 +276,7 @@ export class ExplorerController implements vscode.Disposable {
         if (!project || !this.host.trusted()) { return Promise.resolve(); }
         this.statusLoading = (async () => {
             try {
-                const result = await this.session().call('airk_status', { response_mode: 'full' }, { timeout: 90000, supersede: 'status' });
+                const result = await this.session().call('airk_diagnostics', { response_mode: 'full' }, { timeout: 90000, supersede: 'status' });
                 if (epoch === this.selectionEpoch) { this.status = statusSummary(result.payload); this.statusFor = project; this.notice = undefined; }
             } catch (error) {
                 // A transient missing registration is not a user-facing failure; the next refresh retries.

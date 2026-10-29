@@ -123,9 +123,14 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         ControlMethod::ReserveProject {
             project,
             setup_watch,
+            only_if_missing,
         } => {
             airk_kernel::service_projects::validate_planned(&project)?;
-            registry.register_with_setup(&project, setup_watch)?;
+            if only_if_missing {
+                registry.register_missing_with_setup(&project, setup_watch)?;
+            } else {
+                registry.register_with_setup(&project, setup_watch)?;
+            }
             ControlResponse::Registered {
                 project: registry.get(project.binding)?,
             }
@@ -209,9 +214,30 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
             let (namespace, epoch) = registry.request_epoch()?;
             ControlResponse::RequestEpoch { namespace, epoch }
         }
-        ControlMethod::RequestReceipt { caller, key } => {
+        ControlMethod::RequestReceipt {
+            caller,
+            key,
+            project,
+        } => {
             let (job, expired) = registry.request_receipt(caller, &key)?;
-            ControlResponse::RequestReceipt { job, expired }
+            if let (Some(project), Some(job)) = (project, job.as_ref()) {
+                anyhow::ensure!(project == job.project, "crossed_request_project");
+            }
+            let removed_project = match project {
+                Some(project)
+                    if registry.project_was_removed(project)?
+                        || !registry.is_registered(project)?
+                            && registry.retained_project(project).is_ok() =>
+                {
+                    Some(project)
+                }
+                _ => None,
+            };
+            ControlResponse::RequestReceipt {
+                job,
+                expired,
+                removed_project,
+            }
         }
         ControlMethod::Events {
             project,

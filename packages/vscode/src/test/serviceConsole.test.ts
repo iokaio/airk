@@ -21,6 +21,29 @@ test('raw log actions use the trusted local host and never enter summary reports
     assert.deepEqual(calls,[false,true]);
     f.controller.dispose();
 });
+test('a stuck status poll expires, permits local logs meanwhile, rejects late results and reconnects',async context=>{
+    context.mock.timers.enable({apis:['setTimeout','Date']});
+    const f=fixture(),original=f.host.runtime.client;
+    const base=original({} as any);let release!:()=>void,waiting=false,disposed=0;
+    const blocked=new Promise<void>(resolve=>{release=resolve;});
+    f.host.runtime.client=()=>new ServiceClient({dispose(){disposed++;},async request(method){
+        if(method==='health'){waiting=true;await blocked;}
+        return base.transport.request(method);
+    }});
+    let logs=0;f.host.rawLogs=async()=>{logs++;return 'opened';};
+    const poll=f.controller.refresh();
+    try{
+        for(let i=0;i<30&&!waiting;i++)await Promise.resolve();assert.ok(waiting);
+        await f.action('openRawLogs');assert.equal(logs,1);assert.equal(f.controller.state.busy,true);
+        context.mock.timers.tick(15001);await poll;
+        assert.equal(f.controller.state.busy,false);assert.equal(f.controller.state.connected,false);
+        assert.equal(f.controller.state.health.code,'status_poll_timed_out');assert.ok(disposed>0);
+        assert.match(f.controller.state.message!,/Reconnecting automatically/);
+        release();for(let i=0;i<8;i++)await Promise.resolve();
+        assert.equal(f.controller.state.connected,false,'a late reply cannot replace the timed-out observation');
+        f.host.runtime.client=original;await f.controller.refresh();assert.equal(f.controller.state.connected,true);
+    }finally{release();await poll;f.controller.dispose();}
+});
 test('console workspace registration uses a trusted host action and highlights only native project bindings',async()=>{
     const f=fixture();let registrations=0;
     f.host.registerWorkspace=async()=>{registrations++;};f.host.currentProjects=()=>new Set([project]);
@@ -106,6 +129,38 @@ function fixture(){
     const action=async(name:string,extra:RecordValue={})=>controller.action({type:'service',revision:controller.state.revision,action:name,...extra});
     return {controller,host,sent,values,copied,action,setTrusted:(value:boolean)=>{trusted=value;},setFail:(value:boolean)=>{fail=value;}};
 }
+
+test('unconfirmed receipts stay retained and logged without interrupting project observations',async()=>{
+    for(const malformed of [false,true]){
+        const f=fixture(),base=f.host.runtime.client({} as any),diagnostics:{operation:string;error:unknown}[]=[];
+        f.host.diagnosticFailure=async(operation,error)=>{diagnostics.push({operation,error});};
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            if(typeof method==='object'&&method!==null&&'request_receipt' in method){
+                return malformed?{status:'failure',code:{unexpected:true}}:{status:'request_receipt',job:null};
+            }
+            return base.transport.request(method);
+        }});
+        try{
+            await f.controller.refresh();f.setFail(true);
+            await f.action('index',{project});
+            assert.equal(f.controller.state.message,undefined,'a lost acknowledgement has no warning');
+            const saved=[...f.values.entries()].filter(([key])=>key.startsWith('airk.service.intent.'));
+            assert.equal(saved.length,1);
+            const writes=f.sent.filter(value=>typeof value==='object'&&value!==null&&'enqueue' in value).length;
+            await f.controller.refresh();await f.controller.refresh();
+            assert.equal(f.controller.state.message,undefined);
+            assert.equal(f.controller.state.connected,true);
+            assert.equal(f.controller.state.page?.projects.length,1,'receipt failure does not block the project page');
+            assert.deepEqual(managementView(f.controller.state).pending,[]);
+            assert.deepEqual([...f.values.entries()].filter(([key])=>key.startsWith('airk.service.intent.')),saved,'the exact request is retained');
+            assert.equal(f.sent.filter(value=>typeof value==='object'&&value!==null&&'enqueue' in value).length,writes,'lookup never replays a write');
+            assert.ok(diagnostics.some(item=>item.operation==='request_receipt'&&String(item.error).includes('request_outcome_unconfirmed')));
+            assert.equal(diagnostics.length,malformed?3:2,'identical diagnostics are logged once per controller');
+            if(malformed)assert.ok(diagnostics.some(item=>item.error instanceof Error&&item.error.cause instanceof ServiceError
+                &&item.error.cause.cause instanceof Error&&item.error.cause.cause.message.includes('unexpected')),'native failure details remain in the diagnostic cause chain');
+        }finally{f.controller.dispose();}
+    }
+});
 test('console messages reject stale revisions, injected bodies and out-of-scope identities',async()=>{
     const f=fixture();await f.controller.refresh();const state=f.controller.state;
     for(const message of [
@@ -213,7 +268,7 @@ test('direct removal inspects a missing-source project and requires approval bef
         assert.equal(f.controller.state.page!.projects[0].inspection,null);
         await f.action('unregisterProject',{project});
         assert.match(reviewed,/source folder has been deleted/);
-        assert.match(reviewed,/Sources, settings and index data are retained/);
+        assert.match(reviewed,/deletes.*index data.*saved settings/);
         assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value).length,decision==='approve'?1:0);
         assert.equal(f.controller.state.inactiveProjects===true,decision==='approve');
         assert.equal(f.controller.state.pending.length,0);
@@ -232,7 +287,7 @@ test('unregister binds the prepared project and requires approval before durable
         f.host.confirm=async message=>{reviewed=message;return approved;};
         await f.controller.refresh();f.controller.state.page!.projects[0].inspection={snapshot:{settings_digest:'ab'.repeat(32)}};
         await f.action('configureProject',{project});
-        assert.match(reviewed,/Unregister/);assert.match(reviewed,/Source: \/sensitive/);assert.match(reviewed,/Sources, settings and index data are retained/);
+        assert.match(reviewed,/Unregister/);assert.match(reviewed,/Source: \/sensitive/);assert.match(reviewed,/deletes.*index data.*saved settings/);
         assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value).length,approved?1:0);
         assert.equal(f.controller.state.pending.length,0);f.controller.dispose();
     }
@@ -533,4 +588,27 @@ test('preparation timeout distinguishes an unsubmitted change from an accepted n
         assert.equal(f.sent.filter(value=>value&&typeof value==='object'&&'configure_project' in value).length,waitingKind==='inspect'?0:1);
         assert.equal(f.controller.state.pending.length,0,'acknowledged jobs retain native outcomes, not an unknown request');f.controller.dispose();
     }
+});
+
+
+test('removed-project browsing refreshes active Explorer choices without changing the Management page', async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any);
+    let active=true;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='inactive_console')return {status:'console',page:{revision:2,cached:true,observed_unix_ms:2,after:null,
+            projects:[{project:{registration:{binding:'ab'.repeat(32),root:'/deleted',data_root:'/derived',collection:'removed'},paused:true,fencing_generation:2}}]}};
+        if(name==='console'&&!active)return {status:'console',page:{revision:3,cached:true,observed_unix_ms:3,after:null,projects:[]}};
+        return base.transport.request(method);
+    }});
+    try{
+        await f.controller.refresh();
+        await f.action('inactiveProjects');
+        assert.equal(f.controller.state.inactiveProjects,true);
+        assert.equal((f.controller.state.page!.projects[0].project as any).registration.root,'/deleted');
+        assert.equal((f.controller.state.activePage!.projects[0].project as any).registration.binding,project);
+        active=false;await f.controller.refresh();
+        assert.deepEqual(f.controller.state.activePage!.projects,[],'actual removal must clear the active choices');
+        assert.equal(f.controller.state.inactiveProjects,true);
+    }finally{f.controller.dispose();}
 });

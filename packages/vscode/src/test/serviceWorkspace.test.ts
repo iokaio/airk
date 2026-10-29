@@ -4,8 +4,22 @@ import { test } from 'node:test';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ServiceWorkspace } from '../serviceWorkspace';
+import { renamedDefaultDataRoot, ServiceWorkspace } from '../serviceWorkspace';
 import { ProjectRegistrationReview, RuntimeBinding } from '../serviceBootstrap';
+
+test('saved historical defaults follow the renamed native root while custom and existing locations stay selected',async()=>{
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-storage-'));
+    try{
+        const old=path.join(root,'service-1.4'),current=path.join(root,'index-v1');
+        await fs.mkdir(current);
+        assert.equal(await renamedDefaultDataRoot(old,current),current);
+        assert.equal(await renamedDefaultDataRoot(path.join(root,'custom','service-1.4'),current),undefined);
+        await fs.mkdir(old);
+        assert.equal(await renamedDefaultDataRoot(old,current),undefined,'an existing custom root is preserved');
+        assert.equal(await renamedDefaultDataRoot(path.join(root,'service-1.4-preview'),path.join(root,'index-v1-preview')),path.join(root,'index-v1-preview'));
+        assert.equal(await renamedDefaultDataRoot(old,path.join(root,'custom')),undefined);
+    }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 
 test('workspace definitions require explicit review, persist opaque bindings and retain unavailable sources',async()=>{
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-workspace-fixture-')),values=new Map<string,unknown>();
@@ -86,4 +100,27 @@ test('agent connections resolve stale editor registrations from complete native 
         assert.ok(path.basename(root).startsWith('airk-workspace-agent-'));
         await fs.rm(root,{recursive:true,force:true});
     }
+});
+
+
+test('native removal withdraws only the matching editor launch receipt and preserves another index',async()=>{
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-workspace-removal-')),source=path.join(root,'source');await fs.mkdir(source);
+    const values=new Map<string,unknown>();
+    const binding:RuntimeBinding={installDir:root,controlDir:path.join(root,'control'),runtimeSha256:'ab'.repeat(32),version:'1.6.2',
+        executable:path.join(root,'airk'),launcher:path.join(root,'launcher'),lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
+    const a='cd'.repeat(32),b='ef'.repeat(32);
+    const workspace=new ServiceWorkspace({keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,
+        update:async(key,value)=>{if(value===undefined)values.delete(key);else values.set(key,value);}},
+        {reviewProject:async(_runtime,opened,data,collection)=>({installDir:root,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,
+            root:await fs.realpath(opened),data_root:data,collection,binding:collection==='a'?a:b}),registerProject:async(_runtime,review)=>review},()=>true);
+    try{
+        await workspace.register(binding,source,path.join(root,'data'),'a',async()=>true);
+        await workspace.register(binding,source,path.join(root,'data'),'b',async()=>true);
+        await workspace.withdrawProject(binding,a);
+        assert.equal((await workspace.definitions(binding,[source]))[0].service!.project,b);
+        assert.equal([...values.keys()].filter(key=>key.startsWith('airk.service.workspace.1.')).length,1);
+        await workspace.withdrawProject(binding,b);
+        assert.deepEqual(await workspace.definitions(binding,[source]),[]);
+        assert.equal(values.size,0);
+    }finally{await fs.rm(root,{recursive:true,force:true});}
 });

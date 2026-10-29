@@ -431,18 +431,11 @@ mod tests {
         let mut saved = ServiceRegistry::open_saved(&registry.root)?;
         assert!(!saved.is_registered(selected.binding)?);
         assert_eq!(saved.list(None, None, 32)?.projects[0].registration, other);
-        registry.register(&selected)?;
-        assert!(!registry.get(selected.binding)?.paused);
-        assert_eq!(
-            registry
-                .enqueue_configuration(selected.binding, caller, &accepted_key, &request, engine)?
-                .id,
-            job.id
-        );
         assert!(
-            registry.is_registered(selected.binding)?,
-            "replay must preserve explicit re-registration"
+            registry.register(&selected).is_err(),
+            "full removal must finish before re-registration"
         );
+        assert_eq!(registry.pending_project_removals(None, 32)?.len(), 1);
         Ok(())
     }
 

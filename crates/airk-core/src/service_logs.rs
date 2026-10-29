@@ -23,6 +23,9 @@ pub enum LogKind {
     SourceWorkerFailed,
     SourceTraversalUnavailable,
     SourceTraversalRecovered,
+    SourceProjectRemoved,
+    ProjectRemovalCompleted,
+    ProjectRemovalFailed,
     MetadataUnavailable,
     RecordsDropped,
 }

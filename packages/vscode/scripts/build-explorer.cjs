@@ -138,6 +138,18 @@ async function build() {
     });
     // Node built-ins only: no packages, no host modules, no VS Code API.
     checkInputs('Assistance', assistance.metafile, [/^src\/explorerAssistance\//, ...CONTRACTS, /^airk-explorer-help:/]);
+    // This process must survive removal of the extension and its node_modules.
+    // Bundle the uninstall worker separately; normal host modules stay unbundled.
+    const uninstall = await esbuild.build({
+        absWorkingDir: root, bundle: true, metafile: true, sourcemap: false, legalComments: 'inline', logLevel: 'warning',
+        entryPoints: ['src/uninstallHook.ts'], outfile: 'out/uninstallHook.js', format: 'cjs', platform: 'node', target: 'node20', mainFields: ['module', 'main'],
+        banner: { js: `/*! AIRK standalone uninstall worker. Includes jsonc-parser (MIT).\n${read('node_modules/jsonc-parser/LICENSE.md').trim()}\n*/` },
+    });
+    checkInputs('Uninstall', uninstall.metafile, ['src/uninstallHook.ts', 'src/extensionUninstall.ts', 'src/serviceBootstrap.ts',
+        'src/native.ts', 'src/serviceClient.ts', 'src/mcpStdioSession.ts', 'src/model.ts', 'src/explorerContracts.ts', 'src/explorerRoutes.ts',
+        'src/agentMigration.ts', 'src/unifiedAgentConfig.ts', 'src/explorerAssistanceLaunch.ts', 'src/agentConfig.ts',
+        'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts',
+        /^node_modules\/jsonc-parser\//]);
 }
 
 module.exports = { helpCatalog, engineTopics };

@@ -24,7 +24,7 @@ Recent events display readable timestamps and available job IDs and failure reas
 
 ## Limits
 
-Reports are never uploaded. They include the visible project page and up to 128 cached native events within a 256 KiB bound; omissions are explicit. The native log ring contains at most four 1 MiB files. Older rotated-away records are unavailable, and malformed records are counted and omitted.
+Reports are never uploaded. They include the visible project page and up to 128 cached native events within a 256 KiB bound; omissions are explicit. Each native diagnostic stream is bounded by a 200 MB high-water mark. Crossing it purges oldest FIFO segments to at most 100 MB. Raw errors include setup, connection and polling/action failures as well as job failures. Open/Save does not wait behind status polling; an empty log opens explanatory text or can be saved as an empty file. Older rotated-away records are unavailable, and malformed records are counted and omitted.
 
 ## Log views
 

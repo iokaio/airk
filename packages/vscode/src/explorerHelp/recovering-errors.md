@@ -26,11 +26,13 @@ Errors keep their diagnostic code while the UI explains the next useful step. Qu
 
 Read requests stop waiting after three minutes; interactive dialog/action requests have a longer deadline. The UI clears its waiting state and ignores late replies. You may retry a read or narrow its scope. Check Activity when native work may still be running.
 
+Overview and Management status polls have a separate 15-second deadline and reconnect after expiration. Late replies cannot replace newer observations. MCP status has a two-second budget and reports unknown readiness on timeout; use diagnostics when detailed runtime, job or watcher observations are needed. A watcher that has not reported since startup is unconfirmed, while confirmed failures remain warnings. Published index information stays visible.
+
 ## An action's outcome is unknown
 
-An action can have effects even when its acknowledgment was lost. The UI reports REQUEST_OUTCOME_UNKNOWN instead of claiming that nothing happened. Check Management > Activity, saved files or proposal status first. Durable native requests are recovered through their saved request identity; do not create a duplicate mutation to test whether the first worked.
+An action can have effects even when its acknowledgment was lost. Unacknowledged indexing/configuration requests stay internal: AIRK logs them and checks native receipts in the background without confirmation notices or retry/forget controls. File saves and proposal application can separately report REQUEST_OUTCOME_UNKNOWN; check the saved file or proposal status before repeating those actions.
 
-The UI checks uncertain job/configuration acknowledgements through their read-only native receipts. Missing receipts never authorize replacement writes. Accepted native work can resume under its original identity and recovery budget. Saves, proposal application and repair are never automatically replayed by the UI. Preserve logs and exact request identities while diagnosing. Keep original files and useful index state; use Repair only after ordinary status/reconnect checks reveal a reason.
+The UI checks uncertain job/configuration acknowledgements through their read-only native receipts. Missing receipts never cause automatic replacement writes. Accepted native work can resume under its original identity and recovery budget. Saves, proposal application and repair are never automatically replayed by the UI. Preserve logs and exact request identities while diagnosing. Keep original files and useful index state; use Repair only after ordinary status/reconnect checks reveal a reason.
 
 ## Help and support
 

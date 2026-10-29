@@ -175,6 +175,21 @@ impl AirkServer {
         T: Serialize + Send + 'static,
         F: FnOnce(airk_kernel::Kernel) -> anyhow::Result<T> + Send + 'static,
     {
+        self.execute_response_policy(operation, options, true, work)
+            .await
+    }
+
+    pub(crate) async fn execute_response_policy<T, F>(
+        &self,
+        operation: UsageOperation,
+        options: crate::response::ResponseArgs,
+        allow_diagnostics: bool,
+        work: F,
+    ) -> CallToolResult
+    where
+        T: Serialize + Send + 'static,
+        F: FnOnce(airk_kernel::Kernel) -> anyhow::Result<T> + Send + 'static,
+    {
         let responses = self.responses.clone();
         let mode = options.response_mode.unwrap_or(self.response_mode);
         let control = matches!(
@@ -187,7 +202,7 @@ impl AirkServer {
         };
         let kernel = self.kernel.clone();
         let client = self.client;
-        let diagnostics = if matches!(operation, UsageOperation::Status) {
+        let diagnostics = if allow_diagnostics && matches!(operation, UsageOperation::Status) {
             Some((
                 self.runtime.read().ok().and_then(|value| value.clone()),
                 self.work.read().ok().and_then(|value| value.clone()),

@@ -88,7 +88,7 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
                     return { publication: 'airk-r1:t', payload: { truncated: false, publication: { token: 'airk-r1:t' },
                         hits: [{ citation: { path: 'a.ts', start_line: 2, end_line: 4, content_hash: 'cd'.repeat(32) }, text: 'x', truncated: false }] } };
                 }
-                assert.equal(tool, 'airk_status');
+                assert.equal(tool, 'airk_diagnostics');
                 return { payload: { index_state: 'available', publication: { token: 'airk-r1:t' }, semantic_readiness: { state: 'ready' }, freshness: { state: 'idle' } } };
             }, dispose() {} };
         }

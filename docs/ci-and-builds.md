@@ -2,7 +2,7 @@
 
 A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). Its complete cumulative diff must stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only then do PR/main CI run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remains the authenticated producer.
 
-The current development package version is **1.6.0**; see [its candidate record](release-1.6.0.md). Prior release and qualification records retain their original scope.
+The current development package version is **1.6.4**; see [its release record](release-1.6.4.md). Prior release and qualification records retain their original scope.
 
 Container compilation and ownership tests run as UID/GID 10001. Every cache-using
 build step first repairs only its three mounted Cargo/target cache directories,
@@ -18,7 +18,7 @@ Native smoke jobs, the container adapter, service-pool campaign and installed-co
 
 Native smoke and qualification tools distinguish a raw diagnostic status from an available publication. They share scoped, bounded observation helpers and preserve explicit failed readiness, typed read-retry limits and exact usage accounting; see the [MCP consumer contract](mcp.md). The mandatory 16-file/model service-client and document-table smokes remain routine on every native host. Local verification uses a freshly constructed matching release pair before a corrective push; hosted CI is not the primary debugging loop.
 
-MCP smoke checks require the exact unified 26-tool catalog, including rejection of missing, duplicate and retired advertised names. Container and native client checks share that expected public catalog, while standalone extension frontend checks use the current 26-tool probe. The 16 prefixed native `airk tools` aliases remain a separate CLI compatibility contract.
+MCP smoke checks require the exact unified 27-tool catalog, including rejection of missing, duplicate and retired advertised names. Container and native client checks share that expected public catalog, while standalone extension frontend checks use the current 27-tool probe. The 17 prefixed native `airk tools` aliases remain a separate CLI compatibility contract.
 
 Native builds embed the two pinned INT8 MiniLM exports. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Also prepare native CPU libraries with `python scripts/provision-onnx-runtime.py --download`. Cargo never downloads model assets or runtime libraries. See [model provisioning](onnx-models.md).
 
@@ -66,7 +66,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.6.0 candidate notes](release-1.6.0.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 26-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.6.4 release notes](release-1.6.4.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 27-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 
@@ -102,6 +102,8 @@ Every PR starts the complete-diff classifier and quick checks. The classifier us
 `Required checks` always runs. It requires success for every selected job and an intentional skip for every unselected job. A failed plan, cancellation, unexpected skip or missing result cannot pass. `signed-off` remains independently required; branch protection is unchanged.
 
 ## Test execution and measurements
+
+The required extension suite exercises upgrade routing using the version in `package.json`, including existing 1.4, 1.5 and 1.6 installations, explicit repair/retry and quiet reopen. A future version bump that is missing from the automatic-upgrade policy fails these tests. Bootstrap tests separately cover interrupted predecessor activation and preserve mismatched-runtime, managed-ownership and rollback protections. Packaging contracts require the standalone uninstall hook to survive script stripping.
 
 Nextest **0.9.148** runs each test in its own process on all four native targets and in Docker. [The checked-in profile](../.config/nextest.toml) disables retries, bounds storage-heavy concurrency, starts the 200-publication retention test early and produces a JUnit report without captured test payloads. Doctests run separately with Cargo. Existing ignored tests retain their explicit fixture requirements. The 200 real edits, exact retained-object checks, quota/lease exclusion and crash-recovery assertions remain required.
 

@@ -24,7 +24,7 @@ test('startup adopts the current native registration and preserves a manually co
         assert.equal(await fs.readFile(destination,'utf8'),correct);
         assert.ok(!f.calls.slice(calls).some(line=>line.startsWith('Updated ')||line.startsWith('Could not update')),f.calls.slice(calls).join('\n'));
         const [definition]=await f.api.getServerDefinitions();
-        assert.ok(definition.args.includes(current.binding));assert.ok(definition.args.includes(current.data_root));
+        assert.ok(definition.args.includes(current.root));assert.ok(!definition.args.includes('--service-project'));assert.ok(!definition.args.includes('--data-dir'));
         assert.ok(!definition.args.includes(old.binding));assert.equal(f.writes.length,0);
     }finally{await f.close();}
 });
@@ -38,7 +38,7 @@ test('Codex update saves and verifies a new native binding with Windows editor n
         const oldSpec:LaunchSpec={root:old.root,dataDir:old.data_root,collection:old.collection,name:'fixture',command:f.binding.launcher,
             service:{installDir:f.binding.installDir,project:old.binding}};
         const destination=path.join(old.root,'.codex','config.toml');await fs.mkdir(path.dirname(destination));
-        const before='# Keep my preferences\r\nmodel = "fixture"\r\n'+serializeServers('codex',[unifiedEntry(oldSpec)]).replace(/\r?\n/g,'\r\n');
+        const before='# Keep my preferences\r\nmodel = "fixture"\r\n'+serializeServers('codex',[{...unifiedEntry(oldSpec),args:['runtime','launch','--install-dir',oldSpec.service!.installDir,'--','--root',oldSpec.root,'--data-dir',oldSpec.dataDir,'--collection',oldSpec.collection,'--service-project',oldSpec.service!.project,'mcp']}]).replace(/\r?\n/g,'\r\n');
         await fs.writeFile(destination,before);
         let text=before,saves=0,checks=0,failProbe=false;
         const document={uri:{fsPath:destination},eol:2,isDirty:false,version:1,getText:()=>text,positionAt:(offset:number)=>offset,
@@ -48,7 +48,7 @@ test('Codex update saves and verifies a new native binding with Windows editor n
         f.stub.workspace.applyEdit=async(edit:{after:string})=>{text=edit.after.replace(/\r?\n/g,'\r\n');document.version++;document.isDirty=true;return true;};
         context.mock.method(native,'probeMcp',async(spec:LaunchSpec)=>{
             checks++;assert.equal(spec.dataDir,current.data_root);assert.equal(spec.service!.project,current.binding);
-            assert.ok((await fs.readFile(destination,'utf8')).includes(current.binding),'probe follows actual disk save');
+            assert.ok(!(await fs.readFile(destination,'utf8')).includes('--service-project'),'probe follows actual root-based disk save');
             if(failProbe)throw new Error('fixture connection timeout');
             return {tools:[...UNIFIED_TOOLS],status:{}};
         });
@@ -60,8 +60,8 @@ test('Codex update saves and verifies a new native binding with Windows editor n
         await panel.send({action:'updateCodex'});
         assert.equal(saves,1,f.calls.join('\n'));assert.equal(checks,1);
         assert.match(text,/Keep my preferences/);assert.match(text,/model = "fixture"/);
-        assert.ok(!text.includes(old.binding));assert.ok(text.includes(current.binding));
-        assert.match(panel.webview.html,/configuration saved.*26 tools/);
+        assert.ok(!text.includes(old.binding));assert.ok(text.includes('--root')&&!text.includes('--data-dir'));
+        assert.match(panel.webview.html,/configuration saved.*27 tools/);
         await panel.send({action:'updateCodex'});
         assert.equal(saves,1);assert.equal(checks,2);assert.match(panel.webview.html,/already matches/);
         failProbe=true;await panel.send({action:'updateCodex'});

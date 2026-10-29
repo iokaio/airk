@@ -124,7 +124,7 @@ def check(launcher, root, control):
             child.stdin.write("tools\n")
             child.stdin.flush()
             value = receive(replies)
-            if value.get("tools") != 26:
+            if value.get("tools") != 27:
                 raise RuntimeError("Live MCP connection lost its tool catalog")
             return value["pid"]
         first = ObservedProcess(catalog(clients[0]))

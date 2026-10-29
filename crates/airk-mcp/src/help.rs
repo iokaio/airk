@@ -255,7 +255,7 @@ mod tests {
         }
         let explorer = answer(args(json!({"topic":"explorer","max_bytes":32768}))).unwrap();
         let text = explorer["content"].as_str().unwrap();
-        assert!(text.contains("one airk MCP connection with 26 unprefixed tools"));
+        assert!(text.contains("one airk MCP connection with 27 unprefixed tools"));
         assert!(text.contains("offline"));
         assert!(text.contains("Suggestions wait for the user; applied never means executed"));
     }
@@ -266,7 +266,7 @@ mod tests {
             value["content"]
                 .as_str()
                 .unwrap()
-                .contains("runtime JSON bundle")
+                .contains("Quick AIRK version, basic health and project-index check")
         );
         for value in [
             json!({"topic":"made-up"}),

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Native service smoke for aliases, quota refusal, maintenance and guarded cleanup."""
+"""Native service smoke for aliases, quota refusal, maintenance and complete project removal."""
 import argparse
 from contextlib import ExitStack
 import hashlib
@@ -60,6 +60,7 @@ def main():
 
         retired("collections", "retention", "set", "--json", "{}")
         index()
+        initial_roots = settings("roots")["configured"]
         configure({"operation": "add_root", "alias": "requirements", "path": str(specs)})
         index()
         indexed_path = "@requirements/requirements.md"
@@ -77,7 +78,6 @@ def main():
         index()
         assert not fixture.query(name, "search", "--mode", "lexical", "REQ-81")["hits"]
         assert fixture.query(name, "search", "--mode", "lexical", "Replacement")["hits"]
-        rebound_roots = settings("roots")
         # The previously captured evidence keeps its original citation/hash.
         assert original_read["hits"][0]["citation"]["content_hash"] == hashlib.sha256(original_text.encode()).hexdigest()
 
@@ -95,15 +95,29 @@ def main():
         before = status()["publication"]["token"]
         changed_text = "Additional fictional storage payload.\n" * 100_000
         (root / "main.md").write_text(changed_text, encoding="utf-8")
-        index("failed")
+        waiting_index = json.loads(fixture.run(*fixture.arguments(name), "index").stdout)
+        waiting_id = waiting_index["job"]["id"]
+        deadline = time.monotonic() + 45
+        while True:
+            page = fixture.rpc({"console": {"after": None, "revision": None, "limit": 16}}, deadline=deadline)["page"]
+            recovery = [item for row in page["projects"] if row["project"]["registration"]["binding"] == binding
+                        for item in row.get("recovery", []) if item.get("job") == waiting_id]
+            if any(item["state"] == "waiting" and item["reason"] in
+                   ("storage_quota_root", "storage_quota_collection", "storage_quota_reservation") for item in recovery):
+                break
+            assert time.monotonic() < deadline, "Quota pressure did not produce a durable storage wait"
+            time.sleep(0.05)
+        print("Quota pressure retained the accepted index job in a durable wait.", flush=True)
         retained = fixture.query(name, "read", "main.md", "--start-line", "1", "--end-line", "1")
         assert retained["hits"][0]["text"].strip() == primary_text.strip()
         assert retained["hits"][0]["citation"]["content_hash"] == hashlib.sha256(primary_text.encode()).hexdigest()
         assert retained["publication"]["token"] == status()["publication"]["token"]
         policy_file.write_text(json.dumps(original_policy), encoding="utf-8")
         configure({"operation": "quota_policy", "path": str(policy_file)})
-        index()
+        completed = fixture.wait(waiting_index)
+        assert completed["id"] == waiting_id and completed["attempts"] >= 2
         assert status()["publication"]["token"] != before
+        print("Restored quota resumed the same accepted job without another index request.", flush=True)
         pause(True)
         published = status()["publication"]["token"]
         pause(False)
@@ -118,28 +132,35 @@ def main():
         assert not destination.exists()
         assert status()["publication"]["token"] == published
 
-        configure({"operation": "unregister"})
-        inactive = fixture.rpc({"inactive_console": {"after": None, "revision": None, "limit": 16}})["page"]
-        assert [row["project"]["registration"]["binding"] for row in inactive["projects"]] == [binding]
-        preview_job = fixture.configure_inactive(name, {"operation": "prepare_derived_cleanup"})
-        preview = fixture.rpc({"configuration_result": {"id": preview_job["id"]}})["result"]
-        assert preview["owned_files"] > 0 and preview["preserved_settings_files"] > 0
-        cleanup_job = fixture.configure_inactive(name, {"operation": "delete_derived", "preview": preview["guard"]})
-        report = fixture.rpc({"configuration_result": {"id": cleanup_job["id"]}})["result"]
-        assert report["complete"] and report["pending_incarnations"] == 0
-        assert report["removed_known_files"] > 0 and report["guard"] == preview["guard"]
-        deadline = time.monotonic() + 30
-        while fixture.rpc({"worker": {"project": binding}})["identity"] is not None:
-            assert time.monotonic() < deadline, "Cleanup owner did not drain"
+        receipt_query, removal = fixture.remove(name)
+        assert removal["removed_project"] == binding
+        collection = data / "collections-1.4" / name
+        deadline = time.monotonic() + 90
+        while True:
+            inactive = fixture.rpc({"inactive_console": {"after": None, "revision": None, "limit": 16}})["page"]
+            pending = [row["project"]["registration"]["binding"] for row in inactive["projects"]]
+            assert pending in ([binding], []) and inactive["after"] is None
+            if not collection.exists() and not pending and fixture.rpc({"worker": {"project": binding}})["identity"] is None:
+                break
+            assert time.monotonic() < deadline, "Full removal did not finish"
             time.sleep(0.05)
-        fixture.rpc({"register": {"project": fixture.projects[name]}})
-        index()
-        assert fixture.query(name, "search", "--mode", "lexical", "Replacement")["hits"]
-        assert settings("roots")["configured"] == rebound_roots["configured"]
+        proof = fixture.rpc(receipt_query)
+        assert proof["removed_project"] == binding and proof["job"] is None
+        assert fixture.rpc({"projects": {"after": None, "revision": None, "limit": 16}})["page"]["projects"] == []
         assert (root / "main.md").read_text(encoding="utf-8") == changed_text
         assert (specs / "requirements.md").read_text(encoding="utf-8") == original_text
         assert (replacement / "requirements.md").read_text(encoding="utf-8") == replacement_text
-    print("Native storage lifecycle passed: aliases, exact citations, quota refusal, maintenance, legacy-writer refusal and source-safe cleanup/re-registration.")
+        fixture.rpc({"register": {"project": fixture.projects[name]}})
+        fixture.configure(name, {"operation": "vectors", "enabled": False})
+        fixture.configure(name, {"operation": "usage", "mode": "disabled"})
+        index()
+        assert settings("roots")["configured"] == initial_roots
+        assert not fixture.query(name, "search", "--mode", "lexical", "Replacement")["hits"]
+        assert fixture.query(name, "search", "--mode", "lexical", "Additional")["hits"]
+        assert (root / "main.md").read_text(encoding="utf-8") == changed_text
+        assert (specs / "requirements.md").read_text(encoding="utf-8") == original_text
+        assert (replacement / "requirements.md").read_text(encoding="utf-8") == replacement_text
+    print("Native storage lifecycle passed: aliases, exact citations, quota refusal, maintenance, legacy-writer refusal and source-safe full removal and fresh re-registration.")
 
 
 if __name__ == "__main__":

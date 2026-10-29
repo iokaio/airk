@@ -58,3 +58,15 @@ test('control actions run through the shared console controller', async () => {
     assert.equal(control.observedAt(), 99);
     assert.equal(control.connection(), 'ready');
 });
+
+
+test('removed-project browsing preserves active Explorer choices and excludes removed rows', () => {
+    const active = state().page!;
+    const removed = state({ inactiveProjects: true, activePage: active,
+        page: { ...active, projects: [{ project: { registration: { binding: 'ab'.repeat(32), root: '/deleted', collection: 'deleted' } } }] } });
+    assert.deepEqual(projectSummaries(removed), projectSummaries(state()));
+    assert.ok(!projectSummaries(removed).some(row => row.root === '/deleted'));
+    // A later empty active observation must clear the former choices.
+    removed.activePage = { ...active, projects: [] };
+    assert.deepEqual(projectSummaries(removed), []);
+});

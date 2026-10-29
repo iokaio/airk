@@ -1,5 +1,13 @@
 # Guarded project retirement
 
+## Current 1.6.4 removal contract
+
+Removal cancels work, stops monitoring and new admission, drains owned workers, then automatically deletes the ownership-matched index, usage ledger and saved project settings. Registry details and job/configuration receipts are removed after files are gone. Opaque identifiers and removal time remain as minimal history and an opt-out marker. Sources and shared model assets are untouched. Pending removal is durable and resumes after interruption; it is not reported complete until deletion finishes. Earlier inactive registrations enter this path during the schema-10 migration. Unknown entries, aliases, ownership failures and held leases defer deletion and report failure. See [1.6.4](release-1.6.4.md).
+
+## Historical two-step implementation through 1.6.1
+
+The remainder records the earlier unregister/retained-cleanup behavior and its original validation; it is superseded by the current removal contract above.
+
 Development work for 1.4.0. Unregister and deletion of derived state are separate operations. This contract does not authorize automatic cleanup of 1.3 state or unknown directories.
 
 ## Unregister

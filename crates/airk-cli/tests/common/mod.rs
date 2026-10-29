@@ -6,6 +6,7 @@ use airk_core::service::{
     ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, JobRecord,
     ProjectRegistration, RequestKey,
 };
+use anyhow::Context;
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
@@ -339,7 +340,7 @@ impl Service {
                     let envelope = tokio::time::timeout_at(
                         deadline.into(),
                         connection.call(
-                            "airk_status".into(),
+                            "airk_diagnostics".into(),
                             serde_json::json!({"response_mode":"full"})
                                 .as_object()
                                 .unwrap()
@@ -565,7 +566,18 @@ pub fn published_status(
         .to_string();
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {
-        let value = call_until(root, data, collection, &["status"], deadline)?;
+        let response = call_until(
+            root,
+            data,
+            collection,
+            &["tools", "call", "airk_diagnostics"],
+            deadline,
+        )?;
+        let value = serde_json::from_str(
+            response["content"][0]["text"]
+                .as_str()
+                .context("diagnostic status payload missing")?,
+        )?;
         anyhow::ensure!(
             Instant::now() < deadline,
             "publication observation deadline exhausted"
@@ -596,7 +608,7 @@ fn call_until(
             diagnostic("first native CLI invocation started");
             invocation_started = true;
         }
-        let output = if args == ["status"] {
+        let output = if args == ["status"] || args == ["tools", "call", "airk_diagnostics"] {
             read_retry::once_until(command(root, data, collection).args(args), deadline)?
         } else {
             command(root, data, collection).args(args).output()?

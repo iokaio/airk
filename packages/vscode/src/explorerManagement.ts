@@ -124,9 +124,11 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
     const recovery=recoveries.find(r=>['waiting','retrying'].includes(String(r.state))&&(r.reason==='helper_unavailable'?helperRecovery(r):scopedRecovery(r)||r.reason==='worker_unavailable'&&worker.identity===null));
     const recoveryTitle=recovery?.reason==='source_unavailable'?'Waiting for source folder':String(recovery?.reason).includes('storage')?'Waiting for storage capacity':recovery?.reason==='helper_unavailable'?'Recovering semantic indexing':recovery?.reason==='work_stalled'?'Recovering stalled indexing':'Recovering indexing';
     const health: ProjectHealthView = !state.connected
-        ? { severity: 'warn', title: 'Connection unavailable', detail: 'These are retained observations. Reconnect to check current project health.' }
+        ? state.busy && state.health.state === 'unavailable'
+            ? { severity: 'info', title: 'Connecting to AIRK', detail: 'Loading current project status. Published index information is shown separately.' }
+            : { severity: 'warn', title: 'Connection unavailable', detail: 'These are retained observations. Reconnect to check current project health.' }
         : state.inactiveProjects
-        ? { severity: 'info', title: 'Removed from AIRK', detail: 'Automatic work is stopped. Sources, settings and any retained index remain. Finish pending cleanup before adding this project again.' }
+        ? { severity: 'info', title: 'Removed from AIRK', detail: 'Automatic work is stopped. AIRK is deleting this project’s index data and saved settings. Source files are untouched. This entry disappears when removal completes.' }
         : worker.automatic_start_blocked === true
         ? { severity: 'error', title: 'Indexing cannot continue', detail: 'No project worker is available and automatic startup retries are exhausted. The saved job may still say running. Restart only this project worker; active requests may disconnect.', action: 'restartProject', actionLabel: 'Restart project worker' }
         : worker.restarting === true
@@ -147,6 +149,8 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         ? { severity: 'warn', title: 'Settings change failed', detail: failureDetail(obj(configuration.outcome).code), action: 'inspect', actionLabel: 'Recheck settings' }
         : job.state === 'failed' || job.state === 'canceled'
         ? { severity: job.state === 'failed' ? 'error' : 'info', title: job.state === 'failed' ? 'Job failed' : 'Work canceled', detail: `The ${scalar(job.kind)} job ${job.state}. ${failureDetail(obj(job.outcome).code)}`, action: 'retryJob', actionLabel: 'Retry job' }
+        : watch.enabled === true && watch.failure === 'backend_unavailable' && typeof watch.observed_unix_ms !== 'number'
+        ? { severity: 'info', title: 'Checking live update status', detail: 'Waiting for the source watcher to report its current status. Published index information is shown separately.' }
         : typeof watch.failure === 'string'
         ? { severity: 'warn', title: 'Source watching needs attention', detail: `Reported reason: ${watch.failure}. Review source access and unreadable directories. A retained index may still be available.` }
         : snapshot.source_state === 'unavailable'
@@ -165,7 +169,9 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
         ? { severity: 'ok', title: 'Published index available', detail: 'A published index is available. This does not prove that saved source files still match it.' }
         : { severity: 'info', title: 'Index status not checked', detail: 'Check index and storage to collect a native inspection. Refresh only reloads cached observations.', action: 'inspect', actionLabel: 'Check index & storage' };
     return {
-        rows: rows([['Index format', formats.index === 1 ? 'Index format 1 (index-v1)' : undefined], ['Index data', registration.data_root], ['Project identity', binding], ['Source observation', watch.failure === 'root_unavailable'
+        rows: rows([['Index format', formats.index === 1 ? 'Index format 1 (index-v1)' : undefined], ['Index data', registration.data_root], ['Project identity', binding], ['Source observation', watch.enabled === true && watch.failure === 'backend_unavailable' && typeof watch.observed_unix_ms !== 'number'
+            ? 'Checking live update status'
+            : watch.failure === 'root_unavailable'
             ? 'Source watching is unavailable: a configured root or directory is missing, unreadable or redirected. Remove a deleted project from Management › Projects.'
             : watch.failure ?? watch.backend],
             ['Pending source changes', typeof watch.requested_revision === 'number' && typeof watch.completed_revision === 'number' ? Math.max(0, watch.requested_revision - watch.completed_revision) : undefined],
@@ -188,7 +194,7 @@ function project(row: RecordValue, state: ServiceConsoleState): { rows: FactRow[
             health,
             lifecycle: !state.inactiveProjects ? 'Active' : configuration.state === 'pending' || configuration.state === 'running' ? 'Cleanup or removal request pending'
                 : configuration.state === 'succeeded' && resultValue?.complete === true ? 'Cleanup completed; ready to review registration'
-                : typeof resultValue?.guard === 'string' ? 'Cleanup captured; finish cleanup before adding again' : 'Removed; retained data may remain',
+                : typeof resultValue?.guard === 'string' ? 'Cleanup captured; finish cleanup before adding again' : 'Removal pending; deleting project data',
             requests: rows([...recoveries.map((r):[string,unknown]=>['Automatic recovery',`${scalar(r.reason)} · ${scalar(r.state)} · attempt ${scalar(r.attempts)} / ${scalar(r.limit)}${r.state==='waiting'&&typeof r.next_check_unix_ms==='number'?` · next check ${new Date(r.next_check_unix_ms).toLocaleTimeString()}`:''}`]),['Latest settings request', configuration.id ? `${scalar(configuration.state)} · ${scalar(configuration.id)}` : 'None observed'],
                 ['Settings result', obj(configuration.outcome).code ?? (configuration.state === 'succeeded' ? 'Applied; published coverage is observed separately' : undefined)],
                 ['Current / latest job', job.id ? `${scalar(job.kind)} · ${scalar(job.state)} · ${scalar(job.id)}` : 'None observed'],
@@ -337,7 +343,8 @@ export function managementView(state: ServiceConsoleState): ManagementView {
         pageNote: state.page ? `Showing ${state.page.projects.length} projects at registry revision ${state.page.revision}${state.page.after ? '; more projects remain' : ''}.` : 'No project page has been observed.',
         selectedCount: state.selected.size,
         ...(plan(state) ? { plan: plan(state)! } : {}),
-        pending: state.pending.map(intent => ({ id: intent.id, title: intent.title, unknown: intent.unknown, lifecycle: !!intent.lifecycle, forceAvailable: !!intent.forceAvailable })),
+        // Unacknowledged requests belong to the internal journal and diagnostics.
+        pending: [],
         events: state.events.slice(-32).reverse().map(event => `${scalar(event.kind)} · ${scalar(event.project)} · ${scalar(event.job_kind)} · ${scalar(event.code ?? event.observed_unix_ms)}`),
         processEvents: (Array.isArray(state.serviceEvents?.value?.records) ? state.serviceEvents!.value!.records : []).slice(-32).reverse().map(value => {
             const event = obj(value), timestamp = bytes(event.observed_unix_ms);

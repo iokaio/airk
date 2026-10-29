@@ -20,4 +20,4 @@ Choose Activity for requests and progress, Storage for storage and removal, Reco
 
 Adding a project records setup with registration. The native service prepares reserved storage, prepares the selected model when semantic mode is enabled, then indexes sources and eligible semantic units. It continues after the editor closes. A failed model setup leaves source indexing scheduled. Exhausted worker startup retries require the displayed restart action; acceptance alone does not prove recovery.
 
-Removed projects retain data and settings. Browse removed projects to preview cleanup and approve deletion separately. Finish a captured cleanup before registering again. Original sources are never deleted.
+Removing a project stops its work and automatically deletes its AIRK index data, usage ledger and saved settings after the owned worker drains. Removed projects appear only while cleanup is pending. Cleanup resumes after interruptions; there is no second deletion approval. Original source files are untouched.

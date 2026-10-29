@@ -55,7 +55,12 @@ fn accepted_index_waits_for_restored_source_without_another_request() -> Result<
     let Response::RequestReceipt {
         job: Some(observed),
         expired: false,
-    } = service.request(Method::RequestReceipt { caller, key })
+        removed_project: None,
+    } = service.request(Method::RequestReceipt {
+        caller,
+        key,
+        project: None,
+    })
     else {
         anyhow::bail!("original receipt unavailable")
     };
@@ -289,6 +294,7 @@ fn setup_without_editor(helper: bool) -> Result<()> {
     let reply = service.request(Method::ReserveProject {
         project: project.clone(),
         setup_watch: Some(false),
+        only_if_missing: false,
     });
     ensure!(
         matches!(reply, Response::Registered { .. }),

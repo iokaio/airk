@@ -850,6 +850,7 @@ impl Supervisor {
                             registry.pending_projects(1).is_ok_and(|page| page.is_empty())
                                 && registry.has_recovery_waits().is_ok_and(|pending|!pending)
                                 && registry.has_background_work().is_ok_and(|pending| !pending)
+                                && registry.pending_project_removals(None,1).is_ok_and(|pending| pending.is_empty())
                                 && registry.due_source_projects(None, i64::MAX as u64, 1).is_ok_and(|page| page.is_empty())
                         });
                     let mut sampled_waits = waiting.clone();

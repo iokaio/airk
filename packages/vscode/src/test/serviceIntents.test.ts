@@ -26,7 +26,26 @@ test('lost acknowledgement reconciles by read-only receipt and never resubmits a
     await journal.reconcile(client,async()=>{receipts++;});assert.equal(journal.list().length,1);
     found=true;await journal.reconcile(client,async()=>{receipts++;});
     assert.equal(receipts,1);assert.equal(journal.list().length,0);
-    assert.deepEqual(sent,[{request_receipt:{caller,key:(intent(1) as {enqueue:JobIntent}).enqueue.key}},{request_receipt:{caller,key:(intent(1) as {enqueue:JobIntent}).enqueue.key}}]);
+    assert.deepEqual(sent,[{request_receipt:{caller,project,key:(intent(1) as {enqueue:JobIntent}).enqueue.key}},{request_receipt:{caller,project,key:(intent(1) as {enqueue:JobIntent}).enqueue.key}}]);
+});
+
+test('bounded receipt checks rotate past missing and failed records without replaying them',async()=>{
+    const storage=new Memory(),journal=new IntentJournal(storage,'/control',namespace),sent:string[]=[],failures:string[]=[];
+    for(let index=1;index<=10;index++)await journal.prepare('Index',intent(index));
+    const before=structuredClone([...storage.values]);let receipts=0;
+    const client=new ServiceClient({dispose(){},async request(value){
+        const key=(value as {request_receipt:{key:{nonce:string}}}).request_receipt.key;
+        sent.push(key.nonce);
+        if(key.nonce==='1'.padStart(32,'0'))throw new ServiceError('invalid_service_failure');
+        return {status:'request_receipt',job:key.nonce==='a'.padStart(32,'0')?{id:'12'.repeat(32),project}:null};
+    }});
+    await journal.reconcile(client,async()=>{receipts++;},undefined,id=>{failures.push(id);});
+    assert.equal(sent.length,8);assert.equal(receipts,0);
+    await journal.reconcile(client,async()=>{receipts++;},undefined,id=>{failures.push(id);});
+    assert.equal(sent.length,16);assert.equal(receipts,1);
+    assert.equal(journal.list().length,9);
+    assert.ok(failures.length>0);
+    for(const [key,value] of before)if(!key.endsWith('a'.padStart(32,'0')))assert.deepEqual(storage.values.get(key),value);
 });
 test('configuration journal rejects raw input fields, stale body reuse and oversized configuration',async()=>{
     const storage=new Memory(),journal=new IntentJournal(storage,'/control',namespace);
@@ -88,4 +107,16 @@ test('the complete 256-project selection fits the durable local journal',async()
     assert.ok(Buffer.byteLength(JSON.stringify(selection))>8192);
     await journal.prepare('Verify selected projects',selection);
     assert.deepEqual(journal.list()[0].value.intent,selection);
+});
+
+
+test('authoritative project removal clears only matching saved requests without replay or invented job outcomes',async()=>{
+    const storage=new Memory(),journal=new IntentJournal(storage,'/control',namespace);
+    await journal.prepare('Index',intent(1));let removed='12'.repeat(32),receipts=0;const sent:unknown[]=[];
+    const client=new ServiceClient({dispose(){},async request(value){sent.push(value);return {status:'request_receipt',expired:true,job:null,removed_project:removed};}});
+    await assert.rejects(journal.reconcile(client,async()=>{receipts++;}),/crossed_removed_project_receipt/);
+    assert.equal(journal.list().length,1);
+    removed=project;await journal.reconcile(client,async()=>{receipts++;});
+    assert.equal(journal.list().length,0);assert.equal(receipts,0);
+    assert.ok(sent.every(value=>!!(value as any).request_receipt),'removal never resubmits the old indexing request');
 });

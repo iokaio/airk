@@ -26,6 +26,24 @@ pub(super) fn finish_if_requested(
             == Some(serde_json::json!({"unregistration_requested":true})),
         "unregister preparation receipt is missing or changed"
     );
+    retire(connection, project, Some(job))?;
+    super::configuration::write_result(
+        connection,
+        job,
+        &serde_json::to_vec(&serde_json::json!({
+            "unregistered":true,"sources_preserved":true,"settings_preserved":false,"derived_state_retained":true,"cleanup_pending":true,
+            "worker_drain":"observed separately"
+        }))?,
+    )?;
+    Ok(())
+}
+
+/// Shared retirement transaction: never opens or deletes source/index files.
+fn retire(
+    connection: &Connection,
+    project: ProjectBinding,
+    except: Option<Sha256Digest>,
+) -> Result<()> {
     ensure!(
         connection.execute(
             "UPDATE projects SET registered=0,paused=1 WHERE binding=?1 AND registered=1",
@@ -35,9 +53,13 @@ pub(super) fn finish_if_requested(
     );
     let mut statement = connection.prepare("SELECT id FROM service_jobs WHERE project=?1 AND id<>?2 AND state IN('pending','running') ORDER BY seq LIMIT 1025")?;
     let canceled = statement
-        .query_map(params![project.to_string(), job.to_string()], |row| {
-            row.get::<_, String>(0)
-        })?
+        .query_map(
+            params![
+                project.to_string(),
+                except.map(|id| id.to_string()).unwrap_or_default()
+            ],
+            |row| row.get::<_, String>(0),
+        )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     ensure!(
         canceled.len() <= 1024,
@@ -70,8 +92,8 @@ pub(super) fn finish_if_requested(
         [project.to_string()],
     )?;
     let epoch: i64 = connection.query_row(
-        "SELECT request_epoch FROM service_meta WHERE id=1",
-        [],
+        "SELECT max(request_epoch,(SELECT epoch FROM projects WHERE binding=?1)) FROM service_meta WHERE id=1",
+        [project.to_string()],
         |row| row.get(0),
     )?;
     let next = epoch
@@ -81,14 +103,43 @@ pub(super) fn finish_if_requested(
         "UPDATE service_meta SET request_epoch=?1 WHERE id=1",
         [next],
     )?;
-    super::bump(connection)?;
-    super::configuration::write_result(
-        connection,
-        job,
-        &serde_json::to_vec(&serde_json::json!({
-            "unregistered":true,"sources_preserved":true,"settings_preserved":true,"derived_state_retained":true,
-            "worker_drain":"observed separately"
-        }))?,
+    connection.execute(
+        "UPDATE projects SET cleanup_guard=?1 WHERE binding=?2",
+        params![super::project_removal::GUARD, project.to_string()],
     )?;
+    super::bump(connection)?;
     Ok(())
+}
+
+impl super::ServiceRegistry {
+    /// Consume a supervised source child's confirmed missing-root observation.
+    /// Both registration and watch epochs fence observations across re-registration
+    /// and configuration changes. Filesystem probes stay outside the broker.
+    pub fn retire_missing_source(
+        &mut self,
+        project: ProjectBinding,
+        registration_epoch: u64,
+        configuration_epoch: u64,
+    ) -> Result<bool> {
+        use rusqlite::TransactionBehavior;
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let eligible: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects p LEFT JOIN service_watch w ON w.project=p.binding WHERE p.binding=?1 AND p.registered=1 AND p.epoch=?2 AND coalesce(w.configuration_epoch,0)=?3)",
+            params![project.to_string(), i64::try_from(registration_epoch)?, i64::try_from(configuration_epoch)?], |row| row.get(0))?;
+        if !eligible {
+            return Ok(false);
+        }
+        retire(&tx, project, None)?;
+        ensure!(
+            tx.execute(
+                "UPDATE projects SET epoch=epoch+1 WHERE binding=?1 AND epoch<9223372036854775807",
+                [project.to_string()],
+            )? == 1,
+            "project epoch exhausted during missing-source retirement"
+        );
+        tx.commit()?;
+        Ok(true)
+    }
 }

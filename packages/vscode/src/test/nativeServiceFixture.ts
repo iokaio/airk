@@ -108,7 +108,7 @@ export class NativeServiceFixture {
     async publishedStatus(spec:LaunchSpec,deadline=performance.now()+120000):Promise<RecordValue>{
         let unavailable:RecordValue|undefined;
         while(performance.now()<deadline){
-            const status=await this.tool(spec,'airk_status',{},deadline);
+            const status=await this.tool(spec,'airk_diagnostics',{},deadline);
             assert.ok(performance.now()<deadline,'Published status observation deadline exhausted');
             if(!publishedStatusPending(status,spec.collection,spec.service!.project))return status;
             const observation=statusObservationSummary(status);

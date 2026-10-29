@@ -118,42 +118,129 @@ pub(super) fn append(
         .append_bytes(serde_json::to_vec(&value)?)
 }
 
+/// Records written by the extension share retention with indexing-job errors.
+pub fn record_client_error(root: &Path, operation: &str, input: &[u8]) -> Result<()> {
+    ensure!(
+        !operation.is_empty()
+            && operation.len() <= 64
+            && operation
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b == b'_'),
+        "invalid diagnostic operation"
+    );
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ClientError {
+        code: String,
+        detail: FailureDetail,
+    }
+    let failure: ClientError = serde_json::from_slice(input)?;
+    ensure!(
+        failure.detail.chain.len() <= DETAIL_BYTES
+            && !failure.detail.chain.is_empty()
+            && !failure.code.is_empty()
+            && failure.code.len() <= 128
+            && failure
+                .code
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_'),
+        "invalid client diagnostic detail"
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_millis()
+        .min(u64::MAX as u128) as u64;
+    let record = serde_json::to_vec(
+        &serde_json::json!({"schema":1,"kind":"extension_error","observed_unix_ms":now,
+        "native_version":env!("CARGO_PKG_VERSION"),"operation":operation,"failure":failure}),
+    )?;
+    Sink::named(root, DIRECTORY, OWNER, RECORD_BYTES)?.append_bytes(record)
+}
+
 /// Exact retained JSONL, oldest first. This explicit local CLI path never uses
 /// service RPC or the redacted diagnostic report. No source files are read.
 pub fn export(root: &Path) -> Result<Vec<u8>> {
+    let mut output = Vec::new();
+    export_to(root, &mut output)?;
+    Ok(output)
+}
+/// Stream a finite capture to a caller-owned file; large logs never need an IPC frame.
+pub fn export_to(root: &Path, output: &mut impl Write) -> Result<u64> {
     let parent = crate::runtime_install::log_parent(root)?;
     if !exists(&parent.join(OWNER))? && !exists(&parent.join(DIRECTORY))? {
-        return Ok(Vec::new());
+        return Ok(0);
     }
     let directory = named_owner(root, false, DIRECTORY, OWNER)?;
     preflight(&directory)?;
-    let mut output = Vec::new();
+    let mut total = 0u64;
     for name in FILES.into_iter().rev() {
         let path = directory.join(name);
         if !exists(&path)? {
             continue;
         }
         crate::runtime_install::safe_file(&path)?;
-        let mut bytes = Vec::new();
-        File::open(&path)?
-            .take(FILE_BYTES + 1)
-            .read_to_end(&mut bytes)?;
-        ensure!(
-            bytes.len() <= FILE_BYTES as usize,
-            "raw diagnostic file exceeds bound"
-        );
-        output.extend(bytes);
+        let mut file = File::open(&path)?;
+        let mut remaining = file.metadata()?.len();
+        ensure!(remaining <= FILE_BYTES, "raw diagnostic file exceeds bound");
+        let mut block = [0u8; 65536];
+        let mut last = None;
+        while remaining > 0 {
+            let length = remaining.min(block.len() as u64) as usize;
+            let count = file.read(&mut block[..length])?;
+            if count == 0 {
+                break;
+            }
+            total += count as u64;
+            ensure!(
+                total <= HIGH_WATER_BYTES + FILES.len() as u64,
+                "raw diagnostic capture exceeds retention bound"
+            );
+            output.write_all(&block[..count])?;
+            last = block.get(count - 1).copied();
+            remaining -= count as u64;
+        }
         // Preserve an interrupted record's exact bytes and delimit files.
-        if output.last().is_some_and(|byte| *byte != b'\n') {
-            output.push(b'\n');
+        if last.is_some_and(|byte| byte != b'\n') {
+            output.write_all(b"\n")?;
+            total += 1;
         }
     }
-    Ok(output)
+    Ok(total)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn client_errors_share_retention_with_a_live_job_error_writer_and_require_no_job() -> Result<()>
+    {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("control");
+        crate::local_ipc::prepare_root(&root)?;
+        let mut job_writer = Sink::named(&root, DIRECTORY, OWNER, RECORD_BYTES)?;
+        job_writer.append_bytes(serde_json::to_vec(
+            &serde_json::json!({"kind":"fixture_before"}),
+        )?)?;
+        record_client_error(&root,"open_raw_logs",br#"{"code":"status_poll_timed_out","detail":{"chain":"A local status connection timed out","truncated":false}}"#)?;
+        job_writer.append_bytes(serde_json::to_vec(
+            &serde_json::json!({"kind":"fixture_after"}),
+        )?)?;
+        let bytes = export(&root)?;
+        let records = std::str::from_utf8(&bytes)?
+            .lines()
+            .map(serde_json::from_str::<serde_json::Value>)
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[1]["kind"], "extension_error");
+        assert_eq!(records[1]["operation"], "open_raw_logs");
+        assert_eq!(records[1]["failure"]["code"], "status_poll_timed_out");
+        assert!(record_client_error(&root, "../../foreign", b"{}").is_err());
+        assert_eq!(export(&root)?, bytes);
+        let mut streamed = Vec::new();
+        assert_eq!(export_to(&root, &mut streamed)?, bytes.len() as u64);
+        assert_eq!(streamed, bytes);
+        Ok(())
+    }
     #[test]
     fn raw_failure_survives_while_summary_stays_content_free() -> Result<()> {
         let owner = tempfile::tempdir()?;

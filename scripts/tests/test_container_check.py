@@ -20,7 +20,7 @@ class ContainerCheckTests(unittest.TestCase):
         names = [
             "capabilities", "changes", "code_facts", "context", "document_facts",
             "file_info", "help", "imports", "list_files", "outline", "read_file", "references",
-            "relationships", "search", "status", "symbols", "projects", "draft_search",
+            "relationships", "search", "status", "diagnostics", "symbols", "projects", "draft_search",
             "draft_strategy", "draft_plan", "suggest_view", "list_templates", "get_template",
             "validate_draft", "proposal_status", "get_handoff"]
         for catalog, accepted in ((names, True), (names[:-1], False),
@@ -115,7 +115,7 @@ class ContainerCheckTests(unittest.TestCase):
                     output = json.dumps({"registration": {"collection": collection, "binding": "scope-" + collection}})
                 elif command[:2] == ("tools", "call"):
                     result = {"collection": collection, "items": [1] if collection == "project-a" else []} if command[2] == "airk_symbols" else {"index_state": "available", "collection": collection, "publication": {"collection": collection, "token": "token-" + collection}, "files": 2}
-                    if command[2] == "airk_status":
+                    if command[2] == "airk_diagnostics":
                         status_calls += 1
                         if status_calls == 1:
                             result = {"index_state": "unavailable", "project": "scope-" + collection,

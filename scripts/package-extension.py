@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTENSION = ROOT / "packages" / "vscode"
 TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "linux-x64",
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
-MODULES = ("extension.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "cliInstall.js",
+MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "cliInstall.js",
            "usagePanel.js", "usageReport.js", "report.js",
            "agentConnections.js", "agentConfig.js", "agentMigration.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "serviceClient.js",
            "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js",
@@ -41,6 +41,16 @@ ICONS = ("airk.svg", "icon.png")
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def runtime_package(package):
+    """Retain the reviewed uninstall hook; development scripts never ship."""
+    package = dict(package)
+    package.pop("devDependencies", None)
+    if package.get("scripts", {}).get("vscode:uninstall") != "node ./out/uninstallHook.js":
+        raise ValueError("Expected the packaged AIRK uninstall hook")
+    package["scripts"] = {"vscode:uninstall": "node ./out/uninstallHook.js"}
+    return package
 
 
 def safe_name(name):
@@ -266,8 +276,7 @@ def main():
     stage_runtime_modules(EXTENSION / "out", stage / "out")
     stage_bundles(EXTENSION / "out", stage / "out", package["devDependencies"]["preact"])
     stage_jsonc_parser(EXTENSION / "node_modules" / "jsonc-parser", stage / "node_modules" / "jsonc-parser")
-    for key in ("scripts", "devDependencies"):
-        package.pop(key, None)
+    package = runtime_package(package)
     (stage / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
     listing = (EXTENSION / "README.md").read_text(encoding="utf-8")
     (stage / "images").mkdir()

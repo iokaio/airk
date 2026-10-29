@@ -1,5 +1,7 @@
 # Coding-agent MCP setup research
 
+In 1.6.1, managed connections name the stable launcher and source folder (`--root <folder> mcp`), rather than persisting storage paths and internal binding IDs. The 27-tool catalog separates lightweight `status` from detailed `diagnostics`; routine access checks should use status, and troubleshooting should explicitly call diagnostics. See [the source-scope and migration contract](unified-mcp.md).
+
 ## Project instructions (1.5.12)
 
 Management → Agents → **Help your agent discover and use AIRK** shows optional repository guidance. **Copy instructions** copies the displayed Markdown. Separate file buttons open `CLAUDE.md` for Claude Code, `AGENTS.md` for Codex, and `.github/copilot-instructions.md` for GitHub Copilot in the project selected in the Explorer header. Existing editor contents, including unsaved edits, are preserved; a missing file becomes a named unsaved draft. AIRK does not append, save, create directories, or change MCP configuration through these buttons. Review the suggestion alongside existing rules, save, and have the client load the instructions using its own controls or a new session.
@@ -10,7 +12,7 @@ The bundled **Project instructions for AI agents** help topic explains the workf
 
 ## Connection setup
 
-Current source exposes one unified endpoint; see the [catalog and startup migration](unified-mcp.md). The native evidence adapter retains sixteen compatibility aliases, including airk_help. The fifteen-tool 1.3 statements below describe that historical source.
+Current source exposes one unified endpoint; see the [catalog and startup migration](unified-mcp.md). The native evidence adapter retains seventeen compatibility aliases, including airk_help. The fifteen-tool 1.3 statements below describe that historical source.
 
 The 1.5.11 connection correction checks native project registrations before setup and updates both storage and project identity when the user explicitly replaces a recognized connection for the same source/collection. Codex creation/update verifies the saved connection and reports failures separately from file writes. The earlier client research below retains its original date; see the [current setup contract](unified-mcp.md#startup-migration).
 

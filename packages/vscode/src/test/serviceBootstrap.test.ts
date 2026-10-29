@@ -104,7 +104,7 @@ test('legacy startup review executes only the verified new main and binds exact 
     }finally{await f.cleanup();}
 });
 
-async function fixture(host:{platform:string;arch:string}={platform:process.platform,arch:process.arch}){
+async function fixture(host:{platform:string;arch:string}={platform:process.platform,arch:process.arch},version='1.4.0'){
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-runtime-bootstrap-'));
     const source=path.join(root,'native','runtime');await fs.mkdir(source,{recursive:true});
     const prefix=host.platform==='darwin'?'AIRK.app/Contents/MacOS/':'';
@@ -113,10 +113,10 @@ async function fixture(host:{platform:string;arch:string}={platform:process.plat
     for(const [name,body]of [[main,'Original native main fixture.'],[helper,'Original native inference fixture.'],['LICENSE','Original fixture license notice.']]){
         await fs.mkdir(path.dirname(path.join(source,name)),{recursive:true});await fs.writeFile(path.join(source,name),body);files[name]=sha(body);
     }
-    const inventory=Buffer.from(JSON.stringify({schema:1,version:'1.4.0',os:host.platform==='win32'?'windows':host.platform==='darwin'?'macos':'linux',
+    const inventory=Buffer.from(JSON.stringify({schema:1,version,os:host.platform==='win32'?'windows':host.platform==='darwin'?'macos':'linux',
         arch:host.arch==='arm64'?'aarch64':'x86_64',files}));
     const digest=sha(inventory);await fs.writeFile(path.join(source,'airk-install.json'),inventory);
-    const wrapper={schema:2,version:'1.4.0',vsix_target:`${host.platform}-${host.arch}`,runtime_dir:'runtime',install_manifest_sha256:digest,payload:{[main]:files[main],[helper]:files[helper]}};
+    const wrapper={schema:2,version,vsix_target:`${host.platform}-${host.arch}`,runtime_dir:'runtime',install_manifest_sha256:digest,payload:{[main]:files[main],[helper]:files[helper]}};
     await fs.writeFile(path.join(root,'native','manifest.json'),JSON.stringify(wrapper));
     async function cleanup(){const target=path.resolve(root),base=path.resolve(os.tmpdir());assert.equal(path.dirname(target),base);assert.ok(path.basename(target).startsWith('airk-runtime-bootstrap-'));await fs.rm(target,{recursive:true,force:true});}
     return {root,source,main,helper,digest,wrapper,cleanup};
@@ -135,16 +135,16 @@ test('Mac bundle verification resolves the same two native roles and refuses an 
     }
 });
 
-async function transitionFixture(){
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+async function transitionFixture(version='1.4.0'){
+    const f=await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install);
     await fs.mkdir(path.join(install,'control'));
-    const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion='1.4.0',selectedVersion='1.4.0';
+    const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion=version,selectedVersion=version;
     const inspection=()=>({selection:{active,previous:'cd'.repeat(32)},executable:path.join(install,'runtimes',active,f.main),launcher:path.join(install,'airk-launcher'),
         control_dir:path.join(install,'control'),managed_policy:null,approval:{version:selectedVersion,manifest_sha256:active,verification_basis:'trusted_distribution'}});
     const run:NativeRunner=async(command,args)=>{
         assert.equal(command,path.join(f.source,f.main));calls.push([...args]);
         switch(args[1]){
-            case 'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+            case 'self-test':return {protocol:1,version,self_test:'passed',metadata_console:1};
             case 'location':return {protocol:1,install_dir:install};
             case 'inspect':return inspection();
             case 'diagnose':return {pending_activation:pending};
@@ -164,7 +164,7 @@ async function transitionFixture(){
             default:throw new Error('Unexpected transition action');
         }
     };
-    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},run);
+    const host=new RuntimeHost(f.root,version,{channel:'stable',installDir:install},run);
     return {f,host,calls,install,binding:()=>host.binding(inspection(),install),setActive:(value:string)=>{active=value;},
         setPending:(value:RecordValue)=>{pending=value;},setCandidateVersion:(value:string)=>{candidateVersion=value;},setSelectedVersion:(value:string)=>{selectedVersion=value;}};
 }
@@ -234,6 +234,22 @@ test('a selected different native version stays pinned until explicit review and
         assert.ok(t.calls.every(args=>['self-test','location','inspect','diagnose'].includes(args[1])));
         const reviewed=await t.host.reviewTransition(binding,'upgrade');assert.equal(reviewed.target,t.f.digest);assert.equal(reviewed.version,'1.4.0');
         t.setCandidateVersion('1.4.1');const rollback=await t.host.reviewTransition(binding,'rollback');assert.equal(rollback.version,'1.4.1');
+    }finally{await t.f.cleanup();}
+});
+
+test('1.6 supersedes an unfinished 1.5 upgrade without making that older candidate resumable',async()=>{
+    const t=await transitionFixture('1.6.0');
+    try{
+        t.setSelectedVersion('1.5.11');t.setCandidateVersion('1.5.12');
+        const binding=t.binding(),pending={candidate:'ef'.repeat(32),prior:{active:binding.runtimeSha256},
+            install:t.install,control:binding.controlDir,phase:'drain'};
+        t.setPending(pending);
+        await assert.rejects(t.host.reviewTransition(binding,'resume'),/candidate_not_compatible_with_this_extension/);
+        assert.equal(await t.host.supersedePending(binding,{pending_activation:pending}),true);
+        assert.equal(t.calls.filter(args=>args[1]==='abort-activation').length,1);
+        assert.equal(t.calls.filter(args=>['stage','activate'].includes(args[1])).length,0);
+        const review=await t.host.reviewTransition(binding,'upgrade');
+        await t.host.transition(binding,review);assert.equal(t.binding().runtimeSha256,t.f.digest);
     }finally{await t.f.cleanup();}
 });
 
@@ -471,9 +487,9 @@ test('native lifecycle sends a bounded saved intent over stdin and refuses a cro
     }finally{await f.cleanup();}
 });
 
-test('activation upgrades automatically only within 1.4 or 1.5 patches and from 1.4 to 1.5', () => {
-    for (const [from, to] of [['1.4.0', '1.4.4'], ['1.4.4', '1.4.4'], ['1.4.4', '1.5.0'], ['1.4.1', '1.5.3'], ['1.5.0', '1.5.2']]) { assert.ok(automaticUpgrade(from, to), `${from} → ${to}`); }
-    for (const [from, to] of [['1.5.0', '1.4.4'], ['1.4.4', '1.4.3'], ['1.3.2', '1.5.0'], ['1.3.2', '1.4.0'], ['1.5.1', '1.5.0'], ['1.4.4', '1.6.0'], ['2.0.0', '2.0.1'], ['1.4', '1.5.0'], ['1.4.x', '1.5.0']]) {
+test('activation admits supported forward upgrades and rejects downgrades, unknown lines and malformed versions', () => {
+    for (const [from, to] of [['1.4.0', '1.4.4'], ['1.4.4', '1.4.4'], ['1.4.4', '1.5.0'], ['1.4.1', '1.5.3'], ['1.5.0', '1.5.2'], ['1.4.4','1.6.0'], ['1.5.12','1.6.0'], ['1.6.0','1.6.0'], ['1.6.0','1.6.1']]) { assert.ok(automaticUpgrade(from, to), `${from} → ${to}`); }
+    for (const [from, to] of [['1.5.0', '1.4.4'], ['1.4.4', '1.4.3'], ['1.3.2', '1.5.0'], ['1.3.2', '1.4.0'], ['1.5.1', '1.5.0'], ['1.6.0','1.5.12'], ['1.6.1','1.6.0'], ['1.6.0','1.7.0'], ['2.0.0', '2.0.1'], ['1.4', '1.5.0'], ['1.4.x', '1.5.0'], ['1..0','1.6.0'], ['1.5.0','1.6.'], ['1.5.0','1.6.0-beta'], ['1.5.0','1.6.9007199254740992']]) {
         assert.equal(automaticUpgrade(from, to), false, `${from} → ${to}`);
     }
 });

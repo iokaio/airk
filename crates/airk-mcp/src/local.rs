@@ -443,7 +443,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn status_runtime_bundle_is_explicit_in_both_modes_and_isolated_between_clients()
+    async fn status_summary_is_light_and_diagnostics_are_explicit_and_client_local()
     -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;
         let root = directory.path().join("source");
@@ -460,27 +460,54 @@ mod tests {
         let work = serde_json::json!({"schema":1,"progress_current_worker":false,"pending_job":null,"failed_observations":["watch_unavailable"]});
         first.set_work(work.clone());
         for mode in ["terse", "full", "terse"] {
-            let args = serde_json::json!({"response_mode":mode})
+            let args = serde_json::json!({"response_mode":mode,"include_status":true})
                 .as_object()
                 .unwrap()
                 .clone();
             assert_eq!(
-                body(first.call("airk_status".into(), args).await?)?["runtime"],
+                body(first.call("airk_diagnostics".into(), args).await?)?["runtime"],
                 runtime
             );
             assert_eq!(
-                body(first.call("airk_status".into(), Default::default()).await?)?["work"],
+                body(
+                    first
+                        .call(
+                            "airk_diagnostics".into(),
+                            serde_json::json!({"include_status":true})
+                                .as_object()
+                                .unwrap()
+                                .clone()
+                        )
+                        .await?
+                )?["work"],
                 work
             );
         }
         assert_eq!(
             body(
                 second
-                    .call("airk_status".into(), Default::default())
+                    .call(
+                        "airk_diagnostics".into(),
+                        serde_json::json!({"response_mode":"full"})
+                            .as_object()
+                            .unwrap()
+                            .clone()
+                    )
                     .await?
             )?["runtime"]["error"],
             "native_runtime_context_unavailable"
         );
+        for _ in 0..2 {
+            let summary = body(first.call("airk_status".into(), Default::default()).await?)?;
+            assert_eq!(summary["files"], 1);
+            assert_eq!(summary["version"], env!("CARGO_PKG_VERSION"));
+            assert!(summary["health"].is_string());
+            assert!(summary.get("runtime").is_none() && summary.get("work").is_none());
+            assert!(
+                summary.get("freshness").is_some() && summary.get("semantic_readiness").is_some()
+            );
+            assert!(serde_json::to_vec(&summary)?.len() < 1024);
+        }
         first.close().await?;
         second.close().await?;
         owner.close().await?;
@@ -494,16 +521,20 @@ mod tests {
         let data = tempfile::tempdir()?;
         let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
         let mut owner = LocalTools::new(kernel).await?;
-        assert!(
-            owner
-                .call("airk_status".into(), Default::default())
-                .await?
-                .is_error
-                .unwrap_or(false)
-        );
+        let summary = body(owner.call("airk_status".into(), Default::default()).await?)?;
+        assert_eq!(summary["index_state"], "unavailable");
+        assert!(summary.get("runtime").is_none());
         owner.set_runtime(serde_json::json!({"schema":1,"service":{"responsive":true}}));
         owner.set_work(serde_json::json!({"schema":1,"progress":{"phase":"discovering"}}));
-        let result = owner.call("airk_status".into(), Default::default()).await?;
+        let result = owner
+            .call(
+                "airk_diagnostics".into(),
+                serde_json::json!({"response_mode":"full"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await?;
         assert!(!result.is_error.unwrap_or(false));
         let status = body(result)?;
         assert_eq!(status["index_state"], "unavailable");

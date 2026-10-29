@@ -36,6 +36,8 @@ struct Replies {
     pending: Option<u16>,
     observations: BTreeMap<ProjectBinding, WatchReport>,
     events: BTreeMap<ProjectBinding, (u64, u64)>,
+    missing: BTreeMap<ProjectBinding, (u64, u64)>,
+    removal_results: BTreeMap<ProjectBinding, (bool, bool)>,
 }
 
 struct WatchReport {
@@ -159,6 +161,41 @@ impl WatchChild {
                                 observed.directories = Some(watched_directories);
                                 observed.projects = Some(projects);
                                 observed.pending = Some(pending_events);
+                            }
+                            Reply::RemovalResult {
+                                project,
+                                complete,
+                                failed,
+                            } => {
+                                let Ok(mut observed) = observed.lock() else {
+                                    break;
+                                };
+                                if !observed.removal_results.contains_key(&project)
+                                    && observed.removal_results.len() >= 1024
+                                {
+                                    break;
+                                }
+                                observed.removal_results.insert(project, (complete, failed));
+                                // Queued cleanup batches can delay the periodic
+                                // pulse; each valid result also proves liveness.
+                                observed.pulse = Some(Instant::now());
+                            }
+                            Reply::MissingSource {
+                                project,
+                                registration_epoch,
+                                configuration_epoch,
+                            } => {
+                                let Ok(mut observed) = observed.lock() else {
+                                    break;
+                                };
+                                if !observed.missing.contains_key(&project)
+                                    && observed.missing.len() >= 1024
+                                {
+                                    break;
+                                }
+                                observed
+                                    .missing
+                                    .insert(project, (registration_epoch, configuration_epoch));
                             }
                             Reply::Observation {
                                 project,
@@ -368,6 +405,9 @@ impl SourceSupervisor {
                 let mut child: Option<WatchChild> = None;
                 let mut registry = None;
                 let mut after = None;
+                let mut removal_after = None;
+                let mut removals_pending = false;
+                let mut failed_removals = BTreeSet::new();
                 let mut sent = BTreeMap::<ProjectBinding, (u64, Option<Sha256Digest>)>::new();
                 let mut periodic = BTreeMap::<ProjectBinding, Instant>::new();
                 let mut enabled = BTreeSet::new();
@@ -429,7 +469,15 @@ impl SourceSupervisor {
                         .and_then(|time| u64::try_from(time.as_millis()).ok());
                     if let (Some(registry), Some(now_ms)) = (registry.as_mut(), now_ms) {
                         if let Some(active) = child.as_ref() {
-                            let (observations, events) = if let Ok(mut replies) =
+                            if let Ok(mut replies) = active.replies.lock() {
+                                let results = std::mem::take(&mut replies.removal_results);
+                                for (project, (complete, failed)) in results {
+                                    if complete { failed_removals.remove(&project); log.record(airk_core::service_logs::LogKind::ProjectRemovalCompleted, Some(project), None); }
+                                    else if failed && failed_removals.insert(project) { log.record(airk_core::service_logs::LogKind::ProjectRemovalFailed, Some(project), None); }
+                                    else if !failed { failed_removals.remove(&project); }
+                                }
+                            }
+                            let (observations, events, missing) = if let Ok(mut replies) =
                                 active.replies.lock()
                             {
                                 let observations = replies
@@ -454,10 +502,49 @@ impl SourceSupervisor {
                                         replies.events.remove(&id).map(|value| (id, value))
                                     })
                                     .collect::<Vec<_>>();
-                                (observations, events)
+                                let missing = replies
+                                    .missing
+                                    .keys()
+                                    .take(16)
+                                    .copied()
+                                    .collect::<Vec<_>>()
+                                    .into_iter()
+                                    .filter_map(|id| {
+                                        replies.missing.remove(&id).map(|value| (id, value))
+                                    })
+                                    .collect::<Vec<_>>();
+                                (observations, events, missing)
                             } else {
-                                (vec![], vec![])
+                                (vec![], vec![], vec![])
                             };
+                            for (project, (registration_epoch, configuration_epoch)) in missing {
+                                match registry.retire_missing_source(
+                                    project,
+                                    registration_epoch,
+                                    configuration_epoch,
+                                ) {
+                                    Ok(true) => {
+                                        enabled.remove(&project);
+                                        periodic.remove(&project);
+                                        sent.remove(&project);
+                                        let _ = active.send(vec![Command::Remove {
+                                            project,
+                                            configuration_epoch,
+                                        }]);
+                                        log.record(
+                                            airk_core::service_logs::LogKind::SourceProjectRemoved,
+                                            Some(project),
+                                            None,
+                                        );
+                                    }
+                                    Ok(false) => (),
+                                    Err(_) => log.record(
+                                        airk_core::service_logs::LogKind::MetadataUnavailable,
+                                        Some(project),
+                                        None,
+                                    ),
+                                }
+                            }
                             for (
                                 project,
                                 WatchReport {
@@ -506,6 +593,44 @@ impl SourceSupervisor {
                                 }
                             }
                         }
+                        if Instant::now() >= next_page {
+                            match registry.pending_project_removals(removal_after, 16) {
+                                Ok(removals) => {
+                                    removals_pending = registry.pending_project_removals(None, 1)
+                                        .map_or(true, |pending| !pending.is_empty());
+                                    if removals.is_empty() {
+                                        removal_after = None;
+                                    }
+                                    for registration in removals {
+                                        if child.is_none()
+                                            && attempts < 3
+                                            && Instant::now() >= retry
+                                            && let Ok(active) = WatchChild::start(&root, service, pid.clone())
+                                        {
+                                            pid.store(active.process.id(), Ordering::Release);
+                                            child = Some(active);
+                                            sent.clear();
+                                        }
+                                        if let Some(active) = child.as_ref() {
+                                            if active
+                                                .send(vec![
+                                                    Command::CleanupRemoved {
+                                                        project: registration.binding,
+                                                    },
+                                                ])
+                                                .is_err()
+                                            {
+                                                break;
+                                            }
+                                            removal_after = Some(registration.binding);
+                                        }
+                                    }
+                                }
+                                Err(_) => {
+                                    removals_pending = true;
+                                }
+                            }
+                        }
                         if Instant::now() >= next_page
                             && let Ok(projects) = registry.watch_projects(after, 32)
                         {
@@ -526,37 +651,44 @@ impl SourceSupervisor {
                                     {
                                         periodic.insert(id, Instant::now());
                                     }
-                                    if child.is_none() && attempts < 3 && Instant::now() >= retry {
-                                        let predecessor = SourceWatchLease::acquire(&root).is_err();
-                                        if !predecessor
-                                            && registry.reset_native_watch_observations().is_ok()
-                                        {
-                                            match WatchChild::start(&root, service, pid.clone()) {
-                                                Ok(active) => {
-                                                    pid.store(
-                                                        active.process.id(),
-                                                        Ordering::Release,
-                                                    );
-                                                    child = Some(active);
-                                                    sent.clear();
-                                                }
-                                                Err(_) => {
-                                                    attempts += 1;
-                                                    retry = Instant::now()
-                                                        + Duration::from_secs(1 << attempts.min(6));
-                                                }
-                                            }
-                                        }
-                                        if let Ok(mut cache) = state.lock() {
-                                            cache.predecessor = predecessor;
-                                        }
-                                    }
                                 } else {
                                     enabled.remove(&id);
                                     periodic.remove(&id);
                                 }
+                                if child.is_none() && attempts < 3 && Instant::now() >= retry {
+                                    let predecessor = SourceWatchLease::acquire(&root).is_err();
+                                    if !predecessor
+                                        && registry.reset_native_watch_observations().is_ok()
+                                    {
+                                        match WatchChild::start(&root, service, pid.clone()) {
+                                            Ok(active) => {
+                                                pid.store(active.process.id(), Ordering::Release);
+                                                child = Some(active);
+                                                sent.clear();
+                                            }
+                                            Err(_) => {
+                                                attempts += 1;
+                                                retry = Instant::now()
+                                                    + Duration::from_secs(1 << attempts.min(6));
+                                            }
+                                        }
+                                    }
+                                    if let Ok(mut cache) = state.lock() {
+                                        cache.predecessor = predecessor;
+                                    }
+                                }
                                 if let Some(active) = child.as_ref() {
-                                    if send_configuration(active, &project, &mut sent).is_err() {
+                                    if active
+                                        .send(vec![Command::CheckSource {
+                                            registration: project.project.registration.clone(),
+                                            registration_epoch: project.project.fencing_generation,
+                                            configuration_epoch: project.configuration_epoch,
+                                        }])
+                                        .and_then(|()| {
+                                            send_configuration(active, &project, &mut sent)
+                                        })
+                                        .is_err()
+                                    {
                                         complete = false;
                                         break;
                                     }
@@ -591,7 +723,8 @@ impl SourceSupervisor {
                     if let Ok(mut cache) = state.lock() {
                         cache.coordinated = Some(Instant::now());
                         cache.configuration_revision = configuration_snapshot;
-                        let no_background_intent = scanned && enabled.is_empty();
+                        let no_background_intent =
+                            scanned && enabled.is_empty() && !removals_pending;
                         cache.blocked = attempts >= 3;
                         cache.available = false;
                         if let Some(active) = child.as_ref()
@@ -609,6 +742,7 @@ impl SourceSupervisor {
                             idle.store(
                                 no_background_intent
                                     && replies.events.is_empty()
+                                    && replies.missing.is_empty()
                                     && replies.pending == Some(0),
                                 Ordering::Release,
                             );
