@@ -539,10 +539,17 @@ fn retire_missing_source_cancels_work_preserves_other_projects_and_fences_stale_
 #[test]
 fn completed_removal_never_reuses_an_unadmitted_registration_epoch() -> Result<()> {
     let owner = tempfile::tempdir()?;
-    let mut registry = ServiceRegistry::open(owner.path(), nonce(1))?;
+    let base = owner.path().canonicalize()?;
+    let control = base.join("control");
+    let source = base.join("source");
+    let data = base.join("data");
+    for directory in [&control, &source, &data] {
+        std::fs::create_dir(directory)?;
+    }
+    let mut registry = ServiceRegistry::open(&control, nonce(1))?;
     let project = ProjectRegistration::new(
-        owner.path().join("source").to_str().unwrap().into(),
-        owner.path().join("data").to_str().unwrap().into(),
+        source.to_str().unwrap().into(),
+        data.to_str().unwrap().into(),
         "epoch".into(),
     )?;
     registry.register(&project)?;
