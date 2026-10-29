@@ -3,9 +3,37 @@
 import {execFile} from 'node:child_process';
 import {NativeProcessError} from '../native';
 import {readRetryDelay} from '../explorerEvidence';
+import {strict as assert} from 'node:assert';
+import {RecordValue} from '../serviceClient';
 
 // The Explorer evidence client and these fixtures honor the same native retry hints.
 export {readRetryDelay};
+
+/** Unknown quick readiness is valid only for the explicit deadline contract, never invented evidence. */
+export function assertQuickStatusTimeout(status:RecordValue):void{
+    const error=status.index_error as RecordValue|undefined;
+    assert.equal(status.index_state,'unknown');
+    assert.ok(error?.code==='status_timeout'&&error.retryable===true,'Unknown readiness requires an explicit status_timeout retry hint');
+    assert.equal(status.health,'unknown');
+    assert.equal(typeof status.project,'string');
+    assert.match(String(status.project),/^[a-f0-9]{64}$/);
+    for(const field of ['publication','files','chunks'])assert.equal(status[field],null,'An unconfirmed observation must not invent evidence');
+}
+
+/** Observe the same scoped read after an explicit timeout; never accept unknown as readiness. */
+export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordValue>,deadline=performance.now()+60000):Promise<RecordValue>{
+    let project:unknown;
+    while(performance.now()<deadline){
+        const status=await read(deadline);
+        assert.ok(performance.now()<deadline,'Quick status observation budget exhausted');
+        if(project!==undefined)assert.equal(status.project,project,'Status retries must retain the configured source scope');
+        if(status.index_state!=='unknown')return status;
+        assertQuickStatusTimeout(status);project=status.project;
+        assert.ok(performance.now()+50<deadline,'Quick status observation budget exhausted');
+        await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    throw new Error('Quick status observation budget exhausted');
+}
 
 export async function readNative(command:string,args:readonly string[],cwd:string,until?:number):Promise<unknown>{
     const deadline=Math.min(until??Infinity,performance.now()+120000);

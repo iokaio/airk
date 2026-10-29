@@ -92,7 +92,7 @@ export interface StatusSummary {
 export interface ConnectionCheck {
     phase: 'preparing' | 'checking' | 'verified' | 'failed'; checkedAt?: number; tools?: string[]; error?: string;
     startedAt?: number; message?: string; project?: string; handshakeMs?:number;
-    indexState?: 'not_indexed' | 'unavailable' | 'published';
+    indexState?: 'not_indexed' | 'unavailable' | 'unknown' | 'published';
 }
 export interface ExplorerViewState {
     readonly revision: number;

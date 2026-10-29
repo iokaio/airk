@@ -6,9 +6,22 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { NativeProcessError, NativeWriteQueue, joinScheduledIndex, ScheduledIndexStillQueued, parseIndexProgress, prepareHelper, probeMcp, runJson, runText } from '../native';
-import { LaunchSpec, launchArgs } from '../model';
+import { LaunchSpec, launchArgs, UNIFIED_TOOLS } from '../model';
+import { McpStdioSession } from '../mcpStdioSession';
 import { NativeServiceFixture } from './nativeServiceFixture';
 import { record } from '../serviceClient';
+
+test('MCP connection probes preserve unknown readiness separately from confirmed unavailability',async context=>{
+    let state='unknown',closed=0;
+    const session={request:async(method:string)=>method==='tools/list'?{tools:UNIFIED_TOOLS.map(name=>({name}))}
+        :{isError:false,content:[{type:'text',text:JSON.stringify({index_state:state,files:null,publication:null})}]},close:()=>{closed++;}};
+    context.mock.method(McpStdioSession,'open',async()=>({session:session as unknown as McpStdioSession}));
+    const spec={command:'fixture',root:process.cwd(),dataDir:process.cwd(),collection:'fixture',name:'fixture'};
+    assert.equal(record((await probeMcp(spec)).status).state,'index_unknown');
+    state='unavailable';assert.equal(record((await probeMcp(spec)).status).state,'index_unavailable');
+    state='available';assert.equal(record((await probeMcp(spec)).status).state,undefined);
+    assert.equal(closed,3);
+});
 
 async function removeFixture(directory: string, prefix: string): Promise<void> {
     const resolved = await fs.realpath(directory), base = await fs.realpath(os.tmpdir());
