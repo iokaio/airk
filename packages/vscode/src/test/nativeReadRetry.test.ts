@@ -1,8 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 import {strict as assert} from 'node:assert';
 import {test} from 'node:test';
-import {readRetryDelay} from './nativeReadRetry';
+import {assertQuickStatusTimeout,observeQuickStatus,readRetryDelay} from './nativeReadRetry';
 import {publishedStatusPending} from './nativeServiceFixture';
+
+test('quick-status timeouts disclose unknown readiness without fabricated evidence',()=>{
+    const timeout={project:'a'.repeat(64),health:'unknown',index_state:'unknown',publication:null,files:null,chunks:null,index_error:{code:'status_timeout',retryable:true}};
+    assert.doesNotThrow(()=>assertQuickStatusTimeout(timeout));
+    for(const changed of [{project:'invalid'},{health:'ok'},{index_state:'available'},{files:0},{publication:{token:'invented'}},{index_error:{code:'status_unavailable',retryable:true}},{index_error:{code:'status_timeout',retryable:false}}]){
+        assert.throws(()=>assertQuickStatusTimeout({...timeout,...changed}),assert.AssertionError);
+    }
+});
+
+test('quick-status fixtures require recovery in the same scope within the original budget',async()=>{
+    const timeout={project:'a'.repeat(64),health:'unknown',index_state:'unknown',publication:null,files:null,chunks:null,index_error:{code:'status_timeout',retryable:true}};
+    const confirmed={project:timeout.project,index_state:'unavailable',publication:null,files:null,chunks:null};
+    let calls=0;assert.equal(await observeQuickStatus(async()=>++calls===1?timeout:confirmed),confirmed);assert.equal(calls,2);
+    calls=0;await assert.rejects(observeQuickStatus(async()=>++calls===1?timeout:{...confirmed,project:'b'.repeat(64)}),/source scope/);
+    await assert.rejects(observeQuickStatus(async()=>timeout,performance.now()+20),/observation budget/);
+    await assert.rejects(observeQuickStatus(async()=>({...timeout,index_error:{code:'status_unavailable',retryable:true}})),/status_timeout/);
+});
 
 test('native read fixtures require the complete safe replay contract',()=>{
     const wrap=(hint:unknown)=>({isError:true,content:[{type:'text',text:JSON.stringify(hint)}]});

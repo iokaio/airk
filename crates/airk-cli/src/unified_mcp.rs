@@ -23,11 +23,63 @@ struct Explorer {
     control: PathBuf,
 }
 
+/// A request deadline must not restart authenticated installation setup. The
+/// session retains its one task; dropping the session cancels that task.
+#[derive(Default)]
+struct RuntimeReadiness {
+    state: tokio::sync::Mutex<Option<ReadinessState>>,
+}
+enum ReadinessState {
+    Running(tokio::task::JoinHandle<Result<()>>),
+    Ready,
+}
+impl Drop for ReadinessState {
+    fn drop(&mut self) {
+        if let Self::Running(task) = self {
+            task.abort();
+        }
+    }
+}
+impl RuntimeReadiness {
+    async fn ensure(&self, install: &std::path::Path, control: &std::path::Path) -> Result<()> {
+        let install = install.to_path_buf();
+        let control = control.to_path_buf();
+        self.run(move || async move {
+            let observed = crate::runtime_install::installed_control(&install).await?;
+            ensure!(observed == control, "selected service control changed");
+            Ok(())
+        })
+        .await
+    }
+
+    async fn run<F, Fut>(&self, initialize: F) -> Result<()>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    {
+        let mut state = self.state.lock().await;
+        if state.is_none() {
+            *state = Some(ReadinessState::Running(tokio::spawn(initialize())));
+        }
+        let result = match state.as_mut().unwrap() {
+            ReadinessState::Ready => return Ok(()),
+            ReadinessState::Running(task) => task
+                .await
+                .context("installed runtime verification task failed")
+                .and_then(|result| result),
+        };
+        // Failures never certify readiness. A later request can re-observe the
+        // installation, retaining all existing payload/control/health checks.
+        *state = result.as_ref().ok().map(|_| ReadinessState::Ready);
+        result
+    }
+}
+
 struct RootNative {
     scope: crate::service_frontend::RootScope,
     control: PathBuf,
     install: PathBuf,
-    ready: Arc<tokio::sync::OnceCell<()>>,
+    ready: Arc<RuntimeReadiness>,
     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
     backend: tokio::sync::Mutex<Option<(ProjectBinding, Arc<dyn RemoteTools>)>>,
 }
@@ -37,13 +89,7 @@ impl RemoteTools for RootNative {
     }
     fn call(&self, tool: String, arguments: Map<String, Value>) -> RemoteFuture<'_> {
         Box::pin(async move {
-            self.ready
-                .get_or_try_init(|| async {
-                    let control = crate::runtime_install::installed_control(&self.install).await?;
-                    ensure!(control == self.control, "selected service control changed");
-                    Ok::<(), anyhow::Error>(())
-                })
-                .await?;
+            self.ready.ensure(&self.install, &self.control).await?;
             let control = self.control.clone();
             let scope = self.scope.clone();
             let observed = control.clone();
@@ -106,7 +152,7 @@ fn root_failure(
 struct Native {
     install: Option<PathBuf>,
     control: PathBuf,
-    ready: Arc<tokio::sync::OnceCell<()>>,
+    ready: Arc<RuntimeReadiness>,
     backend: Arc<dyn RemoteTools>,
 }
 impl RemoteTools for Native {
@@ -116,13 +162,7 @@ impl RemoteTools for Native {
     fn call(&self, tool: String, arguments: Map<String, Value>) -> RemoteFuture<'_> {
         Box::pin(async move {
             if let Some(install) = &self.install {
-                self.ready
-                    .get_or_try_init(|| async {
-                        let control = crate::runtime_install::installed_control(install).await?;
-                        ensure!(control == self.control, "selected service control changed");
-                        Ok::<(), anyhow::Error>(())
-                    })
-                    .await?;
+                self.ready.ensure(install, &self.control).await?;
             }
             self.backend.call(tool, arguments).await
         })
@@ -250,7 +290,7 @@ pub async fn serve(
         .iter()
         .map(|p| (p.binding.to_string(), PathBuf::from(&p.root)))
         .collect();
-    let ready = Arc::new(tokio::sync::OnceCell::new());
+    let ready = Arc::new(RuntimeReadiness::default());
     let projects = registrations
         .into_iter()
         .map(|p| Project {
@@ -293,7 +333,7 @@ pub async fn serve_roots(
         "invalid configured source count"
     );
     let primary = scopes[0].key.clone();
-    let ready = Arc::new(tokio::sync::OnceCell::new());
+    let ready = Arc::new(RuntimeReadiness::default());
     let configured = scopes
         .iter()
         .map(|scope| (scope.key.clone(), scope.clone()))
@@ -328,4 +368,102 @@ pub async fn serve_roots(
     let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
     crate::client_owner::watch()?;
     airk_mcp::remote::serve(Arc::new(backend)).await
+}
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn request_deadline_retains_one_initialization_and_its_result() -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let (started, began) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut waiting = Box::pin(ready.run(|| async move {
+            let _ = started.send(());
+            released.await?;
+            Ok(())
+        }));
+        tokio::select! {
+            _ = &mut waiting => panic!("verification must wait for its owned observation"),
+            result = began => result?,
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), waiting)
+                .await
+                .is_err()
+        );
+        release.send(()).unwrap();
+        ready
+            .run(|| async { panic!("a timed-out request must not restart verification") })
+            .await?;
+        ready
+            .run(|| async { panic!("verified session must reuse readiness") })
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn verification_failure_is_reported_and_never_cached_as_ready() -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let (started, began) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut waiting = Box::pin(ready.run(|| async move {
+            let _ = started.send(());
+            released.await?;
+            anyhow::bail!("selected service control changed")
+        }));
+        tokio::select! {
+            _ = &mut waiting => panic!("verification must remain pending"),
+            result = began => result?,
+        }
+        drop(waiting);
+        release.send(()).unwrap();
+        let error = ready
+            .run(|| async { panic!("retain the original failure") })
+            .await
+            .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("selected service control changed")
+        );
+        let mut retried = false;
+        ready
+            .run(|| {
+                retried = true;
+                async { Ok(()) }
+            })
+            .await?;
+        assert!(retried);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn session_drop_cancels_only_its_pending_verification() -> Result<()> {
+        struct Cancelled(Option<tokio::sync::oneshot::Sender<()>>);
+        impl Drop for Cancelled {
+            fn drop(&mut self) {
+                if let Some(sender) = self.0.take() {
+                    let _ = sender.send(());
+                }
+            }
+        }
+        let ready = RuntimeReadiness::default();
+        let (started, began) = tokio::sync::oneshot::channel();
+        let (cancelled, observed) = tokio::sync::oneshot::channel();
+        let mut waiting = Box::pin(ready.run(|| async move {
+            let _guard = Cancelled(Some(cancelled));
+            let _ = started.send(());
+            std::future::pending::<Result<()>>().await
+        }));
+        tokio::select! {
+            _ = &mut waiting => panic!("verification must remain pending"),
+            result = began => result?,
+        }
+        drop(waiting);
+        drop(ready);
+        tokio::time::timeout(Duration::from_secs(5), observed).await??;
+        Ok(())
+    }
 }

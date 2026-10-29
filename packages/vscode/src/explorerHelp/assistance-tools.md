@@ -40,4 +40,4 @@ The attachment uses the configured project's canonical root to find a matching t
 
 New agent entries use the stable launcher and `--root SOURCE mcp`. Each request resolves the current active registration for that source; it does not register or index the project. Missing, removed and ambiguous registrations are distinct outcomes. Use `--index-collection` only to disambiguate multiple registered indexes. Restart or reconnect existing agent sessions after an AIRK upgrade: an already running MCP process retains its previous executable and tool catalog.
 
-A status timeout reports unknown readiness. Use diagnostics to inspect runtime and work separately. Cached status includes its observation age and never proves that live source bytes match the publication.
+A status timeout reports unknown readiness. Cold installed-runtime verification stays shared within the MCP session, so later polls do not restart it; verification failures remain errors. Use diagnostics to inspect runtime and work separately. Cached status includes its observation age and never proves that live source bytes match the publication.

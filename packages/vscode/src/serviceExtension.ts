@@ -291,8 +291,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const result=await probeMcp(selected,27,this.runningVersion,this.connectionEntries(selected)[0],
                 message=>publish({phase:'checking',message}));
             publish({phase:'verified',tools:result.tools,checkedAt:Date.now(),handshakeMs:result.handshakeMs,
-                message:`AIRK responded with ${result.tools.length} tools. This checks AIRK; each agent must load its saved configuration separately.${result.handshakeMs!==undefined&&result.handshakeMs>10000?` The handshake took ${(result.handshakeMs/1000).toFixed(1)} seconds; an agent with a shorter startup deadline may time out.`:''}`,
-                indexState:record(result.status).state==='not_indexed'?'not_indexed':record(result.status).state==='index_unavailable'?'unavailable':'published'});
+                message:`AIRK responded with ${result.tools.length} tools. This checks AIRK; each agent must load its saved configuration separately.${record(result.status).state==='index_unknown'?' Index readiness is unconfirmed; call diagnostics or check again.':''}${result.handshakeMs!==undefined&&result.handshakeMs>10000?` The handshake took ${(result.handshakeMs/1000).toFixed(1)} seconds; an agent with a shorter startup deadline may time out.`:''}`,
+                indexState:record(result.status).state==='not_indexed'?'not_indexed':record(result.status).state==='index_unknown'?'unknown':record(result.status).state==='index_unavailable'?'unavailable':'published'});
         }catch(error){
             if(!this.disposed&&generation===this.generation){
                 const message=error instanceof Error?error.message:String(error);

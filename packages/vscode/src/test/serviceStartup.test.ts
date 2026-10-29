@@ -103,7 +103,7 @@ test('connection check publishes preparation, progress and failure, coalesces cl
         const report=args[4];
         probes++;report?.('MCP handshake completed. Reading the tool list…');
         await pending;if(fail)throw new Error('fixture: tools/list rejected');
-        return {tools:[...UNIFIED_TOOLS],status:{}};
+        return {tools:[...UNIFIED_TOOLS],status:{state:'index_unknown'}};
     });
     try{
         await f.commands.get('airk.explorer.open')!();
@@ -124,6 +124,8 @@ test('connection check publishes preparation, progress and failure, coalesces cl
         assert.equal(check.state.connectionCheck.phase,'verified');
         assert.equal(check.state.connectionCheck.tools.length,27);
         assert.equal(check.state.connectionCheck.project,project);
+        assert.equal(check.state.connectionCheck.indexState,'unknown');
+        assert.match(check.state.connectionCheck.message,/Index readiness is unconfirmed/);
         assert.equal(f.writes.length,0,'checking a connection cannot enqueue indexing or repair');
     }finally{release();await f.close();}
 });

@@ -321,7 +321,7 @@ Retraining is developer work: change templates or pins, re-run, commit the new `
 
 ## 6. Running a plan
 
-- **Limits:** at most 6 steps, 12 tool calls, 20 seconds and 256 KiB of combined payload. Each step passes through the person's `limit`/`max_bytes`.
+- **Limits:** at most 6 steps, 12 tool calls, 30 seconds and 512 KiB of combined payload. Each step passes through the person's `limit`/`max_bytes`.
 - **One snapshot:** the publication from `parse` (or from the first step, for commands) is pinned. Every later step goes through `samePublication`. If the index changes mid-plan, the result is marked *publication changed* and offers **Re-run** instead of combining snapshots.
 - **Cancellation:** each session has its own supersede key, so a new submission cancels the queued one.
 - **Errors and retries:** reuse the `explorerError` codes and `readRetryDelay` handling. A failed step keeps its error in the result and is never dropped.
@@ -367,7 +367,7 @@ The Structured view renders Preact components from the same view model. It needs
 
 ### 7.4 How copying works
 
-The webview sends `{ sessionId, turnId, format }`, and the host renders from the stored envelope and calls `vscode.env.clipboard.writeText`. Large text therefore never crosses the webview message channel; the Explorer's `clipboard.write` message is capped at 256 KiB. The Workbench copies up to **1 MiB**. Beyond that it copies the first 1 MiB and shows a notice.
+The webview sends `{ sessionId, turnId, format }`, and the host renders from the stored envelope and calls `vscode.env.clipboard.writeText`. Large text therefore never crosses the webview message channel; the Explorer's `clipboard.write` message is capped at 512 KiB. The Workbench copies up to **1 MiB**. Beyond that it copies the first 1 MiB and shows a notice.
 
 ---
 
@@ -401,13 +401,14 @@ interface Session {
 
 - Keep the 10 sessions per project with the newest `updatedAt`; delete older files.
 - The Recent list is built by scanning the directory. There is no separate index file to drift out of date.
-- Each session holds at most **200 turns or 4 MiB**. Beyond that, the oldest turns keep only their input and plan (`trimmed: true`) and offer **Re-run**.
+- Each session holds at most **200 turns or 4 MiB** whichever comes first. Beyond that, the oldest turns keep only their input and plan (`trimmed: true`) and offer **Re-run**.
 
 ### 8.3 Behavior
 
 - **Header:** a project picker, **Recent ▾** (titles and relative times) and **＋ New session**.
   - The project defaults to the registered project containing the active editor's file, otherwise the last one used in the window.
   - The Workbench's selection never changes agent retrieval or the Explorer dropdown.
+  - There will be a Copy All button for the session to copy all queries and results.
 - **Old results:** every turn keeps its publication. If the index has moved on, the turn shows a *from an older index* badge with **Re-run**. Old evidence is never shown as current.
 - **Several windows:** each window writes only sessions it created or opened. A changed `revision` on disk means reload, or fork into a new session. A window never overwrites another window's newer revision.
 - **Privacy:** sessions contain source excerpts and stay on this machine.
@@ -470,12 +471,12 @@ Phase 1 is useful on its own. Plain English starts working in phase 2. Phase 3 i
 
 ## 12. Open decisions
 
-1. **Usage attribution:** accept `airk-workbench` as a new client family (recommended), or reuse `airk-explorer`.
-2. **CLI exposure:** ship `airk parse` in the public CLI, or keep it dev-only behind a feature.
-3. **Thresholds:** the "ask" rate (10% proposed) and the accuracy floors in §5.5.
-4. **Name lookup:** how to add case-folded and sub-token symbol lookup. Either a bounded scan through a kernel service, or a stored folded-name column, which changes the storage format and needs a [storage format](../storage-formats.md) identity update. Measure the bounded scan on a large fixture first.
-5. **NFC normalization:** whether to add `unicode-normalization` as a direct dependency (with a license-notice update), or ship with lowercase and whitespace normalization only.
-6. **Model attribution:** whether attribution for weights derived from the training repositories belongs in `THIRD_PARTY_NOTICES.md` or only in `TRAINING.md`.
+1. **Usage attribution:** accept `airk-workbench` as a new client family (recommended), or reuse `airk-explorer`. **Decision:** airk-workbench.
+2. **CLI exposure:** ship `airk parse` in the public CLI, or keep it dev-only behind a feature. **Decision:** include in public CLI.
+3. **Thresholds:** the "ask" rate (10% proposed) and the accuracy floors in §5.5. **Decision:** accept this.
+4. **Name lookup:** how to add case-folded and sub-token symbol lookup. Either a bounded scan through a kernel service, or a stored folded-name column, which changes the storage format and needs a [storage format](../storage-formats.md) identity update. Measure the bounded scan on a large fixture first. **Decision:** do NOT change the storage format.
+5. **NFC normalization:** whether to add `unicode-normalization` as a direct dependency (with a license-notice update), or ship with lowercase and whitespace normalization only. **Decision:** do NOT add NFC normalization unless there is compelling reason to do so and it can be done without backward version risk.
+6. **Model attribution:** whether attribution for weights derived from the training repositories belongs in `THIRD_PARTY_NOTICES.md` or only in `TRAINING.md`. **Decision:** both.
 
 ---
 

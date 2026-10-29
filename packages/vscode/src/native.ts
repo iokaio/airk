@@ -244,7 +244,8 @@ export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 2
         if(expectedTools>=16){
             const text=status.content?.find((part:any)=>part.type==='text')?.text;
             const payload=JSON.parse(text??'null');
-            if(payload?.index_state&&payload.index_state!=='available')status.state='index_unavailable';
+            if(payload?.index_state==='unknown')status.state='index_unknown';
+            else if(payload?.index_state&&payload.index_state!=='available')status.state='index_unavailable';
         }
         if(handshakeMs>10000)report(`AIRK responded, but its handshake took ${(handshakeMs/1000).toFixed(1)} seconds. An agent with a shorter startup deadline may time out.`);
         return { tools, status, handshakeMs };

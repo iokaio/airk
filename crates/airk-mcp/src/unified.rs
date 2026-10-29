@@ -463,11 +463,16 @@ mod tests {
     #[derive(Default)]
     struct Native {
         calls: Mutex<Vec<(String, Map<String, Value>)>>,
+        stall_status: std::sync::atomic::AtomicBool,
     }
     impl RemoteTools for Native {
         fn call(&self, tool: String, args: Map<String, Value>) -> RemoteFuture<'_> {
             Box::pin(async move {
+                let status = tool == "airk_status";
                 self.calls.lock().unwrap().push((tool, args));
+                if status && self.stall_status.load(std::sync::atomic::Ordering::SeqCst) {
+                    return std::future::pending().await;
+                }
                 Ok(success(
                     json!({"index_state":"available","publication":{"token":"fixture"},"freshness":{"state":"idle"}}),
                 ))
@@ -613,6 +618,43 @@ mod tests {
             );
         }
         assert_eq!(ui.calls.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn quick_status_deadline_has_no_evidence_and_later_reads_can_recover() {
+        let (u, native, _, ui) = fixture(false, true);
+        native
+            .stall_status
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            call(&u, "status", json!({})),
+        )
+        .await
+        .expect("quick status must retain its bounded deadline");
+        let status = body(&result).unwrap();
+        assert_eq!(result["isError"], false);
+        assert_eq!(status["index_state"], "unknown");
+        assert_eq!(status["health"], "unknown");
+        assert_eq!(status["project"], "aa".repeat(32));
+        assert_eq!(status["index_error"]["code"], "status_timeout");
+        assert_eq!(status["index_error"]["retryable"], true);
+        for field in ["publication", "files", "chunks"] {
+            assert!(status[field].is_null());
+        }
+        assert_eq!(native.calls.lock().unwrap().len(), 1);
+        assert!(ui.calls.lock().unwrap().is_empty());
+        native
+            .stall_status
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            body(&call(&u, "status", json!({})).await).unwrap()["index_state"],
+            "available"
+        );
+        assert!(ui.calls.lock().unwrap().is_empty());
+        let detailed = body(&call(&u, "diagnostics", json!({})).await).unwrap();
+        assert_eq!(detailed["index_state"], "available");
+        assert!(detailed.get("explorer").is_some());
     }
 
     #[tokio::test]
