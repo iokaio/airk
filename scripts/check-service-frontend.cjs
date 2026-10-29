@@ -12,7 +12,7 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
     const cli=process.argv[4]==='--cli';assert.ok(process.argv[4]===undefined||cli);
     const payload=await fs.realpath(process.argv[3]),parent=await fs.realpath(path.join(__dirname,'../target'));
     const fixture=await fs.mkdtemp(path.join(parent,'airk-frontend-fixture-'));
-    const install=path.join(fixture,'installation'),native=path.join(fixture,'native'),source=path.join(fixture,'source');
+    const install=path.join(fixture,'installation'),native=path.join(fixture,'native'),sourceParent=path.join(fixture,'source-parent'),source=path.join(sourceParent,'source');
     const data=path.join(fixture,'new','data'),main=process.platform==='win32'?'airk.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk':'airk',helper=process.platform==='win32'?'airk-embed.exe':process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk-embed':'airk-embed';
     await fs.mkdir(native);await fs.cp(payload,path.join(native,'runtime'),{recursive:true,errorOnExist:true,force:false});
     const bytes=await fs.readFile(path.join(native,'runtime','airk-install.json')),inventory=JSON.parse(bytes);
@@ -30,12 +30,12 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
         const binding={installDir:install,controlDir:control,executable:path.join(install,'runtimes',digest,main),
             launcher:path.join(install,process.platform==='win32'?'airk-launcher.exe':'airk-launcher'),runtimeSha256:digest,
             version:inventory.version,lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
-        await fs.mkdir(source);const original='Original ivory signal evidence.\n';await fs.writeFile(path.join(source,'memo.txt'),original);
+        await fs.mkdir(source,{recursive:true});const original='Original ivory signal evidence.\n';await fs.writeFile(path.join(source,'memo.txt'),original);
         const review=await runtime.reviewProject(binding,source,data,'frontend-fixture');
         await assert.rejects(fs.stat(data),{code:'ENOENT'});
         await runtime.registerProject(binding,review);assert.equal((await fs.stat(data)).isDirectory(),true);
         console.log('Reviewed registration created only its reserved data path.');
-        const beforeIndex=await nativeRunner(binding.executable,['--service-install-dir',install,'--service-project',review.binding,'tools','call','airk_status'],180000);
+        const beforeIndex=await nativeRunner(binding.executable,['--service-install-dir',install,'--service-project',review.binding,'tools','call','airk_diagnostics'],180000);
         assert.notEqual(beforeIndex.isError,true);const startup=JSON.parse(beforeIndex.content.find(part=>part.type==='text').text);
         assert.equal(startup.index_state,'unavailable');assert.equal(startup.publication,null);assert.equal(startup.files,null);
         assert.equal(startup.runtime.service.version,inventory.version);assert.ok(startup.work);
@@ -51,8 +51,13 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
         }
         const spec={command:binding.launcher,root:review.root,dataDir:review.data_root,collection:review.collection,name:'Frontend fixture',
             service:{installDir:install,project:review.binding}};
-        const first=await probeMcp(spec,26,inventory.version);assert.equal(first.tools.length,26);assert.notEqual(first.status.state,'not_indexed');
-        const observed=JSON.parse(first.status.content.find(part=>part.type==='text').text);
+        const first=await probeMcp(spec,27,inventory.version);assert.equal(first.tools.length,27);assert.notEqual(first.status.state,'not_indexed');
+        const quick=JSON.parse(first.status.content.find(part=>part.type==='text').text);
+        assert.equal(quick.runtime,undefined);assert.equal(quick.work,undefined);
+        const detailed=await nativeRunner(binding.executable,['--service-install-dir',install,'--service-project',review.binding,'tools','call','airk_diagnostics'],180000);
+        assert.notEqual(detailed.isError,true);
+        const observed=JSON.parse(detailed.content.find(part=>part.type==='text').text);
+        assert.equal(observed.index_state,'available');assert.ok(observed.publication.token);
         assert.equal(observed.runtime.service.version,inventory.version);assert.equal(observed.runtime.versions_match,true);
         assert.equal(observed.runtime.service.responsive,true);assert.equal(observed.work.serving_worker.project,review.binding);
         assert.equal(typeof observed.work.watch.enabled,'boolean');assert.ok(Array.isArray(observed.work.queued_jobs));
@@ -82,8 +87,13 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
             console.log('Direct CLI tool/shell calls passed; saved acknowledgment recovery returned the original native job.');
         }
         assert.equal(await fs.readFile(path.join(source,'memo.txt'),'utf8'),original);
-        await fs.rename(source,path.join(fixture,'temporarily-offline-source'));
-        const retained=await probeMcp(spec,26,inventory.version);assert.notEqual(retained.status.state,'not_indexed');
+        // An unavailable ancestor is not a confirmed deleted source leaf.
+        await fs.rename(sourceParent,path.join(fixture,'temporarily-offline-parent'));
+        const retained=await probeMcp(spec,27,inventory.version);assert.notEqual(retained.status.state,'not_indexed');
+        const offline=await nativeRunner(binding.executable,['--service-install-dir',install,'--service-project',review.binding,'tools','call','airk_diagnostics'],180000);
+        assert.notEqual(offline.isError,true);
+        const saved=JSON.parse(offline.content.find(part=>part.type==='text').text);
+        assert.equal(saved.index_state,'available');assert.equal(saved.publication.token,observed.publication.token);
         console.log('Stable-launcher MCP served the registered publication with sources present and unavailable.');
     }finally{
         client?.dispose();

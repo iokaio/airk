@@ -12,6 +12,6 @@ Management uses tabs across the top of the content panel. The Indexing tab conta
 
 Add project reviews an open folder and exact index storage. Native registration saves initial setup durably. Browse active or removed projects changes the list filter; it does not register anything.
 
-Recent activity shows native outcomes. Storage and removal can remove a missing-source project while preserving sources, settings and retained data. Cleanup needs a separate exact preview and confirmation. Complete a captured cleanup before registering again.
+Recent activity shows native outcomes. Storage and removal can remove a missing-source project. After confirmation, AIRK drains its workers and automatically deletes its index, usage ledger and saved project settings; source files and shared models are preserved. Pending removal resumes after interruption without a second cleanup approval. Wait for cleanup to finish before explicitly registering the project again.
 
 Advanced diagnostics and recovery shows identities, unreadable directories and repair controls. Directory diagnostics are bounded, clear after successful root traversal and do not prove indexing completed. Service details distinguishes selected payload versions from observed running processes.

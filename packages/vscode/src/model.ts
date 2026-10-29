@@ -24,10 +24,11 @@ export function collectionId(canonicalRoot: string, platform = process.platform)
     return 'project-' + createHash('sha256').update(identity).digest('hex').slice(0, 24);
 }
 
-export function launchArgs(spec: LaunchSpec, command = 'mcp'): string[] {
+export function launchArgs(spec: LaunchSpec, command = 'mcp', pinProject = false): string[] {
     if(spec.service){
         if(!path.isAbsolute(spec.service.installDir)||!/^[a-f0-9]{64}$/.test(spec.service.project))throw new Error('Invalid trusted service launch binding.');
-        const scoped=['--root',spec.root,'--data-dir',spec.dataDir,'--collection',spec.collection,'--service-project',spec.service.project,command];
+        const scoped=command==='mcp'&&!pinProject?['--root',spec.root,'mcp']
+            :['--root',spec.root,'--data-dir',spec.dataDir,'--collection',spec.collection,'--service-project',spec.service.project,command];
         return spec.service.universal?scoped:['runtime','launch','--install-dir',spec.service.installDir,'--',...scoped];
     }
     return ['--root', spec.root, '--data-dir', spec.dataDir, '--collection', spec.collection, command];
@@ -49,7 +50,7 @@ export function eligibleEvent(file: string, root: string, dataDir: string): bool
 export interface ServerEntry { readonly key: string; readonly command: string; readonly args: readonly string[]; readonly label: string }
 export const ASSISTANCE_KEY = 'airk_explorer';
 export const UNIFIED_KEY = 'airk';
-export const RETRIEVAL_TOOLS = ['capabilities','changes','code_facts','context','document_facts','file_info','help','imports','list_files','outline','read_file','references','relationships','search','status','symbols'] as const;
+export const RETRIEVAL_TOOLS = ['capabilities','changes','code_facts','context','document_facts','file_info','help','imports','list_files','outline','read_file','references','relationships','search','status','diagnostics','symbols'] as const;
 export const UNIFIED_TOOLS = [...RETRIEVAL_TOOLS, 'projects', 'draft_search', 'draft_strategy', 'draft_plan', 'suggest_view', 'list_templates', 'get_template', 'validate_draft', 'proposal_status', 'get_handoff'] as const;
 export const EXPLORER_TOOL_RENAMES: Readonly<Record<string,string>> = {
     airk_explorer_help_search:'help', airk_explorer_help_get:'help', airk_explorer_ui_status:'status',
@@ -70,7 +71,7 @@ export function unifiedEntry(spec: LaunchSpec, descriptor?: string, additional: 
         if (!other.service || !spec.service || other.service.installDir !== spec.service.installDir || other.service.project === spec.service.project) {
             throw new Error('Additional projects must be distinct bindings of the same service.');
         }
-        args.push('--additional-project', other.service.project);
+        args.push('--additional-root', other.root);
     }
     if (additional.length) { args.push('--no-default-project'); }
     return { key: UNIFIED_KEY, command: spec.command, args, label: 'AIRK (indexed evidence, help and Explorer drafts)' };

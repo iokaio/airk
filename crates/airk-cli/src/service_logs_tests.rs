@@ -35,7 +35,7 @@ fn record(time: u64) -> LogRecord {
 fn full_export_reads_every_retained_file_and_excludes_malformed_payloads() -> Result<()> {
     let root = private_root()?;
     let sink = Sink::open(root.path())?;
-    for (n, name) in FILES.iter().rev().enumerate() {
+    for (n, name) in FILES[..4].iter().rev().enumerate() {
         let mut bytes = Vec::new();
         for i in 0..40 {
             serde_json::to_writer(&mut bytes, &record((n * 40 + i) as u64))?;
@@ -81,24 +81,49 @@ fn cached_reads_create_nothing_and_partial_records_are_preserved_but_never_expor
     Ok(())
 }
 #[test]
-fn rotation_stays_within_four_files_and_bounded_export_preserves_recent_order() -> Result<()> {
+fn fifo_size_retention_purges_to_low_water_and_preserves_the_newest_complete_entries() -> Result<()>
+{
     let root = private_root()?;
     let mut sink = Sink::open(root.path())?;
-    for (n, name) in FILES.iter().enumerate() {
-        let mut line = serde_json::to_vec(&record(n as u64))?;
-        line.push(b'\n');
-        let mut bytes = line.repeat(FILE_BYTES as usize / line.len());
-        bytes.resize(FILE_BYTES as usize, b'\n');
-        fs::write(sink.directory.join(name), bytes)?;
+    assert_eq!(
+        (HIGH_WATER_BYTES, LOW_WATER_BYTES),
+        (200_000_000, 100_000_000)
+    );
+    let (high, low, segment) = (8192, 4096, 1024);
+    let mut purges = 0;
+    for n in 0..160 {
+        let mut bytes = serde_json::to_vec(&record(n))?;
+        let before = preflight(&sink.directory)?;
+        let crosses = before + bytes.len() as u64 + 2 > high;
+        sink.append_retained(&mut bytes, high, low, segment)?;
+        let retained = preflight(&sink.directory)?;
+        assert!(retained <= high);
+        if crosses {
+            assert!(retained <= low);
+            purges += 1;
+        }
+        let page = export(root.path())?;
+        assert_eq!(page.records.last().unwrap().observed_unix_ms, n);
+        assert!(
+            page.records
+                .windows(2)
+                .all(|pair| pair[1].observed_unix_ms == pair[0].observed_unix_ms + 1)
+        );
+        assert_eq!(page.malformed_records, 0);
     }
-    assert_eq!(preflight(&sink.directory)?, 4 * FILE_BYTES);
-    sink.append(&record(99))?;
-    let page = recent(root.path(), 32)?;
-    assert_eq!(page.records.last().unwrap().observed_unix_ms, 99);
-    assert!(page.stored_bytes <= 4 * FILE_BYTES);
-    assert!(serde_json::to_vec(&page)?.len() <= 48 << 10);
-    assert!(fs::read(sink.directory.join(FILES[3]))?.starts_with(&serde_json::to_vec(&record(2))?));
-    assert_eq!(fs::read_dir(&sink.directory)?.count(), 5);
+    assert!(purges >= 2);
+    assert!(fs::read_dir(&sink.directory)?.count() <= FILES.len() + 1);
+    drop(sink);
+    let mut restarted = Sink::open(root.path())?;
+    restarted.append_retained(&mut serde_json::to_vec(&record(160))?, high, low, segment)?;
+    assert_eq!(
+        export(root.path())?
+            .records
+            .last()
+            .unwrap()
+            .observed_unix_ms,
+        160
+    );
     Ok(())
 }
 #[test]

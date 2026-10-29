@@ -52,7 +52,7 @@ test('disabling Explorer integration still consolidates servers, and custom conf
         const source=agent==='codex'?toml():json(agent);
         const after=migrateAgentConfig(agent,spec,storage,source,false);
         assert.ok(!after.includes('--explorer-descriptor')&&!after.includes('airk_explorer'));
-        assert.ok(after.includes(spec.service!.project));
+        assert.ok(!after.includes('--service-project'));
     }
     const before=json('claude').replace('"other":', '"airk_explorer":{"command":"custom","args":[]},"other":');
     assert.throws(()=>migrateAgentConfig('claude',spec,storage,before),/Unrecognized/);
@@ -95,12 +95,12 @@ test('missing entries never enable an agent, and foreign/ambiguous launches are 
 
 test('versioned helper pointers migrate even when the old executable has been removed',()=>{
     const old={...entry,command:path.join(storage,'helpers','1.3.0-win32-x64-abc','airk.exe')};
-    assert.ok(migrateAgentConfig('claude',spec,storage,json('claude',old)).includes(spec.service!.project));
+    assert.ok(migrateAgentConfig('claude',spec,storage,json('claude',old)).includes('--root'));
 });
 
 test('Windows native namespaced roots match ordinary agent paths', {skip:process.platform!=='win32'},()=>{
     const native={...spec,root:path.toNamespacedPath(spec.root)};
-    assert.ok(migrateAgentConfig('claude',native,storage,json('claude')).includes(spec.service!.project));
+    assert.ok(migrateAgentConfig('claude',native,storage,json('claude')).includes('--root'));
 });
 
 test('workspace migration skips missing files, refuses linked directories and reports failed saves',async context=>{
@@ -138,7 +138,7 @@ test('a recognized manual VS Code entry owns connection policy and suppresses du
     const source=JSON.stringify({servers:{airk:{command:entry.command,args:entry.args,disabled:true}}});
     assert.equal(hasUnifiedVscodeConfig(spec,storage,source),true);
     assert.equal(hasUnifiedVscodeConfig(spec,storage,json('copilot')),false);
-    assert.equal(hasUnifiedVscodeConfig(spec,storage,source.replace(spec.service!.project,'cd'.repeat(32))),false);
+    assert.equal(hasUnifiedVscodeConfig(spec,storage,source.replace(JSON.stringify(spec.root),JSON.stringify(path.resolve('foreign-root')))),false);
 });
 
 test('comments inside removed server entries survive consolidation and repeated startup',()=>{
@@ -152,19 +152,20 @@ test('comments inside removed server entries survive consolidation and repeated 
     assert.equal(migrateAgentConfig('codex',spec,storage,updated),updated);
 });
 
-test('explicit connection update replaces old storage and binding together, while startup preserves identity',()=>{
+test('startup migrates recognized source scopes even when every prior local receipt is gone',()=>{
     const old={...spec,dataDir:path.resolve('data','service-1.4'),service:{...spec.service!,project:'cd'.repeat(32)}};
     const current={...spec,dataDir:path.resolve('data','index-v1')};
     for(const agent of ['codex','claude','copilot'] as const){
-        const before=serializeServers(agent==='copilot'?'vscode':agent,[unifiedEntry(old,launchDescriptorPath(storage))]);
-        assert.throws(()=>migrateAgentConfig(agent,current,storage,before),/Unrecognized/,'background migration must not silently rebind');
+        const pinned=(value:LaunchSpec)=>({...unifiedEntry(value),args:['runtime','launch','--install-dir',value.service!.installDir,'--','--root',value.root,'--data-dir',value.dataDir,'--collection',value.collection,'--service-project',value.service!.project,'mcp']});
+        const before=serializeServers(agent==='copilot'?'vscode':agent,[pinned(old)]);
+        const automatic=migrateAgentConfig(agent,current,storage,before);assert.ok(!automatic.includes('--service-project')&&!automatic.includes('--data-dir'));
         const after=migrateAgentConfig(agent,current,storage,before,true,undefined,true);
-        assert.ok(after.includes('index-v1')&&after.includes(current.service!.project));
+        assert.ok(after.includes('--root')&&!after.includes('--data-dir')&&!after.includes('--service-project'));
         assert.ok(!after.includes('service-1.4')&&!after.includes(old.service.project));
         assert.equal(migrateAgentConfig(agent,current,storage,after,true,undefined,true),after);
         for(const foreign of [{...old,root:path.resolve('another-project')},{...old,collection:'another-collection'},
-            {...old,command:path.resolve('foreign-launcher')},{...old,dataDir:current.dataDir}]){
-            const source=serializeServers(agent==='copilot'?'vscode':agent,[unifiedEntry(foreign,launchDescriptorPath(storage))]);
+            {...old,command:path.resolve('foreign-launcher')}]){
+            const source=serializeServers(agent==='copilot'?'vscode':agent,[pinned(foreign)]);
             assert.throws(()=>migrateAgentConfig(agent,current,storage,source,true,undefined,true),/Unrecognized/);
         }
     }

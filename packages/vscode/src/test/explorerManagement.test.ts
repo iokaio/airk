@@ -165,7 +165,7 @@ test('management rows mirror the console wording and keep unknown values unobser
     assert.equal(entry.jobId, job); assert.equal(entry.pendingJobId, pending); assert.equal(entry.selected, true);
     assert.equal(row(view.service, 'Accepting work'), 'Yes');
     assert.equal(row(view.resources, 'Resident workers / limit'), '1 / 4');
-    assert.equal(view.pending[0].id, intent);
+    assert.deepEqual(view.pending, [], 'unacknowledged requests stay internal');
     assert.match(view.events[0], /job_succeeded/);
     assert.equal(view.plan?.approvable, true, 'a ready plan with every page read can be approved');
 });
@@ -272,6 +272,12 @@ test('health separates pause, restart acceptance, terminal jobs, removed project
     assert.equal(managementView(current).projects[0].health.title, 'Removed from AIRK');
     current.inactiveProjects = false; current.workers = undefined;
     row.progress.job.state = 'succeeded'; delete row.pending_job;
+    row.watch.enabled = true; row.watch.failure = 'backend_unavailable';
+    delete row.watch.observed_unix_ms;
+    assert.equal(managementView(current).projects[0].health.title, 'Checking live update status');
+    assert.equal(managementView(current).projects[0].health.severity, 'info');
+    row.watch.observed_unix_ms = 123;
+    assert.equal(managementView(current).projects[0].health.severity, 'warn', 'a confirmed backend failure remains visible');
     row.watch.failure = 'root_unavailable';
     assert.equal(managementView(current).projects[0].health.title, 'Source watching needs attention');
     delete row.watch.failure; row.inspection.snapshot.index_state = 'ready';

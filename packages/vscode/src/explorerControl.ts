@@ -24,8 +24,8 @@ const SEMANTIC: readonly SemanticState[] = ['pending', 'partial', 'ready', 'fail
 
 /** Cached console page rows → project summaries. Missing observations stay undefined, never zero. */
 export function projectSummaries(state: ServiceConsoleState): ProjectSummary[] {
-    if (state.inactiveProjects) { return []; }
-    return (state.page?.projects ?? []).flatMap(row => {
+    const page = state.inactiveProjects ? state.activePage : state.page;
+    return (page?.projects ?? []).flatMap(row => {
         const project = obj(row.project), registration = obj(project.registration), binding = text(registration.binding);
         if (!binding || !/^[0-9a-f]{64}$/.test(binding)) { return []; }
         const inspection = obj(row.inspection), snapshot = obj(inspection.snapshot), semantic = obj(snapshot.semantic);
@@ -74,9 +74,9 @@ export class ExplorerControl {
     get state(): ServiceConsoleState { return this.source.controller.state; }
     projects(): ProjectSummary[] { return projectSummaries(this.state); }
     connection(): ConnectionState { return connectionOf(this.state, this.extensionVersion); }
-    observedAt(): number | undefined { return this.state.page?.observed_unix_ms; }
+    observedAt(): number | undefined { return (this.state.inactiveProjects ? this.state.activePage : this.state.page)?.observed_unix_ms; }
     message(): string | undefined { return this.state.message; }
-    morePages(): boolean { return !this.state.inactiveProjects && !!this.state.page?.after; }
+    morePages(): boolean { return !!(this.state.inactiveProjects ? this.state.activePage : this.state.page)?.after; }
     retain(): { dispose(): void } { return this.source.retain(); }
     onDidChange(listener: () => void): { dispose(): void } { return this.source.onDidChangeState(() => listener()); }
     refresh(): Promise<void> { return this.source.run('refresh'); }

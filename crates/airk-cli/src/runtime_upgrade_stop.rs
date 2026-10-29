@@ -38,11 +38,28 @@ pub(super) fn stop(root: &Path, identity: &str) -> Result<()> {
                 paths.push(path);
             }
         }
+        stop_paths(&paths)?;
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let _ = (root, identity); // Other hosts retain authenticated control/manager drain.
+    Ok(())
+}
+
+/// The caller must prove every image from the installation's inventory/launcher receipts.
+/// Keep OS identities open through termination; filenames and PIDs alone confer no authority.
+pub(super) fn stop_paths(paths: &[PathBuf]) -> Result<()> {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
         let mut owners = Vec::new();
-        // Capture and verify every exact process before terminating any of them.
         for path in paths {
-            for pid in crate::legacy_processes::audit(&path).matching_executable_pids {
-                if let Some(owner) = capture(pid, &path)? {
+            let audit = crate::legacy_processes::audit(path);
+            ensure!(
+                audit.failure.is_none(),
+                "AIRK process audit failed: {:?}",
+                audit.failure
+            );
+            for pid in audit.matching_executable_pids {
+                if let Some(owner) = capture(pid, path)? {
                     owners.push(owner);
                 }
             }
@@ -56,7 +73,7 @@ pub(super) fn stop(root: &Path, identity: &str) -> Result<()> {
         }
     }
     #[cfg(not(any(windows, target_os = "linux")))]
-    let _ = (root, identity); // Other hosts retain authenticated control/manager drain.
+    let _ = paths;
     Ok(())
 }
 

@@ -11,6 +11,8 @@ export interface Consolidation {
     readonly entry: ServerEntry;
     recognizes(family: Family, fields: Fields): boolean;
     warn(message: string): void;
+    /** Explicit uninstall removes only entries that pass the same ownership checks. */
+    remove?: boolean;
 }
 const approvals = new Set(['autoApprove','alwaysAllow']);
 const allows = new Set(['enabled_tools','includeTools','tools']);
@@ -103,8 +105,13 @@ export function consolidateJson(source:string, group:string, options:Consolidati
         if (node.type!=='object') { throw new Error('Invalid AIRK server entry; existing file preserved.'); }
         entries.push({key,family:family(key,options),fields:getNodeValue(node)});
     }
-    if (!entries.some(entry=>entry.family!=='explorer')) { return source; }
+    if (!entries.length || !options.remove && !entries.some(entry=>entry.family!=='explorer')) { return source; }
     check(entries,options);
+    if(options.remove){
+        let result=source;
+        for(const entry of entries)result=applyEdits(result,modify(result,[group,entry.key],undefined,{formattingOptions:{insertSpaces:true,tabSize:2}}));
+        return retainComments(source,result);
+    }
     const value=merge(entries,options);
     if (group==='servers' || entries.some(entry=>entry.fields.type==='stdio')) { value.type='stdio'; }
     let result=source;
@@ -141,7 +148,7 @@ export function consolidateToml(source:string,options:Consolidation):string {
         tables.push({start:header.index!,end,key,nested,fields,comments});
     }
     const entries:Existing[]=tables.filter(table=>!table.nested).map(table=>({key:table.key,family:family(table.key,options),fields:{...table.fields}}));
-    if (!entries.some(entry=>entry.family!=='explorer')) { return source; }
+    if (!entries.length || !options.remove && !entries.some(entry=>entry.family!=='explorer')) { return source; }
     for (const table of tables.filter(table=>table.nested)) {
         const entry=entries.find(entry=>entry.key===table.key);
         if (!entry || entry.fields.env!==undefined) { throw new Error('Conflicting AIRK environment tables; existing file preserved.'); }
@@ -150,6 +157,11 @@ export function consolidateToml(source:string,options:Consolidation):string {
     check(entries,options);
     // Inline/reserved spellings cannot be silently replaced by a duplicate table.
     if (/^\s*mcp_servers\s*=/m.test(source)) { throw new Error('Inline MCP TOML needs manual review.'); }
+    if(options.remove){
+        let result=source;
+        for(const table of [...tables].sort((a,b)=>b.start-a.start))result=result.slice(0,table.start)+table.comments.join('\n')+'\n'+result.slice(table.end);
+        return result;
+    }
     const fields=merge(entries,options), env=fields.env;
     const lines=[...tables.flatMap(table=>table.comments),'[mcp_servers.airk]',...Object.entries(fields).filter(([key])=>key!=='env').map(([key,value])=>`${key} = ${JSON.stringify(value)}`)];
     if (env) { lines.push('','[mcp_servers.airk.env]',...Object.entries(env as Fields).map(([key,value])=>`${JSON.stringify(key)} = ${JSON.stringify(value)}`)); }

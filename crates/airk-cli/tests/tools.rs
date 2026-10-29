@@ -39,7 +39,7 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .unwrap(),
     );
     let tools = list["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 16);
+    assert_eq!(tools.len(), 17);
     assert!(tools.iter().any(|tool| tool["name"] == "airk_help"));
     let help = evidence(
         command(&root, &state)
@@ -75,7 +75,7 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
         status["description"]
             .as_str()
             .unwrap()
-            .contains("runtime JSON bundle")
+            .contains("Quick AIRK version, basic health and project-index check")
     );
     for tool in tools {
         let help = success(
@@ -128,7 +128,7 @@ fn tool_calls_preserve_evidence_scope_errors_and_argument_budgets() {
     let status = loop {
         let status = evidence(
             common::read_retry::output_until(
-                command(root.path(), state.path()).args(["tools", "call", "airk_status"]),
+                command(root.path(), state.path()).args(["tools", "call", "airk_diagnostics"]),
                 deadline,
             )
             .unwrap(),

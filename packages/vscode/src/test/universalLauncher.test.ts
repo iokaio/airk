@@ -22,7 +22,7 @@ const installSpec: LaunchSpec = { ...base, command: perInstall, service: { insta
 const storage = path.resolve('editor-storage');
 
 test('the universal launcher keeps every versioned install path out of agent entries', () => {
-    assert.deepEqual(launchArgs(universalSpec), ['--root', base.root, '--data-dir', base.dataDir, '--collection', base.collection, '--service-project', project, 'mcp']);
+    assert.deepEqual(launchArgs(universalSpec), ['--root', base.root, 'mcp']);
     assert.deepEqual(launchArgs(installSpec).slice(0, 5), ['runtime', 'launch', '--install-dir', installDir, '--'], 'without it, the per-installation shape is unchanged');
     assert.deepEqual(assistanceEntry(universalSpec, launchDescriptorPath(storage))!.args, ['explorer-assistance', '--descriptor', launchDescriptorPath(storage)]);
     for (const text of [serializeServers('claude', [retrievalEntry(universalSpec), assistanceEntry(universalSpec, launchDescriptorPath(storage))!]), serializeServers('codex', [retrievalEntry(universalSpec)])]) {
@@ -60,11 +60,11 @@ test('a real universal launcher reads its pointer on every launch and forwards t
         const pointer = (install: string) => fs.writeFileSync(path.join(launcherDir, 'airk-launcher.json'), JSON.stringify({ schema: 1, install, launcher_sha256: sha }), { mode: 0o600 });
         pointer(spec.service!.installDir);
         const universalCall: LaunchSpec = { ...spec, command: executable, service: { ...spec.service!, universal: true } };
-        assert.equal((await probeMcp(universalCall)).tools.length, 26, 'the universal launcher reaches the installed service');
+        assert.equal((await probeMcp(universalCall)).tools.length, 27, 'the universal launcher reaches the installed service');
         pointer(path.join(directory, 'missing-install'));
         await assert.rejects(probeMcp(universalCall), 'a pointer to a missing installation fails instead of guessing');
         pointer(spec.service!.installDir);
-        assert.equal((await probeMcp(universalCall)).tools.length, 26, 'the next launch follows the rewritten pointer');
+        assert.equal((await probeMcp(universalCall)).tools.length, 27, 'the next launch follows the rewritten pointer');
     } finally {
         // Closing a probe signals its child asynchronously. Windows may still
         // hold the copied executable briefly; always drain the owned fixture,

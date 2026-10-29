@@ -201,7 +201,9 @@ export class ServiceClient {
         }
         if (response.status === 'failure') {
             const code = typeof response.code === 'string' && /^[a-z0-9_]{1,128}$/.test(response.code) ? response.code : 'invalid_service_failure';
-            throw new ServiceError(code, code.endsWith('_outcome_unknown') || code === 'registry_response_unknown_retry_with_key');
+            const error = new ServiceError(code, code.endsWith('_outcome_unknown') || code === 'registry_response_unknown_retry_with_key');
+            if(code==='invalid_service_failure')error.cause=new Error(`Invalid native failure code: ${String(JSON.stringify(response.code)).slice(0,2048)}`);
+            throw error;
         }
         if (expected && response.status !== expected) { throw new ServiceError('unexpected_service_response', true); }
         return response;

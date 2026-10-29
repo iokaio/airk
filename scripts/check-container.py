@@ -160,7 +160,7 @@ def main():
         return clients.tool_value(envelope)
 
     def published_status(collection):
-        return clients.observe_publication(lambda until: tool(collection, "airk_status", deadline=until),
+        return clients.observe_publication(lambda until: tool(collection, "airk_diagnostics", deadline=until),
                                            collection, projects[collection], time.monotonic() + 60)
 
     try:

@@ -259,6 +259,12 @@ fn mac_directories(
 
 impl UserPaths {
     pub(crate) fn discover(channel: Channel) -> Result<Self> {
+        let mut paths = Self::historical(channel)?;
+        paths.select_layout()?;
+        Ok(paths)
+    }
+
+    pub(crate) fn historical(channel: Channel) -> Result<Self> {
         #[cfg(unix)]
         let home = home()?;
         let leaf = channel.legacy_leaf();
@@ -299,7 +305,7 @@ impl UserPaths {
         }
         #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
         {
-            let mut paths = Self {
+            let paths = Self {
                 channel,
                 legacy_locations: true,
                 launcher: checked(
@@ -315,7 +321,6 @@ impl UserPaths {
                 cache: checked(cache)?,
                 logs: checked(logs)?,
             };
-            paths.select_layout()?;
             Ok(paths)
         }
     }
@@ -337,6 +342,7 @@ impl UserPaths {
                     .join(crate::universal_launcher::launcher_name()),
             )? == install.canonicalize()?;
         if self.install.try_exists()? && !new_selected {
+            self.select_migrated_data()?;
             return Ok(());
         }
         self.install = checked(install)?;
@@ -354,6 +360,27 @@ impl UserPaths {
             self.logs.with_file_name(self.channel.leaf("logs-v1"))
         })?;
         self.legacy_locations = false;
+        Ok(())
+    }
+
+    pub(crate) fn select_migrated_data(&mut self) -> Result<()> {
+        if !self.install.join("runtime-layout.json").try_exists()? {
+            return Ok(());
+        }
+        let control = crate::runtime_install::saved_control_root(&self.install)?;
+        let migration = airk_store::service::registry::data_relocation::require_settled(&control);
+        if migration.is_err() {
+            // Installation resumes its exact journal; discovery never starts a second root.
+            return Ok(());
+        }
+        let destination = self.data.with_file_name(self.channel.leaf("index-v1"));
+        if airk_store::service::registry::data_relocation::selected(
+            &control,
+            &canonical_location(&self.data)?,
+            &canonical_location(&destination)?,
+        )? {
+            self.data = checked(destination)?;
+        }
         Ok(())
     }
 }

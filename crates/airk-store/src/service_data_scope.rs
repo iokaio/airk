@@ -148,6 +148,18 @@ pub fn check(data: &Path, control: &Path, namespace: Incarnation) -> Result<()> 
     }
     Ok(())
 }
+
+pub(crate) fn relocated_owner(
+    data: &Path,
+    destination: &Path,
+    control: &Path,
+    namespace: Incarnation,
+) -> Result<(Vec<u8>, Vec<u8>)> {
+    check(data, control, namespace)?;
+    let before = read(&data.join(OWNER))?;
+    let after = serde_json::to_vec(&expected(destination, control, namespace)?)?;
+    Ok((before, after))
+}
 fn fresh_namespace(data: &Path) -> Result<()> {
     let directory = data.join("collections-1.4");
     if exists(&directory)? {

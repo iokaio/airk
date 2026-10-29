@@ -24,6 +24,55 @@ pub(crate) fn envelope(read: &CurrentRead) -> Result<RevisionEnvelope> {
 }
 
 impl Kernel {
+    /// A readiness check reads the published scalar metadata, never imported fact
+    /// payloads, model files, source files, or the vector graph itself.
+    pub fn status_summary(&self) -> Result<serde_json::Value> {
+        let read = self.current_reader()?;
+        let state = read
+            .collection_state()?
+            .context("current collection configuration missing")?;
+        let semantic = super::enrichment::readiness(&read, &self.store)?;
+        let discovery = super::progress::readiness(&read, &self.store)?;
+        let pending = crate::shared_models::semantic_upgrade_pending(
+            &self.store,
+            state.configuration.model.as_ref(),
+        );
+        let freshness = self.changes_freshness();
+        let health = if semantic.state == airk_core::readiness::SemanticState::Failed
+            || discovery.state == airk_core::readiness::DiscoveryState::Failed
+        {
+            "needs_attention"
+        } else {
+            match freshness.state {
+                airk_core::changes::FreshnessState::Failed
+                | airk_core::changes::FreshnessState::Blocked => "needs_attention",
+                airk_core::changes::FreshnessState::Pending
+                | airk_core::changes::FreshnessState::Running => "updating",
+                airk_core::changes::FreshnessState::Paused => "paused",
+                airk_core::changes::FreshnessState::Unavailable
+                | airk_core::changes::FreshnessState::Unregistered => "unknown",
+                airk_core::changes::FreshnessState::Idle => {
+                    if matches!(
+                        semantic.state,
+                        airk_core::readiness::SemanticState::Pending
+                            | airk_core::readiness::SemanticState::Partial
+                    ) {
+                        "updating"
+                    } else {
+                        "ok"
+                    }
+                }
+            }
+        };
+        Ok(
+            serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":health,"index_state":"available","collection":self.collection,
+            "generation":read.head().sequence,"publication":{"token":envelope(&read)?.token},"files":state.counts.files,
+            "chunks":state.counts.chunks,"indexed_vectors":if pending {0}else{read.head().graph_head.live_nodes},
+            "freshness":{"state":freshness.state,"live_source_verified":freshness.live_source_verified},
+            "discovery_readiness":{"state":discovery.state},"semantic_readiness":{"state":semantic.state,"completed_artifacts":semantic.completed_artifacts,"selected_artifacts":semantic.selected_artifacts}}),
+        )
+    }
+
     pub fn maintain_current(&self) -> Result<airk_store::current::maintenance::ReclamationReport> {
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         let writer = self.store.lock()?;

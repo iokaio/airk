@@ -34,10 +34,10 @@ test('every supported client format has one named endpoint with evidence and opt
     }
     assert.deepEqual(Object.keys(JSON.parse(serializeServers('claude',[entry])).mcpServers),['airk']);
     assert.deepEqual(Object.keys(JSON.parse(serializeServers('vscode',[entry])).servers),['airk']);
-    const other={...spec,service:{...spec.service!,project:'cd'.repeat(32)}};
+    const other={...spec,root:path.resolve('other-source'),service:{...spec.service!,project:'cd'.repeat(32)}};
     const multi=unifiedEntry(spec,descriptor,[other]);
     assert.ok(multi.args.includes('--no-default-project'));
-    assert.deepEqual(multi.args.slice(-3),['--additional-project',other.service.project,'--no-default-project']);
+    assert.deepEqual(multi.args.slice(-3),['--additional-root',other.root,'--no-default-project']);
     assert.throws(()=>unifiedEntry(spec,descriptor,[spec]),/distinct bindings/);
 });
 

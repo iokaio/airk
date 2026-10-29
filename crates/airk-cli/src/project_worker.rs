@@ -231,7 +231,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 match request.native {
                     Some(native) => tools.read_native(native, state.identity.project).await,
                     None => {
-                        if request.tool == "airk_status" {
+                        if request.tool == "airk_diagnostics" {
                             tools.set_runtime(crate::runtime_metadata::bundle(&state.control, state.identity, request.frontend).await);
                             tools.set_work(crate::runtime_metadata::work(&state.control, state.identity).await);
                         }

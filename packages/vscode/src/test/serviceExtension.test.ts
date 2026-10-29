@@ -45,7 +45,7 @@ test('service activation advertises reviewed bindings without indexing and prese
         const api=await extension.activate(extensionContext);await api.whenReady();assert.equal(ensures,0);assert.ok(discoveries>0);
         const definitions=await api.getServerDefinitions();assert.equal(definitions.length,1);assert.equal(ensures,0);
         assert.equal(definitions[0].command,binding.launcher);assert.equal(definitions[0].env.AIRK_MCP_RESPONSE_MODE,'full');
-        assert.ok(definitions[0].args.includes(registration.binding));assert.equal(definitions[0].cwd.fsPath,path.dirname(binding.launcher));
+        assert.ok(definitions[0].args.includes(registration.root));assert.equal(definitions[0].cwd.fsPath,path.dirname(binding.launcher));
         stopped=true;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),/service_explicitly_stopped/);assert.equal(ensures,1);
         stopped=false;await commands.get('airk.openTools')!();assert.equal(terminals.length,1);
         assert.deepEqual(terminals[0].shellArgs.slice(-2),['tools','shell']);assert.equal(terminals[0].shellPath,binding.launcher);

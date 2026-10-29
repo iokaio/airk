@@ -4,9 +4,12 @@ import * as path from 'node:path';
 import { homedir } from 'node:os';
 import { BootstrapObservation, LegacyStartupTarget, nativeRunner, RuntimeHost, RuntimeOptions } from './serviceBootstrap';
 import { RecordValue, ServiceError, record } from './serviceClient';
-import { ServiceConsoleController } from './serviceConsoleController';
+import { LOCAL_LOG_ACTIONS, ServiceConsoleController } from './serviceConsoleController';
 import { ServiceConsoleState } from './serviceConsoleView';
 import { runText } from './native';
+import * as fs from 'node:fs/promises';
+import { DiagnosticCaptures } from './diagnosticCaptures';
+import { recordDiagnosticFailure } from './diagnosticLogs';
 export type ConsoleRuntime=Pick<RuntimeHost,'discover'|'binding'|'ensure'|'client'|'snapshot'|'repair'|'prepareConfiguration'|'reviewTransition'|'transition'|'lifecycle'|'abandonLifecycle'> & Partial<Pick<RuntimeHost,'reviewLegacyStartup'|'loadLegacyStartup'|'legacyStartupReceipts'|'removeLegacyStartup'>>;
 
 /** Machine/user settings only. A repository cannot nominate an executable or approval. */
@@ -44,9 +47,13 @@ export class ServiceConsole implements vscode.Disposable {
     readonly onDidChangeState=this.stateChanged.event;
     /** Consumers (the AIRK Explorer) that need observations to keep refreshing. */
     private consumers=0;
+    private captures?:DiagnosticCaptures;
     constructor(private readonly context:vscode.ExtensionContext,readonly runtime:ConsoleRuntime,
-        private readonly workspace?:{register():Promise<void>;currentProjects():ReadonlySet<string>}){
+        private readonly workspace?:{register():Promise<void>;currentProjects():ReadonlySet<string>;removed?(project:string):Promise<void>}){
         this.controller=this.createController();
+        if(vscode.workspace.onDidCloseTextDocument)this.listeners.push(vscode.workspace.onDidCloseTextDocument(document=>{
+            if(document.uri.scheme==='file')void this.captures?.release(document.uri.fsPath).catch(error=>this.output.appendLine(`Diagnostic capture cleanup: ${String(error)}`));
+        }));
     }
     private createController():ServiceConsoleController{
         return new ServiceConsoleController({
@@ -55,9 +62,13 @@ export class ServiceConsole implements vscode.Disposable {
             changed:state=>this.changed(state),confirm:async(message,acceptLabel='Continue')=>(await vscode.window.showWarningMessage(message,{modal:true},acceptLabel))===acceptLabel,
             copy:async text=>vscode.env.clipboard.writeText(text),logs:observation=>this.logs(observation),resources:current=>this.resources(current),
             openReport:async text=>{await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({content:text,language:'json'}),{preview:false});},
-            saveReport:text=>this.saveDiagnostic(text,'airk-diagnostic-report'),
+            saveReport:async text=>{await this.saveDiagnostic(text,'airk-diagnostic-report');},
             exportLogs:observation=>this.exportLogs(observation),
             rawLogs:(save,observation)=>this.rawLogs(save,observation),
+            diagnosticFailure:async(operation,error,observation)=>{
+                try{await recordDiagnosticFailure(observation,operation,error);}
+                catch(failure){this.output.appendLine(`Could not retain diagnostic failure: ${String(failure)}. Original error: ${String(error)}`);}
+            },
             configuration:(row,operation)=>this.configuration(row,operation),
             ...(this.runtime.reviewLegacyStartup&&this.runtime.loadLegacyStartup&&this.runtime.legacyStartupReceipts&&this.runtime.removeLegacyStartup?{legacy:{
                 choose:()=>this.legacyTarget(),review:(binding:import('./serviceBootstrap').RuntimeBinding,target:LegacyStartupTarget)=>this.runtime.reviewLegacyStartup!(binding,target),
@@ -77,6 +88,7 @@ export class ServiceConsole implements vscode.Disposable {
             },
             registerWorkspace:this.workspace?()=>this.workspace!.register():undefined,
             currentProjects:()=>this.workspace?.currentProjects()??new Set<string>(),
+            projectRemoved:this.workspace?.removed?project=>this.workspace!.removed!(project):undefined,
         });
     }
     reset():void{
@@ -107,7 +119,7 @@ export class ServiceConsole implements vscode.Disposable {
      */
     async run(action:string,fields:Record<string,unknown>={}):Promise<void>{
         const controller=this.controller;
-        if(!await controller.whenIdle())return;
+        if(!LOCAL_LOG_ACTIONS.includes(action)&&!await controller.whenIdle())return;
         await controller.action({...fields,type:'service',revision:controller.state.revision,action});
     }
     /** Capture a native repair preview; approval stays a separate, explicit step. */
@@ -117,34 +129,59 @@ export class ServiceConsole implements vscode.Disposable {
     async configureProject(project:string,draft:RecordValue,valid:()=>boolean):Promise<void>{
         await this.controller.projectConfiguration(project,draft,valid);
     }
-    private async saveDiagnostic(text:string,name:string,extension='json'):Promise<void>{
+    private async saveDiagnostic(text:string,name:string,extension='json'):Promise<boolean>{
         const target=await vscode.window.showSaveDialog({title:'Save AIRK diagnostics',saveLabel:'Save',filters:{'Diagnostic log':[extension]},
             defaultUri:vscode.Uri.file(path.join(homedir(),`${name}-${new Date().toISOString().replace(/[:.]/g,'-')}.${extension}`))});
-        if(!target||this.disposed)return;
+        if(!target||this.disposed)return false;
         await vscode.workspace.fs.writeFile(target,Buffer.from(text,'utf8'));
+        this.output.appendLine(`Saved AIRK diagnostics: ${target.fsPath}`);return true;
     }
     private async exportLogs(observation?:BootstrapObservation):Promise<void>{
         if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');
         const bootstrap=observation??await this.runtime.discover();
         const control=bootstrap.inspection?.log_control_dir??bootstrap.inspection?.control_dir;
         if(typeof control!=='string'||!path.isAbsolute(control)||control.length>4096||/[\u0000-\u001f\u007f]/.test(control))throw new ServiceError('log_control_binding_unavailable');
-        const text=await runText(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--all','--format','json'],path.dirname(bootstrap.bundle.main),60000);
-        if(!vscode.workspace.isTrusted||this.disposed)return;
-        await this.saveDiagnostic(text,'airk-retained-service-logs');
+        const storage=this.context.globalStorageUri?.fsPath;if(!storage)throw new ServiceError('diagnostic_capture_storage_unavailable');
+        this.captures??=new DiagnosticCaptures(storage);const capture=await this.captures.allocate();
+        try{
+            const result=await nativeRunner(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--all','--format','json','--output',capture],30000);
+            const info=await fs.lstat(capture);
+            if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||info.size>201_048_576||result.written_bytes!==info.size)throw new ServiceError('invalid_diagnostic_capture');
+            if(!vscode.workspace.isTrusted||this.disposed)return;
+            const target=await vscode.window.showSaveDialog({title:'Save retained AIRK service logs',saveLabel:'Save',filters:{'Service log':['json']},defaultUri:vscode.Uri.file(path.join(homedir(),'airk-retained-service-logs.json'))});
+            if(!target||this.disposed||!vscode.workspace.isTrusted)return;
+            await vscode.workspace.fs.copy(vscode.Uri.file(capture),target,{overwrite:true});
+            this.output.appendLine(`Saved retained service logs: ${target.fsPath}`);
+        }finally{await this.captures.release(capture);}
     }
-    private async rawLogs(save:boolean,observation?:BootstrapObservation):Promise<void>{
+    private async rawLogs(save:boolean,observation?:BootstrapObservation):Promise<'opened'|'saved'|'canceled'>{
         if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');
         const bootstrap=observation??await this.runtime.discover();
         const control=bootstrap.inspection?.log_control_dir??bootstrap.inspection?.control_dir;
         if(typeof control!=='string'||!path.isAbsolute(control)||control.length>4096||/[\u0000-\u001f\u007f]/.test(control))throw new ServiceError('log_control_binding_unavailable');
-        const text=await runText(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--raw'],path.dirname(bootstrap.bundle.main),60000);
-        if(!vscode.workspace.isTrusted||this.disposed)return;
-        if(!text.trim()){
-            await vscode.window.showInformationMessage('No raw job errors have been retained by this runtime. Older summary-only failures cannot be reconstructed.');
-            return;
-        }
-        if(save)await this.saveDiagnostic(text,'airk-raw-job-errors','jsonl');
-        else await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({content:text,language:'jsonl'}),{preview:false});
+        const storage=this.context.globalStorageUri?.fsPath;if(!storage)throw new ServiceError('diagnostic_capture_storage_unavailable');
+        this.captures??=new DiagnosticCaptures(storage);const capture=await this.captures.allocate();let opened=false;
+        this.output.appendLine('Reading retained raw diagnostics…');
+        try{
+            const result=await nativeRunner(bootstrap.bundle.main,['service','logs','--runtime-dir',control,'--raw','--output',capture],30000);
+            const info=await fs.lstat(capture);
+            if(!info.isFile()||info.isSymbolicLink()||info.nlink!==1||info.size>200_000_021||result.written_bytes!==info.size)throw new ServiceError('invalid_diagnostic_capture');
+            if(!vscode.workspace.isTrusted||this.disposed)return 'canceled';
+            if(!info.size){
+                const message='No detailed errors have been retained in this log. Older summary-only failures cannot be reconstructed. Review AIRK output and retained service events for earlier setup or connection errors.';
+                this.output.appendLine(message);
+                if(!save){await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({content:message,language:'plaintext'}),{preview:false});return 'opened';}
+            }
+            if(save){
+                const target=await vscode.window.showSaveDialog({title:'Save AIRK raw diagnostics',saveLabel:'Save',filters:{'Diagnostic log':['jsonl']},
+                    defaultUri:vscode.Uri.file(path.join(homedir(),'airk-raw-diagnostics.jsonl'))});
+                if(!target||this.disposed)return 'canceled';
+                await vscode.workspace.fs.copy(vscode.Uri.file(capture),target,{overwrite:true});
+                this.output.appendLine(`Saved raw diagnostics: ${target.fsPath}`);return 'saved';
+            }
+            await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(vscode.Uri.file(capture)),{preview:false});opened=true;return 'opened';
+        }catch(error){this.output.appendLine(`Unable to read/open/save raw diagnostics: ${String(error)}`);this.output.show(false);throw error instanceof ServiceError?error:new ServiceError('raw_diagnostic_log_read_failed_see_airk_service_output');}
+        finally{if(!opened)await this.captures.release(capture);}
     }
     private async logs(observation?:BootstrapObservation):Promise<void>{
         if(!vscode.workspace.isTrusted)throw new ServiceError('runtime_client_no_longer_authorized');
@@ -211,7 +248,7 @@ export class ServiceConsole implements vscode.Disposable {
             {label:'Reset source scan limits',operation:'reset_scan_limits',description:'Remove this project override and use native automatic limits'},
             {label:'Shared storage quota file',operation:'quota_policy',description:'Change storage admission for all collections sharing this data root'},
             {label:'Calibrate token counts',operation:'calibrate',description:'Count explicit logical JSON samples with a local tokenizer'},
-            {label:'Unregister project',operation:'unregister',description:'Stop new connections and automatic work; preserve sources, settings and index data'},
+            {label:'Unregister project',operation:'unregister',description:'Stop work and delete AIRK index data and saved settings; source files are untouched'},
         ],{title:`AIRK project settings: ${String(registration.collection)}`,placeHolder:'Advanced changes become guarded native jobs; source files stay unchanged'}):common;
         if(!selection)return;
         const operation=selection.operation;
@@ -284,6 +321,6 @@ export class ServiceConsole implements vscode.Disposable {
         return recording?{operation,tokenizer,baseline,returned,generation:Number(generation),content_kind:'mixed',record:recording.record}:undefined;
     }
     dispose():void{
-        this.disposed=true;clearTimeout(this.timer);this.controller.dispose();this.output.dispose();this.stateChanged.dispose();this.listeners.forEach(listener=>listener.dispose());
+        this.disposed=true;clearTimeout(this.timer);this.controller.dispose();this.captures?.dispose();this.output.dispose();this.stateChanged.dispose();this.listeners.forEach(listener=>listener.dispose());
     }
 }

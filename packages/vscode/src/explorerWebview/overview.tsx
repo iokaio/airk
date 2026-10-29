@@ -52,7 +52,7 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
     return (
         <section class="workspace">
             <div class="workspace-heading"><div><p class="eyebrow">Local evidence. Clear provenance.</p><h1>{project?.name ?? 'Your workspace'}</h1>
-                <p>{status?.indexState === 'available' ? 'Your published index is available. Current indexing work is shown separately below.' : 'Review project health, indexing progress and published search availability.'}</p></div></div>
+                <p>{project && status?.indexState === 'available' ? 'Your published index is available. Current indexing work is shown separately below.' : 'Review project health, indexing progress and published search availability.'}</p></div></div>
             {first && <p class="callout">{first}</p>}
             {actions.outcome && <p class="callout" role="status">{actions.outcome}</p>}
             {management?.message && !actions.outcome && <p class="muted" role="status">Last control outcome: {management.message}</p>}

@@ -20,6 +20,8 @@ use std::{
 
 #[path = "runtime_activation.rs"]
 mod activation;
+#[path = "runtime_data_migration.rs"]
+mod data_migration;
 #[path = "runtime_launcher_repair.rs"]
 mod launcher_repair;
 #[path = "runtime_layout.rs"]
@@ -282,7 +284,8 @@ pub enum RuntimeCommand {
 }
 
 pub(crate) fn validate_control_root(control: &Path) -> Result<()> {
-    layout::validate_control(control)
+    layout::validate_control(control)?;
+    airk_store::service::registry::data_relocation::require_settled(control)
 }
 pub(crate) fn record_control_root(lease: &airk_store::service::ServiceLease) -> Result<()> {
     layout::record_control(lease)
@@ -369,6 +372,10 @@ pub fn installed_metadata_control(root: &Path) -> Result<PathBuf> {
         "matching runtime version required"
     );
     layout::control(root)
+}
+
+pub(crate) fn saved_control_root(root: &Path) -> Result<PathBuf> {
+    layout::saved_control(root)
 }
 
 #[derive(Subcommand)]

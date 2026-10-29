@@ -236,6 +236,12 @@ enum Command {
         /// Additional explicitly configured project bindings in this same service.
         #[arg(long)]
         additional_project: Vec<airk_core::service::ProjectBinding>,
+        /// Additional source folders; registrations are resolved on each request.
+        #[arg(long, conflicts_with = "additional_project")]
+        additional_root: Vec<PathBuf>,
+        /// Choose a collection only when this source has multiple active indexes.
+        #[arg(long)]
+        index_collection: Option<String>,
         /// Require a project argument for scoped tools in multi-root workspaces.
         #[arg(long)]
         no_default_project: bool,
@@ -389,14 +395,24 @@ enum ServiceCommand {
         runtime_dir: PathBuf,
         #[arg(long, default_value_t = 32)]
         limit: usize,
-        /// Export all retained rotated logs locally (at most four MiB of input).
+        /// Export retained logs locally (200 MB high-water, FIFO purge to 100 MB).
         #[arg(long, conflicts_with = "limit")]
         all: bool,
         /// Open the separate local raw job-error ring (may contain paths/error values).
         #[arg(long, conflicts_with_all = ["all", "limit", "format"])]
         raw: bool,
+        /// Capture raw retained diagnostics into a new local file without buffering stdout.
+        #[arg(long)]
+        output: Option<PathBuf>,
         #[arg(long,default_value="json",value_parser=["json","text"])]
         format: String,
+    },
+    /// Record a bounded local extension/setup error without starting the service.
+    RecordError {
+        #[arg(long)]
+        runtime_dir: PathBuf,
+        #[arg(long)]
+        operation: String,
     },
     Register {
         #[arg(long)]
@@ -661,8 +677,41 @@ async fn run() -> Result<()> {
         Command::Mcp {
             explorer_descriptor,
             additional_project,
+            additional_root,
+            index_collection,
             no_default_project,
         } => {
+            if cli.service_project.is_none()
+                && cli.data_dir.is_none()
+                && cli.service_runtime_dir.is_none()
+            {
+                anyhow::ensure!(
+                    additional_project.is_empty(),
+                    "root-based MCP cannot include internal project IDs"
+                );
+                let (install, control) = airk_cli::service_frontend::root_mcp_control(
+                    cli.service_install_dir.as_deref(),
+                )?;
+                let mut scopes = vec![airk_cli::service_frontend::RootScope::new(
+                    &cli.root,
+                    index_collection.clone(),
+                )?];
+                for root in additional_root {
+                    scopes.push(airk_cli::service_frontend::RootScope::new(root, None)?);
+                }
+                return airk_cli::unified_mcp::serve_roots(
+                    control,
+                    install,
+                    scopes,
+                    *no_default_project,
+                    explorer_descriptor.clone(),
+                )
+                .await;
+            }
+            anyhow::ensure!(
+                additional_root.is_empty() && index_collection.is_none(),
+                "root selectors cannot be combined with a pinned project binding"
+            );
             let project = airk_cli::service_frontend::resolve_mcp(
                 cli.service_install_dir.as_deref(),
                 cli.service_runtime_dir.as_deref(),
@@ -949,6 +998,7 @@ async fn initialize(cli: &Cli) -> Result<()> {
         ControlMethod::ReserveProject {
             project: registration.clone(),
             setup_watch: None,
+            only_if_missing: false,
         },
     )
     .await?;
@@ -1092,14 +1142,34 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
             runtime_dir,
             runtime_sha256,
         } => airk_cli::console_client::run(runtime_dir, *runtime_sha256).await,
+        ServiceCommand::RecordError {
+            runtime_dir,
+            operation,
+        } => {
+            let input = bounded(std::io::stdin(), 16384)?;
+            airk_cli::service_logs::record_client_error(runtime_dir, operation, &input)?;
+            print_json(&serde_json::json!({"recorded":true}))
+        }
         ServiceCommand::Logs {
             runtime_dir,
             limit,
             all,
             raw,
+            output,
             format,
         } => {
             if *raw {
+                if let Some(output) = output {
+                    let parent = output
+                        .parent()
+                        .context("diagnostic output parent missing")?;
+                    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+                    let written =
+                        airk_cli::service_logs::export_raw_to(runtime_dir, file.as_file_mut())?;
+                    file.as_file().sync_all()?;
+                    file.persist_noclobber(output)?;
+                    return print_json(&serde_json::json!({"written_bytes":written}));
+                }
                 std::io::Write::write_all(
                     &mut std::io::stdout().lock(),
                     &airk_cli::service_logs::export_raw(runtime_dir)?,
@@ -1115,6 +1185,22 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
             } else {
                 airk_cli::service_logs::recent(runtime_dir, *limit)?
             };
+            anyhow::ensure!(
+                output.is_none() || *all && format == "json",
+                "file capture requires --raw or --all --format json"
+            );
+            if let Some(output) = output {
+                let mut file = tempfile::NamedTempFile::new_in(
+                    output
+                        .parent()
+                        .context("diagnostic output parent missing")?,
+                )?;
+                serde_json::to_writer(file.as_file_mut(), &page)?;
+                file.as_file().sync_all()?;
+                let written = file.as_file().metadata()?.len();
+                file.persist_noclobber(output)?;
+                return print_json(&serde_json::json!({"written_bytes":written}));
+            }
             if format == "text" {
                 println!("{}", airk_cli::service_logs::render(&page)?);
                 Ok(())
@@ -1366,12 +1452,6 @@ fn configuration(
         "--",
         "--root",
         &project.root,
-        "--data-dir",
-        &project.data_root,
-        "--collection",
-        &project.collection,
-        "--service-project",
-        &project.binding.to_string(),
         "mcp",
     ]
     .into_iter()
@@ -1438,8 +1518,9 @@ mod tests {
             let text = configuration(launcher, install, &project, client)?;
             assert!(
                 text.contains("airk")
-                    && text.contains("--service-project")
-                    && text.contains(&project.binding.to_string())
+                    && text.contains("--root")
+                    && !text.contains("--service-project")
+                    && !text.contains("--data-dir")
             );
             if matches!(client, SetupClient::Codex) {
                 assert!(text.starts_with("[mcp_servers.airk]"));
@@ -1457,9 +1538,8 @@ mod tests {
                     .as_array()
                     .context("separate launcher arguments")?;
                 assert_eq!(args.last(), Some(&json!("mcp")));
-                for path in [&project.root, &project.data_root] {
-                    assert!(args.contains(&json!(path)));
-                }
+                assert!(args.contains(&json!(project.root)));
+                assert!(!args.contains(&json!("--data-dir")));
             }
         }
         Ok(())

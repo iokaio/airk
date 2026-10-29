@@ -17,6 +17,47 @@ SPEC.loader.exec_module(CLIENTS)
 
 
 class ServiceClientTests(unittest.TestCase):
+    def test_removal_requires_exact_history_proof_and_never_replays_a_pruned_request(self):
+        project, job = "a" * 64, "b" * 64
+        for outcome in ("confirmed", "crossed", "expired"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                fixture = self.fixture()
+                fixture.control = Path(directory)
+                fixture.projects = {"fixture": {"binding": project}}
+                fixture.job_timeout = 0.1
+                pending = fixture.control / "client-requests"
+                pending.mkdir()
+                request = {"project": project, "caller": "original-caller", "key": {"nonce": "original-key"}}
+                (pending / "original.json").write_text(json.dumps({"request": {"configure_project": request}}), encoding="utf-8")
+                observed = {"status": "request_receipt", "job": None, "expired": True}
+                if outcome != "expired":
+                    observed["removed_project"] = project if outcome == "confirmed" else "c" * 64
+                clock, queries = [0.0], []
+
+                def rpc(method, *, deadline=None):
+                    queries.append((method, deadline))
+                    clock[0] += 0.06
+                    return observed
+
+                receipt = subprocess.CompletedProcess([], 0, json.dumps({"status": "job", "job": {"id": job, "project": project}}), "")
+                with patch.object(fixture, "enqueue"), patch.object(fixture, "wait"), \
+                        patch.object(fixture, "prepare_configuration", return_value={"prepared": "original"}), \
+                        patch.object(fixture, "run", return_value=receipt) as submit, \
+                        patch.object(fixture, "rpc", side_effect=rpc), \
+                        patch.object(CLIENTS.time, "monotonic", side_effect=lambda: clock[0]), \
+                        patch.object(CLIENTS.time, "sleep"):
+                    if outcome == "confirmed":
+                        query, proof = fixture.remove("fixture")
+                        self.assertEqual(proof, observed)
+                        self.assertIsNone(proof["job"])
+                    else:
+                        with self.assertRaises(AssertionError):
+                            fixture.remove("fixture")
+                    submit.assert_called_once_with("service", "requests", "--runtime-dir", fixture.control, "retry", "original")
+                expected = {"request_receipt": {"caller": request["caller"], "key": request["key"], "project": project}}
+                self.assertTrue(queries)
+                self.assertTrue(all(method == expected and deadline == 0.1 for method, deadline in queries))
+
     def metadata_fixture(self):
         fixture = self.fixture()
         fixture.control = Path("fictional-control")

@@ -15,7 +15,8 @@ export interface ConsoleHost {
     openReport?(text:string):Promise<void>;
     saveReport?(text:string):Promise<void>;
     exportLogs?(observation?:BootstrapObservation):Promise<void>;
-    rawLogs?(save:boolean,observation?:BootstrapObservation):Promise<void>;
+    rawLogs?(save:boolean,observation?:BootstrapObservation):Promise<void|'opened'|'saved'|'canceled'>;
+    diagnosticFailure?(operation:string,error:unknown,observation?:BootstrapObservation):Promise<void>;
     logs(observation?:BootstrapObservation):Promise<void>;
     resources(current:RecordValue):Promise<RecordValue|undefined>;
     configuration?(row:RecordValue,operation?:'detail'|'advanced'):Promise<RecordValue|undefined>;
@@ -24,6 +25,7 @@ export interface ConsoleHost {
     responseMode?():'terse'|'full';
     chooseResponseMode?():Promise<void>;
     registerWorkspace?():Promise<void>;
+    projectRemoved?(project:string):Promise<void>;
     currentProjects?():ReadonlySet<string>;
     legacy?:{
         choose():Promise<LegacyStartupTarget|undefined>;
@@ -34,6 +36,7 @@ export interface ConsoleHost {
     };
 }
 const empty=():ConsoleObservation=>({state:'unavailable',checkedAt:Date.now()});
+export const LOCAL_LOG_ACTIONS=['logs','exportLogs','openRawLogs','saveRawLogs'];
 function objOutcomeUnknown(row:RecordValue):boolean{return record(record(row.configuration??{}).outcome??{}).code==='configuration_outcome_unknown_reinspect';}
 function code(error:unknown):string{return error instanceof ServiceError?error.code:'console_operation_failed';}
 export class ServiceConsoleController {
@@ -47,6 +50,11 @@ export class ServiceConsoleController {
     private disposed=false;
     private legacyReview?:LegacyStartupReview;
     private readonly idle=new Set<(available:boolean)=>void>();
+    private logRequest?:{action:string;work:Promise<void>};
+    private pollDeadline?:number;
+    private lastPollFailure?:string;
+    private readonly receiptDiagnostics=new Set<string>();
+    private readonly retainedOutcomes=new WeakSet<ServiceError>();
     constructor(private readonly host:ConsoleHost){
         this.state={revision:'',trusted:host.trusted(),busy:false,authority:host.authority,version:host.version,connected:false,
             health:empty(),resources:empty(),model:empty(),sources:empty(),bootstrap:empty(),events:[],historyOmitted:false,
@@ -69,12 +77,26 @@ export class ServiceConsoleController {
         this.host.changed(this.state);
     }
     private async rpc(method:unknown,expected?:string):Promise<RecordValue>{
+        this.pollActive();
         this.authorized();if(!this.client)throw new ServiceError('console_not_connected');
-        const value=await this.client.rpc(method,expected);this.authorized();return value;
+        const value=await this.observation(()=>this.client!.rpc(method,expected),typeof method==='string'?method:Object.keys(record(method))[0]);this.authorized();return value;
+    }
+    private pollActive():void{
+        if(this.pollDeadline!==undefined&&Date.now()>=this.pollDeadline)throw new ServiceError('status_poll_timed_out');
+    }
+    /** One deadline covers the whole poll, rather than a new deadline for each RPC. */
+    private async observation<T>(read:()=>Promise<T>,operation='bootstrap'):Promise<T>{
+        this.pollActive();if(this.pollDeadline===undefined)return read();
+        let timer:ReturnType<typeof setTimeout>|undefined;
+        const expired=new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>{
+            this.client?.dispose();this.client=undefined;
+            const failure=new ServiceError('status_poll_timed_out');failure.cause=new Error(`Status poll exceeded its shared deadline while reading ${operation}`);reject(failure);
+        },Math.max(1,this.pollDeadline!-Date.now()));});
+        try{return await Promise.race([read(),expired]);}finally{if(timer)clearTimeout(timer);}
     }
     private async discover():Promise<void>{
         this.authorized();
-        this.bootstrap=await this.host.runtime.discover();this.authorized();
+        this.bootstrap=await this.observation(()=>this.host.runtime.discover());this.authorized();
         this.state.bootstrap={state:'live',checkedAt:Date.now(),value:{
             installed:this.bootstrap.installed,installDir:this.bootstrap.installDir,
             bundleDigest:this.bootstrap.bundle.digest,platform:this.bootstrap.bundle.platform,
@@ -92,7 +114,7 @@ export class ServiceConsoleController {
             if(typeof this.bootstrap.inspection.registry_namespace==='string')this.restoreJournal(this.bootstrap.inspection.registry_namespace);
             this.cachedSnapshot(this.bootstrap.inspection);
             if(this.binding.version!==this.host.version){
-                try{const snapshot=await this.host.runtime.snapshot(this.binding);this.authorized();this.cachedSnapshot(snapshot);}catch{/* Installer observations remain usable without readable cached project metadata. */}
+                try{const snapshot=await this.observation(()=>this.host.runtime.snapshot(this.binding!));this.authorized();this.cachedSnapshot(snapshot);}catch{/* Installer observations remain usable without readable cached project metadata. */}
                 this.state.message='Selected native runtime differs from this extension. Review the bundled upgrade or use the matching extension; the pin is preserved.';
             }
         }
@@ -104,7 +126,7 @@ export class ServiceConsoleController {
             selectedRuntime:snapshot.selection?record(snapshot.selection).active:undefined,
             selectedVersion:snapshot.approval?record(snapshot.approval).version:undefined,
             verificationBasis:snapshot.approval?record(snapshot.approval).verification_basis:undefined}};
-        if(snapshot.console){this.state.page=parseConsolePage(snapshot.console);this.state.inactiveProjects=false;}
+        if(snapshot.console){this.state.page=parseConsolePage(snapshot.console);this.state.activePage=this.state.page;this.state.inactiveProjects=false;}
         this.state.configurationResultsOmitted=snapshot.configuration_results_omitted===true;
         if(snapshot.configuration_results!==undefined){
             const items=snapshot.configuration_results;
@@ -124,7 +146,7 @@ export class ServiceConsoleController {
     }
     private async savedSnapshot(after:string|null=null,revision:number|null=null):Promise<void>{
         if(!this.binding)return;
-        const snapshot=await this.host.runtime.snapshot(this.binding,after,revision);this.authorized();
+        const snapshot=await this.observation(()=>this.host.runtime.snapshot(this.binding!,after,revision));this.authorized();
         if(snapshot.registry_namespace)this.restoreJournal(identifier(snapshot.registry_namespace,16));
         this.cachedSnapshot(snapshot);this.pending();
         if(snapshot.registry_error)throw new ServiceError('cached_registry_unavailable_or_cursor_expired');
@@ -138,10 +160,20 @@ export class ServiceConsoleController {
     }
     async refresh():Promise<void>{
         if(this.disposed||this.state.busy)return;
-        this.state.busy=true;this.publish();
-        try{this.authorized();if(!this.client)await this.discover();await this.observe();}
-        catch(error){this.state.message=code(error);if(!this.client)this.state.bootstrap={...this.state.bootstrap,state:'failed',code:code(error),checkedAt:Date.now()};}
-        finally{this.state.busy=false;this.publish();this.releaseIdle();}
+        this.pollDeadline=Date.now()+15000;this.state.busy=true;this.publish();
+        try{this.authorized();if(!this.client)await this.discover();await this.observe();this.lastPollFailure=undefined;}
+        catch(error){
+            if(this.lastPollFailure!==code(error)){
+                this.lastPollFailure=code(error);void this.host.diagnosticFailure?.('status_poll',error,this.bootstrap).catch(()=>{});
+            }
+            this.state.message=code(error);
+            if(code(error)==='status_poll_timed_out'){
+                this.disconnected();this.state.health={...this.state.health,state:'failed',code:'status_poll_timed_out'};
+                this.state.message='Status check timed out. Reconnecting automatically; current indexing progress is unconfirmed.';
+            }
+            if(!this.client)this.state.bootstrap={...this.state.bootstrap,state:'failed',code:code(error),checkedAt:Date.now()};
+        }
+        finally{this.pollDeadline=undefined;this.state.busy=false;this.publish();this.releaseIdle();}
     }
     private async observe():Promise<void>{
         if(!this.client){await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);return;}
@@ -150,7 +182,7 @@ export class ServiceConsoleController {
             this.state.health={state:'live',value,checkedAt:Date.now()};this.state.connected=true;
         }catch(error){
             this.state.health={...this.state.health,state:'failed',code:code(error),checkedAt:Date.now()};
-            this.disconnected();this.client.dispose();this.client=undefined;
+            this.disconnected();this.client?.dispose();this.client=undefined;
             try{await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);}catch{/* Retain the original health failure. */}
             throw error;
         }
@@ -178,7 +210,7 @@ export class ServiceConsoleController {
     private restoreJournal(namespace:string):void{
         const journal=new IntentJournal(this.host.storage,this.binding!.controlDir,identifier(namespace,16));
         if(this.journal?.scope!==journal.scope){
-            this.journal=journal;this.state.selected.clear();this.eventCursor=null;this.state.events=[];this.state.page=undefined;
+            this.journal=journal;this.state.selected.clear();this.eventCursor=null;this.state.events=[];this.state.page=undefined;this.state.activePage=undefined;
             this.legacyReview=undefined;this.state.legacyReview=undefined;this.state.legacyReceipts=undefined;
             this.state.preview=undefined;
             this.state.configurationResults=undefined;
@@ -200,12 +232,28 @@ export class ServiceConsoleController {
         const prior=this.state.page;
         const start=first?{after:null,revision:null}:next?{after:prior?.after??null,revision:prior?.revision??null}:this.pageStart;
         if(!this.client){await this.savedSnapshot(start.after,start.after?start.revision:null);this.pageStart=start;return;}
-        if(this.journal?.list().length){await this.journal.reconcile(this.client,response=>this.receipt(response));this.pending();}
-        const page=await this.client.projects(start.after,start.after?start.revision:null,16,this.state.inactiveProjects===true);
+        if(this.journal?.list().length){
+            const client=this.client;
+            const current=()=>{this.authorized();if(this.client!==client)throw new ServiceError('stale_receipt_observation');};
+            try{
+                await this.observation(()=>this.journal!.reconcile(client!,response=>{current();return this.receipt(response);},async project=>{current();await this.host.projectRemoved?.(project);},(id,error)=>{this.logReceipt(id,error);current();}));
+            }catch(error){
+                this.logReceipt('reconciliation',error);
+                // Receipt bookkeeping must not prevent loading current project status.
+                this.pollActive();this.authorized();
+            }
+            this.pending();
+            for(const entry of this.journal.list())this.logReceipt(entry.id,new ServiceError('request_outcome_unconfirmed'));
+        }
+        const page=await this.observation(()=>this.client!.projects(start.after,start.after?start.revision:null,16,this.state.inactiveProjects===true));
         this.pageStart=start;
         this.authorized();this.state.page=page;
+        if(this.state.inactiveProjects)for(const row of page.projects){await this.host.projectRemoved?.(identifier(record(record(row.project).registration).binding,32));this.authorized();}
+        // Refresh active registrations even while Management browses removed ones.
+        this.state.activePage=this.state.inactiveProjects
+            ? await this.observation(()=>this.client!.projects(null,null,16,false)) : page;
         this.state.workers=undefined;
-        this.state.workers=await this.client.workers(page.projects.map(row=>String(record(record(row.project).registration).binding)));
+        this.state.workers=await this.observation(()=>this.client!.workers(page.projects.map(row=>String(record(record(row.project).registration).binding))));
         const results:NonNullable<ServiceConsoleState['configurationResults']>=new Map();
         for(const row of page.projects){
             if(!row.configuration)continue;
@@ -277,7 +325,13 @@ export class ServiceConsoleController {
     private async mutation(title:string,intent:ConsoleIntent):Promise<RecordValue>{
         if(!this.journal||(!this.client&&!('lifecycle' in intent)))throw new ServiceError('console_not_connected');
         const id=await this.journal.prepare(title,intent);this.pending();this.publish();
-        this.authorized();const response=await this.submit(id);this.pending();return response;
+        this.authorized();
+        try{const response=await this.submit(id);this.pending();return response;}
+        catch(error){
+            this.logReceipt(id,error);
+            if(error instanceof ServiceError&&error.outcomeUnknown)this.retainedOutcomes.add(error);
+            throw error;
+        }
     }
     private async submit(id:string,force=false):Promise<RecordValue>{
         if(!this.journal)throw new ServiceError('console_journal_not_observed');
@@ -294,7 +348,9 @@ export class ServiceConsoleController {
         });
     }
     async action(message:unknown):Promise<void>{
-        const action=consoleAction(message,this.state);if(!action||this.state.busy||this.disposed)return;
+        const action=consoleAction(message,this.state);if(!action||this.disposed)return;
+        if(LOCAL_LOG_ACTIONS.includes(action.action)){await this.localLogs(action.action);return;}
+        if(this.state.busy)return;
         const requestedPreview=this.state.preview;
         this.state.busy=true;this.state.message=undefined;this.publish();
         try{
@@ -316,9 +372,6 @@ export class ServiceConsoleController {
                 if(!operation)throw new ServiceError('diagnostic_export_unavailable');
                 await operation(requestedPreview);this.state.preview=requestedPreview;return;
             }
-            if(action.action==='exportLogs'){this.authorized();if(!this.host.exportLogs)throw new ServiceError('diagnostic_export_unavailable');await this.host.exportLogs(this.bootstrap);return;}
-            if(action.action==='openRawLogs'||action.action==='saveRawLogs'){this.authorized();if(!this.host.rawLogs)throw new ServiceError('diagnostic_export_unavailable');await this.host.rawLogs(action.action==='saveRawLogs',this.bootstrap);return;}
-            if(action.action==='logs'){await this.host.logs(this.bootstrap);return;}
             if(action.action==='copyConfiguration'){
                 const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===action.project);
                 const saved=this.state.configurationResults?.get(action.project!);
@@ -413,7 +466,9 @@ export class ServiceConsoleController {
                 if(['firstPage','nextPage','morePlan','refreshPlan'].includes(action.action))return;
             }
             await this.observe();
-        }catch(error){this.state.message=code(error);}
+        }catch(error){
+            if(!this.retainedOutcome(error))this.state.message=code(error);
+        }
         finally{
             try{this.pending();}catch(error){this.state.message=code(error);}
             this.state.busy=false;
@@ -421,6 +476,41 @@ export class ServiceConsoleController {
             this.publish();
             this.releaseIdle();
         }
+    }
+    private logReceipt(identity:string,error:unknown):void{
+        const key=`${this.journal?.scope}:${identity}:${code(error)}`;
+        if(this.receiptDiagnostics.has(key))return;
+        this.receiptDiagnostics.add(key);
+        void this.host.diagnosticFailure?.('request_receipt',new Error(`${key}: ${String(error)}`,{cause:error}),this.bootstrap).catch(()=>{});
+    }
+    private retainedOutcome(error:unknown):boolean{
+        return error instanceof ServiceError&&this.retainedOutcomes.has(error);
+    }
+    /** Local file diagnostics must not wait behind an unrelated status/RPC poll. */
+    private async localLogs(action:string):Promise<void>{
+        if(this.logRequest){
+            const current=this.logRequest;await current.work;
+            if(current.action===action)return;
+        }
+        const work=(async()=>{
+            try{
+                this.authorized();this.state.message='Reading local AIRK logs…';this.publish();
+                if(action==='openRawLogs'||action==='saveRawLogs'){
+                    if(!this.host.rawLogs)throw new ServiceError('diagnostic_export_unavailable');
+                    const result=await this.host.rawLogs(action==='saveRawLogs',this.bootstrap);this.authorized();
+                    this.state.message=result==='saved'?'Raw job error log saved.':result==='opened'?'Raw job error log opened.':result==='canceled'?'Log save canceled.':'Log request finished.';
+                }else if(action==='exportLogs'){
+                    if(!this.host.exportLogs)throw new ServiceError('diagnostic_export_unavailable');
+                    await this.host.exportLogs(this.bootstrap);this.authorized();this.state.message='Service log export finished.';
+                }else{await this.host.logs(this.bootstrap);this.authorized();this.state.message='Service logs opened in AIRK Service output.';}
+            }catch(error){
+                this.state.message=code(error);
+                void this.host.diagnosticFailure?.(action.replace(/[A-Z]/g,letter=>'_'+letter.toLowerCase()),error,this.bootstrap).catch(()=>{});
+            }
+            finally{this.publish();}
+        })();
+        this.logRequest={action,work};
+        try{await work;}finally{if(this.logRequest?.work===work)this.logRequest=undefined;}
     }
     private async legacyAction(action:NonNullable<ReturnType<typeof consoleAction>>):Promise<void>{
         this.authorized();const legacy=this.host.legacy;if(!legacy)throw new ServiceError('legacy_review_unavailable');
@@ -474,7 +564,10 @@ export class ServiceConsoleController {
             const result=await this.rpc({configuration_result:{id}},'configuration');check();
             if(record(result.job).id!==id||record(result.job).project!==project||result.result===null)throw new ServiceError('configuration_result_unavailable');
             await this.observe();
-        }catch(error){this.state.message=code(error);throw error;}
+        }catch(error){
+            if(!this.retainedOutcome(error))this.state.message=code(error);
+            throw error;
+        }
         finally{try{this.pending();}catch(error){this.state.message=code(error);}this.state.busy=false;this.publish();this.releaseIdle();}
     }
     async projectPlan(project:string,operation:import('./serviceClient').RepairOperation):Promise<void>{
@@ -486,7 +579,9 @@ export class ServiceConsoleController {
             await this.observe();
             await this.mutation(`Plan ${operation} ${project}`,await this.client.preparePlan([project],operation));
             await this.observe();
-        }catch(error){this.state.message=code(error);}
+        }catch(error){
+            if(!this.retainedOutcome(error))this.state.message=code(error);
+        }
         finally{try{this.pending();}catch(error){this.state.message=code(error);}this.state.busy=false;this.publish();this.releaseIdle();}
     }
     private async waitForProjectJob(response:RecordValue,project:string,kind:string,check:()=>void=()=>this.authorized()):Promise<string>{
@@ -505,9 +600,6 @@ export class ServiceConsoleController {
     }
     private async connectedAction(action:NonNullable<ReturnType<typeof consoleAction>>):Promise<void>{
         const project=action.project!,id=action.id!;
-        if(['index','inspect','modelSetup','enableSemantic','disableSemantic','configureDetail','configureProject','retryRecovery'].includes(action.action) && this.state.pending.some(intent=>intent.unknown)){
-            this.state.message='A saved request has an unknown outcome. Check its exact request in Recent activity before submitting new work.';return;
-        }
         switch(action.action){
             case 'unregisterProject':{
                 const row=this.state.page?.projects.find(row=>record(record(row.project).registration).binding===project);
@@ -518,12 +610,13 @@ export class ServiceConsoleController {
                 const request=await this.host.runtime.prepareConfiguration(this.binding,project,{operation:'unregister'});this.authorized();
                 if(request.configuration.operation!=='unregister')throw new ServiceError('unexpected_removal_configuration');
                 const registration=record(record(row.project).registration);
-                if(!await this.host.confirm(`Remove ${String(registration.collection)} from AIRK on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. This unregisters the project, stops automatic work and drains its worker, including when the source folder has been deleted. Sources, settings and index data are retained. After removal, use Preview / resume index cleanup and Delete reviewed index state to reclaim its index storage.`))return;
+                if(!await this.host.confirm(`Remove ${String(registration.collection)} from AIRK on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. This stops all project work, drains its worker and permanently deletes its AIRK index data and saved settings, including when the source folder has been deleted. Source files are untouched. Only a minimal removal history remains.`))return;
                 this.authorized();
                 await this.waitForProjectJob(await this.mutation(`Unregister ${project}`,await this.client!.prepareConfiguration(project,request)),project,'configure');
+                await this.host.projectRemoved?.(project);this.authorized();
                 this.state.inactiveProjects=true;this.state.selected.clear();
                 await this.page(false,true);
-                this.state.message='Project removed from active indexing. Preview its retained index cleanup, then confirm deletion to reclaim storage.';
+                this.state.message='Project indexing stopped. AIRK is deleting its index data and saved settings; removal continues without this window.';
                 return;
             }
             case 'registeredProjects':case 'inactiveProjects':{
@@ -565,7 +658,7 @@ export class ServiceConsoleController {
                 const request=await this.host.runtime.prepareConfiguration(this.binding,project,draft);this.authorized();
                 if(request.configuration.operation==='unregister'){
                     const registration=record(record(row.project).registration);
-                    if(!await this.host.confirm(`Unregister ${String(registration.collection)} from AIRK on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. This stops automatic work and new connections for this project; its owned worker will drain and existing clients may disconnect. Sources, settings and index data are retained. Registration must be reviewed again before reconnecting.`))return;
+                    if(!await this.host.confirm(`Unregister ${String(registration.collection)} from AIRK on ${this.host.authority}? Source: ${String(registration.root)}. Data: ${String(registration.data_root)}. This stops automatic work and new connections for this project; its owned worker will drain and existing clients may disconnect. Removal deletes its AIRK index data and saved settings. Source files are untouched. Only minimal removal history remains.`))return;
                     this.authorized();
                 }
                 const accepted=await this.mutation(`Configure ${String(request.configuration.operation)} ${project}`,await this.client!.prepareConfiguration(project,request));

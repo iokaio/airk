@@ -579,7 +579,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_status",
-        description = "Check index readiness, generation, counts and extractor version. Includes a runtime JSON bundle identifying running MCP frontend, index worker and service versions, process/instance identities, executable/payload hashes and available build metadata. The work bundle reports scoped job state, phase/counters, pending job, pause policy, source watcher and exact-job sampled waits with freshness/worker identity checks. Frontend identity is client-reported; missing/stale observations remain explicit. Health is not progress and counts are indexed snapshots, not live source proof. Use airk_help for interpretation/CLI options and response_mode=full for diagnosis; MCP does not manage jobs.",
+        description = "Quick AIRK version, basic health and project-index check: generation, counts, freshness and semantic coverage. Successful native snapshots may be cached for up to five seconds with explicit observation time and cache age. Reads scalar publication metadata without imported fact payloads, runtime/work probes or editor processes in every response mode. Use airk_diagnostics for process/version identities, detailed job state and diagnostic observations. Health is not progress; saved counts do not verify live source. response_mode=full retains the same lightweight scope. MCP does not manage jobs.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -587,6 +587,23 @@ impl AirkServer {
         )
     )]
     async fn status(&self, Parameters(args): Parameters<StatusArgs>) -> CallToolResult {
+        self.execute_response_policy(UsageOperation::Status,args.response,false,move|kernel|{
+            kernel.status_summary().or_else(|_error|Ok(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unavailable","publication":null,"files":null,"chunks":null,"freshness":kernel.changes_freshness(),"index_error":{"code":"index_status_unavailable","message":"Published index metadata could not be read. Use diagnostics for details."}})))
+        }).await
+    }
+
+    #[tool(
+        name = "airk_diagnostics",
+        description = "Troubleshoot AIRK: full published coverage, runtime versions and process identities, scoped job/queue state, worker progress, source watcher and sampled waits. Read-only; may be slower and larger than airk_status. Use airk_status for routine readiness checks. response_mode=full detail is always included; does not start indexing or repair.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn diagnostics(&self, Parameters(mut args): Parameters<StatusArgs>) -> CallToolResult {
+        args.response.response_mode = Some(response::ResponseMode::Full);
+        args.response.include_status = true;
         let runtime = self.runtime.read().ok().and_then(|runtime| runtime.clone());
         let work = self.work.read().ok().and_then(|work| work.clone());
         self.execute_response(UsageOperation::Status, args.response, move |kernel| {
@@ -895,20 +912,24 @@ fn render<T: Serialize>(
             object.entry("freshness").or_insert_with(|| {
                 serde_json::to_value(kernel.changes_freshness()).unwrap_or(serde_json::Value::Null)
             });
-            match kernel.readiness_observation(publication.token) {
-                Ok(Some((discovery, semantic))) => {
-                    object.entry("discovery_readiness").or_insert_with(|| {
-                        serde_json::to_value(discovery).unwrap_or(serde_json::Value::Null)
-                    });
-                    object.entry("semantic_readiness").or_insert_with(|| {
-                        serde_json::to_value(semantic).unwrap_or(serde_json::Value::Null)
-                    });
-                }
-                _ => {
-                    object.insert(
-                        "discovery_observation".into(),
-                        "unavailable_after_read".into(),
-                    );
+            if !object.contains_key("discovery_readiness")
+                || !object.contains_key("semantic_readiness")
+            {
+                match kernel.readiness_observation(publication.token) {
+                    Ok(Some((discovery, semantic))) => {
+                        object.entry("discovery_readiness").or_insert_with(|| {
+                            serde_json::to_value(discovery).unwrap_or(serde_json::Value::Null)
+                        });
+                        object.entry("semantic_readiness").or_insert_with(|| {
+                            serde_json::to_value(semantic).unwrap_or(serde_json::Value::Null)
+                        });
+                    }
+                    _ => {
+                        object.insert(
+                            "discovery_observation".into(),
+                            "unavailable_after_read".into(),
+                        );
+                    }
                 }
             }
         }

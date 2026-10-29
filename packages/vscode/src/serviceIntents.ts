@@ -32,6 +32,7 @@ const MAX_BYTES = 32768;
 export class IntentJournal {
     readonly scope: string;
     private tail: Promise<unknown> = Promise.resolve();
+    private reconcileAfter?:string;
     constructor(private readonly storage: IntentStorage, control: string, private readonly namespace: string) {
         identifier(namespace,16);
         this.scope=createHash('sha256').update(JSON.stringify([control,namespace])).digest('hex');
@@ -78,16 +79,27 @@ export class IntentJournal {
             return id;
         });
     }
-    async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>):Promise<void>{
-        for(const saved of this.list().slice(0,8)){
-            const intent=saved.value.intent;
-            if('lifecycle' in intent||'plan_create' in intent)continue;
-            const request='enqueue' in intent?intent.enqueue:'configure_project' in intent?intent.configure_project:intent.retry;
-            const result=await client.rpc({request_receipt:{caller:request.caller,key:request.key}},'request_receipt');
-            if(result.job===null)continue; // Missing/expired receipts never authorize another write.
-            const job=record(result.job);identifier(job.id,32);
-            if('project' in request&&job.project!==request.project)throw new ServiceError('crossed_job_receipt');
-            await onReceipt({status:'job',job});await this.forget(saved.id);
+    async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>,onRemoved?:(project:string)=>Promise<void>,onFailure?:(id:string,error:unknown)=>void):Promise<void>{
+        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent));
+        const after=this.reconcileAfter??'';
+        const batch=[...candidates.filter(saved=>saved.id>after),...candidates.filter(saved=>saved.id<=after)].slice(0,8);
+        for(const saved of batch){
+            this.reconcileAfter=saved.id;
+            try{
+                const intent=saved.value.intent;
+                if('lifecycle' in intent||'plan_create' in intent)continue;
+                const request='enqueue' in intent?intent.enqueue:'configure_project' in intent?intent.configure_project:intent.retry;
+                const project='project' in request?request.project:undefined;
+                const result=await client.rpc({request_receipt:{caller:request.caller,key:request.key,...(project?{project}:{})}},'request_receipt');
+                if(result.removed_project!==undefined){
+                    if(!project||identifier(result.removed_project,32)!==project)throw new ServiceError('crossed_removed_project_receipt');
+                    await onRemoved?.(project);await this.forget(saved.id);continue;
+                }
+                if(result.job===null)continue; // Missing/expired receipts never authorize another write.
+                const job=record(result.job);identifier(job.id,32);
+                if('project' in request&&job.project!==request.project)throw new ServiceError('crossed_job_receipt');
+                await onReceipt({status:'job',job});await this.forget(saved.id);
+            }catch(error){if(!onFailure)throw error;onFailure(saved.id,error);}
         }
     }
     async submit(client:ServiceClient|undefined,id:string,onReceipt?:(response:Record<string,unknown>)=>Promise<void>,

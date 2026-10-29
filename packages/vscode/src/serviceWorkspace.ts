@@ -11,6 +11,7 @@ import { IntentStorage } from './serviceIntents';
 const PREFIX='airk.service.workspace.1.';
 const ACTIVE='airk.service.workspace.active.1.';
 interface SavedProject {schema:1;opened:string;registration:ProjectRegistrationReview}
+export interface WorkspaceRegistrations { active:ProjectRegistrationReview[]; inactive:ProjectRegistrationReview[] }
 function absolute(value:unknown):string {
     if(typeof value!=='string'||value.length>4096||!path.isAbsolute(value)||/[\u0000-\u001f\u007f]/.test(value))throw new ServiceError('invalid_saved_workspace_path');
     return value;
@@ -18,7 +19,40 @@ function absolute(value:unknown):string {
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
 }
-/** No automatic root adoption, source writes, index scheduling or uncertain-mutation replay. */
+/** Follow the native default after a rename without redirecting other custom storage. */
+export async function renamedDefaultDataRoot(configured:string,nativeData:string):Promise<string|undefined>{
+    absolute(configured);absolute(nativeData);
+    const leaf=path.basename(nativeData);
+    if(!['index-v1','index-v1-preview'].includes(leaf))return undefined;
+    const previous=path.join(path.dirname(nativeData),leaf==='index-v1'?'service-1.4':'service-1.4-preview');
+    if(!same(configured,previous))return undefined;
+    try{await fs.lstat(previous);return undefined;}
+    catch(error){if(['ENOENT','ENOTDIR'].includes((error as NodeJS.ErrnoException).code??''))return nativeData;throw error;}
+}
+/** Complete, revision-consistent native observations; a missing page is never an empty registry. */
+export async function readWorkspaceRegistrations(binding:RuntimeBinding,
+    read:(after:string|null,revision:number|null,inactive:boolean)=>Promise<ConsolePage>):Promise<WorkspaceRegistrations>{
+    const result:WorkspaceRegistrations={active:[],inactive:[]},seen=new Set<string>();let revision:number|null=null;
+    for(const inactive of [false,true]){
+        let after:string|null=null;
+        do{
+            const page=await read(after,revision,inactive);
+            if(revision!==null&&page.revision!==revision)throw new ServiceError('workspace_registry_changed');revision=page.revision;
+            for(const row of page.projects){
+                const project=record(record(row.project).registration),id=identifier(project.binding,32);
+                if(seen.has(id)||seen.size>=1024)throw new ServiceError('workspace_registry_page_invalid');seen.add(id);
+                const collection=project.collection;
+                if(typeof collection!=='string'||!/^[A-Za-z0-9._-]{1,128}$/.test(collection)||['.','..'].includes(collection))throw new ServiceError('invalid_saved_workspace_registration');
+                result[inactive?'inactive':'active'].push({installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256,
+                    binding:id,root:absolute(project.root),data_root:absolute(project.data_root),collection});
+            }
+            if(page.after!==null&&(page.after===after||!page.projects.length||seen.size>=1024))throw new ServiceError('workspace_registry_page_invalid');
+            after=page.after;
+        }while(after!==null);
+    }
+    return result;
+}
+/** Workspace state remembers reviewed/native bindings; sources remain read-only. */
 export class ServiceWorkspace {
     constructor(private readonly storage:IntentStorage,private readonly runtime:Pick<RuntimeHost,'reviewProject'|'registerProject'>,
         private readonly authorized:()=>boolean){}
@@ -28,6 +62,57 @@ export class ServiceWorkspace {
         this.active();
         return this.saved().some(value=>same(value.opened,opened)&&same(value.registration.installDir,binding.installDir)
             &&same(value.registration.controlDir,binding.controlDir));
+    }
+    /** Trusted startup may recreate a lost registration; native removal remains authoritative. */
+    async reconcileStartup(binding:RuntimeBinding,opened:string,observed:WorkspaceRegistrations):Promise<'registered'|'removed'|'missing'>{
+        this.active();const saved=(await this.definitions(binding,[opened]))[0];
+        let root:string;
+        try{root=await fs.realpath(opened);}catch(error){if(!saved)throw error;root=saved.root;}
+        this.active();
+        const candidates=observed.active.filter(project=>same(project.root,root));
+        const exact=saved&&candidates.find(project=>project.binding===saved.service!.project);
+        const matching=saved?candidates.filter(project=>project.collection===saved.collection):candidates;
+        const preferred=matching.length===1?matching[0]:undefined;
+        if(!exact&&!preferred&&candidates.length>1)throw new ServiceError('workspace_binding_review_required');
+        const project=exact||preferred||candidates[0];
+        if(project){
+            const key=PREFIX+createHash('sha256').update(JSON.stringify([project.installDir,project.binding,opened])).digest('hex');
+            if(this.storage.get(key)===undefined&&this.saved().length>=1024)throw new ServiceError('workspace_registration_capacity');
+            const existing=this.storage.get(key),current=existing?record(record(existing).registration):undefined;
+            if(!current||Object.entries(project).some(([name,value])=>current[name]!==value)){
+                await this.storage.update(key,{schema:1,opened,registration:project} satisfies SavedProject);this.active();
+            }
+            if(this.storage.get(this.selection(project.installDir,opened))!==project.binding){
+                await this.storage.update(this.selection(project.installDir,opened),project.binding);this.active();
+            }
+            return 'registered';
+        }
+        if(observed.inactive.some(project=>same(project.root,root)&&(!saved||project.collection===saved.collection))){
+            await this.withdraw(binding,opened);
+            return 'removed';
+        }
+        return 'missing';
+    }
+    /** Remove editor launch details after authoritative native removal. */
+    async withdraw(binding:RuntimeBinding,opened:string):Promise<void>{
+        this.active();
+        for(const key of this.storage.keys().filter(key=>key.startsWith(PREFIX))){
+            const value=record(this.storage.get(key)),registration=record(value.registration);
+            if(same(absolute(value.opened),opened)&&same(absolute(registration.installDir),binding.installDir)){
+                await this.storage.update(key,undefined);this.active();
+            }
+        }
+        await this.storage.update(this.selection(binding.installDir,opened),undefined);this.active();
+    }
+    async withdrawProject(binding:RuntimeBinding,project:string):Promise<void>{
+        this.active();identifier(project,32);
+        for(const key of this.storage.keys().filter(key=>key.startsWith(PREFIX))){
+            const value=record(this.storage.get(key)),registration=record(value.registration);
+            if(registration.binding!==project||!same(absolute(registration.installDir),binding.installDir)||!same(absolute(registration.controlDir),binding.controlDir))continue;
+            const opened=absolute(value.opened);await this.storage.update(key,undefined);this.active();
+            const selected=this.selection(binding.installDir,opened);
+            if(this.storage.get(selected)===project){await this.storage.update(selected,undefined);this.active();}
+        }
     }
     private saved():SavedProject[]{
         const keys=this.storage.keys().filter(key=>key.startsWith(PREFIX)).sort();
@@ -42,13 +127,13 @@ export class ServiceWorkspace {
         });
     }
     async register(binding:RuntimeBinding,opened:string,dataRoot:string,collection:string,
-        confirm:(review:ProjectRegistrationReview)=>Promise<boolean>,setupWatch?:boolean):Promise<ProjectRegistrationReview|undefined>{
+        confirm:(review:ProjectRegistrationReview)=>Promise<boolean>,setupWatch?:boolean,onlyIfMissing=false):Promise<ProjectRegistrationReview|undefined>{
         this.active();absolute(opened);this.saved();
         const review=await this.runtime.reviewProject(binding,opened,dataRoot,collection);this.active();
         const key=PREFIX+createHash('sha256').update(JSON.stringify([review.installDir,review.binding,opened])).digest('hex');
         if(this.storage.get(key)===undefined&&this.saved().length>=1024)throw new ServiceError('workspace_registration_capacity');
         if(!await confirm(review))return;this.active();
-        await this.runtime.registerProject(binding,review,setupWatch);this.active();
+        await this.runtime.registerProject(binding,review,setupWatch,onlyIfMissing);this.active();
         await this.storage.update(key,{schema:1,opened,registration:review} satisfies SavedProject);this.active();
         await this.storage.update(this.selection(review.installDir,opened),review.binding);this.active();
         return review;

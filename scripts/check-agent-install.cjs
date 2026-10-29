@@ -74,24 +74,36 @@ exports.activate=()=>{let reloading=false;void (async()=>{
  const definition=manual.airk??definitions[0];assert.ok(definition);
  if(manual.airk)assert.equal(definitions.length,0,'manual configuration owns disabled state and suppresses a duplicate provider');
  const flag=(args,key)=>{const index=args.indexOf(key);assert.ok(index>=0,key);return args[index+1];};
- const spec={command:definition.command,root:${JSON.stringify(canonical)},dataDir:flag(definition.args,'--data-dir'),collection:${JSON.stringify(collection)},name:'fixture',service:{installDir:${JSON.stringify(install)},project:flag(definition.args,'--service-project'),universal:!definition.args.includes('launch')}};
+ const same=(a,b)=>path.relative(process.platform==='win32'?path.toNamespacedPath(a):a,process.platform==='win32'?path.toNamespacedPath(b):b)==='';
+ const {RuntimeHost}=require(path.join(extension.extensionPath,'out/serviceBootstrap.js'));
+ const runtime=new RuntimeHost(extension.extensionPath,extension.packageJSON.version,{channel:'stable',installDir:${JSON.stringify(install)}});
+ const installation=await runtime.discover(),binding=runtime.binding(installation.inspection,installation.installDir),client=runtime.client(binding);
+ let registration;
+ try{const page=await client.projects(null,null,32,false);assert.equal(page.after,null);const matches=page.projects.map(row=>row.project.registration).filter(value=>same(value.root,${JSON.stringify(canonical)})&&value.collection===${JSON.stringify(collection)});assert.equal(matches.length,1);registration=matches[0];}finally{client.dispose();}
+ const spec={command:definition.command,root:registration.root,dataDir:registration.data_root,collection:registration.collection,name:'fixture',service:{installDir:binding.installDir,project:registration.binding,universal:!definition.args.includes('launch')}};
+ async function diagnostics(){
+  const {McpStdioSession}=require(path.join(extension.extensionPath,'out/mcpStdioSession.js'));
+  const {session}=await McpStdioSession.open({command:definition.command,args:definition.args,cwd:path.dirname(definition.command),clientName:'installer-acceptance',clientVersion:extension.packageJSON.version},90000);
+  try{const result=await session.request('tools/call',{name:'diagnostics',arguments:{response_mode:'full'}},90000);assert.notEqual(result.isError,true);return JSON.parse(result.content.find(part=>part.type==='text').text);}finally{session.close();}
+ }
  if(${JSON.stringify(previousVersion)}&&!await fs.access(${JSON.stringify(path.join(run,'baseline.json'))}).then(()=>true,()=>false)){
   assert.equal(extension.packageJSON.version,${JSON.stringify(previousVersion)});
-  await fs.writeFile(${JSON.stringify(path.join(run,'baseline.json'))},JSON.stringify({version:extension.packageJSON.version,command:definition.command,args:definition.args}));
+  await fs.writeFile(${JSON.stringify(path.join(run,'baseline.json'))},JSON.stringify({version:extension.packageJSON.version,command:definition.command,args:definition.args,project:spec.service.project,dataDir:spec.dataDir,root:spec.root,controlDir:binding.controlDir}));
   const deadline=Date.now()+180000;
   while(!await fs.access(${JSON.stringify(path.join(run,'upgrade-reload.json'))}).then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Upgrade did not finish installing');await new Promise(resolve=>setTimeout(resolve,100));}
   reloading=true;await vscode.commands.executeCommand('workbench.action.reloadWindow');return;
  }
  assert.equal(extension.packageJSON.version,${JSON.stringify(version)});
- if(${!!previousVsix}){const old=JSON.parse(await fs.readFile(${JSON.stringify(path.join(run,'baseline.json'))},'utf8'));assert.equal(flag(old.args,'--service-project'),spec.service.project);assert.equal(flag(old.args,'--data-dir'),spec.dataDir);}
+ if(${!!previousVsix}){const old=JSON.parse(await fs.readFile(${JSON.stringify(path.join(run,'baseline.json'))},'utf8'));assert.equal(old.project,spec.service.project);assert.equal(old.dataDir,spec.dataDir);assert.equal(old.root,spec.root);}
  if(${!!previousVsix}){
-  const live=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,26,'upgrade-before-reconnect');
-  const status=JSON.parse(live.status.content[0].text);assert.equal(status.runtime.service.version,${JSON.stringify(version)});
+  const live=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,27,'upgrade-before-reconnect');
+  assert.ok(live.tools.includes('diagnostics'));const status=await diagnostics();assert.equal(status.runtime.service.version,${JSON.stringify(version)});
   await fs.writeFile(${JSON.stringify(path.join(run,'new-runtime-active.json'))},JSON.stringify(status));
   const deadline=Date.now()+45000;while(!await fs.access(${JSON.stringify(path.join(run,'clients-disconnected.json'))}).then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Installer did not terminate preceding clients');await new Promise(resolve=>setTimeout(resolve,100));}
  }
  const texts=await Promise.all(files.map(file=>fs.readFile(file,'utf8')));
- for(const text of texts){assert.ok(text.includes('airk-launcher'));assert.ok(text.includes('--service-project'));assert.ok(text.includes(${JSON.stringify(collection)}));}
+ assert.ok(same(flag(definition.args,'--root'),spec.root));
+ for(const text of texts){assert.ok(text.includes('airk-launcher'));assert.ok(text.includes('--root'));assert.ok(!text.includes('--service-project'));assert.ok(!text.includes('--data-dir'));}
  assert.ok(texts[0].includes('enabled = false'));
  for(const index of [1,2]){const value=JSON.parse(texts[index]),servers=value[index===1?'mcpServers':'servers'];assert.equal(servers[name],undefined);assert.equal(servers.airk.disabled,true);assert.equal(servers.airk.env.AIRK_CLIENT,'fixture');assert.equal(servers.other.command,'preserve-other');assert.equal(servers.airk.command,definition.command);assert.deepEqual(servers.airk.args,definition.args);}
  await vscode.commands.executeCommand('airk.installCli');assert.deepEqual(await Promise.all(files.map(file=>fs.readFile(file,'utf8'))),texts);
@@ -100,11 +112,12 @@ exports.activate=()=>{let reloading=false;void (async()=>{
  await fs.writeFile(${JSON.stringify(path.join(run,'notification-ready.json'))},JSON.stringify({project:spec.service.project}));
  const noticeDeadline=Date.now()+45000;
  while(!await fs.access(${JSON.stringify(path.join(run,'notification-verified.json'))}).then(()=>true,()=>false)){if(Date.now()>noticeDeadline)throw new Error('Installer notification was not verified');await new Promise(resolve=>setTimeout(resolve,100));}
- const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,26,'installer-acceptance');assert.ok(probe.tools.includes('status'));
- const observed=JSON.parse(probe.status.content[0].text);
+ const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,27,'installer-acceptance');assert.ok(probe.tools.includes('status'));
+ const quick=JSON.parse(probe.status.content[0].text);assert.equal(quick.runtime,undefined);assert.equal(quick.work,undefined);
+ const observed=await diagnostics();
  for(const actual of [observed.runtime.mcp_frontend.process.version,observed.runtime.index_worker.process.version,observed.runtime.service.version])assert.equal(actual,${JSON.stringify(version)});
  assert.equal(observed.runtime.service.payload_sha256,${JSON.stringify(candidate.payload['native/runtime/airk-install.json'])});
- await fs.writeFile(${JSON.stringify(path.join(run,'result.json'))},JSON.stringify({passed:true,installed:true,version:extension.packageJSON.version,extensionPath:extension.extensionPath,files,command:definition.command,args:definition.args,tools:probe.tools,status:probe.status,policyPreserved:true,repairIdempotent:true,quietCompletionVerified:true,managementTabsVerified:true,installProgressVerified:await fs.access(${JSON.stringify(path.join(run,'progress-verified.json'))}).then(()=>true,()=>false)},null,2));
+ await fs.writeFile(${JSON.stringify(path.join(run,'result.json'))},JSON.stringify({passed:true,installed:true,version:extension.packageJSON.version,extensionPath:extension.extensionPath,files,command:definition.command,args:definition.args,controlDir:binding.controlDir,tools:probe.tools,status:probe.status,diagnostics:observed,policyPreserved:true,repairIdempotent:true,quietCompletionVerified:true,managementTabsVerified:true,installProgressVerified:await fs.access(${JSON.stringify(path.join(run,'progress-verified.json'))}).then(()=>true,()=>false)},null,2));
  })().catch(error=>{if(reloading&&String(error)==='Canceled: Canceled')return;return fs.writeFile(${JSON.stringify(path.join(run,'error.json'))},JSON.stringify({error:String(error),stack:error.stack}));}).finally(()=>{if(!reloading)return vscode.commands.executeCommand('workbench.action.quit');});};`);
     const log=await fs.open(path.join(run,'editor.log'),'w');
     const child=spawn(editor,[workspace,'--new-window','--user-data-dir',profile,'--extensions-dir',extensions,'--shared-data-dir',path.join(run,'shared'),
@@ -188,7 +201,11 @@ exports.activate=()=>{let reloading=false;void (async()=>{
         for(const child of retained){child.stdin.end();child.kill();}
         await log.close();
         const launcher=path.join(install,process.platform==='win32'?'airk-launcher.exe':'airk-launcher');
-        try{await execute(launcher,['service','shutdown','--runtime-dir',path.join(install,'control')],{windowsHide:true,env,timeout:30000});}
+        try{
+            const saved=await fs.readFile(path.join(run,'result.json'),'utf8').catch(()=>fs.readFile(path.join(run,'baseline.json'),'utf8'));
+            const control=JSON.parse(saved).controlDir;assert.ok(typeof control==='string'&&path.isAbsolute(control),'No observed fixture control directory');
+            await execute(launcher,['service','shutdown','--runtime-dir',control],{windowsHide:true,env,timeout:30000});
+        }
         catch(error){await fs.writeFile(path.join(run,'shutdown-error.json'),JSON.stringify({error:String(error)}));}
         try{await removeFixtureTerminalPath(storage);}
         catch(error){failure??=error;}

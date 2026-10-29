@@ -79,7 +79,7 @@ impl Wire {
         self.send(id, "tools/list", params).await;
         let reply = self.reply(id).await;
         assert!(reply.get("error").is_none(), "{reply}");
-        assert_eq!(reply["result"]["tools"].as_array().unwrap().len(), 26);
+        assert_eq!(reply["result"]["tools"].as_array().unwrap().len(), 27);
     }
     async fn client(&mut self, id: u64, params: Value) -> Value {
         self.send(id, "tools/call", params).await;

@@ -145,6 +145,9 @@ impl Session {
         }
         // Explicit diagnostic/capability/change tools always disclose their status.
         let explicit = include_status
+            || object
+                .get("status_detail")
+                .is_some_and(|value| value == "summary")
             || object.contains_key("execution")
             || object.contains_key("adapters")
             || object.contains_key("baseline_status");

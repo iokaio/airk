@@ -66,8 +66,12 @@ pub use recovery::{RecoveryBudget, RecoveryCondition, WaitingRecovery};
 mod cleanup;
 #[path = "service_configuration.rs"]
 mod configuration;
+#[path = "service_data_relocation.rs"]
+pub mod data_relocation;
 #[path = "service_lifecycle.rs"]
 mod lifecycle;
+#[path = "service_project_removal.rs"]
+mod project_removal;
 #[path = "service_unregistration.rs"]
 mod unregistration;
 
@@ -261,7 +265,7 @@ impl ServiceRegistry {
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && (2..=9).contains(&version),
+            application == APPLICATION && (2..=10).contains(&version),
             "unsupported saved service registry format"
         );
         let registry = Self {
@@ -337,7 +341,7 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=9).contains(&version),
+                    application == APPLICATION && (1..=10).contains(&version),
                     "unsupported service registry format"
                 );
                 schema_version = version;
@@ -606,9 +610,10 @@ impl ServiceRegistry {
                     )?;
                 }
             }
-            tx.pragma_update(None, "user_version", 9)?;
+            tx.pragma_update(None, "user_version", schema_version.max(9))?;
             tx.commit()?;
         }
+        project_removal::migrate(&mut registry.connection, schema_version)?;
         if !owner.ready {
             owner.complete(&registry.root)?;
         }
@@ -633,6 +638,22 @@ impl ServiceRegistry {
         registration: &ProjectRegistration,
         setup_watch: Option<bool>,
     ) -> Result<()> {
+        self.register_project(registration, setup_watch, false)
+    }
+    /// Automatic recovery may create lost state, but cannot reactivate a tombstone.
+    pub fn register_missing_with_setup(
+        &mut self,
+        registration: &ProjectRegistration,
+        setup_watch: Option<bool>,
+    ) -> Result<()> {
+        self.register_project(registration, setup_watch, true)
+    }
+    fn register_project(
+        &mut self,
+        registration: &ProjectRegistration,
+        setup_watch: Option<bool>,
+        only_if_missing: bool,
+    ) -> Result<()> {
         registration.validate()?;
         super::data_scope::check(
             Path::new(&registration.data_root),
@@ -644,6 +665,33 @@ impl ServiceRegistry {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         source_isolation::validate(&transaction, &self.root, registration, &[])?;
+        let removed: bool = transaction.query_row(
+            "SELECT EXISTS(SELECT 1 FROM service_removed_projects WHERE binding=?1 OR root_identity=?2)",
+            params![registration.binding.to_string(), project_removal::removed_root_identity(&registration.root).to_string()],
+            |row| row.get(0),
+        )?;
+        ensure!(
+            !only_if_missing || !removed,
+            "project_was_removed_refresh_registration"
+        );
+        if !only_if_missing {
+            transaction.execute(
+                "DELETE FROM service_removed_projects WHERE binding=?1 OR root_identity=?2",
+                params![
+                    registration.binding.to_string(),
+                    project_removal::removed_root_identity(&registration.root).to_string()
+                ],
+            )?;
+        }
+        if only_if_missing {
+            let concurrent_owner:bool=transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE binding<>?1 AND json_extract(payload,'$.root')=?2)",
+                params![registration.binding.to_string(),registration.root],|row|row.get(0))?;
+            ensure!(
+                !concurrent_owner,
+                "source_registration_changed_refresh_registration"
+            );
+        }
         let existing: Option<Vec<u8>> = transaction
             .query_row(
                 "SELECT substr(payload,1,20481) FROM projects WHERE binding=?1",
@@ -657,6 +705,14 @@ impl ServiceRegistry {
                 existing == payload,
                 "service registration binding collision"
             );
+            if only_if_missing {
+                let registered: bool = transaction.query_row(
+                    "SELECT registered FROM projects WHERE binding=?1",
+                    [registration.binding.to_string()],
+                    |row| row.get(0),
+                )?;
+                ensure!(registered, "project_was_removed_refresh_registration");
+            }
             let cleanup: bool = transaction.query_row("SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN service_configuration c ON c.job=j.id WHERE j.project=?1 AND j.state IN('pending','running') AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
                 [registration.binding.to_string()], |row| row.get(0))?;
             ensure!(
@@ -696,7 +752,7 @@ impl ServiceRegistry {
                 "service project registration capacity exhausted"
             );
             transaction.execute(
-                "INSERT INTO projects(binding,payload,epoch,paused,registered) VALUES(?1,?2,0,0,1)",
+                "INSERT INTO projects(binding,payload,epoch,paused,registered) VALUES(?1,?2,(SELECT request_epoch FROM service_meta WHERE id=1),0,1)",
                 params![registration.binding.to_string(), payload],
             )?;
             bump(&transaction)?;
@@ -953,6 +1009,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn automatic_missing_registration_recovery_cannot_reactivate_a_removed_project() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let mut registry =
+            ServiceRegistry::open(directory.path(), Incarnation::from_bytes([4; 16]))?;
+        let p = project("startup-recovery");
+        registry.register_missing_with_setup(&p, Some(true))?;
+        assert!(registry.project_setup_pending(p.binding)?);
+        registry.connection.execute(
+            "UPDATE projects SET registered=0,paused=1 WHERE binding=?1",
+            [p.binding.to_string()],
+        )?;
+        let before = registry.connection.total_changes();
+        assert!(
+            registry
+                .register_missing_with_setup(&p, Some(true))
+                .is_err()
+        );
+        assert_eq!(registry.connection.total_changes(), before);
+        assert!(registry.get(p.binding).is_err());
+        let replacement = ProjectRegistration::new(
+            p.root.clone(),
+            "/derived/new-location".into(),
+            p.collection.clone(),
+        )?;
+        assert!(
+            registry
+                .register_missing_with_setup(&replacement, Some(true))
+                .is_err(),
+            "a new storage binding cannot bypass the source's removal"
+        );
+        assert_eq!(registry.connection.total_changes(), before);
+        // An explicit Add project still has authority to reactivate it.
+        registry.register_with_setup(&p, Some(true))?;
+        assert!(registry.get(p.binding).is_ok());
+        Ok(())
+    }
+
+    #[test]
     fn int8_upgrade_schedules_closed_and_paused_projects_once() -> Result<()> {
         use airk_core::service::JobKind;
         let directory = tempfile::tempdir()?;
@@ -1034,7 +1128,7 @@ mod tests {
         let version: i64 = registry
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
         registry
             .connection
             .execute_batch("DROP TABLE service_watch_traversal")?;

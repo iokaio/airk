@@ -71,7 +71,7 @@ class Bridge:
 
     def published_status(self, deadline=None):
         deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 120)
-        return clients.observe_publication(lambda until: self.read("airk_status", {"response_mode": "full"}, until),
+        return clients.observe_publication(lambda until: self.read("airk_diagnostics", {"response_mode": "full"}, until),
                                            self.collection, self.binding, deadline)
 
     def readiness(self, deadline=None):

@@ -53,7 +53,7 @@ function Frame(props: { view?: ManagementView; trusted: boolean; actions: Return
     );
 }
 
-function Rows(props: { rows: readonly FactRow[] }) { return <Facts rows={props.rows.map(([name, value]) => [name, value])} />; }
+function Rows(props: { rows: readonly FactRow[]; hideUnobserved?: boolean }) { return <Facts rows={props.rows.filter(([, value]) => !props.hideUnobserved || value.toLowerCase() !== 'not observed').map(([name, value]) => [name, value])} />; }
 
 function RuntimeVersions(props: { state: ScreenProps['state']; view: ManagementView }) {
     return <section class="card runtime-versions" aria-label="AIRK executable versions">
@@ -61,7 +61,7 @@ function RuntimeVersions(props: { state: ScreenProps['state']; view: ManagementV
         <Rows rows={[
             ['VS Code extension', props.state.extensionVersion], ...props.view.runtimeVersions,
             ...(props.state.status?.runtimeVersions ?? [['MCP frontend (airk)', 'not observed'], ['Index worker (airk)', 'not observed']] as FactRow[]),
-        ]} />
+        ]} hideUnobserved />
         <p class="muted">CLI and helper versions describe the selected installation. Process observations describe the service and the selected project’s MCP connection and worker; they may differ during an upgrade. {props.state.status ? `Project runtime observed ${ago(props.state.status.observedAt)}.` : 'Connect to the selected project to observe its processes.'} {!props.view.connected && 'Disconnected: observations may be stale.'}</p>
         {props.state.status?.versionsMatch === false && <p class="callout" role="alert">The observed runtime versions do not match. Review Service before relying on the new version’s behavior.</p>}
     </section>;
@@ -191,20 +191,16 @@ export function ProjectsScreen(props: ScreenProps) {
                 <span class="muted">Updates automatically</span></div>
             <details><summary>Browse active or removed projects</summary><Paging view={view} actions={actions} /></details>
             {!view.connected && !view.busy && <p class="callout">The service connection is unavailable. Automatic checks will retry; view connection details in the Service tab.</p>}
-            {view.pending.length > 0 && <section class="project-health health-warn" role="status"><h3>Requests need confirmation</h3>
-                <p>A connection ended before an outcome was confirmed. Check the saved request before submitting another.</p>
-                {view.pending.map(intent => <div class="actions" key={intent.id}><span>{intent.title}</span><Act actions={actions} action="retryIntent" fields={{ id: intent.id }} enabled={view.enabled.projectActions}>Check exact request</Act></div>)}
-            </section>}
             {!entry && <p class="callout" role="status">{!view.connected?view.busy?'Connecting to AIRK and loading saved project details…':'Project registrations could not be checked. Retained work has not been reported as removed.':`No ${view.inactive?'removed':'active'} projects on this page. Add project reviews an open folder.`}</p>}
             {entry && scoped && <>
                 <h2>{entry.summary.name}</h2><p class="path">{entry.summary.root}</p>
-                {tab==='overview'&&<IndexContents project={entry.summary} status={entry.summary.project===props.state.selectedProject?props.state.status:undefined} connected={view.connected}/>}
+                {tab==='overview'&&!view.inactive&&<IndexContents project={entry.summary} status={entry.summary.project===props.state.selectedProject?props.state.status:undefined} connected={view.connected}/>}
                 <ProjectHealth entry={entry} view={view} actions={actions} go={props.go} compact={tab==='overview'||tab==='activity'} />
                 {tab === 'overview' && !view.inactive && !entry.health.action && <div class="actions">
                     <Act actions={actions} action={entry.jobState === 'running' || entry.jobState === 'pending' || entry.pendingJobId ? 'pause' : 'index'} fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions}>
                         {entry.jobState === 'running' || entry.jobState === 'pending' || entry.pendingJobId ? 'Pause indexing' : 'Update index'}</Act>
                 </div>}
-                {view.inactive && <p class="callout">{entry.lifecycle}. Removal stops indexing and retains settings and index data. Add project reviews registration again; pending cleanup must finish first.</p>}
+                {view.inactive && <p class="callout">{entry.lifecycle}. Removal stops all work and deletes AIRK index data and saved settings. Source files are untouched. Removal continues automatically.</p>}
                 {tab === 'overview' && <>
                 {!view.inactive && <>
                     {(entry.jobId || entry.pendingJobId || entry.configuration.pending) && <WorkProgress entry={entry} />}
@@ -322,15 +318,6 @@ export function RepairScreen(props: ScreenProps) {
                     </div>
                     </details>
                 </article>}
-                <h2>Requests awaiting confirmation</h2>
-                <p class="muted">An unknown outcome keeps its original request key. Rechecking sends that exact request; forgetting it does not cancel native work.</p>
-                {!view.pending.length && <p class="muted">No saved request is awaiting confirmation.</p>}
-                <ul class="hits">{view.pending.map(intent => (
-                    <li key={intent.id} class="hit card">{intent.title} · {intent.unknown ? 'Outcome unknown' : 'Prepared'}
-                        <div class="actions"><Act actions={actions} action="retryIntent" fields={{ id: intent.id }}>Check / retry exact request</Act>
-                            {intent.lifecycle && intent.forceAvailable && <Act actions={actions} action="forceIntent" fields={{ id: intent.id }} ghost>Approve owned manager force stop</Act>}
-                            <Act actions={actions} action="forgetIntent" fields={{ id: intent.id }} ghost>Forget local receipt request</Act></div></li>
-                ))}</ul>
             </>}
         </Frame>
     );
@@ -366,14 +353,10 @@ export function StorageScreen(props: ScreenProps) {
                         <Act actions={actions} action="inspect" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions}>Inspect index &amp; storage</Act>
                         <Act actions={actions} action="configureProject" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions} ghost>Project settings…</Act>
                     </div>}
-                    {view.inactive && <div class="actions">
-                        <Act actions={actions} action="previewCleanup" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions}>Preview / resume index cleanup</Act>
-                        <Act actions={actions} action="deleteDerived" fields={{ project: entry.summary.project }} enabled={view.enabled.projectActions && entry.canDeleteDerived}>Delete reviewed index state</Act>
-                        {entry.configurationResult && <Act actions={actions} action="copyConfiguration" fields={{ project: entry.summary.project }} ghost>Copy cleanup preview</Act>}
-                    </div>}
+                    {view.inactive && <p class="muted">AIRK is deleting index data and saved settings. Removal resumes automatically after interruptions.</p>}
                 </article>)}
-                <p class="muted">Remove a project from Storage and removal, even if its source folder is gone. Then preview and delete its retained index here. Quotas and extra roots are in Advanced settings.</p>
-                {view.inactive && <p class="muted">Unregistered projects keep sources and saved settings. Deletion needs a separate exact preview and confirmation.</p>}
+                <p class="muted">Remove a project from Storage and removal, even if its source folder is gone. AIRK then deletes its owned index data and saved settings automatically. Quotas and extra roots are in Advanced settings.</p>
+                {view.inactive && <p class="muted">Removed projects finish deleting their AIRK data automatically. Source files are untouched.</p>}
                 {view.legacy && <details class="card legacy-startup">
                     <summary>Legacy 1.3 startup review</summary>
                     <p class="muted">Review the old executable path, project and startup ownership separately from the 1.4 service. Review reads metadata only and never runs the old command.</p>
@@ -408,9 +391,9 @@ export function ServiceScreen(props: ScreenProps) {
                 </div>
                 {view.lifecycle === 'external' && <p class="muted">Startup, stop, restart, upgrades and rollback are controlled by the external service manager.</p>}
                 <div class="cards two">
-                    <article class="card"><div class="section-head"><h2>Service</h2><CopyDetails section="service" /></div><Rows rows={view.service} />
+                    <article class="card"><div class="section-head"><h2>Service</h2><CopyDetails section="service" /></div><Rows rows={view.service} hideUnobserved />
                         <p class="muted">Health confirms responsiveness. It does not prove indexing progress, source freshness or complete semantic coverage.</p></article>
-                    <article class="card"><h2>Runtime</h2><Rows rows={view.runtime} />
+                    <article class="card"><h2>Runtime</h2><Rows rows={view.runtime} hideUnobserved />
                         <div class="actions">
                             <Act actions={actions} action="upgradeRuntime" enabled={on('upgradeRuntime')} ghost>Review bundled runtime upgrade</Act>
                             <Act actions={actions} action="rollbackRuntime" enabled={on('rollbackRuntime')} ghost>Review previous runtime</Act>
@@ -419,8 +402,8 @@ export function ServiceScreen(props: ScreenProps) {
                             <Act actions={actions} action="recoverLifecycle" enabled={on('recoverLifecycle')} ghost>Resume saved lifecycle request</Act>
                             <Act actions={actions} action="abandonLifecycle" enabled={on('abandonLifecycle')} ghost>Abandon saved lifecycle request</Act>
                         </div></article>
-                    <article class="card"><h2>Resources</h2><Rows rows={view.resources} /></article>
-                    <article class="card"><h2>Inference helper</h2><Rows rows={view.inference} />
+                    <article class="card"><h2>Resources</h2><Rows rows={view.resources} hideUnobserved /></article>
+                    <article class="card"><h2>Inference helper</h2><Rows rows={view.inference} hideUnobserved />
                         <div class="actions">
                             <Act actions={actions} action="startEmbedding" enabled={on('startEmbedding')} ghost>Start inference helper</Act>
                             <Act actions={actions} action="stopEmbedding" enabled={on('stopEmbedding')} ghost>Stop this inference helper</Act>
@@ -474,7 +457,7 @@ export function AgentsScreen(props: ScreenProps) {
             {view && <>
                 <div class="cards two">
                     <article class="card"><h2>AIRK agent connection</h2>
-                        <p>One connection provides 26 tools for indexed evidence, help and Explorer drafts. Drafts wait for your review.</p>
+                        <p>One connection provides 27 tools for indexed evidence, help and Explorer drafts. Drafts wait for your review.</p>
                         <div class="actions">
                             <button type="button" onClick={() => { void actions.command('airk.setupAgent'); }}>Connect a coding agent…</button>
                             <button type="button" class="ghost" disabled={checking||!props.state.selectedProject} onClick={() => { void actions.command('airk.verifyMcp'); }}>{checking?'Checking AIRK…':'Check AIRK connection'}</button>
@@ -524,8 +507,8 @@ export function LogsScreen(props: ScreenProps) {
         <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Bounded native logs and a metadata-only diagnostic report from">
             {view && <>
                 <article class="card">
-                    <h2>Raw job error log</h2>
-                    <p>Retained error chains with timestamps and job IDs. Long errors are marked as truncated. These local logs can include file paths and error values; review them before sharing. Nothing is uploaded.</p>
+                    <h2>Raw diagnostic log</h2>
+                    <p>Retained indexing, setup, connection and diagnostic-action failures. Entries identify their operation, time and job when available. These local logs can contain paths and error values; review before sharing. Nothing is uploaded. Each retained stream purges its oldest entries from 200 MB to at most 100 MB.</p>
                     <div class="actions">
                         <Act actions={actions} action="openRawLogs">Open raw diagnostic log</Act>
                         <Act actions={actions} action="saveRawLogs" ghost>Save raw diagnostic log…</Act>

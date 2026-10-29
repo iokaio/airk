@@ -20,19 +20,40 @@ use std::{
 
 const DIRECTORY: &str = "logs-1.4";
 const OWNER: &str = "logs-1.4.owner.json";
-const FILES: [&str; 4] = [
+const FILES: [&str; 21] = [
     "current.jsonl",
     "previous-1.jsonl",
     "previous-2.jsonl",
     "previous-3.jsonl",
+    "previous-4.jsonl",
+    "previous-5.jsonl",
+    "previous-6.jsonl",
+    "previous-7.jsonl",
+    "previous-8.jsonl",
+    "previous-9.jsonl",
+    "previous-10.jsonl",
+    "previous-11.jsonl",
+    "previous-12.jsonl",
+    "previous-13.jsonl",
+    "previous-14.jsonl",
+    "previous-15.jsonl",
+    "previous-16.jsonl",
+    "previous-17.jsonl",
+    "previous-18.jsonl",
+    "previous-19.jsonl",
+    "previous-20.jsonl",
 ];
-const FILE_BYTES: u64 = 1 << 20;
+const FILE_BYTES: u64 = 10_000_000;
+const HIGH_WATER_BYTES: u64 = 200_000_000;
+const LOW_WATER_BYTES: u64 = 100_000_000;
 const RECORD_BYTES: usize = 768;
 const READ_BYTES: usize = 64 << 10;
 
 #[path = "service_raw_logs.rs"]
 mod raw;
 pub use raw::export as export_raw;
+pub use raw::export_to as export_raw_to;
+pub use raw::record_client_error;
 pub(crate) use raw::{FailureDetail, JobFailure};
 
 #[derive(Serialize, Deserialize, PartialEq, Eq)]
@@ -82,7 +103,11 @@ fn named_owner(root: &Path, create: bool, name: &str, owner_name: &str) -> Resul
         let mut temporary = tempfile::NamedTempFile::new_in(&parent)?;
         temporary.write_all(&serde_json::to_vec(&expected)?)?;
         temporary.as_file().sync_all()?;
-        temporary.persist_noclobber(&receipt)?;
+        match temporary.persist_noclobber(&receipt) {
+            Ok(_) => {}
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error.into()),
+        }
     }
     crate::runtime_install::safe_file(&receipt)?;
     let mut bytes = Vec::new();
@@ -102,7 +127,7 @@ fn named_owner(root: &Path, create: bool, name: &str, owner_name: &str) -> Resul
 fn preflight(directory: &Path) -> Result<u64> {
     let mut bytes = 0;
     for (count, entry) in fs::read_dir(directory)?.enumerate() {
-        ensure!(count < 5, "unknown diagnostic log entries");
+        ensure!(count <= FILES.len(), "unknown diagnostic log entries");
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_str().context("non-UTF-8 log entry")?;
@@ -139,7 +164,6 @@ impl Sink {
         preflight(&directory)?;
         let lock = open_file(&directory.join("writer.lock"), true)?;
         crate::runtime_install::safe_file(&directory.join("writer.lock"))?;
-        lock.try_lock()?;
         Ok(Self {
             directory,
             lock,
@@ -148,11 +172,11 @@ impl Sink {
     }
     fn rotate(&self) -> Result<()> {
         preflight(&self.directory)?;
-        let oldest = self.directory.join(FILES[3]);
+        let oldest = self.directory.join(FILES[FILES.len() - 1]);
         if exists(&oldest)? {
             fs::remove_file(oldest)?;
         }
-        for n in (0..3).rev() {
+        for n in (0..FILES.len() - 1).rev() {
             let from = self.directory.join(FILES[n]);
             if exists(&from)? {
                 fs::rename(from, self.directory.join(FILES[n + 1]))?;
@@ -165,19 +189,68 @@ impl Sink {
         self.append_bytes(serde_json::to_vec(record)?)
     }
     fn append_bytes(&mut self, mut bytes: Vec<u8>) -> Result<()> {
+        self.append_retained(&mut bytes, HIGH_WATER_BYTES, LOW_WATER_BYTES, FILE_BYTES)
+    }
+    fn append_retained(
+        &mut self,
+        bytes: &mut Vec<u8>,
+        high: u64,
+        low: u64,
+        segment: u64,
+    ) -> Result<()> {
+        // Service job failures and explicit client failures share one stream.
+        struct WriteGuard(File);
+        impl Drop for WriteGuard {
+            fn drop(&mut self) {
+                let _ = self.0.unlock();
+            }
+        }
+        let write = self.lock.try_clone()?;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+        loop {
+            match write.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(5))
+                }
+                Err(error) => return Err(error).context("diagnostic_writer_busy_or_unavailable"),
+            }
+        }
+        let _guard = WriteGuard(write);
         bytes.push(b'\n');
         ensure!(
             bytes.len() <= self.record_bytes,
             "invalid diagnostic log record"
         );
-        preflight(&self.directory)?;
+        let mut stored = preflight(&self.directory)?;
+        let incoming = bytes.len() as u64 + 1;
+        ensure!(
+            low > incoming && low < high && high <= (FILES.len() as u64 - 1) * segment,
+            "invalid log retention bounds"
+        );
+        if stored.saturating_add(incoming) > high {
+            // Whole finite segments contain the oldest complete entries. This
+            // requires no extra copy of a 100 MB log or crash-left temporary file.
+            for name in FILES.iter().rev() {
+                if stored.saturating_add(incoming) <= low {
+                    break;
+                }
+                let path = self.directory.join(name);
+                if exists(&path)? {
+                    let length = fs::metadata(&path)?.len();
+                    crate::runtime_install::safe_file(&path)?;
+                    fs::remove_file(path)?;
+                    stored = stored.saturating_sub(length);
+                }
+            }
+        }
         let path = self.directory.join(FILES[0]);
         let length = if exists(&path)? {
             fs::metadata(&path)?.len()
         } else {
             0
         };
-        if length + bytes.len() as u64 + 1 > FILE_BYTES {
+        if length + incoming > segment {
             self.rotate()?;
         }
         let mut file = open_file(&path, true)?;
@@ -191,7 +264,7 @@ impl Sink {
                 file.write_all(b"\n")?;
             }
         }
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.sync_data()?;
         Ok(())
     }
@@ -408,7 +481,12 @@ pub fn recent(root: &Path, limit: usize) -> Result<LogPage> {
 
 /// Explicit local export of the entire finite ring; never sent over service IPC.
 pub fn export(root: &Path) -> Result<LogPage> {
-    read_retained(root, usize::MAX, FILE_BYTES as usize * FILES.len(), 8 << 20)
+    read_retained(
+        root,
+        usize::MAX,
+        HIGH_WATER_BYTES as usize,
+        HIGH_WATER_BYTES as usize + (1 << 20),
+    )
 }
 
 fn read_retained(

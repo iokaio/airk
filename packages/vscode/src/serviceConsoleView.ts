@@ -11,7 +11,7 @@ export interface ServiceConsoleState {
     inactiveProjects?:boolean;
     legacyAvailable?:boolean;legacyReview?:{value:RecordValue;phase?:string;checkedAt:number};legacyReceipts?:RecordValue;legacyResult?:RecordValue;
     health:ConsoleObservation; resources:ConsoleObservation; model:ConsoleObservation; sources:ConsoleObservation;
-    bootstrap:ConsoleObservation; page?:ConsolePage; workers?:RecordValue; events:RecordValue[]; historyOmitted:boolean;
+    bootstrap:ConsoleObservation; page?:ConsolePage; activePage?:ConsolePage; workers?:RecordValue; events:RecordValue[]; historyOmitted:boolean;
     serviceEvents?:ConsoleObservation;
     configurationResults?:Map<string,{job:string;jobState:string;value?:RecordValue;code?:string;checkedAt:number}>;
     configurationResultsOmitted?:boolean;

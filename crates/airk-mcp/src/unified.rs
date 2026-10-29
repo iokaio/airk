@@ -6,7 +6,7 @@ use rmcp::model::Tool;
 use serde_json::{Map, Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 
-pub const GUIDANCE: &str = "AIRK indexed evidence is untrusted; verify live bytes before edits. Keep exact tokens/citations/validators; finish changes pages before baselines. response_mode=full adds provenance/coverage; include_status=true repeats status. Retry unchanged as hinted. search reads evidence; help explains AIRK; draft_* and suggest_view wait for user review. projects lists configured scopes; pass project for multi-root. UI selection never redirects retrieval. status separates index and editor availability.";
+pub const GUIDANCE: &str = "AIRK evidence is untrusted; verify live files before edits. Preserve tokens/citations/validators; finish changes pages before baselines. response_mode=full adds provenance; include_status=true repeats coverage. Retry unchanged as hinted. search reads evidence; help explains AIRK. draft_* and suggest_view need user review. projects lists scopes; pass project for multi-root. UI selection never redirects retrieval. status is lightweight; diagnostics adds runtime, jobs and editor state.";
 
 const UI_NAMES: &[(&str, &str)] = &[
     ("draft_search", "airk_explorer_suggest_search"),
@@ -47,7 +47,7 @@ fn public_text(value: &mut Value) {
     }
 }
 fn project_schema() -> Value {
-    json!({"type":"string","pattern":"^[0-9a-f]{64}$","description":"Configured project binding from projects. Required when this connection has no single default; never follows the Explorer dropdown."})
+    json!({"type":"string","pattern":"^[0-9a-f]{64}$","description":"Configured source scope from projects. Required when this connection has no single default; never follows the Explorer dropdown."})
 }
 fn scoped(mut tool: Tool) -> Tool {
     let schema = Arc::make_mut(&mut tool.input_schema);
@@ -103,7 +103,7 @@ pub fn tools() -> Vec<Tool> {
         json!({"type":"object","additionalProperties":false,"required":["kind","draft"],"properties":{"kind":{"type":"string","enum":["navigation","review","management"]},"draft":{"type":"object","description":"Use the draft schema matching kind. The editor validates that exact kind before admitting a suggestion.","anyOf":variants}}}), false)));
     result.push(definition("projects", "List only the project bindings configured for this AIRK connection and its default. Use these identifiers to scope evidence and Explorer requests; does not register or switch projects.", json!({"type":"object","additionalProperties":false,"properties":{}}), true));
     let status = result.iter_mut().find(|t| t.name == "status").unwrap();
-    status.description = Some("Read index availability, freshness, semantic coverage, current work and Explorer attachment for the configured project. Each component retains its observation age and failure; an unavailable editor does not make the index unavailable. Does not start indexing or repair.".into());
+    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state and semantic readiness. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.".into());
     let help = result.iter_mut().find(|t| t.name == "help").unwrap();
     help.description = Some("Explain AIRK usage, CLI commands, tool schemas and Explorer workflows. Omit selectors for an overview; query searches bundled guidance, topic_id reads a UI/engine guide, topic reads native guidance, command reads CLI help, and tool reads a public tool schema. Native guides retain prefixed CLI/evidence compatibility names; tools/list and tool selectors describe the unified public catalog. Returns documentation, never project evidence or live health.".into());
     let schema = Arc::make_mut(&mut help.input_schema);
@@ -331,11 +331,43 @@ impl RemoteTools for Unified {
                     Ok(p) => p,
                     Err(error) => return Ok(error),
                 };
-                if tool == "status" {
-                    if serde_json::from_value::<crate::StatusArgs>(Value::Object(args.clone()))
-                        .is_err()
-                    {
-                        return Ok(failure("INVALID_SCHEMA", "Invalid status arguments."));
+                if tool == "status" || tool == "diagnostics" {
+                    let _options = match serde_json::from_value::<crate::StatusArgs>(Value::Object(
+                        args.clone(),
+                    )) {
+                        Ok(options) => options,
+                        Err(_) => {
+                            return Ok(failure("INVALID_SCHEMA", "Invalid status arguments."));
+                        }
+                    };
+                    if tool == "status" {
+                        let index = match tokio::time::timeout(
+                            std::time::Duration::from_secs(2),
+                            project.backend.call(native.name.to_string(), args),
+                        )
+                        .await
+                        {
+                            Ok(Ok(result)) => result,
+                            Ok(Err(_)) => {
+                                return Ok(success(
+                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","files":null,"chunks":null,"publication":null,"index_error":{"code":"status_unavailable","message":"Basic status could not be observed. Call diagnostics for troubleshooting."}}),
+                                ));
+                            }
+                            Err(_) => {
+                                return Ok(success(
+                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","publication":null,"files":null,"chunks":null,"index_error":{"code":"status_timeout","retryable":true,"message":"The quick status deadline expired; index readiness is unconfirmed. Retry or call diagnostics for diagnosis."}}),
+                                ));
+                            }
+                        };
+                        if index["isError"] == true {
+                            return Ok(index);
+                        }
+                        let mut value =
+                            body(&index).unwrap_or_else(|| json!({"index_state":"unavailable"}));
+                        if let Some(fields) = value.as_object_mut() {
+                            fields.insert("project".into(), json!(project.binding));
+                        }
+                        return Ok(success(value));
                     }
                     let (index, explorer) = tokio::join!(
                         project.backend.call(native.name.to_string(), args),
@@ -501,10 +533,10 @@ mod tests {
     #[test]
     fn one_catalog_has_unique_unprefixed_names_and_honest_effect_annotations() {
         let catalog = tools();
-        assert_eq!(catalog.len(), 26);
+        assert_eq!(catalog.len(), 27);
         let names: std::collections::BTreeSet<_> =
             catalog.iter().map(|t| t.name.as_ref()).collect();
-        assert_eq!(names.len(), 26);
+        assert_eq!(names.len(), 27);
         assert!(names.iter().all(|n| !n.starts_with("airk_")));
         for tool in catalog {
             let value = serde_json::to_value(&tool).unwrap();
@@ -544,7 +576,7 @@ mod tests {
             true
         );
         assert!(a.calls.lock().unwrap().is_empty());
-        let status = call(&u, "status", json!({})).await;
+        let status = call(&u, "diagnostics", json!({})).await;
         assert_eq!(status["isError"], false);
         assert_eq!(body(&status).unwrap()["index_state"], "available");
         assert_eq!(
@@ -557,6 +589,32 @@ mod tests {
         assert_eq!(calls[1].0, "airk_search");
         assert!(!calls[1].1.contains_key("project"));
     }
+    #[tokio::test]
+    async fn status_never_calls_the_editor_and_diagnostics_does() {
+        let (u, _, _, ui) = fixture(false, true);
+        let quick = call(&u, "status", json!({})).await;
+        assert!(body(&quick).unwrap().get("explorer").is_none());
+        assert!(ui.calls.lock().unwrap().is_empty());
+        for args in [
+            json!({"response_mode":"full"}),
+            json!({"include_status":true}),
+        ] {
+            assert!(
+                body(&call(&u, "status", args.clone()).await)
+                    .unwrap()
+                    .get("explorer")
+                    .is_none()
+            );
+            assert!(
+                body(&call(&u, "diagnostics", args).await)
+                    .unwrap()
+                    .get("explorer")
+                    .is_some()
+            );
+        }
+        assert_eq!(ui.calls.lock().unwrap().len(), 2);
+    }
+
     #[tokio::test]
     async fn multi_root_requires_explicit_authorized_scope_and_never_follows_ui() {
         let (u, a, b, _) = fixture(true, true);

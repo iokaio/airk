@@ -91,7 +91,7 @@ impl Session {
                 std::time::Instant::now() < deadline,
                 "publication observation deadline exhausted"
             );
-            self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"airk_status","arguments":{"response_mode":"full"}}}))?;
+            self.send(json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"airk_diagnostics","arguments":{"response_mode":"full"}}}))?;
             let reply = self.receive_until(id, deadline)?;
             if let Some(retry) = common::read_retry::within(&reply["result"], deadline) {
                 std::thread::sleep(retry.delay);
@@ -339,7 +339,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             .as_array()
             .unwrap()
             .len(),
-        26
+        27
     );
     for (id, command, option, tool, field, key) in [
         (
@@ -693,15 +693,15 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     let catalog: Value = serde_json::from_slice(&catalog.stdout)?;
     assert_eq!(
         catalog["tools"].as_array().unwrap().len(),
-        16,
+        17,
         "terminal evidence adapter retains compatibility aliases"
     );
-    assert_eq!(tools.len(), 26);
+    assert_eq!(tools.len(), 27);
     let names: std::collections::BTreeSet<_> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names.len(), 26);
+    assert_eq!(names.len(), 27);
     for tool in catalog["tools"].as_array().unwrap() {
         let name = tool["name"]
             .as_str()

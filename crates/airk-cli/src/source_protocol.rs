@@ -50,6 +50,14 @@ pub enum Command {
         configuration_epoch: u64,
         sequence: u64,
     },
+    CleanupRemoved {
+        project: ProjectBinding,
+    },
+    CheckSource {
+        registration: ProjectRegistration,
+        registration_epoch: u64,
+        configuration_epoch: u64,
+    },
     Stop,
 }
 
@@ -61,6 +69,16 @@ pub enum Reply {
         worker: Incarnation,
     },
     Activated,
+    RemovalResult {
+        project: ProjectBinding,
+        complete: bool,
+        failed: bool,
+    },
+    MissingSource {
+        project: ProjectBinding,
+        registration_epoch: u64,
+        configuration_epoch: u64,
+    },
     Observation {
         project: ProjectBinding,
         configuration_epoch: u64,

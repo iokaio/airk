@@ -330,10 +330,20 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     }
     let (main, approval) = verify_runtime(root, &intent.candidate)?;
     let committed = selection(root)? == Some(intent.selected());
+    if committed && data_migration::needed(root)? {
+        migrate_selected(root, &intent, &main, &approval).await?;
+    }
     match probe(root, &approval, &main, intent.manager).await {
         Ok(_) => {
             if !committed {
                 replace_json(root, "selected.json", &intent.selected())?;
+            }
+            // Directory migration follows verified candidate health and durable
+            // selection. A partial layout must resume with the matching runtime,
+            // rather than automatically rolling back to an older metadata reader.
+            if data_migration::needed(root)? {
+                migrate_selected(root, &intent, &main, &approval).await?;
+                probe(root, &approval, &main, intent.manager).await?;
             }
             record(root, &intent, Outcome::Selected)?;
             finish(root)
@@ -350,6 +360,23 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
             Err(error.context("candidate failed; preceding public selection was preserved"))
         }
     }
+}
+
+async fn migrate_selected(
+    root: &Path,
+    intent: &Intent,
+    main: &Path,
+    approval: &Approval,
+) -> Result<()> {
+    let owner = manager(root, intent)?;
+    if intent.manager {
+        owner.stop()?;
+    }
+    // The matching runtime may itself be resuming this installation. Its
+    // authenticated shutdown drains owned workers without terminating the caller.
+    drain(root, main, approval).await?;
+    owner.require_stopped_for_maintenance()?;
+    data_migration::run(root)
 }
 
 /// Called under the installer lock, before any drain, launcher repair or start.

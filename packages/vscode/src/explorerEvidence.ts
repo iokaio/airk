@@ -4,8 +4,8 @@ import { explorerError, ExplorerError } from './explorerErrors';
 import { McpSessionError, McpStdioOptions, McpStdioSession } from './mcpStdioSession';
 import { LaunchSpec, launchArgs } from './model';
 
-/** The 16 read-only native tools. The Explorer calls nothing else on AIRK Retrieval. */
-export const NATIVE_TOOLS = ['airk_search', 'airk_read_file', 'airk_list_files', 'airk_status', 'airk_help', 'airk_file_info', 'airk_outline',
+/** The 17 read-only native tools. The Explorer calls nothing else on AIRK Retrieval. */
+export const NATIVE_TOOLS = ['airk_search', 'airk_read_file', 'airk_list_files', 'airk_status', 'airk_diagnostics', 'airk_help', 'airk_file_info', 'airk_outline',
     'airk_symbols', 'airk_imports', 'airk_document_facts', 'airk_references', 'airk_context', 'airk_capabilities', 'airk_code_facts',
     'airk_relationships', 'airk_changes'] as const;
 export type NativeTool = typeof NATIVE_TOOLS[number];
@@ -184,7 +184,7 @@ export class EvidenceClient {
         if (this.session && !this.session.closed) { return this.session; }
         if (!this.opening) {
             const open = this.options.open ?? ((options, timeout) => McpStdioSession.open(options, timeout));
-            this.opening = open({ command: this.spec.command, args: launchArgs(this.spec), cwd: path.dirname(this.spec.command),
+            this.opening = open({ command: this.spec.command, args: launchArgs(this.spec,'mcp',true), cwd: path.dirname(this.spec.command),
                 clientName: EXPLORER_CLIENT_NAME, clientVersion: this.clientVersion }, this.options.handshakeTimeout ?? 90000)
                 .then(({ session }) => {
                     if (this.disposed) { session.close(); throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', 'The Explorer evidence session was closed.')); }
