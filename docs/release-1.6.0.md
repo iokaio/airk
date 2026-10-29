@@ -112,3 +112,30 @@ including staging/inventory parity for both Mac architectures, Windows and Linux
 The Windows/Linux layout is unchanged, and the corrected local Windows native
 pair rebuilt and passed package verification. Native Mac signing and the remaining
 release checks still require successful hosted results after this correction.
+
+## Main CI build corrections — 28 October 2026
+
+PR #45 passed all platform and container gates and merged as `5e0b8b3`. Its first
+main CI container build then failed with permission denied in the Cargo cache
+when the non-root release build started. The log did not identify whether the
+mount had been recreated or restored; a fresh root-owned mount reproduces the
+failure locally. No release was published from that run.
+Cache ownership now resets at each consuming build step before dropping to
+UID/GID 10001; tests and compilation retain that non-root identity. The cache
+regression reproduces the old failure and verifies empty, recreated, restored
+root-owned and warm caches while preserving sources. Final publication still
+requires successful CI on the corrected main commit.
+
+The same run exposed a CPU-dependent test assumption: the copied lightweight CLI
+correctly selected signed INT8 on a VNNI Linux runner, but the fixture compared
+its manifest with the first (unsigned) catalog entry. The fixture now requires
+the exact native-selected profile and manifest. The existing policy tests cover
+non-VNNI, both VNNI feature paths and ARM64, including rejection of FP32. Model
+selection behavior and its assertions remain enforced; this correction changes
+the integration test, not the selection policy.
+
+Local correction validation passed the full Linux container build and isolated
+runtime smoke, seven CLI/catalog regressions, focused all-feature Clippy,
+formatting, repository/version/whitespace checks, workflow linting and 181 Python
+contracts (four platform-dependent skips). The complete diff received a separate
+self-review pass before the corrective push; it was not independently reviewed.

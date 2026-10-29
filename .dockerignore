@@ -13,6 +13,7 @@
 !scripts/license-notices.py
 !scripts/build-service-runtime.py
 !scripts/build-service-container.py
+!scripts/container-build-user.sh
 !scripts/ci-metrics.py
 !scripts/ci-prune-target.py
 !.config/

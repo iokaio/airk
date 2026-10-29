@@ -31,9 +31,11 @@ fn copied_lightweight_main_exposes_catalog_without_installing_or_falling_back_to
         String::from_utf8_lossy(&report.stderr)
     );
     let report: Value = serde_json::from_slice(&report.stdout)?;
+    let selected = airk_retrieval::model_catalog::selected_profile()?;
+    assert_eq!(report["selection"]["profile_id"], selected.id);
     assert_eq!(
         report["bundled_model"]["manifest"],
-        report["catalog"]["profiles"][0]["manifest"]
+        serde_json::to_value(selected.manifest)?
     );
     assert!(
         !data.exists(),

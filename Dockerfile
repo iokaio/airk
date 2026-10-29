@@ -23,6 +23,7 @@ COPY scripts/ci-metrics.py scripts/ci-prune-target.py ./scripts/
 COPY scripts/license-notices.py scripts/provision-local-model.py ./scripts/
 COPY scripts/provision-onnx-runtime.py scripts/int8-policy.py scripts/macho-identity.py ./scripts/
 COPY scripts/build-service-runtime.py scripts/build-service-container.py ./scripts/
+COPY scripts/container-build-user.sh ./scripts/
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY third_party/models ./third_party/models
 RUN python3 scripts/provision-local-model.py --destination /build/model-assets --download
@@ -33,16 +34,13 @@ COPY third_party/licenses ./third_party/licenses
 
 FROM source AS test
 ARG AIRK_QUALIFICATION=false
-RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=airk-linux-target,target=/build/target \
-    rustup show active-toolchain \
+RUN rustup show active-toolchain \
     && useradd --create-home --uid 10001 airkbuild \
     && chown -R airkbuild:airkbuild /build /usr/local/cargo /usr/local/rustup
-USER 10001:10001
-RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=airk-linux-target,target=/build/target \
+RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry,uid=10001,gid=10001,sharing=locked \
+    --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git,uid=10001,gid=10001,sharing=locked \
+    --mount=type=cache,id=airk-linux-target,target=/build/target,uid=10001,gid=10001,sharing=locked \
+    sh scripts/container-build-user.sh sh -ec '\
     cargo fetch --locked \
     && mkdir -p /build/ci-report \
     && case "$AIRK_QUALIFICATION" in \
@@ -51,17 +49,21 @@ RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
         && python3 scripts/ci-metrics.py run --name doctests -- cargo test --doc --workspace --locked --offline \
         && python3 scripts/ci-metrics.py summary \
         && cp target/nextest/ci/junit.xml artifacts/ci/timings.jsonl /build/ci-report/ ;; \
-      false) printf '%s\n' 'Container workspace qualification not requested; image smoke runs separately.' > /build/ci-report/scope.txt ;; \
+      false) printf "%s\n" "Container workspace qualification not requested; image smoke runs separately." > /build/ci-report/scope.txt ;; \
       *) exit 1 ;; \
-    esac
+    esac'
+USER 10001:10001
 
 FROM test AS build
-RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=airk-linux-target,target=/build/target \
+USER 0:0
+RUN --mount=type=cache,id=airk-cargo-registry,target=/usr/local/cargo/registry,uid=10001,gid=10001,sharing=locked \
+    --mount=type=cache,id=airk-cargo-git,target=/usr/local/cargo/git,uid=10001,gid=10001,sharing=locked \
+    --mount=type=cache,id=airk-linux-target,target=/build/target,uid=10001,gid=10001,sharing=locked \
+    sh scripts/container-build-user.sh sh -ec '\
     python3 scripts/ci-metrics.py run --name release-pair -- python3 scripts/build-service-container.py --destination /build/out \
     && cp artifacts/ci/timings.jsonl /build/ci-report/ \
-    && python3 scripts/ci-prune-target.py
+    && python3 scripts/ci-prune-target.py'
+USER 10001:10001
 
 FROM scratch AS report
 COPY --from=build /build/ci-report/ /
