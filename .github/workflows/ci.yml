@@ -337,6 +337,10 @@ jobs:
               "artifacts/docker-cache/target": {"target": "/build/target", "id": "airk-linux-target"}
             }
           skip-extraction: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' || steps.docker-cache.outputs.cache-hit == 'true' }}
+      - name: Container build-cache ownership regression
+        # A small real-container check covers cache replacement and root-owned
+        # imports before the expensive build. It runs no duplicate Rust suites.
+        run: python scripts/check-container-build-cache.py
       - name: Build runtime image (workspace tests are opt-in)
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:

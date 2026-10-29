@@ -4,6 +4,16 @@ A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflo
 
 The current development package version is **1.6.0**; see [its candidate record](release-1.6.0.md). Prior release and qualification records retain their original scope.
 
+Container compilation and ownership tests run as UID/GID 10001. Every cache-using
+build step first repairs only its three mounted Cargo/target cache directories,
+then drops privileges before running Cargo or tests. This covers fresh,
+recreated and restored root-owned mounts; an earlier cached `chown` layer cannot
+establish ownership for a later mount. Cache mounts are locked while in use. The
+small `python scripts/check-container-build-cache.py` regression reproduces the
+old permission failure and verifies cold, replaced, restored and warm caches,
+the non-root execution identity and unchanged source permissions. It compiles no
+Rust code and runs before the normal container build.
+
 Native smoke jobs, the container adapter, service-pool campaign and installed-console fixture share one metadata retry policy. It honors only the native actor's explicit `registry_busy` contract within finite attempt/time budgets; an accepted index/configuration job is polled by the same receipt, never resubmitted. Deliberate negative tests require an exact expected failure code and do not retry it. The document-table smoke retains its original source, coordinate, extraction, budget and usage assertions. See [the protocol](service-protocol.md) for retry exclusions.
 
 Native smoke and qualification tools distinguish a raw diagnostic status from an available publication. They share scoped, bounded observation helpers and preserve explicit failed readiness, typed read-retry limits and exact usage accounting; see the [MCP consumer contract](mcp.md). The mandatory 16-file/model service-client and document-table smokes remain routine on every native host. Local verification uses a freshly constructed matching release pair before a corrective push; hosted CI is not the primary debugging loop.
@@ -56,7 +66,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.5.12 candidate notes](release-1.5.12.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact sixteen-tool MCP catalog, including airk_help; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.6.0 candidate notes](release-1.6.0.md) describe current behavior and qualification limits, while the [October 17 release summary](releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 26-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 
