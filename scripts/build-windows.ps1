@@ -32,6 +32,11 @@ try {
     } else {
         Invoke-AirkTool $airkPython @('scripts/provision-local-model.py', '--destination', (Join-Path $airkRoot 'target/local-vector-model'), '--download')
     }
+    if ($env:AIRK_BUNDLED_RUNTIME_DIR) {
+        Invoke-AirkTool $airkPython @('scripts/provision-onnx-runtime.py')
+    } else {
+        Invoke-AirkTool $airkPython @('scripts/provision-onnx-runtime.py', '--download')
+    }
     if (-not $SkipChecks) {
         Invoke-AirkTool cargo @('fmt', '--all', '--check')
         Invoke-AirkTool cargo @('clippy', '--workspace', '--all-targets', '--all-features', '--locked', '--target', $airkTarget, '--', '-D', 'warnings')

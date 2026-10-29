@@ -223,13 +223,15 @@ def main():
     specification.loader.exec_module(builder)
     operating_system = "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux"
     executable, helper = builder.runtime_names(operating_system)
+    inference_assets = builder.inference_assets(operating_system, "aarch64" if args.target.startswith("aarch64-") else "x86_64")
+    builder.load_script("int8-policy").verify_embedded(manifest.get("embedded_models", {}))
     mac_resources = set(builder.macos_bundle_files(manifest["version"])) | {"AIRK.app/Contents/_CodeSignature/CodeResources", "AIRK.app/Contents/CodeResources"} if operating_system == "macos" else set()
     with zipfile.ZipFile(archive) as zipped:
         if len(zipped.namelist()) != len(set(zipped.namelist())) or set(zipped.namelist()) != set(manifest["payload"]):
             raise SystemExit("Native archive inventory differs")
         for name, expected in manifest["payload"].items():
             safe_name(name)
-            if name not in (executable, helper, "airk-build.json", "airk-runtime.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and name not in mac_resources and not name.startswith("notices/"):
+            if name not in (executable, helper, "airk-build.json", "airk-runtime.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and name not in mac_resources and name not in inference_assets and not name.startswith("notices/"):
                 raise SystemExit("Unexpected native payload path: " + name)
             data = zipped.read(name)
             if digest(data) != expected:
@@ -240,6 +242,13 @@ def main():
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(data)
     runtime = stage / "native" / "runtime"
+    for name, row in inference_assets.items():
+        path = runtime / name
+        if row.get("macho_payload_sha256"):
+            if path.stat().st_size > 64 << 20 or builder.load_script("macho-identity").payload_digest(path.read_bytes()) != row["macho_payload_sha256"]:
+                raise SystemExit("Signed inference library content differs")
+        elif not path.is_file() or digest(path.read_bytes()) != row["sha256"]:
+            raise SystemExit("Offline inference library/notice differs")
     install_digest = digest((runtime / "airk-install.json").read_bytes())
     install = json.loads((runtime / "airk-install.json").read_text(encoding="utf-8"))
     inventory = {name: value for name, value in manifest["payload"].items() if name != "airk-install.json"}

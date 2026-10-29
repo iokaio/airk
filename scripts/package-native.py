@@ -142,6 +142,15 @@ def validate_runtime(runtime, version, target, source):
     if not required.issubset(files):
         raise ValueError("Runtime pair legal/notice inventory is incomplete")
     allowed = set(required)
+    inference_assets = builder.inference_assets(operating_system, architecture) if builder.int8_version(version) else {}
+    for name, row in inference_assets.items():
+        if operating_system == "macos" and "macho_payload_sha256" in row:
+            metadata = (runtime / name).stat()
+            if metadata.st_size > 64 << 20 or builder.load_script("macho-identity").payload_digest((runtime / name).read_bytes()) != row["macho_payload_sha256"]:
+                raise ValueError("Signed inference library content differs")
+        elif files.get(name) != row["sha256"]:
+            raise ValueError("Pinned offline inference library/notice differs: " + name)
+        allowed.add(name)
     if operating_system == "macos":
         for name, expected in builder.macos_bundle_files(version).items():
             if (runtime / name).stat().st_size != len(expected) or (runtime / name).read_bytes() != expected:
@@ -234,11 +243,15 @@ def main():
         raise SystemExit("Archived native service pair self-test failed")
     model_report = json.loads(capture(str(smoke / executable), "model-catalog"))
     catalog = json.loads((ROOT / "crates/airk-retrieval/src/model_catalog.json").read_text(encoding="utf-8"))
-    if model_report.get("bundled_model", {}).get("manifest") != catalog["profiles"][0]["manifest"]:
+    selected = model_report.get("selection", {}).get("profile_id")
+    profile = next((p for p in catalog["profiles"] if p["id"] == selected), None)
+    if profile is None or model_report.get("bundled_model", {}).get("manifest") != profile["manifest"]:
         raise SystemExit("Archived model metadata differs from source catalog")
+    embedded = builder.verify_embedded_models(smoke, "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux")
     receipt = {
         "schema": "airk-native-candidate/2", "version": version,
         "bundled_model": model_report["bundled_model"],
+        "embedded_models": embedded,
         "source": builder.source_identity(), "install_manifest_sha256": files["airk-install.json"],
         "target": args.target, "vsix_target": TARGETS[args.target],
         "commit": capture("git", "rev-parse", "HEAD"),

@@ -36,8 +36,8 @@ class ServiceRuntimeBuildTests(unittest.TestCase):
                 self.assertNotIn("Program", agent)
             with mock.patch.object(builder.subprocess, "run") as codesign:
                 builder.sign_development_macos_bundle(root)
-                self.assertEqual(codesign.call_count, 3)
-                self.assertEqual(codesign.call_args_list[1].args[0][-1], str(root / "AIRK.app"))
+                self.assertEqual(codesign.call_count, 4)
+                self.assertEqual(codesign.call_args_list[2].args[0][-1], str(root / "AIRK.app"))
                 self.assertIn("--timestamp=none", codesign.call_args_list[0].args[0])
     def test_changed_source_discards_owned_staging_and_preserves_inputs(self):
         script = Path(__file__).resolve().parents[1] / "build-service-runtime.py"
@@ -62,6 +62,9 @@ class ServiceRuntimeBuildTests(unittest.TestCase):
                 return f"{Path(arguments[0]).stem} 9.8.7\n"
 
             with (mock.patch.object(builder, "ROOT", root),
+                  mock.patch.object(builder, "load_script"),
+                  mock.patch.object(builder, "stage_inference_runtime"),
+                  mock.patch.object(builder, "verify_embedded_models"),
                   mock.patch.object(builder, "check_lightweight_dependencies"),
                   mock.patch.object(builder, "cargo_binary", side_effect=artifact),
                   mock.patch.object(builder.platform, "system", return_value="Windows" if suffix else "Linux"),

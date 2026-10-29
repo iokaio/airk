@@ -4,7 +4,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "1.5.12"
+version = "1.6.0"
 edition = "2024"
 rust-version = "1.98"
 license = "Apache-2.0"
@@ -40,7 +40,7 @@ diskann = { version = "=0.59.0", default-features = false }
 diskann-vector = "=0.59.0"
 futures = "0.3"
 notify = "=8.2.0"
-tract-onnx = { version = "=0.23.8", default-features = false }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "load-dynamic"] }
 tokenizers = { version = "=0.23.2", default-features = false, features = ["fancy-regex"] }
 libc = "=0.2.190"
 windows-sys = "=0.61.2"

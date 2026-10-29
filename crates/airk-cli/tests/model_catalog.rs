@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::{fs, process::Command};
 
 #[test]
-fn model_catalog_never_opens_collection_state_and_only_selects_fp32() -> Result<()> {
+fn model_catalog_never_opens_collection_state_and_only_selects_int8() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let missing_root = directory.path().join("not-a-workspace");
     let missing_state = directory.path().join("not-created");
@@ -30,7 +30,7 @@ fn model_catalog_never_opens_collection_state_and_only_selects_fp32() -> Result<
     );
     let value: Value = serde_json::from_slice(&output.stdout)?;
     assert_eq!(value["schema"], 1);
-    assert_eq!(value["automatic_int8"], false);
+    assert_eq!(value["automatic_int8"], true);
     assert_eq!(
         value["capabilities"]["architecture"],
         std::env::consts::ARCH
@@ -40,16 +40,18 @@ fn model_catalog_never_opens_collection_state_and_only_selects_fp32() -> Result<
         std::env::consts::OS
     );
     assert!(value["capabilities"]["logical_cpus"].as_u64().unwrap() >= 1);
-    assert_eq!(
-        value["selection"]["profile_id"],
-        value["catalog"]["default_profile"]
-    );
     let profiles = value["catalog"]["profiles"].as_array().unwrap();
-    assert_eq!(profiles.len(), 1);
-    assert_eq!(profiles[0]["precision"], "fp32");
+    assert_eq!(profiles.len(), 2);
+    assert!(
+        profiles
+            .iter()
+            .any(|p| p["id"] == value["selection"]["profile_id"])
+    );
+    assert_eq!(profiles[0]["precision"], "uint8");
+    assert_eq!(profiles[1]["precision"], "int8");
     assert_eq!(
         profiles[0]["manifest"]["model_sha256"],
-        "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
+        "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21"
     );
     assert_eq!(fs::read_dir(directory.path())?.count(), 0);
     Ok(())

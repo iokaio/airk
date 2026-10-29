@@ -1,5 +1,9 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+**Version 1.6.0 — offline semantic index optimization.** Two bundled INT8 MiniLM exports replace the previous FP32 model. Native CPU detection chooses unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64. Installation and rebuilding require no model download. Upgrade rebuilds semantic vectors and caches while preserving text/fact evidence, pause and semantic opt-out settings. See the [1.6.0 record](docs/release-1.6.0.md) and [optimization rationale](docs/semantic-index-optimization.md).
+
+The following management and agent improvements were introduced in 1.5.12 and remain available.
+
 Management → Agents now offers **Copy instructions** and separate buttons to open Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`) and GitHub Copilot (`.github/copilot-instructions.md`) project instructions. The suggestion teaches agents to discover deferred AIRK tools, confirm status, use focused evidence and verify live files. Existing files stay unchanged; missing files open as unsaved drafts for review and saving. The bundled **Project instructions for AI agents** help topic also covers other assistants.
 
 Version **1.5.12** includes the index-management and startup improvements described below. Explorer opens while runtime checks continue in the background. Healthy completed installations reconnect without running native startup again, and simultaneous discovery requests share work. Agent configuration uses current native registrations. The Agents panel displays connection-check stages, elapsed time and copyable results for the unified 26-tool connection. The full inline agent setup guide remains a proposal. See the [1.5.12 release record](docs/release-1.5.12.md).
@@ -14,7 +18,7 @@ Version 1.5.9 fixes MCP discovery followed by a legacy handshake: a delayed disc
 
 Failed jobs observed by the service now produce retained `job_failed` events with the exact job and safe failure code. Index preparation and discovery preserve stage and recognized native causes. Older generic failures cannot be reconstructed; unknown causes remain explicit.
 
-**Version 1.5.12.** Management uses consistent horizontal tabs for Indexing, Activity, Storage, Recovery, Service, Agents, Usage and Logs. Indexing contains a health banner, current progress, published search availability, and three everyday settings: search mode, updates and evidence detail. Semantic enablement verifies/prepares the offline model before saving the policy and requests source and semantic work. Registration records native setup durably, so closing the editor does not strand a newly registered project before its initial index requests. See the [1.5.8 development record](docs/release-1.5.8.md).
+**Management features introduced in 1.5.12.** Management uses consistent horizontal tabs for Indexing, Activity, Storage, Recovery, Service, Agents, Usage and Logs. Indexing contains a health banner, current progress, published search availability, and three everyday settings: search mode, updates and evidence detail. Semantic enablement verifies/prepares the offline model before saving the policy and requests source and semantic work. Registration records native setup durably, so closing the editor does not strand a newly registered project before its initial index requests. See the [1.5.8 development record](docs/release-1.5.8.md).
 
 Queued repair requests whose plan has finished or lost its owner are settled without replaying old approvals, so they cannot indefinitely block otherwise eligible source work. Overview and Management update automatically while visible. Management exposes plan gates, confirms manual diagnostic status checks, separates old counters from queued work, and provides Copy details for troubleshooting panels.
 
@@ -50,7 +54,7 @@ Successful runtime activation finishes quietly. A detected extension update offe
 
 Trusted startup and **Install or Repair CLI** migrate recognized project-local agent connections to one stable-launcher endpoint. Codex, Claude Code, Copilot, Gemini, Antigravity, Cursor, Roo and Junie files are supported. Other servers, environment values and disabled state are preserved; conflicts, unsafe files and unsaved edits remain for review. Restart the coding agent and approve the renamed tools after migration.
 
-The current development package version is **1.5.12**. The earlier 1.5.0 candidate superseded 1.4.4; its [release notes](docs/release-1.5.0.md) retain their original validation scope.
+The current development package version is **1.6.0**. The earlier 1.5.0 candidate superseded 1.4.4; its [release notes](docs/release-1.5.0.md) retain their original validation scope.
 
 CLI installation removes previous extension-managed terminal executable copies regardless of version. It also retires the previous native rollback payload after successful activation, preserving the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to retry. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
 
@@ -68,7 +72,7 @@ A per-user service brokers authenticated connections and owns registration, dura
 
 The approved runtime pair contains two executables: a lightweight `airk` for native service/client/worker roles, and `airk-embed` for inference and embedded offline MiniLM assets. Compatible projects share verified model files and loaded sessions. Inference starts when needed; connecting a read-only client does not load a model. Native operation targets Windows, Linux and both Mac architectures. Windows/Linux x64 and private Windows editor evidence is recorded separately; native Mac and the complete installed-platform matrix remain unqualified.
 
-The Mac layout uses a [GUI-less signed app bundle](docs/service-macos-login.md) containing those same two executables, with a macOS 13.0 deployment baseline and optional bundle-scoped login registration. Portable ownership/package checks pass; native SDK, signing, lifecycle and installed-platform qualification remain pending.
+The Mac layout uses a [GUI-less signed app bundle](docs/service-macos-login.md) containing those same two executables, with a macOS 13.3 deployment baseline and optional bundle-scoped login registration. The bundled inference library sets that minimum; its license notices reside in bundle resources. Native signing, lifecycle and installed-platform qualification are recorded separately from portable ownership/package checks.
 
 Each project has a canonical source, separate data root, collection name and opaque service binding. Registration reserves disjoint storage before creating it. Sources cannot overlap registered data, runtime state, control or bound logs. Native workers own indexing and source watching. Automatic watching explicitly continues after editor windows close; login startup is a separate opt-in choice.
 
@@ -120,6 +124,10 @@ Storage uses independent collection ownership, admitted publication/replacement 
 ## Development and records
 
 Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). The runtime builder stages a host-native executable pair without creating a VSIX. Formatting, Clippy, workspace tests, repository checks and exact artifact verification remain release gates. Installed-platform evidence is recorded separately from development fixtures.
+
+[Semantic index optimization](docs/semantic-index-optimization.md) explains the
+1.6.0 switch to two bundled INT8 MiniLM exports: lower helper memory and CPU cost,
+smaller weight assets, offline delivery, CPU selection and semantic-only rebuilding.
 
 The [1.3.2](docs/release-1.3.2.md), [1.3.1](docs/release-1.3.1.md), [1.3.0](docs/release-1.3.0.md) and earlier release notes are historical records. Their direct-helper/window-scheduler instructions do not describe 1.4 defaults. Existing public releases are separate from this source candidate; publication requires successful exact-main CI and the release workflows.
 

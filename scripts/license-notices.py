@@ -108,9 +108,19 @@ def main():
     if hashlib.sha256(license_bytes).hexdigest() != profile["manifest"]["license_sha256"]:
         raise SystemExit("Bundled model license digest mismatch")
     (model_notices / "LICENSE").write_bytes(license_bytes)
-    (model_notices / "provenance.json").write_text(json.dumps(profile, indent=2) + "\n", encoding="utf-8")
+    (model_notices / "provenance.json").write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
     (args.output / "inventory.json").write_text(json.dumps(inventory, indent=2) + "\n", encoding="utf-8")
-    (args.output / "bom.cdx.json").write_text(json.dumps(software_bill_of_materials(metadata), indent=2) + "\n", encoding="utf-8")
+    bom = software_bill_of_materials(metadata)
+    runtime = json.loads(Path("crates/airk-retrieval/src/ort_runtime_catalog.json").read_text(encoding="utf-8"))
+    reference = "pkg:nuget/Microsoft.ML.OnnxRuntime@" + runtime["distribution_version"]
+    bom["components"].append({"type": "library", "bom-ref": reference, "purl": reference,
+                              "name": "Microsoft.ML.OnnxRuntime", "version": runtime["distribution_version"],
+                              "licenses": [{"license": {"id": "MIT"}}],
+                              "externalReferences": [{"type": "distribution", "url": runtime["url"],
+                                                      "hashes": [{"alg": "SHA-256", "content": runtime["archive_sha256"]}]}]})
+    bom["dependencies"].append({"ref": reference, "dependsOn": []})
+    bom["metadata"]["properties"][0]["value"] += "; plus pinned native ONNX Runtime CPU distribution"
+    (args.output / "bom.cdx.json").write_text(json.dumps(bom, indent=2) + "\n", encoding="utf-8")
     if missing:
         raise SystemExit("Missing license declarations: " + ", ".join(missing))
     print(f"Bundled notices for {len(inventory)} third-party packages in {args.output}")

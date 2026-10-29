@@ -1,5 +1,9 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
+**Version 1.6.0 — offline semantic index optimization.** Two bundled INT8 MiniLM exports replace the previous FP32 model. Native CPU detection chooses unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64. Installation and rebuilding require no model download. Upgrade rebuilds semantic vectors and caches while preserving text/fact evidence, pause and semantic opt-out settings. See the [1.6.0 record](https://github.com/iokaio/airk/blob/main/docs/release-1.6.0.md) and [optimization rationale](https://github.com/iokaio/airk/blob/main/docs/semantic-index-optimization.md).
+
+The following management and agent improvements were introduced in 1.5.12 and remain available.
+
 Management → Agents now offers **Copy instructions** and separate buttons to open Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`) and GitHub Copilot (`.github/copilot-instructions.md`) project instructions. The suggestion teaches agents to discover deferred AIRK tools, confirm status, use focused evidence and verify live files. Existing files stay unchanged; missing files open as unsaved drafts for review and saving. The bundled **Project instructions for AI agents** help topic also covers other assistants.
 
 Version **1.5.12** includes the index-management and startup improvements described below. Explorer opens while runtime checks continue in the background. Healthy completed installations reconnect without running native startup again, and simultaneous discovery requests share work. Agent configuration uses current native registrations. The Agents panel displays connection-check stages, elapsed time and copyable results for the unified 26-tool connection. The full inline agent setup guide remains a proposal. See the [1.5.12 release record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.12.md).
@@ -16,7 +20,7 @@ One **AIRK MCP connection** now exposes 26 unique tools without repeated `airk_`
 
 Failed jobs observed by the service now produce retained `job_failed` events with the exact job and safe failure code. Index preparation and discovery preserve stage and recognized native causes. Older generic failures cannot be reconstructed; unknown causes remain explicit.
 
-**Version 1.5.12.** Management uses consistent horizontal tabs for Indexing, Activity, Storage, Recovery, Service, Agents, Usage and Logs. Indexing contains a health banner, current progress, published search availability, and three everyday settings: search mode, updates and evidence detail. Semantic enablement verifies/prepares the offline model before saving the policy and requests source and semantic work. Registration records native setup durably, so closing the editor does not strand a newly registered project before its initial index requests. See the [1.5.8 development record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.8.md).
+**Management features introduced in 1.5.12.** Management uses consistent horizontal tabs for Indexing, Activity, Storage, Recovery, Service, Agents, Usage and Logs. Indexing contains a health banner, current progress, published search availability, and three everyday settings: search mode, updates and evidence detail. Semantic enablement verifies/prepares the offline model before saving the policy and requests source and semantic work. Registration records native setup durably, so closing the editor does not strand a newly registered project before its initial index requests. See the [1.5.8 development record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.8.md).
 
 Queued repair requests whose plan has finished or lost its owner are settled without replaying old approvals, so they cannot indefinitely block otherwise eligible source work. Overview and Management update automatically while visible. Management exposes plan gates, confirms manual diagnostic status checks, separates old counters from queued work, and provides Copy details for troubleshooting panels.
 
@@ -86,7 +90,7 @@ Old startup has a separate review and removal confirmation. The verified new run
 
 The runtime contains two executables: lightweight `airk` service/client/worker roles and `airk-embed` inference with offline model assets. Native ownership is independent of the extension directory. Windows, Linux and both Mac architectures are targets; installed-platform qualification is recorded separately and native Mac/editor acceptance remains pending.
 
-The Mac payload contains those same two executables in a GUI-less app bundle, targeting macOS 13.0. Optional signed-bundle login preserves system consent and refuses unverifiable registrations. Native Mac signing/login and installed-editor qualification remain pending.
+The Mac payload contains those same two executables in a GUI-less app bundle, targeting macOS 13.3. Optional signed-bundle login preserves system consent and refuses unverifiable registrations. Native Mac signing/login and installed-editor qualification remain pending.
 
 ## Coding agents and response mode
 

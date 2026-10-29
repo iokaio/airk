@@ -1,6 +1,6 @@
 # Building AIRK for macOS
 
-Native builds embed the pinned FP32 MiniLM assets. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
+Native builds embed the two pinned INT8 MiniLM exports. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Also prepare native CPU libraries with `python scripts/provision-onnx-runtime.py --download`. Cargo never downloads model assets or runtime libraries. See [model provisioning](onnx-models.md).
 
 Build the native Rust executable on a Mac or macOS CI runner. Docker is optional and is not needed for this workflow. Local Apple Silicon build/tests and signing/notarization were observed on 14 October 2026; see the [validation record](validation.md) for exact scope and remaining qualification.
 
@@ -94,7 +94,7 @@ cargo build --release --locked -p airk-cli --target x86_64-apple-darwin
 
 Cross-building also compiles native grammar code and requires a matching Clang/SDK configuration. Adding a Rust target on Windows or Linux alone does not supply the Apple linker and SDK. Prefer macOS runners, and test each binary on its intended architecture. [Rust's macOS target documentation](https://doc.rust-lang.org/rustc/platform-support/apple-darwin.html) describes the targets, SDK discovery and cross-compilation requirements.
 
-The 1.4 runtime builder fixes `MACOSX_DEPLOYMENT_TARGET=13.0` for both architectures and declares that minimum in its GUI-less app bundle. Set the same value for native Cargo checks. The two existing executables, static login plists, signing and ownership contract are described in [Mac service login](service-macos-login.md). Qualification on the oldest claimed OS and both architectures remains pending; compiler support alone does not establish that support range. Earlier native records describe their original artifacts.
+The 1.6 runtime builder fixes `MACOSX_DEPLOYMENT_TARGET=13.3` for both architectures and declares that minimum in its GUI-less app bundle. The bundled ONNX Runtime library declares macOS 13.3 as its minimum. Set the same value for native Cargo checks. The two existing executables, static login plists, signing and ownership contract are described in [Mac service login](service-macos-login.md). Qualification on the oldest claimed OS and both architectures remains pending; compiler support alone does not establish that support range. Earlier native records describe their original artifacts.
 
 ## CI candidates and release work still required
 

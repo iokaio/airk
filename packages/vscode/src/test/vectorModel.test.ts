@@ -8,14 +8,17 @@ import { modelProfileFromCatalog, prepareVectorModel } from '../vectorModel';
 
 async function catalogReport() {
     const catalog = JSON.parse(await fs.readFile(path.resolve(__dirname, '../../../../crates/airk-retrieval/src/model_catalog.json'), 'utf8'));
-    return { schema: 1, automatic_int8: false, catalog,
+    return { schema: 1, automatic_int8: true, catalog,
         bundled_model: { manifest: structuredClone(catalog.profiles[0].manifest) },
         capabilities: { runtime: catalog.profiles[0].runtime }, selection: { profile_id: catalog.default_profile } };
 }
 
 test('native catalog selection binds hashes, precision and inventory', async () => {
     const report = await catalogReport();
-    assert.equal(modelProfileFromCatalog(report).precision, 'fp32');
+    assert.equal(modelProfileFromCatalog(report).precision, 'uint8');
+    const signed = structuredClone(report);
+    signed.selection.profile_id = signed.catalog.profiles[1].id;
+    assert.equal(modelProfileFromCatalog(signed).precision, 'int8');
     for (const mutate of [
         (v: any) => { v.selection.profile_id = 'unapproved'; },
         (v: any) => { v.catalog.profiles[0].precision = 'int8'; },
@@ -23,7 +26,9 @@ test('native catalog selection binds hashes, precision and inventory', async () 
         (v: any) => { v.catalog.profiles[0].assets[0].url = 'https://example.invalid/unpinned'; },
         (v: any) => { v.catalog.profiles[0].assets[0].bytes = 268435457; },
         (v: any) => { v.catalog.profiles[0].assets[1] = v.catalog.profiles[0].assets[0]; },
-        (v: any) => { v.automatic_int8 = true; }
+        (v: any) => { v.automatic_int8 = false; },
+        (v: any) => { v.catalog.profiles[1].precision = 'fp32'; },
+        (v: any) => { v.catalog.profiles.push(v.catalog.profiles[0]); }
     ]) {
         const invalid = structuredClone(report); mutate(invalid);
         assert.throws(() => modelProfileFromCatalog(invalid), /unsupported|invalid/);

@@ -1,0 +1,69 @@
+{
+  "schema": 1,
+  "distribution_version": "1.22.1",
+  "url": "https://github.com/microsoft/onnxruntime/releases/download/v1.22.1/Microsoft.ML.OnnxRuntime.1.22.1.nupkg",
+  "archive_bytes": 121484102,
+  "archive_sha256": "2ee0ed327f6cf2b860182bc4f2feb905c44a596cd120a05c510da6e4044a3e58",
+  "notices": [
+    {
+      "source": "LICENSE",
+      "name": "ONNXRUNTIME-LICENSE",
+      "bytes": 1094,
+      "sha256": "c250d6278f0b47a6439fb7592b08b58a55eb9f535aa49a1db63211c3f982b674"
+    },
+    {
+      "source": "ThirdPartyNotices.txt",
+      "name": "ONNXRUNTIME-ThirdPartyNotices.txt",
+      "bytes": 333022,
+      "sha256": "e00f828e0a33de591a355ae6606d2625f5758da7d2c844db7821c9dd3e3647b6"
+    }
+  ],
+  "platforms": {
+    "windows-x86_64": [
+      {
+        "source": "runtimes/win-x64/native/onnxruntime.dll",
+        "name": "onnxruntime.dll",
+        "bytes": 12416032,
+        "sha256": "7788f3f38e9a339003f7d7e1bf47f928287cf409bb5273273149e1282fbf503f"
+      },
+      {
+        "source": "runtimes/win-x64/native/onnxruntime_providers_shared.dll",
+        "name": "onnxruntime_providers_shared.dll",
+        "bytes": 22048,
+        "sha256": "7a71dbee513692aeb0bd2346a50ae0edd28c8b34defc17254605a29e81c60569"
+      }
+    ],
+    "linux-x86_64": [
+      {
+        "source": "runtimes/linux-x64/native/libonnxruntime.so",
+        "name": "libonnxruntime.so",
+        "bytes": 21087472,
+        "sha256": "3907398e408dae083deb3439e8f643d9e26180ed614b29cc7d5ec342ce5ce06f"
+      },
+      {
+        "source": "runtimes/linux-x64/native/libonnxruntime_providers_shared.so",
+        "name": "libonnxruntime_providers_shared.so",
+        "bytes": 14632,
+        "sha256": "e4706ea02be3999167f000bb1ff7391c86e95d2d96f78eb33225c14b172a8451"
+      }
+    ],
+    "macos-aarch64": [
+      {
+        "source": "runtimes/osx-arm64/native/libonnxruntime.dylib",
+        "name": "libonnxruntime.dylib",
+        "bytes": 33548864,
+        "sha256": "36a46aeb65eee6618daded125577192514d058d0cce6adc4892bc1bcc77cb9be",
+        "macho_payload_sha256": "f77791e1521fa95ab05b8456680233aa041d997856a9705d256a8cdf3fbbc728"
+      }
+    ],
+    "macos-x86_64": [
+      {
+        "source": "runtimes/osx-x64/native/libonnxruntime.dylib",
+        "name": "libonnxruntime.dylib",
+        "bytes": 37740976,
+        "sha256": "9f2f73ddae8cfb7b5d9be7b84f0bfc3db07e5883d5baa78c4b658ec022b46275",
+        "macho_payload_sha256": "5d08416594224612d7652957992a38a7062933a46d4ed90ccc3917aa12be7625"
+      }
+    ]
+  }
+}

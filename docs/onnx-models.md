@@ -1,145 +1,110 @@
-# Local CPU transformer embeddings
+# Offline INT8 transformer embeddings
 
-Schema 2 executes a real BERT-family ONNX encoder using [tract 0.23.8](https://docs.rs/crate/tract-onnx/0.23.8), compiled into the native binary. It uses a local Hugging Face WordPiece tokenizer, attention-mask mean pooling and L2 normalization. Once model assets are present, inference requires no Python, ONNX Runtime DLLs, cloud service or network connection. Unsupported graphs and tokenizers fail explicitly. [Schema 1 word-vector assets](local-models.md) remain compatible.
+AIRK 1.6.0 runs two pinned MiniLM INT8 exports through ONNX Runtime 1.22.1 CPU
+inside `airk-embed`. Service, project workers and MCP frontends exclude inference
+weights and engine dependencies. Compatible projects share the helper's model
+session. No Python, network service or post-install download is needed.
 
-## Default setup and native provisioning
+The optimization reduces embedding memory and CPU cost and bundled weight size.
+[Measurements and limitations](semantic-index-optimization.md) explain the choice.
+FP32 weights, tract inference and precision fallbacks are removed. Floating-point
+pooling, normalization and output vectors remain; INT8 describes quantized weights.
 
-The initial reproducible model is [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), revision `10dbd2f06a8baf40ad285b037edda610c1b9a57c`. Its model card declares Apache-2.0 and describes a 384-dimensional English sentence/short-paragraph encoder with a 256-word-piece context. It can support document and natural-language/code-comment matching; this does not establish compiler resolution or broad code understanding.
+## Bundled profiles
 
-~~~console
-airk --data-dir /path/to/state collections vectors install-bundled
-airk --data-dir /path/to/state index
-airk --data-dir /path/to/state search "recover access after forgetting a login secret" --mode vector
-airk --data-dir /path/to/state search "recover access after forgetting a login secret" --mode hybrid
-~~~
+Both exports use `sentence-transformers/all-MiniLM-L6-v2`, revision
+`10dbd2f06a8baf40ad285b037edda610c1b9a57c`, Apache-2.0, WordPiece tokenization,
+256-token context and 384-dimensional normalized output.
 
-AIRK 1.3.1 embeds this single FP32 model, tokenizer, manifest and Apache-2.0 license in the native helper. The trusted extension checks the bundled manifest against the helper catalog, then runs `collections vectors install-bundled` on first indexing when vectors are enabled. No runtime download or network fallback occurs. The same executable is included in native ZIPs, platform VSIXs and the container; copying the CLI alone retains the offline assets.
+| Execution CPU | Profile | Weight bytes |
+|---|---|---:|
+| x64 without VNNI | `minilm-l6-v2-u8-v1` | 23,046,789 |
+| x64 with AVX-VNNI or AVX-512-VNNI; ARM64 | `minilm-l6-v2-s8-v1` | 23,026,053 |
 
-Installation stages at most the pinned payload in a private system temporary directory, verifies exact sizes and SHA-256 digests, and uses the native quota-reserved atomic installer. Temporary extraction is outside managed index quota and is cleaned on normal success/failure; abrupt process termination can leave an owned temporary directory. An OS installation lock prevents competing processes from publishing partial models. Default setup waits up to thirty seconds for another installer, then preserves and validates the completed model; a timeout reports an explicit retry. Existing/custom inputs are preserved and validated; incomplete or corrupt existing inputs fail explicitly. Installation does not change the model identity, CPU batching policy or existing vector compatibility. Opted-out collections do not install a model. Setup failure leaves published evidence and the enabled setting intact; retry **Index now** or opt out in the panel.
+The signed export is byte-identical to the pinned upstream ARM64 export. Native
+CPU detection selects the profile. Export names do not establish performance
+qualification. `airk model-catalog` reports observations, selection and hashes
+without opening an index. Both profiles ship in every platform installer.
 
-Builds require explicitly prepared model inputs. Run `python scripts/provision-local-model.py --destination target/local-vector-model --download` once on a connected build machine, or transfer the four verified files to that directory for an offline build. `AIRK_BUNDLED_MODEL_DIR` selects another prepared directory. Without `--download`, the script verifies existing files only. Cargo's build script never downloads: it checks the complete manifest against the catalog and verifies all pinned sizes/digests before embedding an immutable snapshot. Missing or mismatched inputs fail the build. Weights remain outside source control; distribution packages include them inside the helper. Generated notices include the model license and catalog provenance. Source URLs identify provenance and explicit build provisioning; installed AIRK does not contact them.
-
-| Asset | Bytes | SHA-256 |
-|---|---:|---|
-| model.onnx | 90,405,214 | `6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452` |
-| tokenizer.json | 466,247 | `be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037` |
-| LICENSE | 11,358 | `cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30` |
-
-The manifest contains schema `2`, `name`, `license`, `source`, `revision`, the three asset hashes (`model_sha256`, `tokenizer_sha256`, `license_sha256`), `dimensions`, `max_tokens`, `pooling`, `input_ids`, `attention_mask`, optional `token_type_ids`, and `output`. The pinned model uses dimensions `384`, context `256`, pooling `attention-mask-mean-l2`, the conventional input names, and output `last_hidden_state`. Unknown manifest fields are rejected.
-
-The identity hashes the complete canonical manifest plus AIRK's runtime specification. Tokenizer, context, provenance/license or weight changes therefore create a new revision. Inputs are int64 `[batch, tokens]`; output must be float32 `[batch, tokens, dimensions]`. Queries use batch size one. Indexing uses complete four-input tensors only for the pinned MiniLM weight/tokenizer digests on Windows x64 when all four inputs fit the 32-token bucket; remainders, longer inputs, other models and other platforms use batch size one. The pipeline descriptor binds this policy and platform. Padding is masked during pooling. Retained model assets are authenticated against their publication and charged to storage quota. Readers lazily cache verified inference plans; lexical operations do not initialize transformer execution.
-
-## Capabilities and qualified model catalog
+## Offline build inputs
 
 ```console
-airk model-catalog
+python scripts/provision-local-model.py --destination target/local-vector-model --download
+python scripts/provision-onnx-runtime.py --download
+python scripts/build-service-runtime.py --destination artifacts/runtime/int8-local --profile release
 ```
 
-This local, read-only CLI command reports native OS/architecture, available logical parallelism, OS-usable instruction features, runtime identity, the embedded catalog and default selection for new model setup. It does not describe an existing collection's published/custom model. It works without a valid workspace or existing data directory and does not read source/model bytes, create collection/usage state, download assets or compile inference plans. It is not an additional MCP tool. Probe the machine running the helper, including a remote extension host/container, rather than the desktop displaying its UI.
+These are explicit build-time downloads. Without `--download`, provisioning only
+verifies existing inputs. Offline builders can transfer both profile directories
+under `target/local-vector-model` and `target/local-onnx-runtime/<os>-<arch>`.
+`AIRK_BUNDLED_MODEL_DIR` may select another model parent directory. Each profile
+has `model.json`, `model.onnx`, `tokenizer.json` and `LICENSE`. Cargo never downloads
+model assets or runtime libraries.
 
-x86 probes report SSE2, FMA, AVX2, AVX-512 F/BW/VL/VNNI and AVX-VNNI independently. ARM64 probes report NEON, integer dot product, FP16 and i8mm. Other architectures report feature detection unavailable and an empty instruction list; an empty list is not a claim that the hardware has no acceleration. Available parallelism is the standard library's scheduling observation, not a physical-core inventory. CPU instruction support does not prove compiled kernel availability, actual dispatch or a speedup under tract.
+Rust build checks exact manifests, sizes and hashes before embedding both models.
+Runtime staging and packaging execute `airk-embed --verify-bundled-models` against
+the actual helper, rejecting missing, substituted, extra or FP32 profiles. CPU
+libraries and their notices ship beside the helper under the complete installer
+inventory. Copying only `airk.exe` is insufficient; use the complete runtime/VSIX.
 
-The catalog is maintained in `crates/airk-retrieval/src/model_catalog.json` and embedded in the native binary. Each entry binds an ID, precision, exact backend identity, qualification evidence/scope, canonical model manifest and asset names, sizes, SHA-256 digests and pinned URLs. The extension requests it only when model setup is needed; the Python provisioning script reads that same catalog. Existing/custom model directories bypass selection. Invalid catalog responses fail before download, and normal native validation/quota-managed installation still applies.
+Asset identity and provenance are recorded in the
+[model catalog](../crates/airk-retrieval/src/model_catalog.json) and
+[runtime catalog](../crates/airk-retrieval/src/ort_runtime_catalog.json).
+Installed AIRK never contacts those source URLs.
 
-There is one automatic entry: **`minilm-l6-v2-fp32-v1`**, the existing `all-MiniLM-L6-v2` export, tokenizer, context and pooling. Its current verification evidence covers Windows x64 and original small execution/retrieval fixtures. Other platforms receive the portable FP32 fallback with `selection.platform_qualified: false`; this preserves their existing default without claiming completed platform qualification. The report discloses the existing short-input batch size (4 on the qualified Windows x64 policy, otherwise 1), not a new batching policy. Capability/catalog reporting changes neither existing model bytes/manifests nor vector/cache identity. No existing semantic index needs rebuilding for this feature alone.
+## Inference and identity
 
-### Future option: automatic INT8 selection (not implemented)
+One CPU session executes one text per forward pass, with CPU spinning disabled.
+Dynamic quantization depends on activation ranges; batching different texts
+changed vectors during measurement. Per-text execution preserves cache behavior
+regardless of batch companions. UTF-8 input, WordPiece context and execution
+admission are bounded, followed by masked mean pooling and L2 normalization.
+Blank input has no vector. Altered assets, unsupported manifests, invalid tensor
+shapes and nonfinite output fail explicitly. Schema-1 word-vector fixtures remain
+separate from the shipped transformer; they are not a precision fallback.
 
-CPU-specific INT8 downloads are not registered selectable profiles. `automatic_int8` is false, including on VNNI/ARM dot-product machines. The [upstream MiniLM exports](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/tree/main/onnx) identify candidates for a later controlled qualification:
-
-| Hardware candidate | Export to evaluate |
-|---|---|
-| x64 AVX2 without VNNI | `model_quint8_avx2.onnx` |
-| x64 AVX-512 without VNNI | `model_qint8_avx512.onnx` |
-| x64 VNNI with a matching available kernel | `model_qint8_avx512_vnni.onnx` |
-| ARM64 with a matching integer kernel | `model_qint8_arm64.onnx` |
-
-These suffixes describe quantization recipes, not instruction code embedded in ONNX. Generic FP32 remains the fallback. Different backend/kernel builds and OS environments require their own evidence; AVX-VNNI and AVX-512-VNNI must not be treated as the same flag. The current graph/type profile does not accept these quantized exports, and merely changing the download URL is insufficient.
-
-Before promotion, add bounded INT8/UINT8 constant validation and the exact required operators, prove native execution/ORT agreement with rounding and zero-range edge cases, and measure release-build loading, inference, end-to-end indexing, query latency, memory and model bytes. Compare against today's actual B1/B4 FP32 policy across representative input lengths. Require judged code/document recall and ranking checks, including final hybrid results. Quantizing weights does not establish a fourfold reduction of stored vector/index bytes.
-
-Dynamic per-tensor activation quantization can make a row depend on its batch companions. AIRK's cache keys bind individual text and pipeline identity; accepting approximate B1/B4 agreement alone would weaken that contract. Begin qualification with B1 or establish a separately reviewed row-independent policy. Any future accepted precision/export must receive its own pipeline identity and regenerated semantic vectors, with indexing/query execution bound to that same pipeline. Existing collections/custom models must not silently switch on a capability or extension update. Model fallback must preserve the published pipeline until an explicit replacement succeeds.
-
-Selection should eventually combine a qualified platform/backend catalog with native feature detection, while allowing an explicit user override and a bounded local performance comparison. A CPU flag alone must never promote an unqualified profile. This is future design guidance; this release enables no INT8 inference or automatic precision switch.
-
-## Runtime identity
-
-The bucketed runtime is `tract-cpu-onnx/0.23.8/airk-buckets-2`. Its runtime and preprocessing identities intentionally differ from the fixed-shape adapter. Rebuild an existing transformer index with `airk --data-dir /path/to/state index --full` before querying it with this runtime. Old vectors are not silently interpreted using the new execution policy; source files and saved collection configuration remain the rebuild inputs.
+Pipeline identity covers exact weights/tokenizer, runtime, platform, preprocessing
+and pooling. Query and index vectors must use the same identity.
 
 ## Bounds and supported profile
 
-Queries and direct adapter calls take at most the first 16 KiB of UTF-8 text and then the declared 8–512 tokens. Indexing first prepares semantic inputs that fit both limits: it splits long bodies, combines adjacent small siblings within the same semantic group and native document location, and reserves room for written heading/signature context. Every body byte remains mapped to its original citation spans; repeated context adds no invented source evidence. Each composed input is re-tokenized without truncation to verify that it fits. The planner tokenizes bounded slices, never an entire oversized document.
+New ONNX imports must match the exact bundled profile selected for this CPU,
+including its preprocessing manifest. An obsolete, edited or mismatched profile
+fails before the saved model changes. Read-only metadata inspection can still
+describe earlier assets so they can be retired during upgrade.
 
-Raw tokenization has no postprocessor; the validated single-sequence processor runs exactly once after reserving its special tokens. The smallest fitting execution shape comes from 32/64/128/256/512, using the exact model context when it falls between these values. Inputs are padded only to that shape. Indexing schedules up to 32 semantic inputs, skips effective whitespace-only inputs and groups exact duplicates before cache lookup or inference. Missing inputs run concurrently in qualified single/four-input tensors; cache persistence and DiskANN insertion remain ordered on the indexing thread. Model files are capped at 256 MiB, tokenizer JSON at 4 MiB, dimensions at 2,048, vocabulary at 100,000 tokens, and a bounded planning slice at 65,536 raw tokens.
+Each forward pass uses one text, a UTF-8-safe 16 KiB prefix and at most 256 tokens.
+Semantic units retain original citation members; the existing 64-member fan-out
+bound can split a group. The 192 MiB inference execution reservation is an admission
+estimate, not a measured resident-memory ceiling or a whole-service memory limit.
 
-Semantic projection is captured before optional structural-detail selection. Units never cross mapped regions or native page/block/slide/table-row/worksheet-row locations; ordinary line citation boundaries can be combined. Each unit has at most 64 body members. More than 64 tiny citation partitions can therefore force extra windows under Detailed compared with Balanced and produce different exact cache inputs, even when their semantic projection is identical. This bound preserves full body coverage and bounded retrieval expansion; it is an explicit exception to input invariance across detail settings.
+## Semantic upgrade
 
-The initial policy targets 256 total tokens, reduced to a smaller declared model context when necessary. Written context uses at most 32 tokens and at most one quarter of the available non-special-token budget. Continuations prioritize their own written signature before parent context. Bodies have no overlap; repeated context is accounted for separately. The policy identity binds these limits. The 256-token choice favors fewer graph/mapping records and remains subject to the broader judged-corpus and integrated indexing qualification in the [implementation plan](indexingenhancements.md).
+The service queues setup for registered projects once during registry upgrade,
+including closed workspaces. Setup replaces old semantic graphs and embedding
+caches from retained extraction evidence, then queues durable semantic rebuilding.
+Text/fact evidence and sources are preserved. Paused projects wait for resume;
+semantic opt-outs remain off. Old ONNX publications cannot supply new-pipeline
+vectors. Text search remains available while semantic replacement is pending.
+Overview and Management separate published coverage from current semantic work;
+model setup completion does not mean every vector is ready.
 
-The adapter accepts the supported BERT operator profile and WordPiece/BertNormalizer/BertPreTokenizer pipeline with bounded special-token processing. It rejects external tensor files, custom domains, control flow, random operators, oversized constants and nonstatic intermediate shapes. Individual declared intermediate tensors are capped at 128 MiB and cumulative declared sizes per plan at 1 GiB. One parsed template shares constant tensors with lazily compiled shapes. The cache retains at most eight plans within a 1 GiB declared template/plan budget and evicts only idle plans. Exhaustion by active plans fails explicitly. Only one compilation runs per model at a time; its temporary typed/optimized graph can coexist with retained plans. Validation happens after shape inference, so compiler allocation is not a hard memory cap. Declared sizes, constants, allocator overhead and compiler state are not process RSS. Native inference is not forcibly interrupted by a wall-clock deadline.
+## Native validation
 
-TemplateProcessing must preserve exactly one sequence A in its single-input template; repeated, missing or B sequences are rejected. Exports must execute the selected token shapes, and the pinned batch model must also execute the qualified batch shape. A graph tied to a fixed context can fail lazy shape compilation explicitly. This adapter does not silently pad every input back to 256 or claim support for arbitrary ONNX exports.
+After provisioning:
 
-## Indexing performance and comparison
+```console
+cargo test -p airk-retrieval --all-features bundled_int8_is_normalized_bounded_and_batch_independent -- --ignored
+```
 
-Normal **Index now** reuses authenticated embeddings for unchanged chunk text and model pipelines. **Reindex**, or CLI `index --full`, deliberately recomputes embeddings. Both construct an ordered graph for a newly published revision; cached vectors avoid inference, not graph insertion. Token length depends only on the input and declared context. The narrow MiniLM batch policy additionally permits four rows for full short groups, after native exact comparisons across B1/B4 rows, ordering and padded tails. Full-rebuild tests reuse the same cache after regrouping inputs to verify exact immutable values. Exact cache keys include the complete policy. Other models remain B1: the accepted ONNX operator list alone does not prove that a graph processes batch rows independently.
+For ignored cache/order tests, set `AIRK_TEST_MODEL_DIR` to the absolute path of
+one profile directory, not its parent. Run native service and packaging checks
+from [CONTRIBUTING](../CONTRIBUTING.md) against the exact runtime being packaged.
+Windows validation does not qualify Mac/Linux, VNNI performance or ARM performance.
 
-The default is at most four workers, further limited by available CPUs and pending inputs. The inference workspace budget is one eighth of detected machine/cgroup memory, clamped to 128 MiB–1 GiB; unknown capacity uses 256 MiB. Each running plan acquires a permit for its declared nonconstant tensor sizes plus an 8 MiB tokenizer/input reserve. Concurrent calls wait for room; an individual plan exceeding the budget fails explicitly. Retained-plan allocation is bounded separately from active workspace allocation. These conservative declarations are not a hard process memory limit. `AIRK_INDEX_WORKERS=1` requests serial execution; values 1–8 are accepted and still respect CPU/memory limits. It affects indexing only and does not change collection configuration or model identity. Set it in the process launching the helper; an already-running VS Code process retains its own environment.
-
-Index JSON reports scheduling batches/workers, logical inputs, blank/duplicate inputs, cache hits/misses and `embedding_actual_forwards`. The older `embedding_inferences` counts logical uncached evaluations, including blank and duplicate misses; it is not a neural execution count. Token measurements cover distinct executed inputs: `embedding_input_tokens` includes specials before token truncation within the byte prefix, `embedding_embedded_tokens` counts unmasked tokens, `embedding_padding_tokens` counts masked execution slots, and `embedding_truncated_inputs` counts token or byte clipping. Cache hits are not tokenized again to manufacture token totals. `embedding_plan_compilations`, `embedding_plan_compile_us` and `embedding_plan_cache_peak_bytes` disclose lazy compilation and retained declared allocation; the last is not RSS. Inference wall time includes worker scheduling, compilation and waiting, while compilation microseconds sum the compilation calls. Existing `publish_us` contains these phases plus lexical/catalog work; nested timers must not be summed. A no-op index has zero embedding work and is not a cold-build benchmark.
-
-Semantic planning additionally reports `vector_units`, `vector_body_bytes` and `vector_planning_us`. Body bytes exclude repeated context. Planning time includes its bounded tokenizer checks and excludes synchronous embedding/cache/graph callbacks. These planning tokenizations are distinct from executed-input token counts. Prepared indexing units should report zero model truncation; direct query/adapter inputs can still exceed their bounds.
-
-For a controlled comparison, run the same new release helper against unchanged sources/model once with `AIRK_INDEX_WORKERS=1` and once with `AIRK_INDEX_WORKERS=4`, using `index --full` for both. Preserve the complete JSON reports, repeat in reverse order, and distinguish OS cache effects from embedding cache reuse. Compare wall time and stage timings alongside identical vector counts and retrieval results. Compare ordinary incremental `index` separately; a warm cache should greatly reduce inference counts. Do not compare an old cold build against a new warm-cache run as evidence of parallel speedup.
-
-The local build setup receipt saves aggregate `index_measurements`, including wall time and available native counters, in `local-agent-setup.json`. Older binaries omit unsupported counters rather than reporting invented zeros. Source paths and skipped-file diagnostics are excluded from these measurements.
-
-## Reproducible qualification
-
-Original code/document passages and fixed relevance judgments are included in the example. Run the native adapter and compare its embeddings against an independent CPU engine:
-
-~~~console
-python scripts/provision-local-model.py --destination target/model-qualification/minilm --download
-cargo run -p airk-retrieval --example qualify_model --locked -- target/model-qualification/minilm > target/model-qualification/native-result.json
-python -m pip --isolated install --target target/model-qualification/oracle-python --no-user onnxruntime==1.23.2 tokenizers==0.23.1
-python scripts/qualify-local-model.py --model-dir target/model-qualification/minilm --native-result target/model-qualification/native-result.json --oracle-python target/model-qualification/oracle-python
-~~~
-
-Python packages are qualification tools only. The oracle uses [ONNX Runtime CPU execution](https://onnxruntime.ai/docs/get-started/with-python.html), the verified model/tokenizer, masked pooling and normalization. It rejects component differences above `1e-5` or cosine similarity below `0.99999`.
-
-The local Windows x64 debug run retrieved the expected passage for all six fixed queries from eight original documents. Fourteen embeddings matched ONNX Runtime 1.23.2: maximum component difference `2.2665e-7`, minimum cosine similarity `0.999999995`. Initial plan loading took 8.3 seconds; the six following query embeddings took 0.92–1.19 seconds each. These debug timings describe one machine and are not release-performance targets. The small fixture establishes numerical adapter correctness and limited retrieval behavior, not production-corpus semantic quality.
-
-Use `python scripts/check-transformer-model.py --binary <airk> --model-dir <assets>` with the built native helper and explicitly provisioned model assets for current SQLite FTS5/DiskANN integration qualification. The retired 1.1 generation-based `onnx_model` integration target was removed with Tantivy in 1.2.5; it no longer qualifies the supported runtime. Retrieval unit tests validate asset identities, bounds, external-data rejection and graph shape/operator limits without fetching weights. Building/testing the CLI or complete workspace additionally requires the explicitly prepared bundle described above; it performs no implicit download.
-
-Set `AIRK_TEST_MODEL_DIR` to the provisioned directory and run `cargo test --release -p airk-retrieval --lib real_model -- --ignored --nocapture` for exact cache/parallel checks and native shape qualification. The shape test compares tokenizer IDs/masks with the previous fixed-context preprocessing, measures fixed-256 versus bucketed B1 and real B4/B8 tensors with warm plans, checks row/order/padded-tail invariance, and exercises plan reuse, bounded eviction and workspace failures. Compilation is reported separately. These fixtures and timings qualify the selected native policy locally; they do not establish production retrieval quality or cross-platform performance.
-
-The 2026-10-18 Windows x64 release qualification passed both native tests. Sixteen tokenizer cases cover bucket boundaries, token truncation, Unicode and literal special tokens; IDs, masks and type IDs matched the fixed-256 reference, and bucketed vectors were bit-exact. B4 vectors matched B1 across every row, reordered inputs and padded tails. The persistent-cache fixture also preserved exact values when rebuilding the same inputs in full groups and shorter remainders. Its ten logical inputs contain four blanks and one duplicate, so five distinct inputs require two tensor executions; a warm-cache pass requires none. B8 at 256 tokens exceeded the declared graph allocation bound, and B8 is not selected for production. These comparisons qualify the pinned assets and tested runtime on this platform, not arbitrary graphs or CPUs.
-
-The quiet repeat on 2026-10-19 used the same 32 short inputs, four workers and three warm samples per shape, with no concurrent repository build or test. These measurements include tensor execution, pooling and scheduling; model loading, tokenization and plan compilation are excluded.
-
-| Tensor shape | Median wall time for 32 inputs | Decision |
-|---|---:|---|
-| B1 × 256 | 683.926 ms | Fixed-context reference |
-| B1 × 32 | 81.801 ms | Default short-input bucket |
-| B4 × 32 | 72.600 ms | Qualified full-group indexing policy |
-| B8 × 32 | 72.430 ms | No meaningful additional win; larger shape failed its memory bound |
-
-On this fixture, bucketing reduced warm execution time by 88.0%; B4 reduced it by another 11.2% relative to bucketed B1. Cold query-plan compilation took 62.454 ms and was reused on the next query. The experimental test's peak retained declared allocation was 1,047,357,460 bytes across tested shapes; it is neither production RSS nor the production policy's required allocation. Small cold collections still pay verification, parsing and compilation before any warm execution benefit. Longer inputs, arbitrary models and other platforms remain B1 until separately qualified; these results do not predict full indexing speedups.
-
-The separate semantic-planner test, `real_model_vector_unit_candidates_preserve_tail_retrieval`, compares 128/192/256-token windows over six original documents with identical long prefixes and different relevant tails. All three candidates ranked the correct tail unit first for all six queries; the deliberately truncated prefix-only comparison ranked the expected source first for one. Real tokenizer Unicode/CRLF checks preserved every body byte, repeated embeddings were exact, and inference reported zero truncations. Four short sibling functions packed into one unit for every candidate. These are focused adversarial and packing checks, not a production relevance benchmark.
-
-| Target tokens | Units | Neural forwards after bounded duplicate reuse | Planning wall time | Warm inference median |
-|---|---:|---:|---:|---:|
-| 128 | 36 | 14 | 37.138 ms | 157.118 ms |
-| 192 | 24 | 9 | 31.278 ms | 261.776 ms |
-| 256 | 18 | 8 | 27.251 ms | 176.510 ms |
-
-This quiet Windows x64 release repeat records one planning pass and three warm inference samples per candidate. Inference includes normal encoder tokenization and scheduling; it excludes model loading, planning, graph writes and plan compilation. The 128-token candidate was faster for inference. The selected 256-token candidate halved graph/mapping units and reduced planning work, while planning plus warm inference took 203.761 ms versus 194.256 ms for 128, about 4.9% longer. The 192-token candidate pads most inputs to 256 and performed worse here. Whole-index gains require end-to-end measurement; the smaller graph is a measured record-count reduction, not an inferred wall-time improvement.
-
-`python scripts/check-transformer-model.py --binary target/release/airk --model-dir target/model-qualification/minilm --report target/model-qualification/release-cli.json` exercises the public CLI, retained model copies, vector/hybrid queries, invalid-asset rollback and context-bound model updates. Use `airk.exe` on Windows. The optional report captures direct process CPU, peak RSS and I/O using the [scale harness measurement conventions](scale-qualification.md); each query starts a fresh process and loads its own model plan.
-
-The 2026-10-14 Windows x64 optimized CLI run passed all six lifecycle checks. Its binary SHA-256 was `bdfec036c89d09e3a69e505127621ad2450b1c64db7515aa9d538664635a4df4`. On the original two-document fixture, initial indexing took 4.797 seconds wall time and 4.234 seconds process CPU, peaking at 323.1 MiB RSS. Fresh-process vector/hybrid queries took 0.734–0.750 seconds wall time and approximately 0.703 seconds CPU, peaking at 319.4–319.5 MiB RSS. Those query times include verification and inference-plan loading; they do not measure an already-loaded MCP worker. Operating-system caches were uncontrolled. The tiny fixture and one Windows machine do not establish production-corpus quality or cross-platform performance.
-
-For a production corpus, add held-out queries and relevance judgments from authorized material. Record asset identities, recall/ranking, cold/warm latency, process RSS, logical index bytes and application versus physical I/O separately. Different languages, long inputs, platforms and model upgrades require their own evidence; the pinned MiniLM result does not qualify arbitrary exports.
-
-Exact inputs share one DiskANN node across a publication, including a forced rebuild. `vector_reused_inputs` counts occurrences served by this transient registry; `embedding_inputs` counts only distinct inputs submitted afterward. `vector_graph_nodes` counts inserted positive vectors. The registry also remembers successful no-vector outcomes; its row/page counters describe bounded private staging, not physical I/O. Explicit [vector selection](vector-selection.md) can skip semantic planning for selected artifacts while preserving their other evidence.
+Prepared runtime inputs can live outside Cargo's target cache using
+`AIRK_BUNDLED_RUNTIME_DIR`; its children are platform directories such as
+`windows-x86_64`. The container uses this to preserve verified libraries when
+BuildKit mounts its compiler cache. macOS packages require 13.3 or later, matching
+the pinned inference library's declared minimum; oldest-OS qualification remains
+separate from compilation on current runners.

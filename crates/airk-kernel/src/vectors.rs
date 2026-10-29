@@ -228,6 +228,18 @@ impl Kernel {
     ) -> Result<Option<airk_core::model_objects::ModelObjectSet>> {
         Ok(self.vector_policy()?.model)
     }
+    pub(crate) fn clear_service_model_selection(&self) -> Result<()> {
+        let writer = self.store.lock()?;
+        let mut policy = self.vector_policy()?;
+        policy.model = None;
+        self.store.configure_vector_policy_bytes(
+            &writer,
+            &self.collection_quota()?,
+            &self.root_id(),
+            &serde_json::to_vec(&policy)?,
+        )?;
+        Ok(())
+    }
     pub fn vectors_enabled(&self) -> Result<bool> {
         Ok(self.vector_policy()?.enabled)
     }

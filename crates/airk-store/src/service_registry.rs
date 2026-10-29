@@ -261,7 +261,7 @@ impl ServiceRegistry {
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && (2..=8).contains(&version),
+            application == APPLICATION && (2..=9).contains(&version),
             "unsupported saved service registry format"
         );
         let registry = Self {
@@ -337,7 +337,7 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=8).contains(&version),
+                    application == APPLICATION && (1..=9).contains(&version),
                     "unsupported service registry format"
                 );
                 schema_version = version;
@@ -588,7 +588,25 @@ impl ServiceRegistry {
                     }
                 }
             }
-            tx.pragma_update(None, "user_version", 8)?;
+            if schema_version < 9 {
+                // 1.6 semantic transition is service-wide, independent of watchers
+                // and open editor windows. Flags persist while a project is paused.
+                let projects = {
+                    let mut statement = tx.prepare("SELECT binding FROM projects WHERE registered=1 AND cleanup_guard IS NULL ORDER BY binding")?;
+                    statement
+                        .query_map([], |r| r.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<Vec<_>>>()?
+                };
+                for project in projects {
+                    background::set(
+                        &tx,
+                        project.parse()?,
+                        airk_core::service::JobKind::ModelSetup,
+                        true,
+                    )?;
+                }
+            }
+            tx.pragma_update(None, "user_version", 9)?;
             tx.commit()?;
         }
         if !owner.ready {
@@ -935,6 +953,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn int8_upgrade_schedules_closed_and_paused_projects_once() -> Result<()> {
+        use airk_core::service::JobKind;
+        let directory = tempfile::tempdir()?;
+        let namespace = Incarnation::from_bytes([9; 16]);
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        let active = project("upgrade-active");
+        let paused = project("upgrade-paused");
+        let removed = project("upgrade-removed");
+        for p in [&active, &paused, &removed] {
+            registry.register(p)?;
+        }
+        registry.pause(paused.binding, true)?;
+        registry.connection.execute(
+            "UPDATE projects SET registered=0,paused=1 WHERE binding=?1",
+            [removed.binding.to_string()],
+        )?;
+        registry.connection.pragma_update(None, "user_version", 8)?;
+        drop(registry);
+        let mut registry = ServiceRegistry::open(directory.path(), namespace)?;
+        assert!(registry.project_setup_pending(active.binding)?);
+        assert!(registry.project_setup_pending(paused.binding)?);
+        assert!(!registry.project_setup_pending(removed.binding)?);
+        let due = registry.due_background_jobs(None, 32)?;
+        assert_eq!(due.len(), 1);
+        assert_eq!((due[0].0, due[0].2), (active.binding, JobKind::ModelSetup));
+        background::set(
+            &registry.connection,
+            active.binding,
+            JobKind::ModelSetup,
+            false,
+        )?;
+        registry.pause(paused.binding, false)?;
+        drop(registry);
+        let registry = ServiceRegistry::open(directory.path(), namespace)?;
+        assert!(!registry.project_setup_pending(active.binding)?);
+        let due = registry.due_background_jobs(None, 32)?;
+        assert_eq!(due.len(), 1);
+        assert_eq!((due[0].0, due[0].2), (paused.binding, JobKind::ModelSetup));
+        Ok(())
+    }
+
+    #[test]
     fn traversal_migration_preserves_v6_registry_and_saved_reads() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let namespace = Incarnation::from_bytes([7; 16]);
@@ -974,7 +1034,7 @@ mod tests {
         let version: i64 = registry
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
-        assert_eq!(version, 8);
+        assert_eq!(version, 9);
         registry
             .connection
             .execute_batch("DROP TABLE service_watch_traversal")?;

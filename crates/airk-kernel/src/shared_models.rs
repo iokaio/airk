@@ -7,6 +7,21 @@ use airk_store::{FileStore, service::model_files::ServiceModelFiles};
 use anyhow::{Context, Result, ensure};
 use std::path::Path;
 
+/// An old ONNX publication is retained evidence, not a compatible vector space.
+pub(crate) fn semantic_upgrade_pending(
+    store: &FileStore,
+    objects: Option<&ModelObjectSet>,
+) -> bool {
+    objects.is_some_and(|objects| {
+        objects
+            .assets
+            .contains_key(&airk_core::model_objects::ModelAssetName::ModelOnnx)
+            && store
+                .shared_model_default()
+                .is_some_and(|default| objects.local_set() != *default)
+    })
+}
+
 pub(crate) fn open_model(store: &FileStore, objects: &ModelObjectSet) -> Result<EmbeddingModel> {
     if objects.shared.is_some() {
         EmbeddingModel::open_shared(&store.installed_model(objects)?, objects)
@@ -70,7 +85,9 @@ impl Kernel {
                 Ok(None)
             };
         };
-        if let Some(objects) = self.selected_shared_model()? {
+        if let Some(objects) = self.selected_shared_model()?
+            && !semantic_upgrade_pending(&self.store, Some(&objects))
+        {
             ensure!(
                 objects.shared.is_some(),
                 "service model policy requires an installed reference"

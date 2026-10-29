@@ -150,7 +150,7 @@ fn serial_parallel_and_incremental_vectors_preserve_retrieval() -> Result<()> {
             && serial["embedding_plan_compilations"]
                 .as_u64()
                 .context("compilations missing")?
-                > 0,
+                == 0,
         "token and plan measurements do not reconcile"
     );
     ensure!(

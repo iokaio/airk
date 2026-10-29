@@ -108,6 +108,12 @@ pub(crate) fn search_current_with_snippets(
         read.require_token(expected)?;
     }
     let semantic_readiness = super::enrichment::readiness(&read, store)?;
+    let upgrade_pending = crate::shared_models::semantic_upgrade_pending(
+        store,
+        read.collection_state()?
+            .as_ref()
+            .and_then(|s| s.configuration.model.as_ref()),
+    );
     let discovery_readiness = super::progress::readiness(&read, store)?;
     let mode = if matches!(mode, CurrentSearchMode::Default) {
         use airk_core::readiness::{DefaultSearchPolicy, DiscoveryState, SemanticState};
@@ -135,6 +141,15 @@ pub(crate) fn search_current_with_snippets(
         } else {
             CurrentSearchMode::Hybrid
         }
+    } else {
+        mode
+    };
+    let mode = if upgrade_pending {
+        ensure!(
+            !matches!(mode, CurrentSearchMode::Vector),
+            "semantic index upgrade pending; text search remains available"
+        );
+        CurrentSearchMode::Lexical
     } else {
         mode
     };

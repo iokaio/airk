@@ -10,11 +10,33 @@ use std::{fs, io::Write};
 #[cfg(feature = "bundled-model")]
 include!(concat!(env!("OUT_DIR"), "/bundled_model.rs"));
 
+fn manifest_bytes() -> Result<&'static [u8]> {
+    Ok(
+        match airk_retrieval::model_catalog::selected_profile()?
+            .id
+            .as_str()
+        {
+            "minilm-l6-v2-u8-v1" => {
+                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-u8-v1/model.json"))
+            }
+            "minilm-l6-v2-s8-v1" => {
+                include_bytes!(concat!(env!("OUT_DIR"), "/minilm-l6-v2-s8-v1/model.json"))
+            }
+            _ => anyhow::bail!("unsupported bundled model"),
+        },
+    )
+}
 pub fn manifest() -> Result<serde_json::Value> {
-    Ok(serde_json::from_slice(include_bytes!(concat!(
-        env!("OUT_DIR"),
-        "/model.json"
-    )))?)
+    Ok(serde_json::from_slice(manifest_bytes()?)?)
+}
+#[cfg(feature = "bundled-model")]
+fn assets() -> Result<&'static [(&'static str, &'static [u8])]> {
+    let id = airk_retrieval::model_catalog::selected_profile()?.id;
+    PROFILES
+        .iter()
+        .find(|(key, _)| *key == id)
+        .map(|(_, assets)| *assets)
+        .ok_or_else(|| anyhow::anyhow!("selected embedded model absent"))
 }
 
 #[cfg(feature = "bundled-model")]
@@ -24,9 +46,8 @@ pub fn extract(directory: &std::path::Path) -> Result<()> {
         metadata.is_dir() && !metadata.file_type().is_symlink(),
         "invalid model extraction directory"
     );
-    let report = serde_json::to_value(airk_retrieval::model_catalog::inspect_catalog()?)?;
-    let profile = &report["catalog"]["profiles"][0];
-    for &(name, bytes) in ASSETS {
+    let profile = serde_json::to_value(airk_retrieval::model_catalog::selected_profile()?)?;
+    for &(name, bytes) in assets()? {
         if name != "model.json" {
             let asset = profile["assets"]
                 .as_array()
@@ -55,7 +76,7 @@ pub struct EmbeddedAssets;
 #[cfg(feature = "bundled-model")]
 impl EmbeddedAssets {
     pub fn bytes(name: airk_core::model_objects::ModelAssetName) -> Result<&'static [u8]> {
-        ASSETS
+        assets()?
             .iter()
             .find(|(key, _)| *key == name.filename())
             .map(|(_, bytes)| *bytes)
@@ -63,7 +84,7 @@ impl EmbeddedAssets {
     }
     fn metadata_plan() -> Result<airk_core::model_objects::ModelObjectSet> {
         let set = default_plan()?;
-        for &(name, bytes) in ASSETS {
+        for &(name, bytes) in assets()? {
             let asset: airk_core::model_objects::ModelAssetName =
                 serde_json::from_value(serde_json::Value::String(name.into()))?;
             ensure!(
@@ -109,9 +130,9 @@ pub fn default_plan() -> Result<airk_core::model_objects::ModelObjectSet> {
     > = std::sync::OnceLock::new();
     PLAN.get_or_init(|| {
         (|| -> Result<_> {
-            let bytes = include_bytes!(concat!(env!("OUT_DIR"), "/model.json"));
-            let report = serde_json::to_value(airk_retrieval::model_catalog::inspect_catalog()?)?;
-            let assets = report["catalog"]["profiles"][0]["assets"]
+            let bytes = manifest_bytes()?;
+            let profile = serde_json::to_value(airk_retrieval::model_catalog::selected_profile()?)?;
+            let assets = profile["assets"]
                 .as_array()
                 .context("model catalog assets missing")?;
             let mut references = std::collections::BTreeMap::new();
@@ -148,4 +169,47 @@ pub fn default_plan() -> Result<airk_core::model_objects::ModelObjectSet> {
     .as_ref()
     .cloned()
     .map_err(|_| anyhow::anyhow!("default model metadata is unavailable"))
+}
+
+/// Packaging checks actual embedded bytes, not just the main executable's metadata.
+#[cfg(feature = "bundled-model")]
+pub fn verify_inventory() -> Result<serde_json::Value> {
+    let catalog = airk_retrieval::model_catalog::inspect_catalog()?.catalog;
+    ensure!(
+        PROFILES.len() == 2,
+        "exactly two INT8 profiles must be embedded"
+    );
+    let mut inventory = Vec::new();
+    for profile in catalog.profiles {
+        let embedded = PROFILES
+            .iter()
+            .find(|(id, _)| *id == profile.id)
+            .ok_or_else(|| anyhow::anyhow!("embedded INT8 profile absent"))?
+            .1;
+        ensure!(embedded.len() == 4, "unexpected embedded model inventory");
+        for asset in &profile.assets {
+            let bytes = embedded
+                .iter()
+                .find(|(name, _)| *name == asset.name)
+                .ok_or_else(|| anyhow::anyhow!("embedded INT8 asset absent"))?
+                .1;
+            ensure!(
+                bytes.len() as u64 == asset.bytes
+                    && format!("{:x}", Sha256::digest(bytes)) == asset.sha256,
+                "embedded INT8 asset failed verification"
+            );
+        }
+        let manifest = embedded
+            .iter()
+            .find(|(name, _)| *name == "model.json")
+            .ok_or_else(|| anyhow::anyhow!("embedded manifest absent"))?
+            .1;
+        ensure!(
+            serde_json::from_slice::<serde_json::Value>(manifest)?
+                == serde_json::to_value(&profile.manifest)?,
+            "embedded manifest differs"
+        );
+        inventory.push(serde_json::json!({"id":profile.id,"precision":profile.precision,"manifest":profile.manifest,"assets":profile.assets}));
+    }
+    Ok(serde_json::json!({"schema":1,"fp32_included":false,"profiles":inventory}))
 }

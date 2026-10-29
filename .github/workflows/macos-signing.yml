@@ -11,6 +11,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: '2'
   CARGO_INCREMENTAL: '0'
+  MACOSX_DEPLOYMENT_TARGET: '13.3'
 jobs:
   signed:
     if: ${{ github.ref == 'refs/heads/main' }}
@@ -40,6 +41,8 @@ jobs:
       - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
+      - name: Prepare pinned offline inference libraries
+        run: python scripts/provision-onnx-runtime.py --download
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets --all-features --locked --target ${{ matrix.target }} -- -D warnings
       - run: cargo test --workspace --all-features --locked --target ${{ matrix.target }}

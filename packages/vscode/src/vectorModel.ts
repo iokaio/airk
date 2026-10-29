@@ -18,18 +18,20 @@ export interface VectorStatus {
     };
 }
 export interface ModelAsset { name: string; url: string; bytes: number; sha256: string }
-interface CatalogProfile { id: string; precision: 'fp32'; assets: ModelAsset[]; manifest: Record<string, unknown> }
+interface CatalogProfile { id: string; precision: 'uint8' | 'int8'; assets: ModelAsset[]; manifest: Record<string, unknown> }
 
 /** Fail before installing if the verified helper's catalog protocol is incompatible. */
 export function modelProfileFromCatalog(value: unknown): CatalogProfile {
     const object = (item: unknown): Record<string, unknown> => item !== null && typeof item === 'object' && !Array.isArray(item) ? item as Record<string, unknown> : {};
     const report = object(value), catalog = object(report.catalog), selection = object(report.selection);
     const profiles = catalog.profiles;
-    if (report.schema !== 1 || catalog.schema !== 1 || report.automatic_int8 !== false
-        || !Array.isArray(profiles) || profiles.length !== 1 || typeof selection.profile_id !== 'string'
-        || selection.profile_id !== catalog.default_profile) { throw new Error('AIRK helper returned an unsupported model catalog.'); }
-    const profile = object(profiles[0]), manifest = object(profile.manifest);
-    if (profile.id !== selection.profile_id || profile.precision !== 'fp32'
+    if (report.schema !== 1 || catalog.schema !== 1 || report.automatic_int8 !== true
+        || !Array.isArray(profiles) || profiles.length !== 2 || typeof selection.profile_id !== 'string'
+        || new Set(profiles.map(p => object(p).id)).size !== 2
+        || !profiles.every(p => (object(p).id === 'minilm-l6-v2-u8-v1' && object(p).precision === 'uint8')
+            || (object(p).id === 'minilm-l6-v2-s8-v1' && object(p).precision === 'int8'))) { throw new Error('AIRK helper returned an unsupported model catalog.'); }
+    const profile = object(profiles.find(p => object(p).id === selection.profile_id)), manifest = object(profile.manifest);
+    if (profile.id !== selection.profile_id || !['uint8', 'int8'].includes(String(profile.precision))
         || typeof profile.runtime !== 'string' || profile.runtime !== object(report.capabilities).runtime
         || manifest.schema !== 2 || manifest.dimensions !== 384 || manifest.max_tokens !== 256
         || manifest.source !== 'https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2'
@@ -41,7 +43,7 @@ export function modelProfileFromCatalog(value: unknown): CatalogProfile {
         const field = name === 'model.onnx' ? 'model_sha256' : name === 'tokenizer.json' ? 'tokenizer_sha256' : name === 'LICENSE' ? 'license_sha256' : undefined;
         const maximum = name === 'model.onnx' ? 268435456 : name === 'tokenizer.json' ? 4194304 : 262144;
         const url = name === 'LICENSE' ? 'https://www.apache.org/licenses/LICENSE-2.0.txt'
-            : `${manifest.source}/resolve/${manifest.revision}/${name === 'model.onnx' ? 'onnx/model.onnx' : 'tokenizer.json'}`;
+            : `${manifest.source}/resolve/${manifest.revision}/${name === 'model.onnx' ? `onnx/${profile.precision === 'uint8' ? 'model_quint8_avx2.onnx' : 'model_qint8_avx512_vnni.onnx'}` : 'tokenizer.json'}`;
         if (typeof name !== 'string' || !field || names.has(name) || !Number.isSafeInteger(asset.bytes)
             || Number(asset.bytes) <= 0 || Number(asset.bytes) > maximum || asset.url !== url
             || typeof asset.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(asset.sha256)
@@ -49,7 +51,7 @@ export function modelProfileFromCatalog(value: unknown): CatalogProfile {
         names.add(name);
         return asset as unknown as ModelAsset;
     });
-    return { id: String(profile.id), precision: 'fp32', assets, manifest };
+    return { id: String(profile.id), precision: profile.precision as CatalogProfile['precision'], assets, manifest };
 }
 
 async function existingModel(directory: string): Promise<boolean> {

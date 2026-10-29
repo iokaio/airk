@@ -21,7 +21,7 @@ class SigningContracts(unittest.TestCase):
             runtime = output / "runtime"
             source.mkdir(); runtime.mkdir(parents=True)
             target = "aarch64-apple-darwin"
-            names = signing.pair_package().runtime_builder().runtime_names("macos")
+            names = signing.pair_package().runtime_builder().signing_names("macos")
             original = {"files": {}}
             signed = {"files": {}}
             components = {}

@@ -22,11 +22,13 @@ def main():
     spec = importlib.util.spec_from_file_location("airk_provision", Path(__file__).with_name("provision-local-model.py"))
     provision = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(provision)
-    manifest = provision.provision(args.model_dir, download=False)
+    selected = json.loads((args.model_dir / "model.json").read_text(encoding="utf-8"))
+    profile = next(p for p in provision.CATALOG["profiles"] if p["manifest"] == selected)
+    manifest = provision.provision(args.model_dir, download=False, profile=profile)
     if args.native_result.stat().st_size > 1_048_576:
         raise ValueError("qualification report exceeds 1 MiB")
     native = json.loads(args.native_result.read_text(encoding="utf-8-sig"))
-    identity = hashlib.sha256(b"tract-cpu-onnx/0.23.8/airk-1" +
+    identity = hashlib.sha256(b"onnxruntime-cpu/1.22.1/airk-int8-b1-1" +
         json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
     if native["model"]["identity"] != identity:
         raise ValueError("native report identity differs from the pinned model/tokenizer/runtime specification")
@@ -42,7 +44,7 @@ def main():
             raise ValueError("native vectors do not reproduce the fixed relevance judgment")
     tokenizer = tokenizers.Tokenizer.from_file(str(args.model_dir / "tokenizer.json"))
     tokenizer.enable_truncation(max_length=manifest["max_tokens"], stride=0)
-    tokenizer.enable_padding(length=manifest["max_tokens"], pad_id=tokenizer.token_to_id("[PAD]"), pad_token="[PAD]")
+    tokenizer.no_padding()
     options = ort.SessionOptions()
     options.intra_op_num_threads = 1
     options.inter_op_num_threads = 1
@@ -53,6 +55,8 @@ def main():
             raise ValueError("qualification text exceeds byte budget")
         text = text.encode()[:16_384].decode("utf-8", errors="ignore")
         encoding = tokenizer.encode(text, add_special_tokens=True)
+        length = next(n for n in (32, 64, 128, 256) if n >= len(encoding.ids))
+        encoding.pad(length, pad_id=tokenizer.token_to_id("[PAD]"), pad_token="[PAD]")
         ids = np.asarray([encoding.ids], dtype=np.int64)
         mask = np.asarray([encoding.attention_mask], dtype=np.int64)
         types = np.asarray([encoding.type_ids], dtype=np.int64)

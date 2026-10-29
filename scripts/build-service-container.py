@@ -40,6 +40,8 @@ def main():
     architecture = {"x86_64": "x86_64", "aarch64": "aarch64"}.get(platform.machine().lower())
     if not architecture:
         raise SystemExit("Unsupported Linux container architecture")
+    builder.stage_inference_runtime(runtime, "linux", architecture)
+    builder.verify_embedded_models(runtime, "linux")
     builder.write_pair_metadata(runtime, version, "linux", architecture)
     (runtime / "airk-container-build.json").write_text(json.dumps({
         "schema": 1, "kind": "airk-container-build", "version": version,

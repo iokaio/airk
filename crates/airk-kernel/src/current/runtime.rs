@@ -125,9 +125,17 @@ impl Kernel {
             exact_fact_backend: "sqlite",
             lexical_backend: "sqlite-fts5-current",
             vector_backend: "microsoft-diskann-0.59.0/airk-current-provider",
-            local_model_ready: c.model.is_some(),
+            local_model_ready: c.model.is_some()
+                && !crate::shared_models::semantic_upgrade_pending(&self.store, c.model.as_ref()),
             vectors_enabled: self.vectors_enabled()?,
-            indexed_vectors: read.head().graph_head.live_nodes as usize,
+            indexed_vectors: if crate::shared_models::semantic_upgrade_pending(
+                &self.store,
+                c.model.as_ref(),
+            ) {
+                0
+            } else {
+                read.head().graph_head.live_nodes as usize
+            },
             vector_selection_digest: Some(c.vector_selection.digest()?),
             vector_eligible_artifacts: usize::try_from(state.counts.vector_eligible)?,
             vector_excluded_artifacts: usize::try_from(state.counts.vector_excluded)?,
