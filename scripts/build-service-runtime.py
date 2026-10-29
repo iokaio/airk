@@ -30,10 +30,10 @@ def stage_inference_runtime(staging, operating_system, architecture):
     target = operating_system + "-" + architecture
     directory = Path(os.environ.get("AIRK_BUNDLED_RUNTIME_DIR", ROOT / "target/local-onnx-runtime")) / target
     rows = provisioner.provision(directory, target)
-    destination = (staging / runtime_names(operating_system)[1]).parent
-    destination.mkdir(parents=True, exist_ok=True)
     for row in rows:
-        shutil.copyfile(directory / row["name"], destination / row["name"])
+        destination = staging / inference_asset_path(operating_system, row["name"])
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(directory / row["name"], destination)
 
 
 def verify_embedded_models(staging, operating_system):
@@ -155,9 +155,18 @@ def int8_version(version):
     return tuple(int(v) for v in version.split(".")[:2]) >= (1, 6)
 
 
+def inference_asset_path(operating_system, name):
+    # Contents/MacOS is a code directory: codesign treats even license text there
+    # as nested code. Keep non-code resources outside it on both Mac targets.
+    if operating_system == "macos" and name in ("ONNXRUNTIME-LICENSE", "ONNXRUNTIME-ThirdPartyNotices.txt"):
+        parent = Path("AIRK.app/Contents/Resources/onnxruntime")
+    else:
+        parent = Path(runtime_names(operating_system)[1]).parent
+    return (parent / name).as_posix()
+
+
 def inference_assets(operating_system, architecture):
-    parent = Path(runtime_names(operating_system)[1]).parent
-    return {(parent / row["name"]).as_posix(): row
+    return {inference_asset_path(operating_system, row["name"]): row
             for row in load_script("provision-onnx-runtime").entries(operating_system + "-" + architecture)}
 
 

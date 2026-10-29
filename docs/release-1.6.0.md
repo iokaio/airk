@@ -96,3 +96,19 @@ These checks do not establish native Mac signing/notarization, ARM or VNNI
 performance, or full Bookbuilder indexing time. Hosted platform CI and release
 receipts establish their own scope; the earlier component benchmark is not a
 whole-application memory guarantee.
+
+## Mac packaging correction — 28 October 2026
+
+The first PR CI run exposed a bundle-layout error: ad-hoc signing treated the
+inference library's license text in `Contents/MacOS` as unsigned nested code.
+Both Mac architectures failed at that signing step; Windows and Linux completed
+their native, installed-runtime, MCP and package checks, and the container passed.
+The notices now reside in `Contents/Resources/onnxruntime`, while the native
+library stays beside the helper. Staging and every packaging/release validator
+use the same path mapping; hashes, licensing and signature checks remain required.
+
+The correction passes 181 Python contracts with four platform-dependent skips,
+including staging/inventory parity for both Mac architectures, Windows and Linux.
+The Windows/Linux layout is unchanged, and the corrected local Windows native
+pair rebuilt and passed package verification. Native Mac signing and the remaining
+release checks still require successful hosted results after this correction.

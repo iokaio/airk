@@ -1,6 +1,6 @@
 # AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
 
-**Version 1.6.0 — offline semantic index optimization.** Two bundled INT8 MiniLM exports replace the previous FP32 model. Native CPU detection chooses unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64. Installation and rebuilding require no model download. Upgrade rebuilds semantic vectors and caches while preserving text/fact evidence, pause and semantic opt-out settings. See the [1.6.0 record](../../docs/release-1.6.0.md) and [optimization rationale](../../docs/semantic-index-optimization.md).
+**Version 1.6.0 — offline semantic index optimization.** Two bundled INT8 MiniLM exports replace the previous FP32 model. Native CPU detection chooses unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64. Installation and rebuilding require no model download. Upgrade rebuilds semantic vectors and caches while preserving text/fact evidence, pause and semantic opt-out settings. See the [1.6.0 record](https://github.com/iokaio/airk/blob/main/docs/release-1.6.0.md) and [optimization rationale](https://github.com/iokaio/airk/blob/main/docs/semantic-index-optimization.md).
 
 The following management and agent improvements were introduced in 1.5.12 and remain available.
 

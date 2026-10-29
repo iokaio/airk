@@ -18,6 +18,32 @@ def script(name):
 
 
 class Int8Distribution(unittest.TestCase):
+    def test_mac_notices_are_resources_and_all_staged_assets_match_package_paths(self):
+        builder = script("build-service-runtime")
+        provisioner = script("provision-onnx-runtime")
+        for system, architecture in [("macos", "aarch64"), ("macos", "x86_64"),
+                                     ("windows", "x86_64"), ("linux", "x86_64")]:
+            with self.subTest(system=system, architecture=architecture), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                target = system + "-" + architecture
+                prepared = root / "inputs" / target
+                prepared.mkdir(parents=True)
+                rows = provisioner.entries(target)
+                for row in rows:
+                    (prepared / row["name"]).write_bytes(row["name"].encode())
+                with patch.dict("os.environ", AIRK_BUNDLED_RUNTIME_DIR=str(root / "inputs")), \
+                     patch.object(provisioner, "provision", return_value=rows), \
+                     patch.object(builder, "load_script", return_value=provisioner):
+                    builder.stage_inference_runtime(root / "out", system, architecture)
+                    expected = builder.inference_assets(system, architecture)
+                actual = {p.relative_to(root / "out").as_posix() for p in (root / "out").rglob("*") if p.is_file()}
+                self.assertEqual(actual, set(expected))
+                for name, row in expected.items():
+                    self.assertEqual((root / "out" / name).read_bytes(), row["name"].encode())
+                    if system == "macos":
+                        parent = "AIRK.app/Contents/Resources/onnxruntime/" if row["name"].startswith("ONNXRUNTIME-") else "AIRK.app/Contents/MacOS/"
+                        self.assertEqual(name, parent + row["name"])
+
     def test_mac_minimum_includes_the_native_inference_library(self):
         builder = script("build-service-runtime")
         for version, minimum in [("1.6.0", "13.3"), ("1.4.4", "13.0")]:

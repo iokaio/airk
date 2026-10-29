@@ -142,9 +142,8 @@ def validate_runtime(runtime, version, target, source):
     if not required.issubset(files):
         raise ValueError("Runtime pair legal/notice inventory is incomplete")
     allowed = set(required)
-    runtime_catalog = builder.load_script("provision-onnx-runtime")
-    for row in (runtime_catalog.entries(operating_system + "-" + architecture) if builder.int8_version(version) else []):
-        name = (Path(helper).parent / row["name"]).as_posix()
+    inference_assets = builder.inference_assets(operating_system, architecture) if builder.int8_version(version) else {}
+    for name, row in inference_assets.items():
         if operating_system == "macos" and "macho_payload_sha256" in row:
             metadata = (runtime / name).stat()
             if metadata.st_size > 64 << 20 or builder.load_script("macho-identity").payload_digest((runtime / name).read_bytes()) != row["macho_payload_sha256"]:
