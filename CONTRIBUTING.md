@@ -2,7 +2,7 @@
 
 The narrowly pinned [1.4.4 release-tool repair](docs/release-workflow.md#pinned-144-release-tool-repair) is the only exception to rebuilding native candidates on main. Complete diff, version, ancestry and runtime-identity checks must prove that only the permitted release tooling/tests/docs changed. Its PR/main gates still run quick checks and all four host contract suites; source or extension changes restore normal CI. It applied only to the pinned 1.4.4 source and cannot apply to 1.5.0 or later sources; removing its tooling is a separate change.
 
-Inference-helper builds embed the pinned FP32 MiniLM assets; the default main CLI excludes inference/model weights. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](docs/onnx-models.md).
+Inference-helper builds embed the two pinned INT8 MiniLM exports; the default main CLI excludes inference/model weights. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Also run `python scripts/provision-onnx-runtime.py --download` to prepare the pinned CPU libraries and notices. These are explicit build-time downloads; offline builders can transfer the verified inputs. Cargo never downloads model assets or runtime libraries. See [model provisioning](docs/onnx-models.md).
 
 Contributions to code, extraction fixtures, retrieval quality and documentation are welcome. Read the [architecture](docs/architecture.md) and [roadmap](docs/roadmap.md) before choosing a change. Small focused pull requests are easiest to review; discuss changes to collection identity, index formats, MCP contracts and default dependencies in an issue first.
 
@@ -42,7 +42,7 @@ With Docker available, use `docker build --target test -t airk:local-test .` for
 
 ## Candidate and release versions
 
-Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch is synchronized at **1.5.12** across the Rust workspace/local lock entries, extension manifest and npm lock entries. Verify with `python scripts/release-version.py check --expected 1.5.12`. Do not repeat this bump for the same change or relabel tested binaries after qualification. Installer-only local testing does not waive full main CI before publishing.
+Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch is synchronized at **1.6.0** across the Rust workspace/local lock entries, extension manifest and npm lock entries. Verify with `python scripts/release-version.py check --expected 1.6.0`. Do not repeat this bump for the same change or relabel tested binaries after qualification. Installer-only local testing does not waive full main CI before publishing.
 
 ## Submitting
 

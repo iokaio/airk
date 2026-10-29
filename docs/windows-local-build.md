@@ -8,7 +8,7 @@ Historical October 25 manual-test checkpoint: cleanup, help and live-status chan
 
 October 25 onboarding follow-up: the new automatic trusted-workspace setup is covered by extension regressions and package closure checks. Earlier installed-editor receipts and the manual-dialog harness below describe the previous VSIX, not qualification of this follow-up.
 
-The lightweight main and inference helper are built separately. The helper embeds the pinned FP32 MiniLM assets; the main excludes inference dependencies and weights. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Cargo never downloads model assets. See [model provisioning](onnx-models.md).
+The lightweight main and inference helper are built separately. The helper embeds the two pinned INT8 MiniLM exports; the main excludes inference dependencies and weights. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Also prepare native CPU libraries with `python scripts/provision-onnx-runtime.py --download`. Cargo never downloads model assets or runtime libraries. See [model provisioning](onnx-models.md).
 
 From the repository root in PowerShell 7:
 

@@ -8,7 +8,7 @@ The Mac payload places the existing lightweight `airk` and inference-only `airk-
 
 `Contents/Info.plist` identifies the GUI-less app. Two static files under `Contents/Library/LaunchAgents` select stable/preview login roles through `BundleProgram`. They contain no workspace, index, install-root or user-home paths. The role derives its installation from the exact approved payload location and validates the saved channel and active startup candidate before serving.
 
-The paired hashes, build receipt, installer inventory and notices remain outside the signed app. This avoids a signature/hash cycle. The native builder fixes `MACOSX_DEPLOYMENT_TARGET=13.0`, creates an ad-hoc development signature, then hashes the final bytes. An ad-hoc signature is not Developer ID, notarization or independent distribution approval.
+The paired hashes, build receipt, installer inventory and notices remain outside the signed app. This avoids a signature/hash cycle. The native builder fixes `MACOSX_DEPLOYMENT_TARGET=13.3`, creates an ad-hoc development signature, then hashes the final bytes. An ad-hoc signature is not Developer ID, notarization or independent distribution approval.
 
 Engine identity resolves that same external pair receipt, so maintenance/model ownership includes the expected helper digest even when the main sits inside the app. Portable bare/app-layout tests verify that changing the helper changes engine identity and a mismatched main is refused. These checks do not execute Apple frameworks.
 

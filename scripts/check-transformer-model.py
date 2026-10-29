@@ -99,10 +99,12 @@ def main():
             manifest = json.loads((model_input / "model.json").read_bytes())
             manifest["max_tokens"] = 128
             (model_input / "model.json").write_text(json.dumps(manifest), encoding="utf-8")
-            fixture.configure("transformer", {"operation": "install_model", "directory": str(model_input)})
-            fixture.job("transformer", "index")
-            changed = ready()
-            assert changed["generation"] > initial["generation"]
+            # 1.6 deliberately accepts only the CPU-selected pinned INT8 profile.
+            # Refuse edited preprocessing before changing policy or publication;
+            # never report success and silently substitute the default later.
+            fixture.configure("transformer", {"operation": "install_model", "directory": str(model_input)}, expected="failed")
+            assert tool("airk_status")["generation"] == initial["generation"]
+            assert tool("airk_search", {"query": "forgotten password recovery", "mode": "vector", "limit": 1})["hits"][0]["citation"]["path"] == "auth.txt"
             fixture.configure("transformer", {"operation": "vectors", "enabled": False})
             fixture.job("transformer", "index")
             assert tool("airk_status")["indexed_vectors"] == 0

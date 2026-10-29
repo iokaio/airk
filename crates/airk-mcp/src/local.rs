@@ -27,7 +27,7 @@ impl ReportFormat {
         }
     }
 }
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeRead {
     ValidateSettings {
@@ -167,113 +167,130 @@ impl LocalTools {
         let kernel = self.kernel.clone();
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            let kernel = kernel.refresh_service_snapshot()?;
-            match request {
-                NativeRead::ValidateSettings {
-                    view,
-                    input,
-                    cursor,
-                    max_bytes,
-                } => {
-                    let value = match view {
-                        SettingsView::ExtractionPolicy => {
-                            let policy = serde_json::from_slice(
-                                &airk_kernel::service_configuration::verified_input(
-                                    &input, 131_072,
-                                )?,
-                            )?;
-                            serde_json::to_value(kernel.validate_extraction_policy(&policy)?)?
+            retry_native_read(
+                std::time::Instant::now() + std::time::Duration::from_secs(5),
+                || {
+                    let kernel = kernel.refresh_service_snapshot()?;
+                    match request.clone() {
+                        NativeRead::ValidateSettings {
+                            view,
+                            input,
+                            cursor,
+                            max_bytes,
+                        } => {
+                            let value = match view {
+                                SettingsView::ExtractionPolicy => {
+                                    let policy = serde_json::from_slice(
+                                        &airk_kernel::service_configuration::verified_input(
+                                            &input, 131_072,
+                                        )?,
+                                    )?;
+                                    serde_json::to_value(
+                                        kernel.validate_extraction_policy(&policy)?,
+                                    )?
+                                }
+                                SettingsView::VectorSelection => {
+                                    let policy = serde_json::from_slice(
+                                        &airk_kernel::service_configuration::verified_input(
+                                            &input, 16_384,
+                                        )?,
+                                    )?;
+                                    serde_json::to_value(
+                                        kernel.validate_vector_selection(&policy)?,
+                                    )?
+                                }
+                                SettingsView::ScanLimits => {
+                                    let limits: airk_kernel::limits::ScanLimits =
+                                        serde_json::from_slice(
+                                            &airk_kernel::service_configuration::verified_input(
+                                                &input, 65_536,
+                                            )?,
+                                        )?;
+                                    limits.validate()?;
+                                    serde_json::to_value(limits)?
+                                }
+                                SettingsView::QuotaPolicy => {
+                                    let policy: airk_kernel::storage::QuotaPolicy =
+                                        serde_json::from_slice(
+                                            &airk_kernel::service_configuration::verified_input(
+                                                &input, 16_384,
+                                            )?,
+                                        )?;
+                                    policy.validate()?;
+                                    serde_json::to_value(policy)?
+                                }
+                                _ => {
+                                    anyhow::bail!("settings view does not accept validation input")
+                                }
+                            };
+                            Ok(serde_json::to_value(airk_kernel::usage_page::page(
+                                serde_json::json!({"project":project,"value":value}),
+                                cursor.as_deref(),
+                                max_bytes,
+                            )?)?)
                         }
-                        SettingsView::VectorSelection => {
-                            let policy = serde_json::from_slice(
-                                &airk_kernel::service_configuration::verified_input(
-                                    &input, 16_384,
-                                )?,
-                            )?;
-                            serde_json::to_value(kernel.validate_vector_selection(&policy)?)?
+                        NativeRead::Settings {
+                            view,
+                            cursor,
+                            max_bytes,
+                        } => {
+                            let value = match view {
+                                SettingsView::ExtractionPolicy => {
+                                    serde_json::to_value(kernel.extraction_policy()?)?
+                                }
+                                SettingsView::VectorSelection => {
+                                    serde_json::to_value(kernel.vector_selection_status()?)?
+                                }
+                                SettingsView::VectorStatus => {
+                                    serde_json::to_value(kernel.vector_status()?)?
+                                }
+                                SettingsView::Roots => serde_json::to_value(kernel.roots()?)?,
+                                SettingsView::ScanLimits => {
+                                    serde_json::to_value(kernel.describe_scan_limits()?)?
+                                }
+                                SettingsView::QuotaPolicy => {
+                                    serde_json::to_value(kernel.quota_policy()?)?
+                                }
+                                SettingsView::QuotaStatus => {
+                                    serde_json::to_value(kernel.quota_status()?)?
+                                }
+                            };
+                            Ok(serde_json::to_value(airk_kernel::usage_page::page(
+                                serde_json::json!({"project":project,"value":value}),
+                                cursor.as_deref(),
+                                max_bytes,
+                            )?)?)
                         }
-                        SettingsView::ScanLimits => {
-                            let limits: airk_kernel::limits::ScanLimits = serde_json::from_slice(
-                                &airk_kernel::service_configuration::verified_input(
-                                    &input, 65_536,
-                                )?,
-                            )?;
-                            limits.validate()?;
-                            serde_json::to_value(limits)?
+                        NativeRead::UsagePolicy => {
+                            serde_json::to_value(kernel.usage_policy()?).map_err(Into::into)
                         }
-                        SettingsView::QuotaPolicy => {
-                            let policy: airk_kernel::storage::QuotaPolicy = serde_json::from_slice(
-                                &airk_kernel::service_configuration::verified_input(
-                                    &input, 16_384,
-                                )?,
-                            )?;
-                            policy.validate()?;
-                            serde_json::to_value(policy)?
+                        NativeRead::UsageReport {
+                            days,
+                            cursor,
+                            max_bytes,
+                            format,
+                            price,
+                        } => {
+                            let view = match price {
+                                Some(price) => kernel.usage_report_with_price(days, &price)?,
+                                None => kernel.usage_report(days)?,
+                            };
+                            let view = match format {
+                                ReportFormat::Json => serde_json::to_value(view)?,
+                                _ => serde_json::Value::String(airk_kernel::usage::render_report(
+                                    &view,
+                                    format.name(),
+                                )?),
+                            };
+                            Ok(serde_json::to_value(airk_kernel::usage_page::page(
+                                serde_json::json!({"project":project,"value":view}),
+                                cursor.as_deref(),
+                                max_bytes,
+                            )?)?)
                         }
-                        _ => anyhow::bail!("settings view does not accept validation input"),
-                    };
-                    Ok(serde_json::to_value(airk_kernel::usage_page::page(
-                        serde_json::json!({"project":project,"value":value}),
-                        cursor.as_deref(),
-                        max_bytes,
-                    )?)?)
-                }
-                NativeRead::Settings {
-                    view,
-                    cursor,
-                    max_bytes,
-                } => {
-                    let value = match view {
-                        SettingsView::ExtractionPolicy => {
-                            serde_json::to_value(kernel.extraction_policy()?)?
-                        }
-                        SettingsView::VectorSelection => {
-                            serde_json::to_value(kernel.vector_selection_status()?)?
-                        }
-                        SettingsView::VectorStatus => {
-                            serde_json::to_value(kernel.vector_status()?)?
-                        }
-                        SettingsView::Roots => serde_json::to_value(kernel.roots()?)?,
-                        SettingsView::ScanLimits => {
-                            serde_json::to_value(kernel.describe_scan_limits()?)?
-                        }
-                        SettingsView::QuotaPolicy => serde_json::to_value(kernel.quota_policy()?)?,
-                        SettingsView::QuotaStatus => serde_json::to_value(kernel.quota_status()?)?,
-                    };
-                    Ok(serde_json::to_value(airk_kernel::usage_page::page(
-                        serde_json::json!({"project":project,"value":value}),
-                        cursor.as_deref(),
-                        max_bytes,
-                    )?)?)
-                }
-                NativeRead::UsagePolicy => {
-                    serde_json::to_value(kernel.usage_policy()?).map_err(Into::into)
-                }
-                NativeRead::UsageReport {
-                    days,
-                    cursor,
-                    max_bytes,
-                    format,
-                    price,
-                } => {
-                    let view = match price {
-                        Some(price) => kernel.usage_report_with_price(days, &price)?,
-                        None => kernel.usage_report(days)?,
-                    };
-                    let view = match format {
-                        ReportFormat::Json => serde_json::to_value(view)?,
-                        _ => serde_json::Value::String(airk_kernel::usage::render_report(
-                            &view,
-                            format.name(),
-                        )?),
-                    };
-                    Ok(serde_json::to_value(airk_kernel::usage_page::page(
-                        serde_json::json!({"project":project,"value":view}),
-                        cursor.as_deref(),
-                        max_bytes,
-                    )?)?)
-                }
-            }
+                    }
+                },
+            )
         })
         .await?
     }
@@ -300,9 +317,69 @@ impl LocalTools {
     }
 }
 
+/// Native settings/report reads use the same typed contention contract as MCP
+/// evidence reads. Keep the original request/cursor and one bounded deadline.
+fn retry_native_read<T>(
+    deadline: std::time::Instant,
+    mut read: impl FnMut() -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    loop {
+        match read() {
+            Err(error) => {
+                let Some(hint) = airk_kernel::retrieval_retry::read_retry_hint(&error) else {
+                    return Err(error);
+                };
+                let delay = std::time::Duration::from_millis(u64::from(hint.retry_after_ms));
+                if std::time::Instant::now() + delay >= deadline {
+                    return Err(error);
+                }
+                std::thread::sleep(delay);
+            }
+            result => return result,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn native_read_retries_only_typed_contention_with_one_deadline() {
+        use std::time::{Duration, Instant};
+        let mut attempts = 0;
+        let value = retry_native_read(Instant::now() + Duration::from_secs(1), || {
+            attempts += 1;
+            if attempts == 1 {
+                Err(anyhow::anyhow!("publication applying")
+                    .context(airk_kernel::CurrentGateContention::Applying))
+            } else {
+                Ok(42)
+            }
+        })
+        .unwrap();
+        assert_eq!((value, attempts), (42, 2));
+        attempts = 0;
+        let result: anyhow::Result<()> =
+            retry_native_read(Instant::now() + Duration::from_secs(1), || {
+                attempts += 1;
+                anyhow::bail!("invalid retained evidence")
+            });
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid retained evidence")
+        );
+        assert_eq!(attempts, 1);
+        attempts = 0;
+        let result: anyhow::Result<()> = retry_native_read(Instant::now(), || {
+            attempts += 1;
+            Err(anyhow::anyhow!("publication applying")
+                .context(airk_kernel::CurrentGateContention::Applying))
+        });
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+    }
     fn body(value: CallToolResult) -> anyhow::Result<serde_json::Value> {
         anyhow::ensure!(!value.is_error.unwrap_or(false), "{value:?}");
         Ok(serde_json::from_str(

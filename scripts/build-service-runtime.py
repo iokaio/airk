@@ -2,6 +2,7 @@
 """Build and stage a host-native executable pair; never package/publish a VSIX."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,31 @@ import tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def load_script(name):
+    specification = importlib.util.spec_from_file_location(name.replace("-", "_"), ROOT / "scripts" / (name + ".py"))
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def stage_inference_runtime(staging, operating_system, architecture):
+    provisioner = load_script("provision-onnx-runtime")
+    target = operating_system + "-" + architecture
+    directory = Path(os.environ.get("AIRK_BUNDLED_RUNTIME_DIR", ROOT / "target/local-onnx-runtime")) / target
+    rows = provisioner.provision(directory, target)
+    destination = (staging / runtime_names(operating_system)[1]).parent
+    destination.mkdir(parents=True, exist_ok=True)
+    for row in rows:
+        shutil.copyfile(directory / row["name"], destination / row["name"])
+
+
+def verify_embedded_models(staging, operating_system):
+    report = json.loads(subprocess.check_output(
+        [str(staging / runtime_names(operating_system)[1]), "--verify-bundled-models"],
+        text=True, encoding="utf-8"))
+    return load_script("int8-policy").verify_embedded(report)
 
 
 def cargo_binary(name, profile, features):
@@ -43,7 +69,7 @@ def check_lightweight_dependencies():
         "--edges", "normal", "--prefix", "none", "--format", "{p}"],
         cwd=ROOT, text=True, encoding="utf-8")
     dependencies = {line.split()[0] for line in result.splitlines() if line.strip()}
-    forbidden = sorted(name for name in dependencies if name == "tokenizers" or name.startswith("tract-"))
+    forbidden = sorted(name for name in dependencies if name in ("tokenizers", "ort", "ort-sys") or name.startswith("tract-"))
     if forbidden:
         raise RuntimeError(f"Main executable includes inference dependencies: {forbidden}")
 
@@ -58,6 +84,8 @@ def source_identity():
         "git", "-c", f"safe.directory={ROOT.as_posix()}", "ls-files", "-z",
         "--cached", "--others", "--exclude-standard", "--", "Cargo.toml", "Cargo.lock",
         "rust-toolchain.toml", ".cargo", "crates", "scripts/build-service-runtime.py",
+        "scripts/provision-onnx-runtime.py", "scripts/provision-local-model.py", "scripts/int8-policy.py",
+        "scripts/macho-identity.py",
         "scripts/license-notices.py", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "third_party"], cwd=ROOT)
     result = hashlib.sha256()
     files = sorted(set(name for name in names.split(b"\0") if name))
@@ -118,13 +146,28 @@ def runtime_names(operating_system):
     return ("airk.exe", "airk-embed.exe") if operating_system == "windows" else ("airk", "airk-embed")
 
 
+def signing_names(operating_system, version="1.6.0"):
+    names = runtime_names(operating_system)
+    return names + (("AIRK.app/Contents/MacOS/libonnxruntime.dylib",) if operating_system == "macos" and int8_version(version) else ())
+
+
+def int8_version(version):
+    return tuple(int(v) for v in version.split(".")[:2]) >= (1, 6)
+
+
+def inference_assets(operating_system, architecture):
+    parent = Path(runtime_names(operating_system)[1]).parent
+    return {(parent / row["name"]).as_posix(): row
+            for row in load_script("provision-onnx-runtime").entries(operating_system + "-" + architecture)}
+
+
 def macos_bundle_files(version):
     """Static signed resources; mutable install/control paths never enter the bundle."""
     files = {"AIRK.app/Contents/Info.plist": plistlib.dumps({
         "CFBundleIdentifier": "io.iokaio.airk.service", "CFBundleName": "AIRK Service",
         "CFBundleExecutable": "airk", "CFBundlePackageType": "APPL",
         "CFBundleVersion": version, "CFBundleShortVersionString": version,
-        "LSMinimumSystemVersion": "13.0", "LSBackgroundOnly": True,
+        "LSMinimumSystemVersion": "13.3" if int8_version(version) else "13.0", "LSBackgroundOnly": True,
     }, sort_keys=True)}
     for channel in ("stable", "preview"):
         label = "io.iokaio.airk.service." + channel
@@ -152,6 +195,8 @@ def arrange_macos_bundle(staging, version):
 def sign_development_macos_bundle(staging):
     # An ad-hoc signature enables native development fixtures. It is never a
     # Developer ID, notarization or independent distribution-approval claim.
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none",
+                    str(staging / "AIRK.app/Contents/MacOS/libonnxruntime.dylib")], check=True)
     subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "runtime",
                     "--timestamp=none", str(staging / runtime_names("macos")[1])], check=True)
     subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "runtime",
@@ -165,15 +210,16 @@ def main():
     parser.add_argument("--profile", choices=["debug", "release"], default="debug")
     args = parser.parse_args()
     if platform.system() == "Darwin":
-        configured = os.environ.get("MACOSX_DEPLOYMENT_TARGET", "13.0")
-        if configured not in ("13", "13.0"):
-            raise RuntimeError("The 1.4 Mac bundle requires MACOSX_DEPLOYMENT_TARGET=13.0; qualify another baseline separately")
-        os.environ["MACOSX_DEPLOYMENT_TARGET"] = "13.0"
+        configured = os.environ.get("MACOSX_DEPLOYMENT_TARGET", "13.3")
+        if configured != "13.3":
+            raise RuntimeError("The INT8 Mac bundle requires MACOSX_DEPLOYMENT_TARGET=13.3; qualify another baseline separately")
+        os.environ["MACOSX_DEPLOYMENT_TARGET"] = "13.3"
     destination = args.destination.absolute()
     if destination.exists() or destination.is_symlink():
         raise SystemExit("Destination already exists; select a fresh runtime directory")
     destination.parent.mkdir(parents=True, exist_ok=True)
     source = source_identity()
+    load_script("int8-policy").catalog()
     check_lightweight_dependencies()
     with tempfile.TemporaryDirectory(prefix=".airk-runtime-stage-", dir=destination.parent) as temporary:
         staging = Path(temporary)
@@ -190,6 +236,9 @@ def main():
             raise RuntimeError("Unsupported host runtime pair target")
         if operating_system == "macos":
             arrange_macos_bundle(staging, version)
+        stage_inference_runtime(staging, operating_system, architecture)
+        verify_embedded_models(staging, operating_system)
+        if operating_system == "macos":
             sign_development_macos_bundle(staging)
         manifest = write_pair_metadata(staging, version, operating_system, architecture)
         if source_identity() != source:

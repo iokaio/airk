@@ -73,7 +73,7 @@ An independent thin native-helper extension is implemented under [packages/vscod
 
 ## CLI installation and PATH
 
-New vector-model setup asks the native helper for its CPU capabilities and pinned model catalog before installing its embedded assets offline. The sole automatic profile remains FP32 MiniLM; existing/custom models are preserved without re-selection. `airk model-catalog` inspects the choice offline without opening collection/model state. [CPU-specific INT8 selection](onnx-models.md#capabilities-and-qualified-model-catalog) is documented as future work and is not enabled.
+New vector-model setup asks the native helper for its CPU capabilities and pinned model catalog before installing its embedded assets offline. Version 1.6 selects unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64; prior semantic state is rebuilt. `airk model-catalog` inspects the choice offline without opening collection/model state. [CPU selection and offline provisioning](onnx-models.md) describe the implemented optimization.
 
 On first trusted activation, the extension copies its verified native helper to a stable `cli/bin` directory under its per-user extension storage. The executable is `airk.exe` on Windows and `airk` on macOS/Linux. Updates replace that copy atomically; the directory does not contain an extension version. No Cargo, Rust, administrator permission or system-wide installation is needed. Installation runs when the extension activates, not while VS Code is closed after a VSIX download.
 

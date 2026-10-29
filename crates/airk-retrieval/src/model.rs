@@ -79,12 +79,12 @@ pub(crate) fn verified_source_asset(
     Ok(bytes)
 }
 
-pub const ONNX_RUNTIME: &str = "tract-cpu-onnx/0.23.8/airk-buckets-2";
+pub const ONNX_RUNTIME: &str = "onnxruntime-cpu/1.22.1/airk-int8-b1-1";
 pub const MAX_MODEL_BYTES: u64 = 268_435_456;
 pub const MAX_TOKENIZER_BYTES: u64 = 4_194_304;
 pub const MAX_INPUT_BYTES: usize = 16_384;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OnnxManifest {
     pub schema: u32,
@@ -289,7 +289,7 @@ fn valid_digest(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "local-inference"))]
 pub(crate) fn verified_asset(
     directory: &Path,
     name: &str,
@@ -354,15 +354,6 @@ pub(crate) fn onnx_manifest(bytes: &[u8]) -> Result<(OnnxManifest, String)> {
     digest.update(ONNX_RUNTIME.as_bytes());
     digest.update(serde_json::to_vec(&manifest)?);
     Ok((manifest, format!("{:x}", digest.finalize())))
-}
-
-pub(crate) fn qualified_batch_four(manifest: &OnnxManifest) -> bool {
-    cfg!(all(target_os = "windows", target_arch = "x86_64"))
-        && manifest.model_sha256
-            == "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452"
-        && manifest.tokenizer_sha256
-            == "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037"
-        && manifest.dimensions == 384
 }
 
 enum VerifiedManifest {
@@ -551,10 +542,22 @@ pub fn inspect_object_plan(directory: &Path) -> Result<ModelObjectSet> {
             "linked model source ancestor"
         );
     }
-    let descriptor = inspect_cache_descriptor(directory)?;
-    let info = inspect(directory)?;
+    // New installations must use the same CPU-selected pipeline as automatic
+    // setup. Retained metadata remains readable for upgrade/retirement, but an
+    // obsolete or edited ONNX manifest must never be acknowledged as installed
+    // and then silently replaced by the bundled default at the next index.
     let manifest = read_asset(directory, "model.json", 16_384)?;
     let schema = serde_json::from_slice::<serde_json::Value>(&manifest)?["schema"].as_u64();
+    if schema == Some(2) {
+        let (definition, _) = onnx_manifest(&manifest)?;
+        crate::model_catalog::approved_manifest(&definition)?;
+        ensure!(
+            definition == crate::model_catalog::selected_profile()?.manifest,
+            "model selection differs from the bundled INT8 profile for this CPU; use bundled model setup"
+        );
+    }
+    let descriptor = inspect_cache_descriptor(directory)?;
+    let info = inspect(directory)?;
     let names: &[ModelAssetName] = match schema {
         Some(1) => &[ModelAssetName::ModelJson, ModelAssetName::VocabularyJson],
         Some(2) => &[
@@ -930,7 +933,7 @@ fn descriptor_from_manifest(source: DescriptorManifest<'_>) -> Result<EmbeddingD
             serde_json::to_vec(&(
                 MAX_INPUT_BYTES,
                 manifest.max_tokens,
-                "tokenizers-0.23.2/fancy-regex/utf8-boundary-prefix/trim-empty-none/raw-single-encoding/right-truncation-reserve-specials-stride0/right-PAD-type0/smallest-32-64-128-256-512-or-context/qualified-minilm-windows-x64-32-full4-otherwise1/2",
+                "tokenizers-0.23.2/fancy-regex/utf8-boundary-prefix/trim-empty-none/raw-single-encoding/right-truncation-reserve-specials-stride0/right-PAD-type0/smallest-32-64-128-256-512-or-context/int8-per-text-batch1/3",
             ))?,
             manifest.pooling.as_bytes().to_vec(),
             ONNX_RUNTIME.as_bytes().to_vec(),
@@ -990,6 +993,31 @@ mod tests {
         // macOS presents the default temporary directory through /var.
         // Object planning intentionally rejects symlinked model ancestors.
         Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
+    }
+
+    #[test]
+    fn new_model_install_rejects_obsolete_or_edited_onnx_before_reading_weights() -> Result<()> {
+        let directory = unlinked_tempdir()?;
+        for obsolete_weights in [false, true] {
+            let mut manifest = crate::model_catalog::selected_profile()?.manifest;
+            if obsolete_weights {
+                manifest.model_sha256 =
+                    "6fd5d72fe4589f189f8ebc006442dbb529bb7ce38f8082112682524616046452".into();
+            } else {
+                manifest.max_tokens = 128;
+            }
+            fs::write(
+                directory.path().join("model.json"),
+                serde_json::to_vec(&manifest)?,
+            )?;
+            let error = inspect_object_plan(directory.path()).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("semantic_model_upgrade_required")
+            );
+        }
+        Ok(())
     }
 
     #[test]

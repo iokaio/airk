@@ -7,6 +7,9 @@
 !crates/**
 !scripts/
 !scripts/provision-local-model.py
+!scripts/provision-onnx-runtime.py
+!scripts/int8-policy.py
+!scripts/macho-identity.py
 !scripts/license-notices.py
 !scripts/build-service-runtime.py
 !scripts/build-service-container.py

@@ -204,6 +204,25 @@ pub(super) fn read_work(read: &CurrentRead, store: &FileStore) -> Result<Option<
 
 pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<SemanticReadiness> {
     let policy = read_policy(read, store)?;
+    let state = read
+        .collection_state()?
+        .context("current configuration missing")?;
+    if crate::shared_models::semantic_upgrade_pending(store, state.configuration.model.as_ref()) {
+        return Ok(SemanticReadiness {
+            version: 1,
+            state: SemanticState::Pending,
+            default_search_policy: policy,
+            selected_artifacts: state.counts.vector_eligible,
+            completed_artifacts: 0,
+            selected_units: None,
+            completed_units: 0,
+            first_ready_unix_ms: None,
+            fully_ready_unix_ms: None,
+            selection_digest: Some(state.configuration.vector_selection.digest()?),
+            pipeline_digest: store.shared_model_default().map(|o| o.pipeline_digest),
+            failure: None,
+        });
+    }
     if let Some(work) = read_work(read, store)? {
         return Ok(work.readiness(policy));
     }
@@ -348,6 +367,151 @@ pub(super) fn prepare_work(
 }
 
 impl Kernel {
+    /// Replace obsolete semantic state using retained source evidence. This is
+    /// one publication: text/facts survive; the old graph and embedding cache
+    /// are retired together before any new vectors are admitted.
+    pub fn upgrade_service_semantics(&self) -> Result<bool> {
+        ensure!(
+            self.is_service_collection(),
+            "service project owner required"
+        );
+        let enabled = self.vectors_enabled()?;
+        if enabled {
+            self.select_service_bundled_model()?;
+        } else {
+            self.clear_service_model_selection()?;
+        }
+        self.replace_semantic_state()
+    }
+
+    fn replace_semantic_state(&self) -> Result<bool> {
+        let enabled = self.vectors_enabled()?;
+        let Some(scope) = self.current_scope()? else {
+            return Ok(false);
+        };
+        let quota = self.collection_quota()?;
+        super::recover_current(&self.store, &quota, &scope)?;
+        let writer = self.store.lock()?;
+        let read = self.store.current_build_read(&scope, &writer)?;
+        let mut configuration = read
+            .collection_state()?
+            .context("current configuration missing")?
+            .configuration;
+        let objects = self.configured_model_objects(false)?;
+        if configuration.model == objects {
+            return Ok(true);
+        }
+        let snapshot = self.current_scan_projection(&read)?;
+        let selection = self.vector_selection()?;
+        let reservation = self.publication_reservation()?;
+        if let Some(objects) = &objects {
+            self.retain_configured_model(objects, &reservation)?;
+        }
+        let model = objects
+            .as_ref()
+            .map(|o| self.open_configured_model(o))
+            .transpose()?;
+        let mut pending = Vec::new();
+        for (path, artifact) in &snapshot.artifacts {
+            crate::service_execution::checkpoint()?;
+            let retained = artifact
+                .retained
+                .as_ref()
+                .context("retained extraction missing")?;
+            if enabled
+                && selection
+                    .decision(
+                        path,
+                        retained
+                            .profile
+                            .as_ref()
+                            .context("retained profile missing")?,
+                        &artifact.language,
+                    )?
+                    .eligible
+            {
+                pending.push(PendingArtifact {
+                    path: path.clone(),
+                    source_hash: artifact.content_hash.parse()?,
+                    extraction_object: retained.object.parse()?,
+                });
+            }
+        }
+        ensure!(
+            pending.len() <= MAX_PENDING_INPUTS,
+            "semantic upgrade admission exceeded"
+        );
+        configuration.model = objects.clone();
+        configuration.vector_selection = selection.clone();
+        let now = now_unix_ms()?;
+        let selection_digest = selection.digest()?;
+        let work = objects.as_ref().map(|o| SemanticWork {
+            version: 1,
+            pipeline_digest: o.pipeline_digest,
+            selection_digest,
+            selected_artifacts: pending.len() as u64,
+            completed_artifacts: 0,
+            selected_units: None,
+            completed_units: 0,
+            all_units_countable: true,
+            force_recompute: true,
+            first_ready_unix_ms: now,
+            fully_ready_unix_ms: pending.is_empty().then_some(now),
+            pending,
+            failure: None,
+            regeneration_job: None,
+            recompute_boundary: None,
+        });
+        drop(read);
+        let resources = [
+            match work {
+                Some(work) => work.resource_change(&self.store, &reservation)?,
+                None => ResourceChange {
+                    key: KEY.into(),
+                    reference: None,
+                },
+            },
+            ResourceChange {
+                key: "embedding-cache".into(),
+                reference: None,
+            },
+        ];
+        let mut stats = EmbeddingCacheStats::default();
+        let semantic = model
+            .as_ref()
+            .zip(objects)
+            .map(|(model, objects)| SemanticUpdate {
+                model,
+                objects,
+                selection: &selection,
+                defer: true,
+                cache: EmbeddingCacheContext {
+                    cache: None,
+                    bypass: true,
+                    stats: &mut stats,
+                    max_workers: 1,
+                    working_memory_bytes: 256 << 20,
+                },
+            });
+        // Rebind every retained artifact to the new graph/configuration in the
+        // same transaction. No live source read or extraction is needed.
+        let changes: Vec<_> = snapshot
+            .artifacts
+            .into_values()
+            .map(|artifact| ArtifactChange::Upsert(Box::new(CapturedInput::new(artifact))))
+            .collect();
+        CurrentUpdater {
+            store: &self.store,
+            quota: &quota,
+            scope: &scope,
+            writer: &writer,
+            reservation: &reservation,
+            configuration: Some(&configuration),
+        }
+        .apply_with_resources(&changes, semantic, &resources)?;
+        Ok(true)
+    }
+
     /// Queue every eligible retained extraction without scanning live sources or
     /// discarding readable vectors. Subsequent service turns replace bounded batches.
     pub fn begin_service_vector_regeneration(

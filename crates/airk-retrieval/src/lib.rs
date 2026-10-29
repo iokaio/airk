@@ -3,6 +3,8 @@
 pub mod bounded;
 pub mod embedding_batch;
 pub mod embedding_worker;
+#[cfg(any(test, all(feature = "local-inference", target_os = "macos")))]
+mod macho_identity;
 pub mod model;
 pub mod model_catalog;
 #[cfg(feature = "local-inference")]

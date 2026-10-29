@@ -213,10 +213,10 @@ impl Engine {
                     "model source must be a bounded absolute path"
                 );
                 let directory = directory.canonicalize()?;
+                let set = model::inspect_object_plan(&directory)?;
                 self.model = None;
                 self.model_lease = None;
                 self.model_key = None;
-                let set = model::inspect_object_plan(&directory)?;
                 let _lease = self
                     .model_files
                     .retain(&set, |name| directory.join(name.filename()))?;

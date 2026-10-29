@@ -31,6 +31,67 @@ fn pending_fixture() -> Result<(tempfile::TempDir, Kernel)> {
 }
 
 #[test]
+fn semantic_upgrade_replaces_graph_and_cache_preserves_text_and_resumes() -> Result<()> {
+    let (_owner, kernel) = pending_fixture()?;
+    kernel.run_scheduled_enrichment()?;
+    let before = kernel.status()?;
+    assert!(before.indexed_vectors > 0);
+    let read = kernel.current_reader()?;
+    let old_graph = read.head().graph_head.scope.graph_instance;
+    assert!(read.resource(&kernel.store, "embedding-cache")?.is_some());
+    drop(read);
+    // Change only the model; leave an unreadable live source to prove replacement
+    // builds from retained evidence rather than silently re-extracting sources.
+    fs::remove_file(kernel.root.join("fixture.txt"))?;
+    let model = kernel.data_root.join("models/local");
+    let vocabulary = br#"{"authenticate":[0.0,1.0]}"#;
+    fs::write(model.join("vocabulary.json"), vocabulary)?;
+    fs::write(
+        model.join("model.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema":1,"name":"replacement-fixture","license":"Apache-2.0","dimensions":2,
+            "sha256":format!("{:x}",Sha256::digest(vocabulary))
+        }))?,
+    )?;
+    assert!(kernel.replace_semantic_state()?);
+    let pending = kernel.status()?;
+    assert_eq!(
+        (pending.files, pending.chunks),
+        (before.files, before.chunks)
+    );
+    assert_eq!(pending.indexed_vectors, 0);
+    assert_eq!(pending.semantic_readiness.state, SemanticState::Pending);
+    let read = kernel.current_reader()?;
+    assert_ne!(read.head().graph_head.scope.graph_instance, old_graph);
+    assert!(read.resource(&kernel.store, "embedding-cache")?.is_none());
+    assert!(read_work(&read, &kernel.store)?.unwrap().force_recompute);
+    drop(read);
+    let reopened = Kernel::open(&kernel.root, Some(kernel.data_root.clone()))?;
+    assert!(reopened.replace_semantic_state()?);
+    assert_eq!(
+        reopened.status()?.generation,
+        pending.generation,
+        "restart reset pending work"
+    );
+    reopened.run_scheduled_enrichment()?;
+    let ready = reopened.status()?;
+    assert_eq!(ready.semantic_readiness.state, SemanticState::Ready);
+    assert!(ready.indexed_vectors > 0);
+    assert_eq!(ready.files, before.files);
+    reopened.configure_vectors(false)?;
+    reopened.replace_semantic_state()?;
+    let disabled = reopened.status()?;
+    assert_eq!(disabled.indexed_vectors, 0);
+    assert_eq!(disabled.semantic_readiness.state, SemanticState::Disabled);
+    assert_eq!(
+        (disabled.files, disabled.chunks),
+        (before.files, before.chunks)
+    );
+    assert!(!reopened.root.join("fixture.txt").exists());
+    Ok(())
+}
+
+#[test]
 fn source_changes_preserve_forced_recomputation_for_unfinished_semantic_work() -> Result<()> {
     let (_directory, kernel) = pending_fixture()?;
     let read = kernel.current_reader()?;

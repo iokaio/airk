@@ -101,11 +101,12 @@ def read_verified_pair(directory, source, target, commit, lock_digest, signtool=
     original = package.bounded_json(source / "airk-install.json")
     signed = package.bounded_json(runtime / "airk-install.json")
     main, helper = package.runtime_builder().runtime_names("windows" if "windows" in target else "macos")
+    signing_names = package.runtime_builder().signing_names("windows" if "windows" in target else "macos", original.get("version", "1.6.0"))
     components = receipt.get("components", {})
     ticket = {"AIRK.app/Contents/CodeResources"} if "apple" in target else set()
-    if set(components) != {main, helper} or set(original["files"]) - ticket != set(signed["files"]) - ticket:
+    if set(components) != set(signing_names) or set(original["files"]) - ticket != set(signed["files"]) - ticket:
         raise ValueError("Pair signing component inventory differs")
-    mutable = {main, helper, "airk-runtime.json", "airk-build.json"}
+    mutable = {*signing_names, "airk-runtime.json", "airk-build.json"}
     if "apple" in target:
         mutable.add("AIRK.app/Contents/_CodeSignature/CodeResources")
         mutable.add("AIRK.app/Contents/CodeResources")
@@ -114,7 +115,7 @@ def read_verified_pair(directory, source, target, commit, lock_digest, signtool=
     for name, expected in original["files"].items():
         if name not in mutable and signed["files"].get(name) != expected:
             raise ValueError("Signing changed unrelated runtime payload")
-    for name in (main, helper):
+    for name in signing_names:
         component = components[name]
         if (component.get("schema") != "airk-native-signing/1" or component.get("target") != target
                 or component.get("commit") != commit or component.get("cargo_lock_sha256") != lock_digest
@@ -148,7 +149,7 @@ def verify_app_bundle(runtime, team):
 
 def stapled_app_ticket(components):
     receipts = [component.get("notarization") for component in components.values()]
-    return (len(receipts) == 2 and all(isinstance(value, dict) and value.get("status") == "Accepted"
+    return (len(receipts) in (2, 3) and all(isinstance(value, dict) and value.get("status") == "Accepted"
             and value.get("stapled") is True and value.get("scope") == "AIRK.app" and isinstance(value.get("id"), str) and value["id"] for value in receipts)
             and len({value["id"] for value in receipts}) == 1)
 
@@ -186,7 +187,8 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
     if pending != {"schema": 1, "source": str(source), "target": target, "source_install_sha256": files["airk-install.json"]}:
         raise ValueError("Signing source differs from prepared pair")
     staged = package.inventory(runtime)
-    mutable = set(executables)
+    signing_names = package.runtime_builder().signing_names("windows" if "windows" in target else "macos", original_install["version"])
+    mutable = set(signing_names)
     if "apple" in target:
         mutable.add("AIRK.app/Contents/_CodeSignature/CodeResources")
     ticket = {"AIRK.app/Contents/CodeResources"} if "apple" in target else set()
@@ -194,7 +196,7 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
         raise ValueError("New app ticket lacks matching stapled notarization receipts")
     if set(staged) - ticket != set(files) - ticket or any(staged[name] != files[name] for name in files if name not in mutable and name not in ticket):
         raise ValueError("Signing changed unrelated runtime payload")
-    if set(components) != set(executables):
+    if set(components) != set(signing_names):
         raise ValueError("Both signed service components are required")
     for name, component in components.items():
         if (component.get("schema") != "airk-native-signing/1" or component.get("target") != target
@@ -232,7 +234,8 @@ def sign_pair(args):
     commit = run(["git", "rev-parse", "HEAD"]).strip()
     lock_digest = digest(ROOT / "Cargo.lock")
     components = {}
-    for name in executables:
+    version = json.loads((runtime / "airk-install.json").read_text(encoding="utf-8"))["version"]
+    for name in pair_package().runtime_builder().signing_names("macos" if "apple" in args.target else "windows", version):
         component_output = output / (Path(name).name + ".signature")
         command = [__import__("sys").executable, str(ROOT / "scripts/sign-native.py"), "--target", args.target,
                    "--source-file", str(source / name), "--output", str(component_output), "--identity", args.identity,
@@ -307,7 +310,7 @@ def main():
     source = args.source_file or ROOT / "target" / args.target / "release" / ("airk.exe" if windows else "airk")
     if args.source_file:
         source = source.resolve(strict=True)
-        expected = ("airk.exe", "airk-embed.exe") if windows else ("airk", "airk-embed")
+        expected = ("airk.exe", "airk-embed.exe") if windows else ("airk", "airk-embed", "libonnxruntime.dylib")
         owner = source.parent
         if not windows and source.parent.name == "MacOS":
             owner = source.parents[3]

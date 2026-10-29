@@ -11,7 +11,7 @@ publish.workspace = true
 
 [features]
 default = ["local-inference"]
-local-inference = ["dep:tract-onnx", "dep:tokenizers"]
+local-inference = ["dep:ort", "dep:tokenizers"]
 
 [dependencies]
 airk-core.workspace = true
@@ -23,5 +23,5 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
-tract-onnx = { workspace = true, optional = true }
+ort = { workspace = true, optional = true }
 tokenizers = { workspace = true, optional = true }

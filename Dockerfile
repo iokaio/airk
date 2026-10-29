@@ -21,11 +21,14 @@ COPY crates ./crates
 COPY .config/nextest.toml ./.config/nextest.toml
 COPY scripts/ci-metrics.py scripts/ci-prune-target.py ./scripts/
 COPY scripts/license-notices.py scripts/provision-local-model.py ./scripts/
+COPY scripts/provision-onnx-runtime.py scripts/int8-policy.py scripts/macho-identity.py ./scripts/
 COPY scripts/build-service-runtime.py scripts/build-service-container.py ./scripts/
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md ./
 COPY third_party/models ./third_party/models
 RUN python3 scripts/provision-local-model.py --destination /build/model-assets --download
 ENV AIRK_BUNDLED_MODEL_DIR=/build/model-assets
+ENV AIRK_BUNDLED_RUNTIME_DIR=/build/runtime-assets
+RUN python3 scripts/provision-onnx-runtime.py --download
 COPY third_party/licenses ./third_party/licenses
 
 FROM source AS test

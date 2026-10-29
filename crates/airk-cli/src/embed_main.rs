@@ -140,6 +140,10 @@ fn handle(
 }
 
 fn main() -> Result<()> {
+    if std::env::args().skip(1).eq(["--verify-bundled-models"]) {
+        println!("{}", airk_cli::bundled_assets::verify_inventory()?);
+        return Ok(());
+    }
     if std::env::args().skip(1).eq(["pool"]) {
         return tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -153,7 +157,7 @@ fn main() -> Result<()> {
     }
     ensure!(
         std::env::args().skip(1).eq(["worker"]),
-        "usage: airk-embed worker | --version"
+        "usage: airk-embed worker | --version | --verify-bundled-models"
     );
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();

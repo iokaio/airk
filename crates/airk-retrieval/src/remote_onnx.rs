@@ -17,6 +17,7 @@ pub struct OnnxModel {
 impl OnnxModel {
     fn connect(location: ModelLocation, bytes: &[u8]) -> Result<Self> {
         let (manifest, identity) = model::onnx_manifest(bytes)?;
+        crate::model_catalog::approved_manifest(&manifest)?;
         let session = embedding_worker::connector()?.open(location, &identity)?;
         Ok(Self {
             manifest,

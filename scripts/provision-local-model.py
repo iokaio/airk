@@ -2,6 +2,7 @@
 """Deliberately provision pinned Apache-2.0 MiniLM assets; native reads never download."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -10,19 +11,25 @@ import urllib.request
 
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "crates/airk-retrieval/src/model_catalog.json"
 CATALOG = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
-PROFILE, = CATALOG["profiles"]
-if CATALOG["schema"] != 1 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "fp32":
-    raise ValueError("No approved FP32 provisioning profile")
+_spec = importlib.util.spec_from_file_location("int8_policy", Path(__file__).with_name("int8-policy.py"))
+_policy = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_policy)
+_policy.validate_catalog(CATALOG)
+PROFILE = CATALOG["profiles"][0]
+if CATALOG["schema"] != 1 or PROFILE["id"] != CATALOG["default_profile"] or PROFILE["precision"] != "uint8" or len(CATALOG["profiles"]) != 2:
+    raise ValueError("No approved INT8 provisioning profiles")
 REVISION = PROFILE["manifest"]["revision"]
 SOURCE = PROFILE["manifest"]["source"]
 ASSETS = {asset["name"]: (asset["url"], asset["bytes"], asset["sha256"]) for asset in PROFILE["assets"]}
 
 
-def validate_asset_bindings():
-    if set(ASSETS) != {"model.onnx", "tokenizer.json", "LICENSE"} or len(PROFILE["assets"]) != 3:
+def validate_asset_bindings(profile=None, assets=None):
+    profile = PROFILE if profile is None else profile
+    assets = ASSETS if assets is None else assets
+    if set(assets) != {"model.onnx", "tokenizer.json", "LICENSE"} or len(profile["assets"]) != 3:
         raise ValueError("Model catalog asset inventory differs")
     for name, field in [("model.onnx", "model_sha256"), ("tokenizer.json", "tokenizer_sha256"), ("LICENSE", "license_sha256")]:
-        if PROFILE["manifest"][field] != ASSETS[name][2]:
+        if profile["manifest"][field] != assets[name][2]:
             raise ValueError("Model catalog manifest and asset hashes differ")
 
 
@@ -41,13 +48,15 @@ def verify(path, expected_size, expected_digest):
         raise ValueError(f"Asset digest mismatch: {path.name}")
 
 
-def provision(destination, download=False):
-    validate_asset_bindings()
+def provision(destination, download=False, profile=None):
+    selected = PROFILE if profile is None else profile
+    assets = ASSETS if profile is None else {a["name"]: (a["url"], a["bytes"], a["sha256"]) for a in profile["assets"]}
+    validate_asset_bindings(selected, assets)
     destination = Path(destination)
     destination.mkdir(parents=True, exist_ok=True)
     if destination.is_symlink():
         raise ValueError("Destination must be an unlinked directory")
-    for name, (url, size, digest) in ASSETS.items():
+    for name, (url, size, digest) in assets.items():
         path = destination / name
         if path.exists() or path.is_symlink():
             verify(path, size, digest)
@@ -77,7 +86,7 @@ def provision(destination, download=False):
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
-    manifest = dict(PROFILE["manifest"])
+    manifest = dict(selected["manifest"])
     path = destination / "model.json"
     payload = (json.dumps(manifest, indent=2) + "\n").encode()
     if path.exists() or path.is_symlink():
@@ -96,7 +105,8 @@ def main():
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--download", action="store_true", help="explicitly fetch the pinned public model/tokenizer/license")
     args = parser.parse_args()
-    manifest = provision(args.destination, args.download)
+    manifest = {profile["id"]: provision(args.destination / profile["id"], args.download, profile)
+                for profile in CATALOG["profiles"]}
     print(json.dumps({"verified": True, "directory": str(args.destination.resolve()), "manifest": manifest}, indent=2))
 
 

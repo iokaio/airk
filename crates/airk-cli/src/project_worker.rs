@@ -339,11 +339,19 @@ fn execute(
         }
         JobKind::Vectors => unreachable!("vector turns use publication-aware retry"),
         JobKind::ModelSetup => {
-            // Re-registration preserves an explicit text-only preference.
-            if kernel.vectors_enabled()? {
-                kernel.install_service_default_vector_model()?;
-            }
-            return Ok(JobOutcome::Succeeded { revision: None });
+            // Upgrade existing semantic state from retained evidence without a
+            // source rescan. Disabled projects retire vectors and stay text-only.
+            let retained = kernel.upgrade_service_semantics()?;
+            return Ok(JobOutcome::Succeeded {
+                revision: if retained {
+                    kernel
+                        .status()?
+                        .publication
+                        .map(|publication| publication.token)
+                } else {
+                    None
+                },
+            });
         }
         JobKind::Verify => {
             let mut after = None;
@@ -888,7 +896,28 @@ pub async fn run() -> Result<()> {
                 // bounded flags survive public queue saturation and owner exit.
                 if matches!(outcome, JobOutcome::Succeeded { .. }) {
                     if job.kind == JobKind::ModelSetup {
-                        registry.set_background_pending(&job_lease, JobKind::Index, true)?;
+                        let readiness =
+                            if matches!(outcome, JobOutcome::Succeeded { revision: Some(_) }) {
+                                Some(airk_kernel::service_execution::with_database_admission(
+                                    || kernel.refresh_service_snapshot()?.status(),
+                                )?)
+                            } else {
+                                None
+                            };
+                        if readiness.is_none() {
+                            registry.set_background_pending(&job_lease, JobKind::Index, true)?;
+                        }
+                        registry.set_background_pending(
+                            &job_lease,
+                            JobKind::Vectors,
+                            readiness.is_some_and(|s| {
+                                matches!(
+                                    s.semantic_readiness.state,
+                                    airk_core::readiness::SemanticState::Pending
+                                        | airk_core::readiness::SemanticState::Partial
+                                )
+                            }),
+                        )?;
                     } else if matches!(
                         job.kind,
                         JobKind::Index

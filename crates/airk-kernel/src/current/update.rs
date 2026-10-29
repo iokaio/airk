@@ -543,21 +543,27 @@ impl CurrentUpdater<'_> {
                         )?)
             })
             .transpose()?
-            .unwrap_or(false);
+            .unwrap_or_else(|| {
+                self.configuration.is_some_and(|c| c.model.is_none())
+                    && applied
+                        .as_ref()
+                        .is_some_and(|s| s.configuration.model.is_some())
+            });
         let graph_limits = GraphOverlayLimits::for_indexing(self.reservation);
         let overlay = Arc::new(if replacing {
-            let semantic = semantic.as_ref().expect("replacement model");
+            let dimensions = semantic.as_ref().map_or(1, |s| s.model.dimensions());
+            let pipeline = semantic.as_ref().map_or_else(
+                || airk_core::identity::framed_digest(b"current-lexical-only/1", &[]),
+                |s| s.objects.pipeline_digest,
+            );
             let mut instance = [0; 16];
             getrandom::fill(&mut instance)
                 .map_err(|e| anyhow::anyhow!("allocate graph identity: {e}"))?;
             let mut scope = base.graph_head.scope.clone();
             scope.graph_instance = airk_core::identity::Incarnation::from_bytes(instance);
-            scope.specification = airk_retrieval::vector::mutable::specification(
-                semantic.model.dimensions(),
-                semantic.objects.pipeline_digest,
-            )?;
-            scope.record_bytes =
-                airk_retrieval::vector::mutable::record_bytes(semantic.model.dimensions())?;
+            scope.specification =
+                airk_retrieval::vector::mutable::specification(dimensions, pipeline)?;
+            scope.record_bytes = airk_retrieval::vector::mutable::record_bytes(dimensions)?;
             GraphOverlay::empty(self.reservation, scope, graph_limits)
                 .context("create replacement graph overlay")?
         } else {
@@ -846,7 +852,10 @@ impl CurrentUpdater<'_> {
                 key: "embedding-cache".into(),
                 reference: Some(reference),
             });
-        } else if captured_model.is_none() && trusted_cache.is_some() {
+        } else if captured_model.is_none()
+            && trusted_cache.is_some()
+            && !resources.iter().any(|r| r.key == "embedding-cache")
+        {
             resources.push(airk_store::current::resources::ResourceChange {
                 key: "embedding-cache".into(),
                 reference: None,

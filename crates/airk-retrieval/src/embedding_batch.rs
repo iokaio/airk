@@ -110,7 +110,7 @@ fn prepare_onnx_batch<'a>(
 }
 
 /// All joins complete before returning, including failure. Results retain input order.
-#[cfg(any(feature = "local-inference", test))]
+#[cfg(test)]
 pub(crate) fn parallel_map<T: Sync, R: Send>(
     items: &[T],
     workers: usize,
@@ -424,10 +424,6 @@ mod tests {
             "ONNX assets required"
         );
         let descriptor = model.cache_descriptor()?;
-        let batch_four = match &model {
-            EmbeddingModel::Onnx(onnx) => crate::model::qualified_batch_four(&onnx.manifest),
-            _ => false,
-        };
         let long = "A bounded original input with Unicode café. ".repeat(600);
         let blank_prefix = format!("{}suffix", " ".repeat(crate::model::MAX_INPUT_BYTES));
         let split_unicode = format!("{}é suffix", " ".repeat(crate::model::MAX_INPUT_BYTES - 1));
@@ -469,13 +465,10 @@ mod tests {
             (cold.inputs, cold.blank_inputs, cold.duplicate_inputs),
             (10, 4, 1)
         );
-        assert_eq!(cold.actual_forwards, if batch_four { 2 } else { 5 });
+        assert_eq!(cold.actual_forwards, 5);
         assert_eq!(cache.lookups.load(Ordering::Relaxed), 5);
         assert_eq!(cache.stores.load(Ordering::Relaxed), 5);
-        assert!(
-            cold.workers > 1,
-            "real model should fit concurrent execution in the declared budget"
-        );
+        assert_eq!(cold.workers, 1, "INT8 uses one bounded session");
         let mut warm = EmbeddingCacheStats::default();
         assert_eq!(
             embed(
@@ -519,7 +512,7 @@ mod tests {
         );
         assert_eq!(full.hits, 0);
         assert_eq!(full.inferences, texts.len() as u64);
-        assert_eq!(full.actual_forwards, if batch_four { 2 } else { 5 });
+        assert_eq!(full.actual_forwards, 5);
         assert_eq!(cache.lookups.load(Ordering::Relaxed), 10);
         assert_eq!(cache.stores.load(Ordering::Relaxed), 10);
         let mut direct = EmbeddingCacheStats::default();
@@ -552,16 +545,9 @@ mod tests {
                     1 << 30
                 )?,
                 expected,
-                "new row positions and B1 tails must match previously cached B4 vectors exactly"
+                "regrouping must preserve the cached per-text INT8 vectors exactly"
             );
-            assert_eq!(
-                changed.actual_forwards,
-                if batch_four && positions.len() == 4 {
-                    1
-                } else {
-                    positions.len() as u64
-                }
-            );
+            assert_eq!(changed.actual_forwards, positions.len() as u64);
         }
         let mut rejected = EmbeddingCacheStats::default();
         assert!(

@@ -103,6 +103,10 @@ def verify_native(directory, target, commit, version, signed):
     required = {executable, helper, "airk-runtime.json", "airk-build.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"} if paired else {executable, "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
     bundle_files = builder.macos_bundle_files(version) if paired and os_name == "macos" else {}
     required.update(bundle_files)
+    inference_assets = builder.inference_assets(os_name, "aarch64" if target.startswith("aarch64-") else "x86_64") if builder.int8_version(version) else {}
+    required.update(inference_assets)
+    if builder.int8_version(version):
+        builder.load_script("int8-policy").verify_embedded(receipt.get("embedded_models", {}))
     bundle_signatures = {"AIRK.app/Contents/_CodeSignature/CodeResources", "AIRK.app/Contents/CodeResources"} if bundle_files else set()
     if signed:
         required.update(bundle_signatures)
@@ -121,6 +125,12 @@ def verify_native(directory, target, commit, version, signed):
         for name, expected in bundle_files.items():
             if zipped.read(name) != expected:
                 raise ValueError("Mac service bundle resources differ")
+        for name, row in inference_assets.items():
+            if row.get("macho_payload_sha256"):
+                if zipped.getinfo(name).file_size > 64 << 20 or builder.load_script("macho-identity").payload_digest(zipped.read(name)) != row["macho_payload_sha256"]:
+                    raise ValueError("Signed inference library content differs")
+            elif payload.get(name) != row["sha256"]:
+                raise ValueError("Inference library/notice digest differs")
         if paired:
             install = json.loads(zipped.read("airk-install.json"))
             pair = json.loads(zipped.read("airk-runtime.json"))
@@ -142,7 +152,7 @@ def verify_native(directory, target, commit, version, signed):
                     or signing.get("cargo_lock_sha256") != receipt["cargo_lock_sha256"]
                     or signing.get("install_manifest_sha256") != payload["airk-install.json"]
                     or not re.fullmatch(r"[0-9a-f]{64}", signing.get("source_install_sha256", ""))
-                    or set(signing.get("components", {})) != {executable, helper}):
+                    or set(signing.get("components", {})) != set(builder.signing_names(os_name, version))):
                 raise ValueError("Pair signing receipt does not bind this build")
             components = signing["components"]
             if bundle_files and not signer.stapled_app_ticket(components):

@@ -266,9 +266,6 @@ fn paired_offline_setup_shares_default_assets_and_preserves_explicit_custom_inpu
             custom.join(name.filename()),
         )?;
     }
-    let mut definition: Value = serde_json::from_slice(&fs::read(custom.join("model.json"))?)?;
-    definition["max_tokens"] = 128.into();
-    fs::write(custom.join("model.json"), serde_json::to_vec(&definition)?)?;
     let original_definition = fs::read(custom.join("model.json"))?;
     let configured = common::configure_cli(
         &service,
@@ -280,6 +277,22 @@ fn paired_offline_setup_shares_default_assets_and_preserves_explicit_custom_inpu
     assert_eq!(configured.state, JobState::Succeeded);
     service.wait(enqueue(service.project.binding).id);
     assert_eq!(fs::read(custom.join("model.json"))?, original_definition);
+    // An edited ONNX definition must fail before replacing the working model.
+    let mut definition: Value = serde_json::from_slice(&original_definition)?;
+    definition["max_tokens"] = 128.into();
+    let edited_definition = serde_json::to_vec(&definition)?;
+    fs::write(custom.join("model.json"), &edited_definition)?;
+    let rejected = common::configure_cli(
+        &service,
+        root.path(),
+        data.path(),
+        "one",
+        serde_json::json!({"operation":"install_model","directory":custom}),
+    )?;
+    assert_eq!(rejected.state, JobState::Failed);
+    assert_eq!(fs::read(custom.join("model.json"))?, edited_definition);
+    installed.verify(1 << 30)?;
+    fs::write(custom.join("model.json"), &original_definition)?;
     fs::write(custom.join("tokenizer.json"), b"broken fixture")?;
     let rejected = common::configure_cli(
         &service,

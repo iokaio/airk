@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
       transformer:
-        description: Download and qualify the pinned Apache-2.0 MiniLM model
+        description: Qualify the bundled Apache-2.0 INT8 MiniLM model
         type: boolean
         default: false
 permissions:
@@ -48,6 +48,8 @@ jobs:
           python-version: '3.11'
       - name: Prepare pinned bundled model build inputs
         run: python scripts/provision-local-model.py --destination target/local-vector-model --download
+      - name: Prepare pinned offline inference libraries
+        run: python scripts/provision-onnx-runtime.py --download
       - name: Build the verified separate native runtime pair
         run: python scripts/build-service-runtime.py --destination artifacts/qualification/runtime --profile release
       - name: Fixed corpus scale and optional pinned public repository
@@ -64,12 +66,9 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Scale qualification failed' }
       - name: Abrupt process termination and atomic recovery
         run: python scripts/check-publication-faults.py --binary artifacts/qualification/runtime/${{ matrix.executable }} --output artifacts/qualification/process-faults.json
-      - name: Provision pinned model only when explicitly selected
-        if: ${{ inputs.transformer }}
-        run: python scripts/provision-local-model.py --destination artifacts/qualification/model --download
       - name: Qualify real transformer publication and retrieval
         if: ${{ inputs.transformer }}
-        run: python scripts/check-transformer-model.py --binary artifacts/qualification/runtime/${{ matrix.executable }} --model-dir artifacts/qualification/model --report artifacts/qualification/transformer.json
+        run: python scripts/check-transformer-model.py --binary artifacts/qualification/runtime/${{ matrix.executable }} --report artifacts/qualification/transformer.json
       - name: Retain numeric qualification reports only
         if: ${{ always() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
