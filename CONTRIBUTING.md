@@ -20,7 +20,8 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
 python scripts/check-service-clients.py --runtime-dir target/service-runtime --files 16 --model
 pwsh -NoProfile -File scripts/check-repo.ps1
-python scripts/license-notices.py --output target/notices
+python scripts/license-notices.py --output target/notices --release
+python scripts/dependency-audit.py
 python -m unittest discover -s scripts/tests -v
 git diff --check
 ```
@@ -46,7 +47,7 @@ With Docker available, use `docker build --target test -t airk:local-test .` for
 
 ## Candidate and release versions
 
-Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch is synchronized at **1.7.3** across the Rust workspace/local lock entries, extension manifest and npm lock entries. Verify with `python scripts/release-version.py check --expected 1.7.3`. Do not repeat this bump for the same change or relabel tested binaries after qualification. Installer-only local testing does not waive full main CI before publishing.
+Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch is synchronized at **1.7.4** across the Rust workspace/local lock entries, extension manifest and npm lock entries. Verify with `python scripts/release-version.py check --expected 1.7.4`. Do not repeat this bump for the same change or relabel tested binaries after qualification. Installer-only local testing does not waive full main CI before publishing.
 
 ## Submitting
 

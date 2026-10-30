@@ -1,10 +1,10 @@
 # Native VS Code extension
 
-**1.7.3 stable release candidate:** [Marketplace image links and release promotion](releases/release-1.7.3.md).
+**1.7.4 stable release candidate:** [first-use review, native execution control, uninstall cleanup and data purge](releases/release-1.7.4.md). Published 1.7.3: [Marketplace image links and release promotion](releases/release-1.7.3.md).
 
 Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order and pending extension replacement may still require Reload Window.
 
-The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; the current source candidate is **1.7.3**.
+The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed, and the current source candidate is **1.7.4**.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 
@@ -14,11 +14,50 @@ The Workbench development catalog exposes 28 tools, including read-only `parse` 
 
 ## Installation and evidence privacy
 
-In a trusted workspace, automatic setup installs the bundled runtime and CLI, updates user PATH or marked shell-profile blocks, and registers folders for background indexing. The service can continue indexing after the editor closes; login startup is a separate opt-in. `airk.cli.autoInstall: false` prevents automatic installation and registration, but discovery can still run the bundled native executable to inspect its location and self-test. Use an isolated OS environment when evaluating untrusted binaries.
+In a trusted workspace, automatic setup:
 
-Hidden files can be indexed unless excluded by ignore rules. AIRK is not a secret scanner: credentials in ordinary source, JSON or configuration files can enter retained index objects and retrieved excerpts. Review source selection and `.airkignore` before indexing. Workbench sessions can retain result excerpts; disable `airk.workbench.persistResults` and clear saved results if those copies are unwanted. Evidence returned to a connected agent is subject to that agent's provider policies.
+- installs the bundled runtime and CLI;
+- updates the user PATH or adds marked shell-profile blocks;
+- registers folders for background indexing.
 
-Use private, user-owned storage. Newly created Unix storage directories use mode 0700, but AIRK does not tighten permissions or verify ownership of an existing custom storage root. A shared/permissive root may expose source-derived database content to other local accounts. Permission enforcement for existing roots is deferred to a separate compatibility-reviewed change. Uninstall preserves native index data and may leave shell/PATH integration; successful extension cleanup attempts to remove Workbench sessions. Explicit data removal, exports, backups and evidence already sent to agents require separate attention.
+Before the first installation, 1.7.4 shows a [first-use review](#first-use-review-174) of these effects and lets you defer or decline them. The service can keep indexing after the editor closes; login startup is a separate opt-in. Use an isolated OS environment when evaluating untrusted binaries.
+
+### Native execution control
+
+`airk.runtime.nativeExecution: false` (User settings only) stops the extension from starting any AIRK process. That covers discovery and self-tests, the service, MCP sessions, tools, usage reports and MCP server definitions. Views report that native execution is off rather than guessing native status. Run **AIRK: Enable Native Execution** to resume the normal verified-runtime path. `airk.cli.autoInstall: false` is narrower: it skips installation and registration, but discovery still runs the bundled executable. Neither setting is a sandbox or isolates the operating-system account. The Explorer Assistance endpoint runs inside the editor and follows `airk.explorer.assistance.enabled`.
+
+### Sensitive files and saved evidence
+
+Hidden files can be indexed unless ignore rules exclude them. AIRK is not a secret scanner: credentials in ordinary source, JSON or configuration files can end up in retained index objects and retrieved excerpts.
+
+- **Hard exclusions.** `.git`, `.ssh`, `.aws`, `.env` and `.env.*`, `*.pem`, `*.key`, `node_modules`, `target`, `.venv` and `__pycache__` are always skipped.
+- **Credential defaults (1.7.4).** These are skipped unless an ignore-file negation such as `!.npmrc` re-includes them: `.npmrc`, `.netrc`/`_netrc`, `.pypirc`, `.git-credentials`, the private keys `id_rsa`, `id_dsa`, `id_ecdsa` and `id_ed25519` (public `.pub` keys are indexed), `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `kubeconfig`, `.kube/config`, `*.tfstate` and `*.tfstate.backup`, and `.docker/config.json`.
+
+Review source selection and `.airkignore` before indexing.
+
+Workbench sessions can keep result excerpts. Turning off `airk.workbench.persistResults` strips saved excerpts in every project, and turning off `airk.workbench.persistSessions` deletes saved sessions in every project. Evidence returned to a connected agent is subject to that agent provider's policies.
+
+### Retiring sensitive data that was already indexed
+
+1. Add an ignore rule (for example `secrets.json` in `.airkignore`), then update the index. Changes to ignore files trigger a full rescan, which removes the file from the current publication.
+2. For a complete purge of a project's index, unregister it in Management or through **AIRK: Review and Remove AIRK Data**. This deletes its index and saved settings and leaves source files untouched.
+3. Clear Workbench sessions with **AIRK: Clear Workbench Sessions**, or turn persistence off.
+
+Deletion is logical. It does not erase filesystem backups, relocated or copied roots, exports, or evidence already sent to an agent provider.
+
+### Storage privacy
+
+Indexes hold source-derived text. On Unix, AIRK creates new storage directories with mode 0700. An existing storage root is accepted only when it, or one of its ancestors, is owned by your account and grants no group or other access. Otherwise registration, storage preparation and project startup fail with `storage_not_private`. AIRK never changes the permissions of a directory it did not create: choose a private directory, or restrict it yourself (for example with `chmod 700`). POSIX ACLs are not evaluated. Windows storage relies on the inherited profile ACL and is not checked.
+
+### Data inventory and purge
+
+**AIRK: Review and Remove AIRK Data**, or `airk runtime inventory --install-dir <dir>`, lists AIRK-owned locations (logs, cache, data, state, install, launcher, configuration) with bounded sizes, every recorded project index root, and what the inventory cannot see. The command never deletes anything by itself.
+
+- **Logs and caches** can be purged after reviewing an exact plan: run `airk runtime purge --select stable:logs`, then repeat it with `--confirm <plan_digest>`. The AIRK service must be stopped first. Links are never followed, and the location roots remain.
+- **Project indexes** are removed only through the project removal contract (Management's unregister).
+- **Runtime payloads** are removed by `airk runtime uninstall`.
+
+Uninstall preserves index data; see [removing the terminal command and uninstalling](#removing-the-terminal-command-and-uninstalling).
 
 ## AIRK Explorer (1.5.9 development)
 
@@ -85,7 +124,7 @@ Each trusted window publishes a private attachment endpoint (a named pipe on Win
 
 **Open AIRK Tools** on each dashboard collection, or **AIRK: Open AIRK Tools** in the Command Palette, opens an interactive console in the Terminal panel. It launches the verified bundled helper directly with that collection's root and storage. Enter `list`, `help airk_search`, `call airk_status`, or `exit`. [Direct MCP tool access](mcp.md#call-tools-without-a-coding-agent) documents JSON/file arguments and standalone equivalents. Trust is required; the console does not trigger indexing. Existing consoles close when their collection bindings change or the extension shuts down.
 
-An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in release version is 1.6.4; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
+An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in release version is 1.7.4; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
 
 [Deployment and packaging](extension-deployment.md) adapts VCP's delivery practices; [CI](ci-and-builds.md) builds matching native and extension candidates on all three operating systems. Actual observed checks remain in [validation](validation.md).
 
@@ -93,20 +132,68 @@ An independent thin native-helper extension is implemented under [packages/vscod
 
 New vector-model setup asks the native helper for its CPU capabilities and pinned model catalog before installing its embedded assets offline. Version 1.6 selects unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64; prior semantic state is rebuilt. `airk model-catalog` inspects the choice offline without opening collection/model state. [CPU selection and offline provisioning](onnx-models.md) describe the implemented optimization.
 
-On first trusted activation, the extension copies its verified native helper to a stable `cli/bin` directory under its per-user extension storage. The executable is `airk.exe` on Windows and `airk` on macOS/Linux. Updates replace that copy atomically; the directory does not contain an extension version. No Cargo, Rust, administrator permission or system-wide installation is needed. Installation runs when the extension activates, not while VS Code is closed after a VSIX download.
+### First-use review (1.7.4)
+
+Before the first runtime installation on a machine, a trusted window asks **Set up AIRK on this computer?** and shows what setup will change:
+
+- where indexes are stored;
+- which folders will be registered for background indexing;
+- that indexing continues after windows close, and that login startup is a separate opt-in;
+- the shell or PATH change;
+- possible updates to existing AIRK agent entries;
+- that hidden files can be indexed (see `.airkignore`).
+
+The choices are:
+
+- **Set up** installs as described.
+- **Customize…** lets you deselect folders or the external terminal command.
+- **Not now** saves a deferral. Nothing is installed, edited or registered until you run **AIRK: Set Up** or **AIRK: Install or Repair CLI**.
+- **Don't set up automatically** sets `airk.cli.autoInstall` to `false`.
+
+The review is not shown again when an existing installation or a managed (organization) runtime is found. A home folder or a filesystem/volume root is never registered automatically: it is unchecked in **Customize…**, and otherwise needs **Add Project**. A folder you leave out is remembered and is not registered on later activations.
+
+### Terminal command
+
+Setup publishes a small wrapper, `service-cli/bin/airk` on macOS/Linux or `service-cli/bin/airk.cmd` on Windows, under the extension's per-user global storage. The wrapper forwards every argument to the native installation's version-free launcher. It is not a copy of the engine. Updates rewrite it atomically, and the directory does not contain an extension version. No Cargo, Rust, administrator permission or system-wide installation is needed. Releases before 1.6 copied an executable to `cli/bin`. That layout is retired: setup removes an old copy, and uninstall also removes old profile blocks and PATH entries for it.
 
 The dashboard's **Use AIRK in your terminal** note starts with `airk --help`, reports setup status, and offers **Install or repair CLI**. The Command Palette also exposes **AIRK: Install or Repair CLI**. A CLI setup failure is logged and shown separately; it does not stop indexing or the collection-scoped tools console.
 
-- **VS Code terminals:** the extension contributes the stable directory through VS Code's terminal environment collection. Open a new terminal after activation.
-- **Windows external terminals:** setup appends the directory to the current user's registry PATH, preserving existing entries, expandable variables and the registry value type. It broadcasts the environment change. Restart Windows Terminal/PowerShell or sign out and back in if a new tab still inherits the old environment.
-- **macOS/Linux external terminals:** setup appends guarded PATH blocks to `.profile`, `.bashrc`, the first existing `.bash_profile`/`.bash_login`, `.zprofile`, `.zshrc`, and fish's `conf.d/airk-path.fish`. It honors absolute `ZDOTDIR` and `XDG_CONFIG_HOME`. Existing commands are preserved and repeated setup does not append duplicate blocks. Open a new shell after setup. Other shells or profiles that exit early may need manual PATH configuration.
-- **Remote workspaces:** installation and PATH changes occur on the extension host (SSH host, WSL distribution or container), not automatically on the local desktop too.
+- **VS Code terminals:** the extension adds the wrapper directory through VS Code's terminal environment collection. Open a new terminal after activation.
+- **Windows external terminals:** setup **prepends** the wrapper directory to the current user's registry PATH (`HKCU\Environment\Path`). It preserves existing entries, unexpanded variables and the registry value type, then broadcasts the environment change. Restart Windows Terminal or PowerShell, or sign out and back in, if a new tab still inherits the old environment.
+- **macOS/Linux external terminals:** `airk.cli.shellIntegration` controls which startup files are edited.
+  - `auto` (the default) appends a marked `# AIRK CLI PATH` block to `.profile`, to the startup files of your current `$SHELL`, and to any Bash, Zsh or fish startup files that already exist. It honors an absolute `ZDOTDIR` and `XDG_CONFIG_HOME`, and never creates profiles for shells you do not use.
+  - `all` keeps the 1.7.3 behavior and also edits `.bashrc`, `.zprofile`, `.zshrc` and fish's `conf.d/airk-path.fish`.
+  - `off` changes no startup file or user PATH. In that case the command works only in VS Code terminals.
 
-Set `airk.cli.autoInstall` to `false` in **User** settings before activation to skip automatic setup. Workspace values cannot override that choice. This stops future automatic installation; it does not remove an existing CLI or PATH entries. Explicit **Install or Repair CLI** still works. Source collection settings are never baked into this executable: ordinary CLI commands retain their native workspace/storage defaults. Use **Open AIRK Tools** to target an extension-managed collection with its existing root, storage and collection arguments.
+  Existing commands are preserved, and repeated setup does not append duplicate blocks. Open a new shell after setup.
+- **Remote workspaces:** installation and PATH changes happen on the extension host (an SSH host, WSL distribution or container), not on the local desktop.
 
-If Windows locks a running CLI during an update, the previous executable remains intact and setup reports failure. Close that process and run **Install or Repair CLI**. Redirected/non-file shell startup files are reported for manual configuration rather than overwritten. Existing aliases or another `airk` earlier on PATH can still select an older executable; inspect `Get-Command airk -All` in PowerShell or `command -v airk` in a POSIX shell and remove the stale alias or entry.
+Set `airk.cli.autoInstall` to `false` in **User** settings before activation to skip automatic setup; workspace values cannot override that choice. Disabling it stops future automatic installation, but trusted windows still run the bundled executable for `runtime self-test` and `runtime location`. To start no AIRK process at all, see [native execution control](#native-execution-control). An explicit **Install or Repair CLI** still works. Source collection settings are never baked into the command: ordinary CLI commands keep their native workspace and storage defaults. Use **Open AIRK Tools** to target an extension-managed collection with its existing root, storage and collection arguments.
 
-VS Code has no general extension-uninstall hook for reversing user shell changes. To remove this CLI, disable automatic setup, remove its `cli/bin` entry from Windows user PATH or remove the marked `# AIRK CLI PATH` blocks from your shell profiles, and delete only the extension storage's `cli` directory. Uninstalling the extension removes its VS Code terminal environment contribution; user PATH/profile edits and the cached executable may remain. Do not delete the sibling indexes directory to remove the CLI.
+If Windows locks a running CLI during an update, the previous executable remains intact and setup reports a failure. Close that process and run **Install or Repair CLI**. Redirected or non-file shell startup files are reported for manual configuration rather than overwritten. An alias, or another `airk` earlier on PATH, can still select an older executable. Inspect `Get-Command airk -All` in PowerShell or `command -v airk` in a POSIX shell, and remove the stale alias or entry.
+
+### Removing the terminal command and uninstalling
+
+**AIRK: Remove Terminal Command** removes AIRK-owned PATH integration from external shells now: the exact `# AIRK CLI PATH` blocks it wrote, or the matching user PATH entries on Windows. It also sets `airk.cli.shellIntegration` to `off` so later setup does not add them again. The wrapper stays so that VS Code terminals keep working. A block you edited, or a redirected or hard-linked profile, is preserved and reported.
+
+Uninstalling the extension runs its `vscode:uninstall` hook the next time VS Code starts. The hook copies the verified engine to a private temporary `airk-uninstall-*` directory and starts a detached cleanup worker. It prints that directory, which holds `cleanup.log`, `result.json` and `README.txt`. The worker:
+
+- first records `state: started`;
+- removes recorded AIRK agent entries in project files;
+- runs `airk runtime uninstall`, which stops the service and removes the runtime payloads and the launcher;
+- removes the AIRK-owned PATH entries, profile blocks and wrapper, and the Workbench sessions;
+- writes `complete` or `needs_attention`.
+
+The result is also mirrored to `extension-uninstall/last-result.json` in the native state directory, which survives uninstall. A `started` result with no running worker means the cleanup was interrupted; it is never reported as success. Reinstall AIRK and run **AIRK: Show Last Uninstall Result**, or read the files above. A later activation warns once when the last cleanup needs attention.
+
+Uninstall deliberately preserves:
+
+- project index data and service metadata;
+- user-wide agent configurations you added manually;
+- the temporary diagnostics directory;
+- exports, backups and evidence already sent to agent providers.
+
+To remove index data first, use **AIRK: Review and Remove AIRK Data** or unregister projects in Management (see [installation and evidence privacy](#installation-and-evidence-privacy)). To remove only the command manually, delete the marked blocks or PATH entry and the extension storage's `service-cli` (or legacy `cli`) directory. Do not delete the sibling index directories just to remove the command.
 
 Windows tests exercise executable discovery and registry-value handling through an isolated registry double. POSIX profile-generation fixtures run on Windows; execution fixtures run on POSIX hosts. These checks do not establish clean-machine macOS/Linux, remote-host or installed-editor qualification.
 

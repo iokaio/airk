@@ -1,0 +1,22 @@
+# Response to repository review 02
+
+Date: 2026-10-30. This response covers the 1.7.4 stable release candidate on `fix/extreview02`. The [review 02 drafts](review02/README.md) were written against commit `c62c1e6936500801dbf41dffdd6e21453e48335d` (1.7.2) and are kept unchanged as a dated historical record, apart from one corrected link. Items already fixed in 1.7.3 are described in the [review 01 response](reporeview01-response.md).
+
+Drafts 01, 02 and 13 were marked for private security review. By the maintainer's decision they are published together with their fixes in this release: 01 is patched and its advisory is public, and the residual behavior of 02 and 13 is addressed here.
+
+| Draft | Outcome in 1.7.4 | Remaining |
+|---|---|---|
+| 01 XML attribute CPU | quick-xml 0.41.0 and the 1,024-attribute limit came in 1.7.3. 1.7.4 adds a typed budget error, the `extraction_budget_exceeded` skip code and coverage count, a multi-document test, a repeat-index test, and a service restart test showing bounded rejection, continued progress for other sources and no stall code. Replacement rebuilds now publish around per-file failures. | None known. |
+| 02 Custom storage permissions | Existing Unix roots that other accounts can reach are refused (`storage_not_private`) at registration, storage preparation and worker binding; new roots are created 0700. Permissions are never changed. | The two-account Unix observation has not been run. POSIX and Windows ACLs are not evaluated. |
+| 03 Advisory checks | Audit script, policy, exceptions file and a separate workflow, with tests for detection, a scoped exception, expiry, staleness and scanner failure. | The workflow has not yet run on GitHub. |
+| 04 Dependency findings | Every row has a dated disposition in [dependency advisories](../dependency-advisories.md), and the MSAL advisory was assessed against the OIDC publish job. The fresh audit exits 0. | Exceptions expire 2027-01-31; replacing `pdf-extract` is a separate action. |
+| 05 First-use review | The review, shell scope setting, deferral, decline and per-folder choices are implemented, and home folders and roots need an explicit pick. Covered by extension tests. | Installed-editor walkthrough on each platform. |
+| 06 No native execution | `airk.runtime.nativeExecution` gates every spawn path and MCP definitions; a test asserts no discovery and refusal at the spawn points. The setting description is corrected. | Installed-editor process observation. |
+| 07 Sensitive data | Credential defaults with negation override; a fictional credential test; persistence controls apply to all projects; retirement guidance. | — |
+| 08 Uninstall shell integration | Owned PATH entries, profile blocks and wrappers are removed on uninstall and by command; modified files are preserved. Tests use a registry double and POSIX profile fixtures. | Real uninstall on each platform. |
+| 09 Retained data purge | Read-only inventory, plan-digest purge of logs and caches, and a review command. Project indexes go through unregister. | Purge does not cover custom roots outside recorded projects. |
+| 10 Uninstall completion | `started` is written first, plus a README and a durable mirror; interrupted runs are reported, never shown as success. | Installed-editor tests with a held file, a refusal and an interrupted worker. |
+| 11 Published package verification | Verifier script and procedure. Evidence for published 1.7.3 Windows x64 is in [release verification](../release-verification.md). | The other three platforms and the Marketplace copy. |
+| 12 License disposition | Maintainer dispositions recorded for the three exact versions and enforced for sealed payloads. | — |
+| 13 Windows Assistance IPC | Investigation found the development machine's profile ACL granting a `CodexSandboxUsers` group read access to the descriptor directory, which holds the credential. The extension now restricts that directory and the forwarder refuses broader ACLs. | Two-account connection test. Node still cannot set the pipe ACL; the credential remains the pipe's authentication. |
+| 14 CLI documentation | The CLI section of the extension guide now describes the wrapper path, the PATH prepend, the uninstall hook and worker, automatic cleanup and the manual fallback. | — |
