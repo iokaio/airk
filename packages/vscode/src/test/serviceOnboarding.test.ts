@@ -366,3 +366,28 @@ test('an uninstall that never wrote a final result is reported as interrupted, n
         assert.ok(f.warnings.some(message=>message.includes('did not finish cleanly')));
     }finally{await f.close();}
 });
+
+test('data review is read-only until a plan digest is confirmed and never deletes project indexes directly',async context=>{
+    const bootstrap=require('../serviceBootstrap') as typeof import('../serviceBootstrap');
+    const f=await serviceTestHost(context);
+    const calls:string[][]=[];
+    context.mock.method(bootstrap,'nativeRunner',async(_main:string,args:string[])=>{
+        calls.push(args);
+        if(args[1]==='inventory')return {protocol:1,incomplete:false,not_covered:['exports'],projects:[{collection:'fixture',root:'/src',data_root:'/data'}],
+            locations:[{id:'stable:logs',kind:'logs',path:'/logs',exists:true,bytes:1048576,complete:true,purge:'purgeable',consequence:'Deletes logs.'},
+                {id:'stable:data',kind:'data',path:'/data',exists:true,bytes:1,complete:true,purge:'requires_project_removal',consequence:'Indexes.'}]};
+        if(args.includes('--confirm'))return {protocol:1,purged:[{id:'stable:logs',path:'/logs',files_deleted:3}],retained:[],complete:true};
+        return {protocol:1,plan:[{id:'stable:logs',path:'/logs',bytes:1048576,consequence:'Deletes logs.'}],plan_digest:'ab'.repeat(32)};
+    });
+    try{
+        f.state.pick=items=>items.filter((item:any)=>item.label==='stable:logs'||item.label==='stable:data');
+        f.state.confirm=false;
+        await f.commands.get('airk.reviewData')!();
+        assert.deepEqual(calls.map(args=>args.includes('--confirm')),[false,false],'declining the confirmation deletes nothing');
+        assert.ok(f.calls.some(line=>line.includes('Not removable here')));
+        f.state.confirm=true;calls.length=0;
+        await f.commands.get('airk.reviewData')!();
+        assert.deepEqual(calls.at(-1)!.slice(-2),['--confirm','ab'.repeat(32)]);
+        assert.ok(f.calls.some(line=>line.includes('Deleted 3 files')));
+    }finally{await f.close();}
+});

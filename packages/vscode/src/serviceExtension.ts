@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
 import { collectionId, launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry } from './model';
 import { probeMcp, runText } from './native';
-import { automaticUpgrade, BootstrapObservation, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
+import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError } from './serviceClient';
 import { IntentJournal } from './serviceIntents';
@@ -555,6 +555,41 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();const result=await this.lastUninstall(await this.runtime().discover());
         this.output.appendLine(result?.text??'No AIRK uninstall result is recorded for this user.');this.output.show(true);
     }
+    /** Read-only inventory first; logs/caches are purged only after a reviewed plan digest,
+     * and project indexes go through Management's own unregister confirmation. */
+    async reviewData(run=nativeRunner):Promise<void>{
+        this.trusted();const binding=await this.runtime().ensure();this.trusted();
+        const main=(await this.runtime().discover()).bundle.main;this.trusted();
+        const report=await run(main,['runtime','inventory','--install-dir',binding.installDir],120000);this.trusted();
+        const size=(bytes:unknown)=>typeof bytes==='number'?`${(bytes/1048576).toFixed(1)} MiB`:'size unknown';
+        const items:(vscode.QuickPickItem&{location?:string;project?:boolean})[]=[];
+        for(const raw of Array.isArray(report.locations)?report.locations:[]){
+            const location=record(raw);if(location.exists!==true)continue;
+            items.push({label:String(location.id),description:String(location.path),detail:`${size(location.bytes)}${location.complete===false?' (partial count)':''} · ${String(location.consequence)}`,
+                ...(location.purge==='purgeable'?{location:String(location.id)}:{}),picked:false});
+        }
+        for(const raw of Array.isArray(report.projects)?report.projects:[]){
+            const project=record(raw);
+            items.push({label:`Project index: ${String(project.collection)}`,description:String(project.root),detail:`Index at ${String(project.data_root)} · removal opens Management for its own confirmation`,project:true,picked:false});
+        }
+        for(const line of [`AIRK data inventory${report.incomplete===true?' (incomplete)':''}:`,...items.map(item=>`  ${item.label}: ${item.description} — ${item.detail}`),
+            ...(Array.isArray(report.not_covered)?report.not_covered.map(value=>`  Not covered: ${String(value)}`):[])])this.output.appendLine(line);
+        const picked=await vscode.window.showQuickPick(items,{canPickMany:true,title:'Review AIRK data (nothing is removed until you confirm)'});this.trusted();
+        if(!picked?.length)return;
+        if(picked.some(item=>item.project))await this.showManagement('#manage/projects');
+        const select=picked.flatMap(item=>item.location?[item.location]:[]);
+        const refused=picked.filter(item=>!item.location&&!item.project).map(item=>item.label);
+        if(refused.length)this.output.appendLine(`Not removable here (see consequences above): ${refused.join(', ')}`);
+        if(!select.length)return;
+        const plan=await run(main,['runtime','purge','--install-dir',binding.installDir,...select.flatMap(id=>['--select',id])],120000);this.trusted();
+        const detail=(Array.isArray(plan.plan)?plan.plan:[]).map(raw=>{const item=record(raw);return `${String(item.id)}: ${String(item.path)} (${size(item.bytes)})\n${String(item.consequence)}`;}).join('\n\n');
+        if(await vscode.window.showWarningMessage('Delete the contents of these AIRK locations?',{modal:true,detail:`${detail}\n\nThe AIRK service must be stopped. This is logical deletion, not secure erasure.`},'Delete')!=='Delete')return;
+        this.trusted();
+        const result=await run(main,['runtime','purge','--install-dir',binding.installDir,...select.flatMap(id=>['--select',id]),'--confirm',String(plan.plan_digest)],300000);
+        for(const raw of Array.isArray(result.purged)?result.purged:[]){const item=record(raw);this.output.appendLine(`Deleted ${String(item.files_deleted)} files from ${String(item.path)}`);}
+        for(const line of Array.isArray(result.retained)?result.retained:[])this.output.appendLine(`Retained: ${String(line)}`);
+        this.output.show(true);
+    }
     /** Remove external-shell PATH integration now; VS Code terminals keep the command. */
     async removeTerminalCommand():Promise<void>{
         const choice=await vscode.window.showWarningMessage('Remove the airk command from external terminals?',{modal:true,
@@ -931,6 +966,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.setUp=()=>controller.repairInstallation();
     commands.removeTerminalCommand=()=>controller.removeTerminalCommand();
     commands.showLastUninstallResult=()=>controller.showLastUninstallResult();
+    commands.reviewData=()=>controller.reviewData();
     commands.retryUpdate=()=>controller.retryUpdate();
     commands.reloadUpdatedExtension=()=>controller.reloadUpdatedExtension();
     commands.openTools=()=>controller.openTools();

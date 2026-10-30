@@ -279,6 +279,11 @@
         "category": "AIRK"
       },
       {
+        "command": "airk.reviewData",
+        "title": "Review and Remove AIRK Data",
+        "category": "AIRK"
+      },
+      {
         "command": "airk.openTools",
         "title": "Open AIRK Tools",
         "category": "AIRK",
