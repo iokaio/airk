@@ -151,7 +151,7 @@ async function build() {
     checkInputs('Uninstall', uninstall.metafile, ['src/uninstallHook.ts', 'src/extensionUninstall.ts', 'src/serviceBootstrap.ts',
         'src/native.ts', 'src/nativeGate.ts', 'src/cliInstall.ts', 'src/cliRemove.ts', 'src/serviceClient.ts', 'src/mcpStdioSession.ts', 'src/model.ts', 'src/explorerContracts.ts', 'src/explorerRoutes.ts',
         'src/agentMigration.ts', 'src/unifiedAgentConfig.ts', 'src/explorerAssistanceLaunch.ts', 'src/agentConfig.ts',
-        'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts',
+        'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts', 'src/privateDirectory.ts',
         /^node_modules\/jsonc-parser\//]);
 }
 

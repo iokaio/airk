@@ -15,6 +15,12 @@ Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and 
 - **Extraction budgets and rebuilds (contract change).** Skip reports carry a `code`, and coverage reports `extraction_budget_exceeded`. A replacement rebuild may now publish when its only incomplete measurement is per-file extraction failures, which remain reported. The job outcome itself does not carry the count; read it from coverage. The eligibility policy version is bumped, so cached coverage inventories refresh once.
 - **Explorer Assistance on Windows.** The extension replaces inherited ACL entries on its descriptor directory with the current user, SYSTEM and Administrators. The native forwarder refuses a launch descriptor that other accounts can read.
 
+## Headless use
+
+- `build.ps1` and `build.sh` at the repository root build an installation-free runtime for the build host under `builds/<UTC timestamp>-<platform>/` (`builds/` is ignored by Git). The generated README explains each process and a VS Code-free test setup. These builds are unsigned and for experiments only.
+- `airk --help` now carries a guide written for people and agents: how the service and its workers fit together, how to select a project, a headless quick start, and how to learn the tools. Command descriptions now say what each command does. The same text reaches agents through `airk_help`.
+- [Running AIRK headless](../headless-cli.md) maps every extension feature to the CLI. Guarded maintenance plans (rebuild, repair and verify previews) are still only available through raw `service rpc` JSON.
+
 ## Release and dependency controls
 
 - `scripts/dependency-audit.py` and the separate dependency audit workflow check both lockfiles against advisory databases. Dated dispositions are recorded in [dependency advisories](../dependency-advisories.md): the unmaintained `paste` and `ttf-parser` crates are covered by exceptions until 2027-01-31, and the MSAL advisory was assessed against the Marketplace publish job. Routine CI is unchanged.

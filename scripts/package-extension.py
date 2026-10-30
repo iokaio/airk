@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 EXTENSION = ROOT / "packages" / "vscode"
 TARGETS = {"x86_64-pc-windows-msvc": "win32-x64", "x86_64-unknown-linux-gnu": "linux-x64",
            "aarch64-apple-darwin": "darwin-arm64", "x86_64-apple-darwin": "darwin-x64"}
-MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "cliInstall.js",
+MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnosticLogs.js", "diagnosticCaptures.js", "serviceExtension.js", "serviceDashboard.js", "serviceWorkspace.js", "model.js", "native.js", "nativeGate.js", "cliInstall.js", "cliRemove.js", "privateDirectory.js",
            "usagePanel.js", "usageReport.js", "report.js",
            "agentConnections.js", "agentConfig.js", "agentMigration.js", "unifiedAgentConfig.js", "agentSetup.js", "serviceBootstrap.js", "serviceClient.js",
            "serviceConsole.js", "serviceConsoleController.js", "serviceConsoleView.js", "serviceIntents.js",

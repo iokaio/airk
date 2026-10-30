@@ -2,7 +2,6 @@
 // Per-window rendezvous for the Explorer Assistance server. A trusted window listens on
 // a private endpoint and publishes a user-only descriptor with a rotating credential;
 // the server reads it at connect time. Requests are typed; nothing here runs commands.
-import * as childProcess from 'node:child_process';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as net from 'node:net';
@@ -11,6 +10,7 @@ import * as path from 'node:path';
 import { ASSISTANCE_IPC_LIMIT, type AssistanceIpcReply, type AssistanceWindowStatus, type ExplorerHandoff, parseWindowDescriptor, WINDOW_DESCRIPTOR_LIMIT, WINDOW_SCHEMA, type WindowDescriptor } from './explorerContracts';
 import { DRAFT_KINDS, type DraftKind } from './explorerDrafts';
 import type { DraftClient, Submission, SuggestionStore } from './explorerSuggestions';
+import { restrictWindowsDirectory } from './privateDirectory';
 
 export const DESCRIPTOR_TTL_MS = 30 * 60_000;
 export const ROTATE_MS = 10 * 60_000;
@@ -34,20 +34,6 @@ export interface AssistanceHostPort {
 }
 
 export const windowsDirectory = (directory: string) => path.join(directory, 'windows');
-
-const restricted = new Set<string>();
-/** Windows ignores POSIX modes and profile ACLs may grant extra groups (for example
- * sandbox or backup accounts). Replace inherited entries with the current user,
- * SYSTEM and Administrators so descriptors and credentials stay private. */
-export function restrictWindowsDirectory(directory: string, run: typeof childProcess.execFileSync = childProcess.execFileSync): void {
-    if (process.platform !== 'win32' || restricted.has(directory)) { return; }
-    const system32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
-    const user = /"(S-1-5-[0-9-]+)"/.exec(String(run(path.join(system32, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true })))?.[1];
-    if (!user) { throw new Error('Could not resolve the current Windows account for the Assistance descriptor ACL.'); }
-    run(path.join(system32, 'icacls.exe'), [directory, '/inheritance:r', '/grant:r', `*${user}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'],
-        { windowsHide: true, stdio: 'ignore' });
-    restricted.add(directory);
-}
 
 /** Write a user-only file atomically: temporary sibling, then rename. */
 export function writePrivate(file: string, content: string): void {

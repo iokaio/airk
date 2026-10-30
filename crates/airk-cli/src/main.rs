@@ -29,7 +29,9 @@ struct EvidenceOptions {
 #[command(
     name = "airk",
     version,
-    about = "Artifact Indexing and Retrieval Kernel — native service client"
+    about = "Artifact Indexing and Retrieval Kernel — native service client",
+    long_about = "Artifact Indexing and Retrieval Kernel: local, read-only code and document retrieval through a native service. Run `airk --help` (not -h) for the full guide.",
+    after_long_help = include_str!("help_guide.txt")
 )]
 struct Cli {
     #[arg(long, default_value = ".", global = true)]
@@ -62,7 +64,10 @@ enum Command {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Prepare or execute a bounded read-only evidence plan. No source writes.
+    /// Plan, and with --execute run, a multi-step read-only evidence request.
+    ///
+    /// Give a natural-language request with --text, or a structured plan with --request FILE ('-' for stdin).
+    /// Without --execute it only prints the plan; same contract as the MCP `parse` tool. Never writes sources.
     Parse {
         text: Option<String>,
         /// Configured native project binding (alias for global --service-project).
@@ -76,26 +81,34 @@ enum Command {
         #[arg(long, default_value = "")]
         path_prefix: String,
     },
-    /// Read registered project settings through exact bounded direct pages.
+    /// Read one project setting view; read-only.
+    ///
+    /// Views: extraction_policy, vector_selection, vector_status, roots, scan_limits, quota_policy and
+    /// quota_status. --validate-file checks a configuration draft without applying it.
     Settings {
         #[arg(value_parser = ["extraction_policy", "vector_selection", "vector_status", "roots", "scan_limits", "quota_policy", "quota_status"])]
         view: String,
         #[arg(long)]
         validate_file: Option<PathBuf>,
     },
-    /// Submit a guarded project configuration using a bounded native draft.
+    /// Apply a guarded project configuration draft from --file or --stdin (JSON with an "operation").
+    ///
+    /// Examples: {"operation":"unregister"} deletes the project's index and saved settings (sources untouched);
+    /// {"operation":"vectors","enabled":true} turns on semantic search. Prints the accepted job receipt.
     Configure {
         #[arg(long, required_unless_present = "stdin", conflicts_with = "stdin")]
         file: Option<PathBuf>,
         #[arg(long)]
         stdin: bool,
     },
-    /// Collection-scoped reports over the direct native worker connection.
+    /// Local usage reporting for the selected project: report, policy, configure (mode), clear, feedback, import, calibrate.
     Usage {
         #[command(subcommand)]
         action: UsageCommand,
     },
-    /// Manage an approved offline service runtime.
+    /// Installed-runtime lifecycle: location, inspect, ensure, start, login, uninstall, inventory, purge and repair.
+    ///
+    /// The VS Code extension uses these; headless experiments can instead run `airk serve` from a local build.
     Runtime {
         #[command(subcommand)]
         action: airk_cli::runtime_install::RuntimeCommand,
@@ -108,14 +121,16 @@ enum Command {
     SourceWorker,
     #[command(hide = true)]
     ProcessGuardian,
-    /// Read-only service adapter for Bridge.
+    /// Internal read-only adapter used by trusted launchers.
     Bridge {
         #[arg(long)]
         runtime_dir: PathBuf,
         #[arg(long)]
         project: airk_core::service::ProjectBinding,
     },
-    /// Private native control loop for an explicit service runtime.
+    /// Run the AIRK service in the foreground for a private control directory (created if missing).
+    ///
+    /// It owns the project registry, job queue and worker processes. Stop it with `airk service shutdown`.
     Serve {
         #[arg(long)]
         runtime_dir: PathBuf,
@@ -123,7 +138,7 @@ enum Command {
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..=3600))]
         idle_exit_seconds: Option<u64>,
     },
-    /// Read-only service adapter for ModelCatalog.
+    /// Print the offline model catalog and the CPU-based model choice for this machine; opens no project state.
     ModelCatalog,
     /// Start the VS Code extension's Explorer Assistance MCP server (help and UI drafts only).
     #[command(hide = true)]
@@ -132,12 +147,15 @@ enum Command {
         #[arg(long)]
         descriptor: PathBuf,
     },
-    /// List, inspect or call the same read-only MCP tools.
+    /// List, describe or call the read-only MCP tools from the terminal.
+    ///
+    /// `tools list --json`, `tools help <tool>` and `tools call <tool> --args '<json>'`.
+    /// Start here to learn every query an agent can make.
     Tools {
         #[command(subcommand)]
         action: tools::ToolsCommand,
     },
-    /// Read-only service adapter for Changes.
+    /// Report indexed changes since a revision token: added, modified and removed files, symbols and documents.
     Changes {
         #[arg(long)]
         since: Option<airk_core::identity::RevisionToken>,
@@ -163,7 +181,7 @@ enum Command {
         #[arg(long)]
         cursor: Option<String>,
     },
-    /// Read-only service adapter for CodeFacts.
+    /// List code facts (definitions, signatures, durable symbol keys) for a symbol or path, with continuation cursors.
     CodeFacts {
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
@@ -187,7 +205,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Read-only service adapter for Relationships.
+    /// Follow indexed relationships of a symbol in --direction, optionally of one --kind, up to --hops levels.
     Relationships {
         symbol: String,
         #[arg(long, default_value = "incoming")]
@@ -203,16 +221,21 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Print a stable-launcher MCP configuration for an existing registration.
+    /// Print the MCP client configuration (command and arguments) for an already registered project.
     Setup {
         #[arg(long,value_enum,default_value_t=SetupClient::Claude)]
         client: SetupClient,
     },
-    /// Register canonical roots and prepare reserved service storage.
+    /// Register --root as a project of the installed runtime and prepare its index storage.
+    ///
+    /// For a service you started with `airk serve`, use `airk service register --runtime-dir <control>` instead.
     Init,
-    /// Read the registered project status through the direct client.
+    /// Print the project's publication, freshness, coverage and job status.
     Status,
-    /// Read-only service adapter for Search.
+    /// Search indexed evidence; results carry file, line and revision citations.
+    ///
+    /// Default mode is lexical (all words must appear). --mode vector or hybrid uses the local embedding
+    /// model when the project has vectors enabled (see `setup-model` and `configure`).
     Search {
         query: String,
         #[arg(long, value_enum, conflicts_with = "semantic")]
@@ -227,7 +250,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Read-only service adapter for Files.
+    /// List indexed files under --prefix, with continuation cursors.
     Files {
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
@@ -239,7 +262,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Read-only service adapter for Read.
+    /// Read an indexed file's lines (--start-line/--end-line) from the published revision, with a citation.
     Read {
         #[command(flatten)]
         evidence: EvidenceOptions,
@@ -251,7 +274,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Serve read-only MCP through the installed broker and direct project worker.
+    /// Serve the read-only MCP protocol on stdin/stdout for one agent connection (this is what agents launch).
     Mcp {
         /// Optional verified Explorer adapter; native retrieval works without it.
         #[arg(long)]
@@ -269,13 +292,13 @@ enum Command {
         #[arg(long)]
         no_default_project: bool,
     },
-    /// Read-only service adapter for Info.
+    /// Show what the index knows about one file: language, size, extraction method and parse status.
     Info {
         path: String,
         #[command(flatten)]
         evidence: EvidenceOptions,
     },
-    /// Read-only service adapter for Outline.
+    /// Outline one file's structure: symbols, headings and sections with line ranges.
     Outline {
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
@@ -291,7 +314,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Read-only service adapter for Symbol.
+    /// Find symbol definitions by name, optionally filtered by language or path prefix.
     Symbol {
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
@@ -305,7 +328,7 @@ enum Command {
         #[arg(long, default_value = "")]
         path_prefix: String,
     },
-    /// Read-only service adapter for Imports.
+    /// List import and dependency statements found under a path prefix.
     Imports {
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
@@ -316,7 +339,7 @@ enum Command {
         #[arg(default_value = "")]
         path_prefix: String,
     },
-    /// Read-only service adapter for Facts.
+    /// List document facts (requirements, dates, decisions, features) extracted from indexed documents.
     Facts {
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
@@ -339,13 +362,13 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Read-only service adapter for Refs.
+    /// Find indexed references to a name under a path prefix.
     Refs {
         name: String,
         #[arg(long, default_value = "")]
         path_prefix: String,
     },
-    /// Read-only service adapter for Context.
+    /// Read lines around --line in a file (--before/--after), with a citation.
     Context {
         #[command(flatten)]
         evidence: EvidenceOptions,
@@ -358,17 +381,22 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Accept durable indexing work for the registered project.
+    /// Queue indexing of the project's sources and print the job receipt. Follow it with `tools call airk_status`.
+    ///
+    /// Full rebuilds (--full) need a guarded maintenance preview through the service instead.
     Index {
         #[arg(long)]
         full: bool,
     },
-    /// Explicit shared bundled-model setup; preserve an existing/custom selection.
+    /// Prepare the bundled offline embedding model for vector search; keeps an existing or custom selection.
     SetupModel,
-    /// Accept a bounded native inspection job.
+    /// Queue a bounded inspection job that refreshes coverage and readiness without reindexing.
     Inspect,
+    /// Pause automatic and queued work for the project; existing evidence stays queryable.
     Pause,
+    /// Resume work paused with `pause`.
     Resume,
+    /// Turn native source watching on or off for the project (on keeps the index current after edits).
     Watch {
         #[arg(value_parser=["on","off"])]
         mode: String,
@@ -383,29 +411,35 @@ enum Command {
 }
 #[derive(Subcommand)]
 enum ServiceCommand {
+    /// Review and retire pre-1.4 startup entries and derived state (explicit, previewed).
     Legacy {
         #[command(subcommand)]
         action: airk_cli::legacy_startup::LegacyCommand,
     },
+    /// Prepare, list, retry or forget durable client requests (jobs and configuration) for a control directory.
     Requests {
         #[arg(long)]
         runtime_dir: PathBuf,
         #[command(subcommand)]
         action: ClientRequestCommand,
     },
+    /// Print the canonical registration for --root/--data-dir/--collection, including its binding. Read-only.
     PrepareRegistration,
+    /// Create the reserved index storage for an already reserved project (owner-only on Unix).
     PrepareStorage {
         #[arg(long)]
         runtime_dir: PathBuf,
         #[arg(long)]
         project: airk_core::service::ProjectBinding,
     },
+    /// Prepare a guarded configuration request for a project; submit it with `requests retry`.
     PrepareConfiguration {
         #[arg(long)]
         runtime_dir: PathBuf,
         #[arg(long)]
         project: airk_core::service::ProjectBinding,
     },
+    /// Persistent JSON management transport on stdin/stdout (used by the VS Code extension).
     Console {
         #[arg(long)]
         runtime_dir: PathBuf,
@@ -413,6 +447,7 @@ enum ServiceCommand {
         #[arg(long)]
         runtime_sha256: Option<airk_core::identity::Sha256Digest>,
     },
+    /// Print recent service log records (--limit), export all retained logs (--all) or the raw job-error ring (--raw).
     Logs {
         #[arg(long)]
         runtime_dir: PathBuf,
@@ -437,10 +472,12 @@ enum ServiceCommand {
         #[arg(long)]
         operation: String,
     },
+    /// Register --root/--data-dir/--collection with the service at --runtime-dir. The data directory must exist.
     Register {
         #[arg(long)]
         runtime_dir: PathBuf,
     },
+    /// Send one raw management request (JSON from --request-file or --stdin) and print the response.
     Rpc {
         #[arg(long)]
         runtime_dir: PathBuf,
@@ -450,10 +487,12 @@ enum ServiceCommand {
         #[arg(long)]
         stdin: bool,
     },
+    /// Check that the service for --runtime-dir is running and healthy; exits non-zero otherwise.
     Health {
         #[arg(long)]
         runtime_dir: PathBuf,
     },
+    /// Ask the service for --runtime-dir to drain its workers and exit.
     Shutdown {
         #[arg(long)]
         runtime_dir: PathBuf,
