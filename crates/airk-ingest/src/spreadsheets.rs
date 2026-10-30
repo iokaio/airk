@@ -98,7 +98,15 @@ pub(crate) fn extract(bytes: &[u8]) -> Result<Extracted> {
         archive.len() <= 10_000,
         "XLSX archive exceeds 10000 entries"
     );
-    let names: BTreeSet<_> = archive.file_names().map(str::to_owned).collect();
+    ensure!(
+        !archive.has_duplicate_names(),
+        "duplicate XLSX archive parts"
+    );
+    let names: BTreeSet<_> = archive
+        .file_names()
+        .map(|name| name.map(|name| name.into_owned()))
+        .collect::<zip::result::ZipResult<_>>()
+        .context("invalid XLSX archive part name")?;
     ensure!(names.len() == archive.len(), "duplicate XLSX archive parts");
     let mut total = 0;
     let workbook_path = if names.contains("_rels/.rels") {
@@ -778,6 +786,71 @@ mod tests {
             writer.write_all(content.as_bytes())?;
         }
         Ok(writer.finish()?.into_inner())
+    }
+
+    #[test]
+    fn legacy_zip_names_preserve_evidence_and_duplicate_parts_fail_early() -> Result<()> {
+        fn archive(names: &[&str]) -> Result<Vec<u8>> {
+            let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+            for name in names {
+                writer.start_file(*name, zip::write::SimpleFileOptions::default())?;
+                writer.write_all(b"<root/>")?;
+            }
+            Ok(writer.finish()?.into_inner())
+        }
+        let base = workbook(
+            r#"<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Requirement</t></is></c></row><row r="2"><c r="A2" t="inlineStr"><is><t>The service must respond.</t></is></c></row></sheetData></worksheet>"#,
+        )?;
+        let reference = extract(&base)?;
+        let mut writer = zip::ZipWriter::new_append(Cursor::new(base))?;
+        writer.start_file("\u{e9}.xml", zip::write::SimpleFileOptions::default())?;
+        writer.write_all(b"<root/>")?;
+        let mut legacy = writer.finish()?.into_inner();
+        let offsets: Vec<_> = legacy
+            .windows(2)
+            .enumerate()
+            .filter_map(|(i, bytes)| (bytes == [0xc3, 0xa9]).then_some(i))
+            .collect();
+        assert_eq!(offsets.len(), 2);
+        for offset in offsets {
+            // Convert the extra member name to valid CP437 in both headers.
+            let flags = if &legacy[offset - 30..offset - 26] == b"PK\x03\x04" {
+                offset - 24
+            } else {
+                assert_eq!(&legacy[offset - 46..offset - 42], b"PK\x01\x02");
+                offset - 38
+            };
+            legacy[flags + 1] &= !0x08; // Clear the UTF-8 filename flag.
+            legacy[offset..offset + 2].copy_from_slice(&[0x82, b'x']);
+        }
+        let result = extract(&legacy)?;
+        assert_eq!(
+            result.chunks.iter().map(|c| &c.text).collect::<Vec<_>>(),
+            reference.chunks.iter().map(|c| &c.text).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            serde_json::to_value(result.facts)?,
+            serde_json::to_value(reference.facts)?
+        );
+
+        let mut duplicate = archive(&["a.xml", "b.xml"])?;
+        let offsets: Vec<_> = duplicate
+            .windows(5)
+            .enumerate()
+            .filter_map(|(i, bytes)| (bytes == b"b.xml").then_some(i))
+            .collect();
+        assert_eq!(offsets.len(), 2);
+        for offset in offsets {
+            duplicate[offset] = b'a';
+        }
+        assert!(
+            format!(
+                "{:#}",
+                extract(&duplicate).err().expect("duplicate part must fail")
+            )
+            .contains("duplicate XLSX archive parts")
+        );
+        Ok(())
     }
 
     #[test]

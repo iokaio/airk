@@ -3,6 +3,7 @@
 import argparse
 from datetime import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -21,11 +22,13 @@ MAIN_TARGETS = TARGETS[3:]
 CONTRACT_HOSTS = ("ubuntu-24.04", "windows-2025", "macos-15", "macos-15-intel")
 
 
+_spec = importlib.util.spec_from_file_location("github_read", Path(__file__).with_name("github-read.py"))
+reads = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(reads)
+
+
 def api(path, paginate=False):
-    command = ["gh", "api", f"repos/{REPOSITORY}/{path}"]
-    if paginate:
-        command += ["--paginate", "--slurp"]
-    return json.loads(subprocess.check_output(command))
+    return reads.get(f"repos/{REPOSITORY}/{path}", paginate=paginate)
 
 
 def positive(value):
@@ -215,6 +218,36 @@ def resolve(commit, run_id=None):
     raise ValueError("No eligible main CI candidate. Run CI manually on this exact main commit, then supply candidate_run_id; no implicit rebuild is performed.")
 
 
+def validate_record(record, commit):
+    """Check a protected preflight record locally, without claiming live origin."""
+    if (record.get("schema") not in ("airk-ci-producer/1", "airk-ci-producer/2")
+            or record.get("repository") != REPOSITORY or record.get("commit") != commit
+            or not re.fullmatch(r"[0-9a-f]{40}", commit)
+            or record.get("event") not in ("push", "workflow_dispatch")):
+        raise ValueError("Invalid pinned producer identity")
+    for key in ("run_id", "attempt", "workflow_id"):
+        positive(record.get(key))
+    artifacts = record.get("artifacts", {})
+    expected = set()
+    for target in TARGETS:
+        owner = record
+        source = commit
+        if record["schema"] == "airk-ci-producer/2" and target in PR_TARGETS:
+            owner = record.get("promotion", {}).get("producer", {})
+            source = owner.get("source_commit", "")
+            if not re.fullmatch(r"[0-9a-f]{40}", source):
+                raise ValueError("Invalid promoted source commit")
+        for kind in ("native", "vsix"):
+            name = f"airk-{kind}-{target}-{source}-{positive(owner.get('run_id'))}-{positive(owner.get('attempt'))}"
+            expected.add(name)
+            artifact = artifacts.get(name, {})
+            positive(artifact.get("id"))
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", "")):
+                raise ValueError("Invalid pinned artifact digest")
+    if set(artifacts) != expected or len({a["id"] for a in artifacts.values()}) != 8:
+        raise ValueError("Pinned producer lacks exactly eight unique artifacts")
+
+
 def verify_record(record, commit):
     if record.get("commit") != commit or record.get("schema") not in ("airk-ci-producer/1", "airk-ci-producer/2"):
         raise ValueError("Producer record belongs to another commit/schema")
@@ -294,13 +327,44 @@ def unpack_artifact(archive, destination):
 def download(artifact, destination):
     with tempfile.TemporaryDirectory(prefix="airk-artifact-") as temporary:
         archive = Path(temporary) / "artifact.zip"
-        with archive.open("wb") as output:
-            subprocess.run(["gh", "api", f"repos/{REPOSITORY}/actions/artifacts/{positive(artifact['id'])}/zip"], stdout=output, check=True)
+        reads.get(f"repos/{REPOSITORY}/actions/artifacts/{positive(artifact['id'])}/zip", output=archive)
         with archive.open("rb") as stream:
             actual = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
         if actual != artifact["digest"]:
             raise ValueError("Downloaded GitHub artifact digest differs from authenticated metadata")
         unpack_artifact(archive, destination)
+
+
+def release_inputs(commit, run_id, destination):
+    """Admit exact same-run signed outputs and small verified source receipts."""
+    run_id = positive(run_id)
+    run = api(f"actions/runs/{run_id}")
+    verify_run({**run, "status": "completed"}, commit, "github-release.yml", ("workflow_dispatch",), success=False)
+    expected = set()
+    for target in TARGETS:
+        prefix = "airk" if target == "x86_64-unknown-linux-gnu" else "airk-signed"
+        expected.update(f"{prefix}-{kind}-{target}-{commit}-{run_id}" for kind in ("native", "vsix"))
+        expected.add(f"airk-source-{target}-{commit}-{run_id}")
+    selected = {}
+    for artifact in run_artifacts(run_id):
+        name = artifact.get("name")
+        if name not in expected:
+            continue
+        origin = artifact.get("workflow_run", {})
+        if (name in selected or artifact.get("expired") is not False
+                or origin.get("id") != run_id or origin.get("head_sha") != commit
+                or origin.get("head_branch") != "main"
+                or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", ""))):
+            raise ValueError("Release inputs are duplicate, expired or from another origin")
+        selected[name] = dict(id=positive(artifact["id"]), digest=artifact["digest"])
+    if set(selected) != expected or len({row["id"] for row in selected.values()}) != 12:
+        raise ValueError("Release inputs lack exactly twelve unique artifacts")
+    destination.mkdir(parents=True, exist_ok=False)
+    for name, artifact in selected.items():
+        download(artifact, destination / name)
+        print(f"Verified same-run release input: {name}")
+        if name.startswith("airk-source-") and {p.name for p in (destination / name).iterdir()} != {"source.json"}:
+            raise ValueError("Source receipt artifact contains unexpected files")
 
 
 def release_bundle(commit, run_id, attempt, destination):
@@ -356,9 +420,11 @@ def verify_tag(tag, commit):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("resolve", "download", "bundle", "tag", "rehearsal", "rehearsal-download", "promote"))
+    parser.add_argument("command", choices=("resolve", "download", "bundle", "tag", "rehearsal", "rehearsal-download", "promote", "release-inputs"))
     parser.add_argument("--record", type=Path, default=Path("artifacts/producer.json"))
     parser.add_argument("--target", choices=TARGETS)
+    parser.add_argument("--kind", choices=("native", "vsix"), default="native")
+    parser.add_argument("--pinned", action="store_true", help="Use a protected preflight record and verify downloaded digests locally")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--run-id")
     args = parser.parse_args()
@@ -390,13 +456,15 @@ def main():
         args.record.parent.mkdir(parents=True, exist_ok=True)
         args.record.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"Verified producer {record['run_id']}, attempt {record['attempt']}, exact commit {commit}")
+    elif args.command == "release-inputs":
+        release_inputs(commit, os.environ["GITHUB_RUN_ID"], args.output)
     elif args.command == "bundle":
         release_bundle(commit, os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"], args.output)
     else:
         record = json.loads(args.record.read_text(encoding="utf-8"))
-        verify_record(record, commit)
+        (validate_record if args.pinned else verify_record)(record, commit)
         for name, artifact in record["artifacts"].items():
-            if name.startswith("airk-native-") and (not args.target or name.startswith(f"airk-native-{args.target}-")):
+            if name.startswith(f"airk-{args.kind}-") and (not args.target or name.startswith(f"airk-{args.kind}-{args.target}-")):
                 download(artifact, args.output if args.target else args.output / name)
 
 

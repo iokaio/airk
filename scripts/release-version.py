@@ -21,6 +21,11 @@ VERSION = r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
 TAG = re.compile(rf"v({VERSION})(?:-build\.[1-9][0-9]*)?")
 
 
+_spec = importlib.util.spec_from_file_location("github_read", ROOT / "scripts/github-read.py")
+reads = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(reads)
+
+
 def numeric(version):
     if not re.fullmatch(VERSION, version):
         raise ValueError("Expected a numeric package version")
@@ -42,6 +47,8 @@ def source_version(root=ROOT):
 
 
 def api(path, payload=None, paginate=False, missing=False):
+    if payload is None:
+        return reads.get(f"repos/{REPOSITORY}/{path}", paginate=paginate, missing=missing)
     command = ["gh", "api", f"repos/{REPOSITORY}/{path}"]
     if paginate:
         command += ["--paginate", "--slurp"]

@@ -1,16 +1,24 @@
 # Native VS Code extension
 
-**1.7.2 development candidate:** [Workbench features, upgrade policy and validation limits](releases/release-1.7.2.md).
+**1.7.3 stable release candidate:** [Marketplace image links and release promotion](releases/release-1.7.3.md).
 
 Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order and pending extension replacement may still require Reload Window.
 
-The unreleased [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. The development version is **1.7.2**, separate from the 1.6.4 release record.
+The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; the current source candidate is **1.7.3**.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 
 The Workbench development catalog exposes 28 tools, including read-only `parse` plan preparation/execution; published 1.6.4 has 27 tools. `status` is a lightweight readiness check; `diagnostics` provides detailed runtime, job and watcher observations. Agent connections follow their configured source folders across index replacement. Explorer bounds status polling, keeps local log actions responsive and reconciles uncertain requests internally without replaying them. Installation migrates registered historical default index roots to `index-v1`, preserving publications and settings; custom roots stay in place. See the [1.6.4 release notes](releases/release-1.6.4.md).
 
 <a id="airk-explorer-150"></a>
+
+## Installation and evidence privacy
+
+In a trusted workspace, automatic setup installs the bundled runtime and CLI, updates user PATH or marked shell-profile blocks, and registers folders for background indexing. The service can continue indexing after the editor closes; login startup is a separate opt-in. `airk.cli.autoInstall: false` prevents automatic installation and registration, but discovery can still run the bundled native executable to inspect its location and self-test. Use an isolated OS environment when evaluating untrusted binaries.
+
+Hidden files can be indexed unless excluded by ignore rules. AIRK is not a secret scanner: credentials in ordinary source, JSON or configuration files can enter retained index objects and retrieved excerpts. Review source selection and `.airkignore` before indexing. Workbench sessions can retain result excerpts; disable `airk.workbench.persistResults` and clear saved results if those copies are unwanted. Evidence returned to a connected agent is subject to that agent's provider policies.
+
+Use private, user-owned storage. Newly created Unix storage directories use mode 0700, but AIRK does not tighten permissions or verify ownership of an existing custom storage root. A shared/permissive root may expose source-derived database content to other local accounts. Permission enforcement for existing roots is deferred to a separate compatibility-reviewed change. Uninstall preserves native index data and may leave shell/PATH integration; successful extension cleanup attempts to remove Workbench sessions. Explicit data removal, exports, backups and evidence already sent to agents require separate attention.
 
 ## AIRK Explorer (1.5.9 development)
 

@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK: Local Search for Coding Agents",
   "description": "Local code and document search for coding agents, plus AIRK Workbench for cited evidence in VS Code. No cloud service or API key.",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",

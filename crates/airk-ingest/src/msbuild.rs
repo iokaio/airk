@@ -59,7 +59,7 @@ pub fn analyze(path: &str, text: &str) -> Result<crate::syntax::Analysis> {
                     let attr = attr?;
                     ensure!(attrs.len() < 256, "MSBuild exceeds attribute limit");
                     let key = std::str::from_utf8(attr.key.as_ref())?.to_owned();
-                    let value = attr.unescape_value()?.into_owned();
+                    let value = crate::documents::attribute_value(&attr)?;
                     ensure!(value.len() <= 4096, "MSBuild attribute exceeds byte limit");
                     if key == "xmlns" {
                         ensure!(

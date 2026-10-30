@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Stage a platform VSIX from a verified native candidate and compiled AIRK modules."""
 import argparse
+from html.parser import HTMLParser
 import hashlib
 import importlib.util
 import json
@@ -10,6 +11,7 @@ import shutil
 import stat
 import subprocess
 import zipfile
+from urllib.parse import urlsplit
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -173,6 +175,22 @@ def stage_jsonc_parser(source, destination):
         target.write_bytes(data)
 
 
+def verify_listing_images(listing):
+    """The gallery serves README separately; bundled relative images cannot render."""
+    sources = [a or b for a, b in re.findall(r'!\[[^\]\n]*\]\(\s*(?:<([^>\n]+)>|([^\s)]+))', listing)]
+
+    class Images(HTMLParser):
+        def handle_starttag(self, tag, attrs):
+            if tag == "img":
+                sources.append(dict(attrs).get("src", ""))
+
+    Images().feed(listing)
+    for source in sources:
+        parsed = urlsplit(source)
+        if parsed.scheme != "https" or not parsed.netloc:
+            raise ValueError("Marketplace README images require absolute HTTPS URLs: " + source)
+
+
 def verify_vsix(archive, expected, executable, platform=None, version=None, pre_release=None, display_name=None):
     with zipfile.ZipFile(archive) as zipped:
         files = [item for item in zipped.infolist() if not item.is_dir()]
@@ -193,6 +211,8 @@ def verify_vsix(archive, expected, executable, platform=None, version=None, pre_
         for name in expected:
             if name in ("native/airk", "native/runtime/airk", "native/runtime/airk-embed", "native/runtime/AIRK.app/Contents/MacOS/airk", "native/runtime/AIRK.app/Contents/MacOS/airk-embed") and not (zipped.getinfo("extension/" + name).external_attr >> 16) & stat.S_IXUSR:
                 raise ValueError("VSIX lost native executable permission: " + name)
+        if "extension/readme.md" in names:
+            verify_listing_images(zipped.read("extension/readme.md").decode("utf-8"))
         metadata = ET.fromstring(zipped.read("extension.vsixmanifest"))
         identity = next((element for element in metadata.iter()
                          if element.tag.rsplit("}", 1)[-1] == "Identity"), None)
@@ -305,20 +325,17 @@ def main():
         if source.is_symlink() or not source.is_file() or source.stat().st_size > 2_097_152:
             raise SystemExit("Invalid or oversized extension illustration: " + name)
         shutil.copyfile(source, stage / "images" / name)
-        listing = listing.replace("https://raw.githubusercontent.com/iokaio/airk/main/docs/images/" + name,
-                                  "images/" + name)
     for name, component in PRODUCT_ILLUSTRATIONS.items():
         source = ROOT / "docs" / component / "images" / name
         if source.is_symlink() or not source.is_file() or source.stat().st_size > 2_097_152:
             raise SystemExit("Invalid or oversized product illustration: " + name)
         shutil.copyfile(source, stage / "images" / name)
-        listing = listing.replace(f"https://raw.githubusercontent.com/iokaio/airk/main/docs/{component}/images/" + name,
-                                  "images/" + name)
     for name in ICONS:
         source = EXTENSION / "images" / name
         if source.is_symlink() or not source.is_file() or source.stat().st_size > 16_384:
             raise SystemExit("Invalid or oversized extension icon: " + name)
         shutil.copyfile(source, stage / "images" / name)
+    verify_listing_images(listing)
     (stage / "README.md").write_text(listing, encoding="utf-8")
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, stage / name)

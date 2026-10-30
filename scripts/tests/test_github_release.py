@@ -618,7 +618,7 @@ class GithubReleaseContracts(unittest.TestCase):
         with patch.object(release.subprocess, "run", return_value=response) as run:
             self.assertEqual(release.release_id_for_tag(TAG), 7)
             self.assertEqual(run.call_args.args[0], ["gh", "api", f"repos/{release.REPOSITORY}/releases?per_page=100",
-                                                   "--paginate", "--slurp"])
+                                                   "--method", "GET", "--paginate", "--slurp"])
         for entries in ([{"tag_name": TAG, "id": 7}] * 2,
                         [{"tag_name": TAG, "id": "7"}], [{"tag_name": TAG, "id": True}],
                         [{"tag_name": TAG, "id": 0}], [{"tag_name": TAG}]):

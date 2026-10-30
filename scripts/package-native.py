@@ -10,6 +10,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tomllib
 import zipfile
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -179,19 +180,41 @@ def validate_runtime(runtime, version, target, source):
     return files, (main, helper)
 
 
+def source_packaging_metadata(path, target, signed):
+    receipt = bounded_json(path, 4_194_304)
+    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+    if (not signed or receipt.get("schema") != "airk-native-candidate/2"
+            or receipt.get("version") != version or receipt.get("target") != target
+            or receipt.get("dirty_checkout") is not False or receipt.get("signed_distribution") is not False
+            or receipt.get("cargo_lock_sha256") != sha256(ROOT / "Cargo.lock")
+            or receipt.get("toolchain_file_sha256") != sha256(ROOT / "rust-toolchain.toml")
+            or receipt.get("tree") != capture("git", "rev-parse", "HEAD^{tree}")
+            or not isinstance(receipt.get("rustc"), str)
+            or "host: " + target not in receipt["rustc"].splitlines()
+            or not isinstance(receipt.get("cargo"), str) or not receipt["cargo"].startswith("cargo ")):
+        raise ValueError("Source packaging metadata differs from this tested tree/target")
+    return receipt
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", choices=TARGETS, required=True)
     parser.add_argument("--output", type=Path, help="Fresh directory inside ignored artifacts/; defaults to artifacts/native/<target>")
     parser.add_argument("--runtime-dir", type=Path, required=True, help="Exact tested build-service-runtime.py output")
     parser.add_argument("--signed-dir", type=Path, help="Fresh sign-native.py artifact copy and receipt, verified again on this OS")
+    parser.add_argument("--source-manifest", type=Path, help="Reuse verified CI compiler metadata for signed repackaging")
     parser.add_argument("--signtool", default="signtool")
     args = parser.parse_args()
-    compiler = capture("rustc", "-vV")
-    if "host: " + args.target not in compiler.splitlines():
-        raise SystemExit("Package and smoke-test on the intended native runner")
-    metadata = json.loads(capture("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"))
-    version = next(p["version"] for p in metadata["packages"] if p["name"] == "airk-cli")
+    source_manifest = None
+    if args.source_manifest:
+        source_manifest = source_packaging_metadata(args.source_manifest, args.target, bool(args.signed_dir))
+        compiler, version = source_manifest["rustc"], source_manifest["version"]
+    else:
+        compiler = capture("rustc", "-vV")
+        if "host: " + args.target not in compiler.splitlines():
+            raise SystemExit("Package and smoke-test on the intended native runner")
+        metadata = json.loads(capture("cargo", "metadata", "--locked", "--no-deps", "--format-version", "1"))
+        version = next(p["version"] for p in metadata["packages"] if p["name"] == "airk-cli")
     builder = runtime_builder()
     runtime = args.runtime_dir.resolve(strict=True)
     if runtime.is_symlink() or not runtime.is_dir():
@@ -259,7 +282,7 @@ def main():
         "dirty_checkout": bool(capture("git", "status", "--porcelain")),
         "cargo_lock_sha256": sha256(ROOT / "Cargo.lock"),
         "toolchain_file_sha256": sha256(ROOT / "rust-toolchain.toml"),
-        "rustc": compiler, "cargo": capture("cargo", "--version"),
+        "rustc": compiler, "cargo": source_manifest["cargo"] if source_manifest else capture("cargo", "--version"),
         "archive": archive.name, "archive_sha256": sha256(archive),
         "payload": files, "signed_distribution": signing is not None, "signing": signing,
         "qualification": "native CLI candidate; installed editor and oldest OS not qualified",

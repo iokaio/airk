@@ -31,7 +31,7 @@ class RepairContracts(unittest.TestCase):
         commands = set()
         for step in workflow.split("\n      - "):
             for line in step.splitlines():
-                if "run: python scripts/" in line and "release-1.4.4-repair.py" in line:
+                if "python scripts/" in line and "release-1.4.4-repair.py" in line:
                     command = re.search(r"\s(preflight|download|stage-signing|assemble|bundle|publish)(?:\s|$)", line)
                     self.assertIsNotNone(command, line)
                     commands.add(command[1])
