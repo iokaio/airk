@@ -875,6 +875,127 @@ fn service_watcher_owns_nested_changes_pause_and_restart_without_editor_events()
     ensure!(fs::read(file)? == offline, "restart changed source bytes");
     Ok(())
 }
+#[test]
+fn over_budget_document_stays_bounded_across_service_restart() -> Result<()> {
+    use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("state");
+    fs::create_dir_all(&source)?;
+    fs::create_dir(&data)?;
+    let attributes = (0..1025)
+        .map(|index| format!(" a{index}=\"v\""))
+        .collect::<String>();
+    fs::write(
+        source.join("wide.svg"),
+        format!("<svg{attributes}><title>wide</title></svg>"),
+    )?;
+    let notes = source.join("notes.md");
+    fs::write(&notes, "# Zircon harbor\nZircon harbor notes.\n")?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "budget-fixture")?;
+    // Settled automatic work must find `term` while the unchanged over-budget file
+    // remains, and no job may stall or rely on the watchdog.
+    async fn settle(
+        root: &Path,
+        project: &airk_core::service::ProjectRegistration,
+        term: &str,
+    ) -> Result<()> {
+        let until = tokio::time::Instant::now() + Duration::from_secs(90);
+        loop {
+            let watch = airk_cli::service_runtime::request(
+                root,
+                Method::Watch {
+                    project: project.binding,
+                },
+            )
+            .await?;
+            let settled = matches!(&watch, Response::Watch { observation, .. }
+                if observation.completed_revision > 0
+                    && observation.completed_revision == observation.requested_revision);
+            if settled {
+                let mut connection =
+                    airk_cli::project_client::Connection::connect(root, project.binding).await?;
+                let evidence = connection
+                    .read_retry(
+                        "airk_search".into(),
+                        serde_json::json!({"query": term, "mode": "lexical", "max_bytes": 4096})
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    )
+                    .await?;
+                if evidence.to_string().contains("notes.md") {
+                    break;
+                }
+            }
+            ensure!(
+                tokio::time::Instant::now() < until,
+                "automatic work did not settle around the over-budget document"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let console = airk_cli::service_runtime::request(
+            root,
+            Method::Console {
+                after: None,
+                revision: None,
+                limit: 64,
+            },
+        )
+        .await?;
+        ensure!(
+            !serde_json::to_string(&console)?.contains("work_stalled"),
+            "over-budget extraction reached the stall watchdog"
+        );
+        Ok(())
+    }
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        let request = |method| airk_cli::service_runtime::request(&root, method);
+        ensure!(
+            matches!(
+                request(Method::Register {
+                    project: project.clone()
+                })
+                .await?,
+                Response::Registered { .. }
+            ),
+            "budget fixture registration failed"
+        );
+        ensure!(
+            matches!(
+                request(Method::ConfigureWatch {
+                    project: project.binding,
+                    enabled: true
+                })
+                .await?,
+                Response::Watch { .. }
+            ),
+            "budget fixture watch configuration failed"
+        );
+        settle(&root, &project, "zircon harbor").await?;
+        request(Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(wait_exit(&mut children.0[0])?, "service did not drain");
+    drop(airk_store::service::SourceWatchLease::acquire(&root)?);
+    fs::write(&notes, "# Zircon harbor\nRestarted garnet beacon.\n")?;
+    children.0.push(start(&root)?);
+    wait_ready(&root)?;
+    tokio::runtime::Runtime::new()?.block_on(async {
+        settle(&root, &project, "garnet beacon").await?;
+        airk_cli::service_runtime::request(&root, Method::Shutdown).await?;
+        Ok::<_, anyhow::Error>(())
+    })?;
+    ensure!(
+        wait_exit(children.0.last_mut().unwrap())?,
+        "restarted service did not drain"
+    );
+    Ok(())
+}
+
 impl Drop for Children {
     fn drop(&mut self) {
         for child in &mut self.0 {

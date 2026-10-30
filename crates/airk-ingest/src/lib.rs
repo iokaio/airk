@@ -338,6 +338,9 @@ fn flag_is_false(value: &bool) -> bool {
 pub struct SkippedFile {
     pub path: String,
     pub reason: String,
+    /// Stable cause for extraction skips, such as `extraction_budget_exceeded`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
 }
 
 pub fn scan(root: &Path, data_dir: &Path, previous: &Snapshot) -> Result<(Snapshot, IndexReport)> {
@@ -784,6 +787,7 @@ fn scan_observed_profiled(
                 report.skip(SkippedFile {
                     path,
                     reason: "path exceeds 4096 bytes".into(),
+                    code: Some("path_limit_exceeded".into()),
                 });
                 continue;
             }
@@ -800,6 +804,7 @@ fn scan_observed_profiled(
                 report.skip(SkippedFile {
                     path,
                     reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
+                    code: Some("file_limit_exceeded".into()),
                 });
                 continue;
             }
@@ -829,6 +834,7 @@ fn scan_observed_profiled(
                 report.skip(SkippedFile {
                     path,
                     reason: format!("file exceeds {} byte configured limit", limits.file_bytes),
+                    code: Some("file_limit_exceeded".into()),
                 });
                 continue;
             }
@@ -895,6 +901,7 @@ fn scan_observed_profiled(
                     report.selection_diagnostics.push(SkippedFile {
                         path: path.clone(),
                         reason,
+                        code: None,
                     });
                 } else {
                     report.selection_diagnostics_truncated += 1;
@@ -1193,6 +1200,8 @@ fn discovery(root: &Path, data_dir: &Path) -> ignore::Walk {
 fn discovery_selected(root: &Path, data_dir: &Path, selected: Option<Vec<String>>) -> ignore::Walk {
     let data_dir = data_dir.to_path_buf();
     let ordering_root = root.to_path_buf();
+    let credential_root = root.to_path_buf();
+    let credentials = std::sync::Mutex::new(source_scope::CredentialDefaults::new(root));
     let selected = selected.map(|paths| {
         paths
             .into_iter()
@@ -1219,7 +1228,19 @@ fn discovery_selected(root: &Path, data_dir: &Path, selected: Option<Vec<String>
                     && !entry.path().starts_with(&data_dir)
                     && selected.as_ref().is_none_or(|paths| {
                         paths.iter().any(|path| path.starts_with(entry.path()))
-                    }))
+                    })
+                    && entry
+                        .path()
+                        .strip_prefix(&credential_root)
+                        .is_ok_and(|relative| {
+                            !credentials
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .excluded(
+                                    relative,
+                                    entry.file_type().is_some_and(|kind| kind.is_dir()),
+                                )
+                        }))
         })
         .build()
 }
@@ -1260,7 +1281,8 @@ fn read_source_with_budget(root: &Path, path: &Path, remaining: usize) -> Result
     source_read::read(root, path, MAX_FILE_BYTES, remaining)
 }
 
-fn excluded(name: &str) -> bool {
+/// Hard exclusions apply to every path component and cannot be re-included.
+pub fn excluded(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     matches!(
         name.as_str(),

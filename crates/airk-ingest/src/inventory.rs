@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub const POLICY_VERSION: &str = "airk-eligibility-v3";
+pub const POLICY_VERSION: &str = "airk-eligibility-v4";
 
 #[derive(Clone, Copy)]
 pub struct InventoryLimits {
@@ -42,6 +42,9 @@ pub struct Entry {
     pub bytes: usize,
     pub extracted_bytes: usize,
     pub eligibility: Eligibility,
+    /// Set when extraction failed because a document work budget rejected it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub budget_exceeded: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -197,7 +200,8 @@ pub fn scan_roots_with_policy(
                 continue;
             }
             let hash = format!("{:x}", Sha256::digest(&bytes));
-            let (eligibility, extracted_bytes) = if previous.extractor_version == EXTRACTOR_VERSION
+            let (eligibility, extracted_bytes, budget_exceeded) = if previous.extractor_version
+                == EXTRACTOR_VERSION
                 && previous
                     .artifacts
                     .get(&path)
@@ -206,12 +210,17 @@ pub fn scan_roots_with_policy(
                 (
                     Eligibility::Eligible,
                     previous.artifacts[&path].extracted_bytes(),
+                    false,
                 )
             } else if let Some(old) = cached
                 .and_then(|inventory| inventory.entries.get(&path))
                 .filter(|old| old.content_hash == hash)
             {
-                (old.eligibility.clone(), old.extracted_bytes)
+                (
+                    old.eligibility.clone(),
+                    old.extracted_bytes,
+                    old.budget_exceeded,
+                )
             } else {
                 let supported_document = Path::new(&path)
                     .extension()
@@ -224,14 +233,19 @@ pub fn scan_roots_with_policy(
                 if !supported_document
                     && (std::str::from_utf8(&bytes).is_err() || bytes.contains(&0))
                 {
-                    (Eligibility::Unsupported, 0)
+                    (Eligibility::Unsupported, 0, false)
                 } else {
                     match super::documents::extract(&path, &bytes) {
                         Ok(extracted) => (
                             Eligibility::Eligible,
                             extracted.chunks.iter().map(|chunk| chunk.text.len()).sum(),
+                            false,
                         ),
-                        Err(_) => (Eligibility::ExtractionFailed, 0),
+                        Err(error) => (
+                            Eligibility::ExtractionFailed,
+                            0,
+                            super::documents::budget_exceeded(&error),
+                        ),
                     }
                 }
             };
@@ -242,6 +256,7 @@ pub fn scan_roots_with_policy(
                     bytes: bytes.len(),
                     extracted_bytes,
                     eligibility,
+                    budget_exceeded,
                 },
             );
         }

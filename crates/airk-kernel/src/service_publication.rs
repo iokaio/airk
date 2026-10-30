@@ -155,6 +155,9 @@ impl Kernel {
             );
         }
         let coverage = next.coverage(true)?;
+        // A deterministic per-file extraction failure (malformed or over-budget
+        // input) must not block replacement forever. It stays reported in the
+        // refreshed coverage; every other incomplete measurement still refuses.
         ensure!(
             coverage.indexed
                 && coverage.scan_complete
@@ -162,11 +165,11 @@ impl Kernel {
                 && !coverage.source_configuration_pending
                 && coverage.stale == 0
                 && coverage.missing == 0
-                && coverage.extraction_failed == 0
                 && coverage.capacity_blocked == 0
                 && coverage.unreadable == 0
                 && coverage.pending_removals == 0
-                && coverage.current == coverage.eligible,
+                && coverage.current.checked_add(coverage.extraction_failed)
+                    == Some(coverage.eligible),
             "sources or configuration changed during replacement; keep the current index and reconcile before retrying"
         );
         ensure!(
@@ -633,6 +636,56 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(source.path().join("memo.md"))?,
             "Later original user edit.\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn replacement_rebuild_publishes_with_a_reported_over_budget_document() -> Result<()> {
+        let source = tempfile::tempdir()?;
+        let data = tempfile::tempdir()?;
+        std::fs::write(
+            source.path().join("memo.md"),
+            "# Basalt harbor\nBasalt harbor.\n",
+        )?;
+        let attributes = (0..1025)
+            .map(|index| format!(" a{index}=\"v\""))
+            .collect::<String>();
+        std::fs::write(
+            source.path().join("wide.xml"),
+            format!("<root{attributes}>text</root>"),
+        )?;
+        let kernel =
+            Kernel::open_service_collection(source.path(), Some(data.path().into()), "fixture")?;
+        kernel.configure_vectors(false)?;
+        let report = kernel.index()?;
+        let skipped = report
+            .skipped
+            .iter()
+            .find(|file| file.path == "wide.xml")
+            .context("over-budget document was not reported")?;
+        assert_eq!(skipped.code.as_deref(), Some("extraction_budget_exceeded"));
+        std::fs::write(
+            source.path().join("memo.md"),
+            "# Gneiss harbor\nGneiss harbor.\n",
+        )?;
+        let token = kernel.rebuild_service(Sha256Digest::from_bytes([13; 32]))?;
+        let current = kernel.refresh_service_snapshot()?;
+        assert_eq!(
+            current
+                .status()?
+                .publication
+                .context("rebuilt publication missing")?
+                .token,
+            token
+        );
+        assert!(!current.search(&query("gneiss"))?.hits.is_empty());
+        let coverage = current.coverage(false)?;
+        assert_eq!(coverage.extraction_failed, 1);
+        assert_eq!(coverage.extraction_budget_exceeded, 1);
+        assert_eq!(
+            coverage.current + coverage.extraction_failed,
+            coverage.eligible
         );
         Ok(())
     }

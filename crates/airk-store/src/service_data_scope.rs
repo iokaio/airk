@@ -29,6 +29,56 @@ impl std::fmt::Display for UnboundDataRoot {
     }
 }
 impl std::error::Error for UnboundDataRoot {}
+/// An existing storage root that other local accounts can reach. AIRK never
+/// changes permissions of a directory it did not create.
+#[derive(Debug, Clone)]
+pub struct StorageNotPrivate(pub String);
+impl std::fmt::Display for StorageNotPrivate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "storage_not_private: {}; choose a private directory owned by this account or restrict it yourself (for example `chmod 700`); permissions are not changed automatically",
+            self.0
+        )
+    }
+}
+impl std::error::Error for StorageNotPrivate {}
+
+/// Indexes hold source-derived text, so on Unix an existing root must be
+/// shielded from other accounts: the root or one of its ancestors is owned by
+/// this user and grants no group/other access. POSIX ACLs and Windows ACLs are
+/// not evaluated here. Missing roots are accepted; creation uses mode 0700.
+pub fn require_private(data: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if !exists(data)? {
+            return Ok(());
+        }
+        let canonical = data.canonicalize()?;
+        // SAFETY: geteuid takes no pointers and has no failure mode.
+        let uid = unsafe { libc::geteuid() };
+        for ancestor in canonical.ancestors() {
+            let metadata = fs::metadata(ancestor)?;
+            if metadata.uid() == uid && metadata.permissions().mode() & 0o077 == 0 {
+                return Ok(());
+            }
+        }
+        let metadata = fs::metadata(&canonical)?;
+        return Err(StorageNotPrivate(format!(
+            "{} (owner uid {}, mode {:o}) and its ancestors allow other accounts to read stored evidence",
+            canonical.display(),
+            metadata.uid(),
+            metadata.permissions().mode() & 0o7777
+        ))
+        .into());
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = data;
+        Ok(())
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -189,10 +239,23 @@ pub fn bind(data: &Path, control: &Path, namespace: Incarnation) -> Result<Bound
     let scope = expected(data, control, namespace)?;
     check(&scope.data, &scope.control, namespace)?;
     if exists(&scope.data.join(OWNER))? {
+        // Existing projects on shared roots fail visibly before any collection opens.
+        require_private(&scope.data)?;
         return Ok(BoundDataRoot(scope));
     }
     fresh_namespace(&scope.data)?;
-    fs::create_dir_all(&scope.data)?;
+    require_private(&scope.data)?;
+    {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&scope.data)?;
+    }
+    require_private(&scope.data)?;
     ensure!(
         scope.data.canonicalize()? == scope.data,
         "service data root redirected during claim"

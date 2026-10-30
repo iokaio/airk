@@ -265,9 +265,15 @@ where
                         },
                     );
                 }
+                let code = if crate::documents::budget_exceeded(&error) {
+                    "extraction_budget_exceeded"
+                } else {
+                    "extraction_failed"
+                };
                 report.skip(crate::SkippedFile {
                     path: captured.path,
                     reason: error.to_string(),
+                    code: Some(code.into()),
                 });
                 Ok(())
             }

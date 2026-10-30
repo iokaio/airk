@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Table-aware evidence shared by native DOCX and XLSX extraction.
-use crate::documents::{Extracted, MAX_EXTRACTED, attribute, entity};
+use crate::documents::{Extracted, MAX_EXTRACTED, attribute, entity, within};
 use airk_core::{DocumentEvidence, DocumentLocation, Fact, TableCellEvidence, TableEvidence};
 use anyhow::{Context, Result, ensure};
 use quick_xml::{Reader, events::Event};
@@ -64,10 +64,10 @@ pub(crate) fn append_row(
         .join(" | ")
         + "\n";
     let prior_bytes: usize = output.chunks.iter().map(|chunk| chunk.text.len()).sum();
-    ensure!(
+    within(
         prior_bytes + text.len() <= MAX_EXTRACTED,
-        "table extraction exceeds 4 MiB"
-    );
+        "table extraction exceeds 4 MiB",
+    )?;
     let start = output.chunks.last().map_or(1, |chunk| chunk.end_line + 1);
     let full_cells = table.cells.clone();
     let mut omitted = table.cells.len() > 32 || table.headers_truncated;
@@ -112,7 +112,7 @@ pub(crate) fn append_row(
         if cell.value.is_empty() && cell.formula.is_none() {
             continue;
         }
-        ensure!(output.facts.len() < 10_000, "document exceeds 10000 facts");
+        within(output.facts.len() < 10_000, "document exceeds 10000 facts")?;
         let label = cell
             .header
             .as_deref()
@@ -177,7 +177,7 @@ pub(crate) fn append_row(
         }
         output.facts.push(fact);
     }
-    ensure!(output.facts.len() <= 10_000, "document exceeds 10000 facts");
+    within(output.facts.len() <= 10_000, "document exceeds 10000 facts")?;
     output.chunks.push(airk_core::Chunk {
         text,
         start_line: start,
@@ -214,10 +214,10 @@ pub(crate) fn append_docx_tables(xml: &str, output: &mut Extracted) -> Result<()
         match reader.read_event()? {
             Event::Start(e) if e.local_name().as_ref() == b"tbl" => {
                 ordinal += 1;
-                ensure!(
+                within(
                     ordinal <= 256 && stack.len() < 32,
-                    "DOCX table/depth limit exceeded"
-                );
+                    "DOCX table/depth limit exceeded",
+                )?;
                 stack.push(Table {
                     ordinal,
                     ..Default::default()
@@ -328,15 +328,15 @@ pub(crate) fn append_docx_tables(xml: &str, output: &mut Extracted) -> Result<()
                 cell.value = cell.value.trim().into();
                 let row = table.row.as_mut().context("DOCX cell outside row")?;
                 row.next_column += cell.column_span;
-                ensure!(
+                within(
                     row.next_column <= 16_385 && row.cells.len() < 256,
-                    "DOCX column limit exceeded"
-                );
+                    "DOCX column limit exceeded",
+                )?;
                 row.cells.push(cell);
             }
             Event::End(e) if e.local_name().as_ref() == b"tr" => {
                 total_rows += 1;
-                ensure!(total_rows <= 10_000, "DOCX row limit exceeded");
+                within(total_rows <= 10_000, "DOCX row limit exceeded")?;
                 let table = stack.last_mut().context("DOCX row outside table")?;
                 table
                     .rows

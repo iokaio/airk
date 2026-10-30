@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded SpreadsheetML extraction. No Excel, formula execution or external reads.
 use crate::{
-    documents::{Extracted, MAX_EXTRACTED, attribute, entity, read_part, require_root},
+    documents::{Extracted, MAX_EXTRACTED, attribute, entity, read_part, require_root, within},
     tables::{MAX_HEADER_BYTES, append_row, bounded},
 };
 use airk_core::{DocumentLocation, TableCellEvidence, TableEvidence};
@@ -88,16 +88,16 @@ fn read_xml(
 ) -> Result<String> {
     let text = read_part(archive, path)?;
     *total += text.len();
-    ensure!(*total <= MAX_XML, "XLSX parts exceed 16 MiB XML budget");
+    within(*total <= MAX_XML, "XLSX parts exceed 16 MiB XML budget")?;
     Ok(text)
 }
 
 pub(crate) fn extract(bytes: &[u8]) -> Result<Extracted> {
     let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).context("invalid XLSX archive")?;
-    ensure!(
+    within(
         archive.len() <= 10_000,
-        "XLSX archive exceeds 10000 entries"
-    );
+        "XLSX archive exceeds 10000 entries",
+    )?;
     ensure!(
         !archive.has_duplicate_names(),
         "duplicate XLSX archive parts"
@@ -162,7 +162,7 @@ pub(crate) fn extract(bytes: &[u8]) -> Result<Extracted> {
                     Some("hidden" | "veryHidden")
                 );
                 sheets.push((name, part_path(&workbook_path, &rel.target)?, hidden));
-                ensure!(sheets.len() <= 128, "XLSX exceeds 128 sheets");
+                within(sheets.len() <= 128, "XLSX exceeds 128 sheets")?;
             }
             Event::DocType(_) => anyhow::bail!("XLSX DTDs are unsupported"),
             Event::Eof => break,
@@ -299,10 +299,10 @@ fn shared_strings(xml: &str) -> Result<Vec<String>> {
             Event::Eof => break,
             _ => {}
         }
-        ensure!(
+        within(
             strings.len() <= MAX_CELLS,
-            "XLSX shared-string limit exceeded"
-        );
+            "XLSX shared-string limit exceeded",
+        )?;
     }
     ensure!(value.is_none(), "unterminated shared string");
     Ok(strings)
@@ -334,7 +334,7 @@ fn styles(xml: &str) -> Result<Vec<(u32, Option<String>)>> {
                         .unwrap_or_else(|| "0".into())
                         .parse::<u32>()?,
                 );
-                ensure!(ids.len() <= 10_000, "XLSX style count exceeded");
+                within(ids.len() <= 10_000, "XLSX style count exceeded")?;
             }
             Event::DocType(_) => anyhow::bail!("XLSX DTDs are unsupported"),
             Event::Eof => break,
@@ -442,7 +442,7 @@ fn worksheet(
                     rows.insert(row, (hidden, Vec::new())).is_none(),
                     "duplicate XLSX row"
                 );
-                ensure!(rows.len() <= 10_000, "XLSX row limit exceeded");
+                within(rows.len() <= 10_000, "XLSX row limit exceeded")?;
                 in_row = true;
                 column = 0;
             }
@@ -479,7 +479,7 @@ fn worksheet(
                 );
                 column = cell_column;
                 *count += 1;
-                ensure!(*count <= MAX_CELLS, "XLSX cell limit exceeded");
+                within(*count <= MAX_CELLS, "XLSX cell limit exceeded")?;
                 cell = Some(Cell {
                     address: cell_address,
                     kind: attribute(&e, b"t")?.unwrap_or_else(|| "n".into()),
@@ -498,7 +498,7 @@ fn worksheet(
                 );
                 column = cell_column;
                 *count += 1;
-                ensure!(*count <= MAX_CELLS, "XLSX cell limit exceeded");
+                within(*count <= MAX_CELLS, "XLSX cell limit exceeded")?;
             }
             Event::Start(e) if e.local_name().as_ref() == b"rPh" => phonetic = true,
             Event::End(e) if e.local_name().as_ref() == b"rPh" => phonetic = false,
@@ -568,10 +568,10 @@ fn worksheet(
                     .saturating_add(decoded.formula.as_ref().map_or(0, String::len))
                     .saturating_add(decoded.number_format.as_ref().map_or(0, String::len))
                     .saturating_add(decoded.address.as_ref().map_or(0, String::len));
-                ensure!(
+                within(
                     *decoded_bytes <= MAX_EXTRACTED,
-                    "XLSX decoded cell text exceeds 32 MiB"
-                );
+                    "XLSX decoded cell text exceeds 32 MiB",
+                )?;
                 rows.get_mut(&row)
                     .context("XLSX row missing")?
                     .1
@@ -599,10 +599,10 @@ fn worksheet(
         for cell in cells {
             for (r1, c1, r2, c2, range) in &merges {
                 merge_checks += 1;
-                ensure!(
+                within(
                     merge_checks <= 2_000_000,
-                    "XLSX merge lookup budget exceeded"
-                );
+                    "XLSX merge lookup budget exceeded",
+                )?;
                 if (*r1..=*r2).contains(row) && (*c1..=*c2).contains(&cell.column) {
                     ensure!(
                         cell.merged_range.is_none(),

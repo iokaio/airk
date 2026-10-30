@@ -1,8 +1,35 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Shared source-discovery ignore semantics for bounded directory planning.
 use anyhow::{Result, ensure};
-use ignore::{IncrementalIgnore, WalkBuilder};
+use ignore::{
+    IncrementalIgnore, WalkBuilder,
+    gitignore::{Gitignore, GitignoreBuilder},
+};
 use std::path::{Component, Path};
+
+/// Common credential files skipped by default. Unlike the hard exclusions,
+/// an explicit negation such as `!.npmrc` in `.airkignore` re-includes one.
+/// This is a convenience default, not secret detection.
+pub const CREDENTIAL_DEFAULTS: &[&str] = &[
+    ".npmrc",
+    ".netrc",
+    "_netrc",
+    ".pypirc",
+    ".git-credentials",
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "*.p12",
+    "*.pfx",
+    "*.jks",
+    "*.keystore",
+    "kubeconfig",
+    "**/.kube/config",
+    "*.tfstate",
+    "*.tfstate.backup",
+    "**/.docker/config.json",
+];
 
 pub(crate) fn builder(root: &Path) -> WalkBuilder {
     let mut builder = WalkBuilder::new(root);
@@ -45,5 +72,35 @@ impl DirectoryIgnore {
             return Err(error.into());
         }
         Ok(matched.is_ignore())
+    }
+}
+
+/// Applies [`CREDENTIAL_DEFAULTS`] after the user's ignore files so that an
+/// explicit whitelist rule for the same path takes precedence.
+pub(crate) struct CredentialDefaults {
+    defaults: Gitignore,
+    user: IncrementalIgnore,
+}
+
+impl CredentialDefaults {
+    pub(crate) fn new(root: &Path) -> Self {
+        let mut defaults = GitignoreBuilder::new(root);
+        for pattern in CREDENTIAL_DEFAULTS {
+            defaults
+                .add_line(None, pattern)
+                .expect("built-in credential patterns are valid");
+        }
+        Self {
+            defaults: defaults
+                .build()
+                .expect("built-in credential patterns compile"),
+            user: builder(root).build_matchers().remove(0),
+        }
+    }
+
+    /// `relative` is root-relative, as produced by the source walk.
+    pub(crate) fn excluded(&mut self, relative: &Path, is_dir: bool) -> bool {
+        self.defaults.matched(relative, is_dir).is_ignore()
+            && !self.user.matched(relative, is_dir).is_whitelist()
     }
 }

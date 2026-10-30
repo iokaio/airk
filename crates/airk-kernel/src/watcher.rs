@@ -458,23 +458,10 @@ pub(crate) fn relevant(path: &Path, root: &Path, data: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
     };
-    !relative.components().any(|component| {
-        let name = component.as_os_str().to_string_lossy().to_ascii_lowercase();
-        matches!(
-            name.as_str(),
-            ".git"
-                | ".airk"
-                | "node_modules"
-                | "target"
-                | ".venv"
-                | "__pycache__"
-                | ".aws"
-                | ".ssh"
-                | ".env"
-        ) || name.starts_with(".env.")
-            || name.ends_with(".pem")
-            || name.ends_with(".key")
-    })
+    // Credential defaults are left to the scan, which honors user whitelists.
+    !relative
+        .components()
+        .any(|component| airk_ingest::excluded(&component.as_os_str().to_string_lossy()))
 }
 
 #[cfg(test)]

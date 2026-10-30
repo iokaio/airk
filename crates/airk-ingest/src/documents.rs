@@ -14,6 +14,30 @@ use std::{
 // Bound per-element work even with a linear-time duplicate-attribute parser.
 const MAX_XML_ATTRIBUTES: usize = 1024;
 
+/// A deterministic per-document work budget rejected this input. Kept distinct
+/// from malformed or empty extraction so reports can name the cause.
+#[derive(Debug)]
+pub struct BudgetExceeded(pub &'static str);
+impl std::fmt::Display for BudgetExceeded {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.0)
+    }
+}
+impl std::error::Error for BudgetExceeded {}
+
+pub(crate) fn within(condition: bool, limit: &'static str) -> Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(BudgetExceeded(limit).into())
+    }
+}
+
+/// True when any cause in the chain is a document work-budget rejection.
+pub fn budget_exceeded(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.is::<BudgetExceeded>())
+}
+
 pub(crate) const MAX_EXTRACTED: usize = airk_core::extraction::MAX_TEXT_BYTES;
 /// Keep costly syntax/structured parsing within the established input bound.
 /// Larger UTF-8 sources retain exact text and locations, with no claimed facts.
@@ -29,10 +53,10 @@ pub(crate) fn large_text(
     {
         return Ok(None);
     }
-    ensure!(
+    within(
         bytes.len() <= MAX_EXTRACTED,
-        "text exceeds 32 MiB extraction limit"
-    );
+        "text exceeds 32 MiB extraction limit",
+    )?;
     let text = std::str::from_utf8(bytes).context("binary or non-UTF-8; extractor unavailable")?;
     ensure!(!text.contains('\0'), "binary data; extractor unavailable");
     Ok(Some(Extracted {
@@ -96,10 +120,10 @@ pub(crate) fn extract_selected(
         "docx" => {
             let mut archive =
                 zip::ZipArchive::new(Cursor::new(bytes)).context("invalid DOCX archive")?;
-            ensure!(
+            within(
                 archive.len() <= 10_000,
-                "OOXML archive exceeds 10000 entries"
-            );
+                "OOXML archive exceeds 10000 entries",
+            )?;
             let xml = read_part(&mut archive, "word/document.xml")?;
             require_root(&xml, b"document")?;
             let paragraphs = ooxml_paragraphs(&xml)?;
@@ -125,10 +149,10 @@ pub(crate) fn extract_selected(
         "pptx" => {
             let mut archive =
                 zip::ZipArchive::new(Cursor::new(bytes)).context("invalid PPTX archive")?;
-            ensure!(
+            within(
                 archive.len() <= 10_000,
-                "OOXML archive exceeds 10000 entries"
-            );
+                "OOXML archive exceeds 10000 entries",
+            )?;
             let presentation = read_part(&mut archive, "ppt/presentation.xml")?;
             let relationships = read_part(&mut archive, "ppt/_rels/presentation.xml.rels")?;
             let targets = relationship_targets(&relationships)?;
@@ -149,10 +173,10 @@ pub(crate) fn extract_selected(
                         );
                         let xml = read_part(&mut archive, &format!("ppt/{target}"))?;
                         total += xml.len();
-                        ensure!(
+                        within(
                             total <= MAX_EXTRACTED,
-                            "PPTX XML exceeds 32 MiB extraction limit"
-                        );
+                            "PPTX XML exceeds 32 MiB extraction limit",
+                        )?;
                         let text = ooxml_paragraphs(&xml)?.join("\n");
                         if let Some(title) = pptx_title(&xml)? {
                             titles.insert(slides.len() + 1, title);
@@ -163,7 +187,7 @@ pub(crate) fn extract_selected(
                                 number: slides.len() + 1,
                             },
                         ));
-                        ensure!(slides.len() <= 512, "PPTX exceeds 512 slides");
+                        within(slides.len() <= 512, "PPTX exceeds 512 slides")?;
                     }
                     Event::Eof => break,
                     _ => {}
@@ -183,10 +207,10 @@ pub(crate) fn extract_selected(
             let text =
                 std::str::from_utf8(bytes).context("binary or non-UTF-8; extractor unavailable")?;
             ensure!(!text.contains('\0'), "binary data; extractor unavailable");
-            ensure!(
+            within(
                 text.len() <= MAX_EXTRACTED,
-                "text exceeds 32 MiB extraction limit"
-            );
+                "text exceeds 32 MiB extraction limit",
+            )?;
             let selected =
                 crate::syntax::analyze_selected_with_detail(path, text, adapter, detail)?;
             let mut analysis = selected.analysis;
@@ -275,10 +299,10 @@ fn from_blocks_selected(
         let text = format!("{}\n", text.trim_end());
         let block_offset = total;
         total += text.len();
-        ensure!(
+        within(
             total <= MAX_EXTRACTED,
-            "document exceeds 32 MiB extracted text"
-        );
+            "document exceeds 32 MiB extracted text",
+        )?;
         let block_start = line;
         for mut chunk in crate::chunk(&text) {
             chunk.start_line += block_start - 1;
@@ -355,7 +379,7 @@ fn from_blocks_selected(
                 document: None,
             });
         }
-        ensure!(facts.len() <= 10_000, "document exceeds 10000 facts");
+        within(facts.len() <= 10_000, "document exceeds 10000 facts")?;
     }
     ensure!(
         !chunks.is_empty(),
@@ -378,17 +402,17 @@ pub(crate) fn read_part(
     let file = archive
         .by_name(name)
         .with_context(|| format!("missing OOXML part {name}"))?;
-    ensure!(
+    within(
         file.size() <= MAX_EXTRACTED as u64,
-        "OOXML part exceeds 32 MiB"
-    );
+        "OOXML part exceeds 32 MiB",
+    )?;
     let mut bytes = Vec::new();
     file.take((MAX_EXTRACTED + 1) as u64)
         .read_to_end(&mut bytes)?;
-    ensure!(
+    within(
         bytes.len() <= MAX_EXTRACTED,
-        "OOXML expanded part exceeds 32 MiB"
-    );
+        "OOXML expanded part exceeds 32 MiB",
+    )?;
     let xml = String::from_utf8(bytes).context("OOXML part is not UTF-8")?;
     let mut reader = Reader::from_str(&xml);
     let mut depth = 0usize;
@@ -397,24 +421,24 @@ pub(crate) fn read_part(
         match reader.read_event()? {
             Event::Start(element) => {
                 for (index, value) in element.attributes().enumerate() {
-                    ensure!(
+                    within(
                         index < MAX_XML_ATTRIBUTES,
-                        "XML element exceeds 1024 attributes"
-                    );
+                        "XML element exceeds 1024 attributes",
+                    )?;
                     value?;
                 }
                 if depth == 0 {
                     roots += 1;
                 }
                 depth += 1;
-                ensure!(depth <= 128, "OOXML nesting exceeds 128 levels");
+                within(depth <= 128, "OOXML nesting exceeds 128 levels")?;
             }
             Event::Empty(element) => {
                 for (index, value) in element.attributes().enumerate() {
-                    ensure!(
+                    within(
                         index < MAX_XML_ATTRIBUTES,
-                        "XML element exceeds 1024 attributes"
-                    );
+                        "XML element exceeds 1024 attributes",
+                    )?;
                     value?;
                 }
                 if depth == 0 {
@@ -680,10 +704,10 @@ fn ooxml_paragraphs(xml: &str) -> Result<Vec<String>> {
             Event::Start(e) if e.local_name().as_ref() == b"p" => paragraph.clear(),
             Event::Empty(e) if e.local_name().as_ref() == b"p" => {
                 paragraphs.push(String::new());
-                ensure!(
+                within(
                     paragraphs.len() <= 10_000,
-                    "document exceeds 10000 paragraphs"
-                );
+                    "document exceeds 10000 paragraphs",
+                )?;
             }
             Event::Start(e) if e.local_name().as_ref() == b"t" => in_text = true,
             Event::Text(e) if in_text => paragraph.push_str(&e.decode()?),
@@ -694,10 +718,10 @@ fn ooxml_paragraphs(xml: &str) -> Result<Vec<String>> {
             Event::End(e) if e.local_name().as_ref() == b"t" => in_text = false,
             Event::End(e) if e.local_name().as_ref() == b"p" => {
                 paragraphs.push(std::mem::take(&mut paragraph));
-                ensure!(
+                within(
                     paragraphs.len() <= 10_000,
-                    "document exceeds 10000 paragraphs"
-                );
+                    "document exceeds 10000 paragraphs",
+                )?;
             }
             Event::DocType(_) => anyhow::bail!("document type declarations are unsupported"),
             Event::Eof => break,
@@ -802,10 +826,10 @@ pub(crate) fn attribute(
 ) -> Result<Option<String>> {
     let mut value = None;
     for (index, attr) in e.attributes().enumerate() {
-        ensure!(
+        within(
             index < MAX_XML_ATTRIBUTES,
-            "XML element exceeds 1024 attributes"
-        );
+            "XML element exceeds 1024 attributes",
+        )?;
         let attr = attr?;
         if attr.key.as_ref() == name {
             value = Some(attribute_value(&attr)?);
@@ -839,14 +863,14 @@ fn delimited_facts(text: &str, tsv: bool) -> Result<Vec<Fact>> {
         .delimiter(if tsv { b'\t' } else { b',' })
         .from_reader(text.as_bytes());
     let headers = reader.headers()?.clone();
-    ensure!(
+    within(
         headers.len() <= 10_000,
-        "delimited document exceeds 10000 headers"
-    );
-    ensure!(
+        "delimited document exceeds 10000 headers",
+    )?;
+    within(
         headers.iter().all(|name| name.len() <= 1024),
-        "column header exceeds 1024 bytes"
-    );
+        "column header exceeds 1024 bytes",
+    )?;
     let start = headers
         .position()
         .map_or(0, |position| position.byte() as usize);
@@ -899,10 +923,10 @@ fn xml_facts(text: &str) -> Result<Vec<Fact>> {
                 let end = reader.buffer_position() as usize;
                 facts.push(line_fact(text, start, end, name, "element", "xml-element"));
                 for (index, attr) in e.attributes().enumerate() {
-                    ensure!(
+                    within(
                         index < MAX_XML_ATTRIBUTES,
-                        "XML element exceeds 1024 attributes"
-                    );
+                        "XML element exceeds 1024 attributes",
+                    )?;
                     let attr = attr?;
                     let key = String::from_utf8_lossy(attr.key.as_ref());
                     if matches!(
@@ -921,7 +945,7 @@ fn xml_facts(text: &str) -> Result<Vec<Fact>> {
                         facts.push(line_fact(text, start, end, name, "key", "xml-attribute"));
                     }
                 }
-                ensure!(facts.len() <= 10_000, "XML exceeds 10000 facts");
+                within(facts.len() <= 10_000, "XML exceeds 10000 facts")?;
             }
             Event::DocType(_) => anyhow::bail!("XML document type declarations are unsupported"),
             Event::Eof => break,
@@ -956,8 +980,8 @@ fn line_facts(text: &str, language: &str) -> Result<Vec<Fact>> {
                 None
             };
         if let Some((name, kind)) = fact {
-            ensure!(facts.len() < 10_000, "configuration exceeds 10000 facts");
-            ensure!(name.len() <= 1024, "configuration key exceeds 1024 bytes");
+            within(facts.len() < 10_000, "configuration exceeds 10000 facts")?;
+            within(name.len() <= 1024, "configuration key exceeds 1024 bytes")?;
             let line_number = ordinal + 1;
             facts.push(Fact {
                 code: None,
