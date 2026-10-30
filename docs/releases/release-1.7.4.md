@@ -19,6 +19,8 @@ Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and 
 
 - `build.ps1` and `build.sh` at the repository root build an installation-free runtime for the build host under `builds/<UTC timestamp>-<platform>/` (`builds/` is ignored by Git). The generated README explains each process and a VS Code-free test setup. These builds are unsigned and for experiments only.
 - `airk --help` now carries a guide written for people and agents: how the service and its workers fit together, how to select a project, a headless quick start, and how to learn the tools. Command descriptions now say what each command does. The same text reaches agents through `airk_help`.
+- `airk projects` lists registered projects, matching the MCP `projects` tool. `airk explorer <tool>` provides every Explorer Assistance tool without an editor. Each requires `--output <new file>` and writes its result there: drafts are schema-checked and never admitted to an Inbox, templates come from a generated copy of the strategy pack, and `get-handoff` alone reaches a running window.
+- The [CLI guide](../cli.md) and the generated [CLI reference](../cli-reference.md) document every command; a test fails when the reference drifts from the parser. `crates/airk-cli/tests/cli_commands.rs` gives every public command a test, either directly or by naming the native test or script that covers it.
 - [Running AIRK headless](../headless-cli.md) maps every extension feature to the CLI. Guarded maintenance plans (rebuild, repair and verify previews) are still only available through raw `service rpc` JSON.
 
 ## Release and dependency controls

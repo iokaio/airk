@@ -13,6 +13,7 @@ publish.workspace = true
 airk-core.workspace = true
 airk-kernel.workspace = true
 anyhow.workspace = true
+regex = "=1.13.1"
 rmcp = { workspace = true, features = ["client"] }
 serde.workspace = true
 serde_json.workspace = true

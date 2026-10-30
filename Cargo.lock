@@ -197,6 +197,7 @@ dependencies = [
  "airk-core",
  "airk-kernel",
  "anyhow",
+ "regex",
  "rmcp",
  "serde",
  "serde_json",

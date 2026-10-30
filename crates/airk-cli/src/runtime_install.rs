@@ -397,11 +397,17 @@ pub(crate) fn saved_control_root(root: &Path) -> Result<PathBuf> {
 
 #[derive(Subcommand)]
 pub enum LoginCommand {
+    /// Show what login startup registration would create; changes nothing.
     Plan,
+    /// Report whether login startup is registered, loaded and running.
     Status,
+    /// Register the service to start at login for this user.
     Install,
+    /// Start the registered login service now.
     Start,
+    /// Stop the registered login service.
     Stop,
+    /// Remove the login startup registration.
     Uninstall,
 }
 

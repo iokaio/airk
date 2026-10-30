@@ -66,7 +66,7 @@ enum Command {
     },
     /// Plan, and with --execute run, a multi-step read-only evidence request.
     ///
-    /// Give a natural-language request with --text, or a structured plan with --request FILE ('-' for stdin).
+    /// Give a natural-language request as the TEXT argument, or a structured plan with --request FILE ('-' for stdin).
     /// Without --execute it only prints the plan; same contract as the MCP `parse` tool. Never writes sources.
     Parse {
         text: Option<String>,
@@ -234,8 +234,9 @@ enum Command {
     Status,
     /// Search indexed evidence; results carry file, line and revision citations.
     ///
-    /// Default mode is lexical (all words must appear). --mode vector or hybrid uses the local embedding
-    /// model when the project has vectors enabled (see `setup-model` and `configure`).
+    /// Without --mode the project's search policy applies, which uses vectors when they are enabled; that
+    /// fails until the embedding model is set up (`setup-model`). --mode lexical (all words must appear)
+    /// always works on a published index; vector and hybrid need ready vectors.
     Search {
         query: String,
         #[arg(long, value_enum, conflicts_with = "semantic")]
@@ -401,6 +402,22 @@ enum Command {
         #[arg(value_parser=["on","off"])]
         mode: String,
     },
+    /// List the projects registered with the service (same fields as the MCP `projects` tool).
+    ///
+    /// Uses the installed runtime, or the service you started when --runtime-dir names its control directory.
+    Projects {
+        /// Control directory of a service started with `airk serve`.
+        #[arg(long)]
+        runtime_dir: Option<PathBuf>,
+    },
+    /// Explorer Assistance tools without an editor; every result is written to --output.
+    ///
+    /// Drafts are checked against the same schemas as the MCP tools and written to a new file for
+    /// review. Nothing is sent to an Explorer Inbox or executed. get-handoff alone needs a running editor.
+    Explorer {
+        #[command(subcommand)]
+        action: ExplorerCommand,
+    },
     /// Run the installed service under an explicit container/user supervisor.
     Host,
     /// Bounded native metadata and request recovery; never a project writer.
@@ -498,30 +515,238 @@ enum ServiceCommand {
         runtime_dir: PathBuf,
     },
 }
+#[derive(clap::Args)]
+struct ExplorerIo {
+    /// Tool arguments as one JSON object, exactly as for the MCP tool of the same name.
+    #[arg(long, default_value = "{}")]
+    args: String,
+    /// New file for the result (must not exist). Results are never sent to an Explorer Inbox.
+    #[arg(long)]
+    output: PathBuf,
+}
+#[derive(Subcommand)]
+enum ExplorerCommand {
+    /// Write a proposed Explorer Search form (MCP draft_search) after schema validation.
+    DraftSearch {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Write a proposed Studio strategy (MCP draft_strategy) after schema validation.
+    DraftStrategy {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Write proposed Planner tasks (MCP draft_plan) after schema validation.
+    DraftPlan {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Write a Navigation, Review or Management suggestion (MCP suggest_view; --args {"kind":…,"draft":…}).
+    SuggestView {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Validate a draft without writing it as a proposal (MCP validate_draft; --args {"kind":…,"draft":…}).
+    ValidateDraft {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// List the bundled strategy templates (MCP list_templates; optional offset, limit, max_bytes).
+    ListTemplates {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Read one strategy template with its operators (MCP get_template; --args {"template_id":…}).
+    GetTemplate {
+        #[command(flatten)]
+        io: ExplorerIo,
+    },
+    /// Report the status of a draft file written by this CLI (it is never admitted to an Inbox).
+    ProposalStatus {
+        /// Draft file written by draft-search, draft-strategy, draft-plan or suggest-view.
+        #[arg(long)]
+        draft: PathBuf,
+        /// New file for the result (must not exist).
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Read a handoff the user shared from a running Explorer window (MCP get_handoff).
+    ///
+    /// Handoff tokens exist only in that window, so this needs its launch descriptor
+    /// (<VS Code global storage>/iokaio.airk/explorer-assistance/launch-1.json).
+    GetHandoff {
+        /// The ex-share-… token the user copied from Explorer.
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        explorer_descriptor: PathBuf,
+        /// New file for the result (must not exist).
+        #[arg(long)]
+        output: PathBuf,
+    },
+}
+/// Create `path` exclusively (owner-only on Unix) and write `value` as JSON.
+fn write_new(path: &std::path::Path, value: &Value) -> Result<()> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).with_context(|| {
+        format!(
+            "create new output file {} (it must not exist)",
+            path.display()
+        )
+    })?;
+    use std::io::Write;
+    file.write_all(&serde_json::to_vec_pretty(value)?)?;
+    file.write_all(b"\n")?;
+    Ok(())
+}
+async fn explorer_command(cli: &Cli, action: &ExplorerCommand) -> Result<()> {
+    use airk_mcp::explorer_offline as offline;
+    let arguments = |io: &ExplorerIo| -> Result<serde_json::Map<String, Value>> {
+        match serde_json::from_str(&io.args).context("--args must be one JSON object")? {
+            Value::Object(map) => Ok(map),
+            _ => anyhow::bail!("--args must be one JSON object"),
+        }
+    };
+    let now = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis(),
+    )?;
+    let project = cli.service_project.map(|binding| binding.to_string());
+    let (output, value, ok) = match action {
+        ExplorerCommand::DraftSearch { io }
+        | ExplorerCommand::DraftStrategy { io }
+        | ExplorerCommand::DraftPlan { io }
+        | ExplorerCommand::SuggestView { io } => {
+            let tool = match action {
+                ExplorerCommand::DraftSearch { .. } => "draft_search",
+                ExplorerCommand::DraftStrategy { .. } => "draft_strategy",
+                ExplorerCommand::DraftPlan { .. } => "draft_plan",
+                _ => "suggest_view",
+            };
+            let value = offline::draft(tool, arguments(io)?, project, now)?;
+            let ok = value["valid"] == json!(true);
+            (&io.output, value, ok)
+        }
+        ExplorerCommand::ValidateDraft { io } => {
+            (&io.output, offline::validate_draft(&arguments(io)?)?, true)
+        }
+        ExplorerCommand::ListTemplates { io } => {
+            (&io.output, offline::list_templates(&arguments(io)?)?, true)
+        }
+        ExplorerCommand::GetTemplate { io } => {
+            (&io.output, offline::get_template(&arguments(io)?)?, true)
+        }
+        ExplorerCommand::ProposalStatus { draft, output } => {
+            let file: Value =
+                serde_json::from_slice(&bounded(std::fs::File::open(draft)?, 1 << 20)?)?;
+            (output, offline::proposal_status(&file)?, true)
+        }
+        ExplorerCommand::GetHandoff {
+            token,
+            explorer_descriptor,
+            output,
+        } => {
+            let descriptor = explorer_descriptor.clone();
+            let arguments = json!({"token":token})
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            let value = tokio::task::spawn_blocking(move || {
+                airk_cli::unified_mcp::call_explorer(
+                    descriptor,
+                    None,
+                    None,
+                    "airk_explorer_handoff_get".into(),
+                    arguments,
+                    airk_core::usage::ClientFamily::Cli,
+                )
+            })
+            .await??;
+            let ok = value["ok"] != json!(false);
+            (output, value, ok)
+        }
+    };
+    write_new(output, &value)?;
+    print_json(&json!({"written":output,"ok":ok}))?;
+    ensure!(
+        ok,
+        "result written to {} reports a problem",
+        output.display()
+    );
+    Ok(())
+}
+async fn list_projects(cli: &Cli, runtime_dir: Option<&std::path::Path>) -> Result<()> {
+    let control = match runtime_dir {
+        Some(control) => control.to_path_buf(),
+        None => airk_cli::runtime_install::installed_control(&install_root(cli)?).await?,
+    };
+    let (mut after, mut revision, mut projects) = (None, None, Vec::new());
+    loop {
+        let response = airk_cli::console_client::request(
+            &control,
+            ControlMethod::Projects {
+                after,
+                revision,
+                limit: 32,
+            },
+        )
+        .await?;
+        let airk_core::service::ControlResponse::Projects { page } = response else {
+            anyhow::bail!("unexpected service response to a projects page");
+        };
+        for project in &page.projects {
+            let registration = &project.registration;
+            projects.push(json!({"project":registration.binding,
+                "name":std::path::Path::new(&registration.root).file_name().map(|name| name.to_string_lossy().into_owned()),
+                "collection":registration.collection,"root":registration.root,"data_root":registration.data_root}));
+        }
+        match page.after {
+            Some(next) => {
+                after = Some(next);
+                revision = Some(page.revision);
+            }
+            None => break,
+        }
+    }
+    print_json(&json!({"default_project":cli.service_project,"projects":projects}))
+}
 #[derive(Subcommand)]
 enum ClientRequestCommand {
+    /// Save a configuration request for a project from a draft --file, without submitting it.
     PrepareConfiguration {
         #[arg(long)]
         project: airk_core::service::ProjectBinding,
         #[arg(long)]
         file: PathBuf,
     },
+    /// Save a job request (--kind index, inspect, reconcile, vectors, model_setup, verify, recover or maintain).
     Prepare {
         #[arg(long)]
         project: airk_core::service::ProjectBinding,
         #[arg(long,default_value="index",value_parser=["index","inspect","reconcile","vectors","model_setup","verify","recover","maintain"])]
         kind: String,
     },
+    /// List saved client requests and their outcomes.
     List,
+    /// Submit, or resubmit after an unknown outcome, a saved request by its nonce.
     Retry {
         nonce: airk_core::identity::Incarnation,
     },
+    /// Discard a saved request record by its nonce.
     Forget {
         nonce: airk_core::identity::Incarnation,
     },
 }
 #[derive(Subcommand)]
 enum UsageCommand {
+    /// Summarize recorded usage for the last --days (json, csv or markdown; optional price scenario file).
     Report {
         #[arg(long, default_value_t = 7)]
         days: u16,
@@ -530,18 +755,23 @@ enum UsageCommand {
         #[arg(long)]
         price_scenario: Option<PathBuf>,
     },
+    /// Show the project's usage recording mode and retention.
     Policy,
+    /// Delete recorded usage for the project.
     Clear,
+    /// Set the recording mode: disabled, aggregates_only or diagnostic_events.
     #[command(name = "configure", alias = "set")]
     Set {
         #[arg(long, value_parser = ["disabled", "aggregates_only", "diagnostic_events"])]
         mode: String,
     },
+    /// Record whether one returned request was useful, partly useful or not useful.
     Feedback {
         request_id: String,
         #[arg(long, value_parser = ["useful", "partly_useful", "not_useful", "partly-useful", "not-useful"])]
         usefulness: String,
     },
+    /// Import a usage export; --preview shows what would change and --if-sha256 pins the file.
     Import {
         file: PathBuf,
         #[arg(long)]
@@ -549,6 +779,7 @@ enum UsageCommand {
         #[arg(long)]
         if_sha256: Option<airk_core::identity::Sha256Digest>,
     },
+    /// Calibrate token estimates against a tokenizer and baseline/returned samples (advanced).
     Calibrate {
         #[arg(long)]
         tokenizer: PathBuf,
@@ -824,6 +1055,10 @@ async fn run() -> Result<()> {
             .await;
         }
         Command::Init => return initialize(&cli).await,
+        Command::Projects { runtime_dir } => {
+            return list_projects(&cli, runtime_dir.as_deref()).await;
+        }
+        Command::Explorer { action } => return explorer_command(&cli, action).await,
         Command::Index { full: true } => anyhow::bail!(
             "full rebuilds require a guarded maintenance preview and separate approval; use Service Console or typed service RPC"
         ),
@@ -1742,5 +1977,89 @@ mod tests {
             Cli::try_parse_from(["airk", "--root", "/missing/source", "tools", "list"]).is_ok()
         );
         assert!(Cli::try_parse_from(["airk", "--service-project", "bad", "mcp"]).is_err());
+    }
+}
+
+/// docs/cli-reference.md is generated from the parser, so every public command is
+/// documented exactly as `--help` prints it. Regenerate with AIRK_WRITE_CLI_REFERENCE=1.
+#[cfg(test)]
+mod cli_reference_tests {
+    use super::*;
+
+    fn reference() -> String {
+        // Clap's generated `help` subcommands repeat other entries.
+        let catalog: std::collections::BTreeMap<String, String> = cli_help_catalog()
+            .into_iter()
+            .filter(|(name, _)| !name.split(' ').any(|part| part == "help"))
+            .collect();
+        let mut text = String::from(
+            "# AIRK CLI reference\n\n<!-- Generated from the native parser by `cargo test -p airk-cli --bin airk cli_reference`; do not edit. Set AIRK_WRITE_CLI_REFERENCE=1 to regenerate. -->\n\nEvery public command and subcommand, exactly as `airk <command> --help` prints it. For concepts, workflows and the feature map, see [Running AIRK headless](headless-cli.md) and [the CLI guide](cli.md).\n\n## Contents\n\n",
+        );
+        for name in catalog.keys() {
+            let title = if name.is_empty() {
+                "airk".to_owned()
+            } else {
+                format!("airk {name}")
+            };
+            let anchor = title.replace(' ', "-");
+            text.push_str(&format!("- [`{title}`](#{anchor})\n"));
+        }
+        for (name, help) in &catalog {
+            let title = if name.is_empty() {
+                "airk".to_owned()
+            } else {
+                format!("airk {name}")
+            };
+            text.push_str(&format!(
+                "\n## {title}\n\n```text\n{}\n```\n",
+                help.trim_end()
+            ));
+        }
+        text
+    }
+
+    #[test]
+    fn cli_reference_documents_every_public_command() {
+        let path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/cli-reference.md");
+        let expected = reference();
+        if std::env::var_os("AIRK_WRITE_CLI_REFERENCE").is_some() {
+            std::fs::write(&path, &expected).unwrap();
+        }
+        let actual = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
+        assert!(
+            actual == expected,
+            "docs/cli-reference.md is stale: run AIRK_WRITE_CLI_REFERENCE=1 cargo test -p airk-cli --bin airk cli_reference"
+        );
+    }
+
+    #[test]
+    fn every_public_command_has_help_text() {
+        use clap::CommandFactory;
+        let mut root = Cli::command();
+        root.build();
+        fn visit(command: &clap::Command, path: &str, missing: &mut Vec<String>) {
+            for child in command
+                .get_subcommands()
+                .filter(|child| !child.is_hide_set() && child.get_name() != "help")
+            {
+                let name = format!("{path} {}", child.get_name()).trim().to_owned();
+                if child.get_about().is_none()
+                    && child.get_long_about().is_none()
+                    && child.get_name() != "help"
+                {
+                    missing.push(name.clone());
+                }
+                visit(child, &name, missing);
+            }
+        }
+        let mut missing = Vec::new();
+        visit(&root, "", &mut missing);
+        assert!(
+            missing.is_empty(),
+            "commands without help text: {missing:?}"
+        );
     }
 }

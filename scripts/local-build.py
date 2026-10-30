@@ -39,7 +39,7 @@ $scope = @('--service-runtime-dir', $control, '--service-project', $binding, '--
 # 4. Index, check status and search.
 & $airk @scope index
 & $airk @scope tools call airk_status --args '{{}}'
-& $airk @scope search "copper harbor"
+& $airk @scope search "copper harbor" --mode lexical
 
 # 5. Optional: serve MCP over stdio for an agent or an MCP inspector.
 & $airk @scope mcp
@@ -70,7 +70,7 @@ set -- --service-runtime-dir "$control" --service-project "$binding" --root "$te
 # 4. Index, check status and search.
 "$airk" "$@" index
 "$airk" "$@" tools call airk_status --args '{{}}'
-"$airk" "$@" search "copper harbor"
+"$airk" "$@" search "copper harbor" --mode lexical
 
 # 5. Optional: serve MCP over stdio for an agent or an MCP inspector.
 "$airk" "$@" mcp

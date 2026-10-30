@@ -109,9 +109,15 @@ async function build() {
     const { HelpIndex } = require(path.join(root, 'out', 'explorerAssistance', 'help.js'));
     const nativeCatalog = path.resolve(root, '..', '..', 'crates', 'airk-mcp', 'src', 'unified_explorer.json');
     const schemas = JSON.stringify(toolDefinitions(new HelpIndex(catalog)), null, 2) + '\n';
-    if (process.argv.includes('--write-mcp-catalog')) { fs.writeFileSync(nativeCatalog, schemas); }
-    else if (!fs.existsSync(nativeCatalog) || fs.readFileSync(nativeCatalog, 'utf8') !== schemas) {
-        throw new Error('Native UI schemas differ: run node scripts/build-explorer.cjs --write-mcp-catalog and review the catalog diff.');
+    // The native CLI serves list_templates/get_template offline from the same strategy pack.
+    const { CORE_PACK, OPERATORS } = require(path.join(root, 'out', 'explorerStrategies.js'));
+    const nativeTemplates = path.resolve(root, '..', '..', 'crates', 'airk-mcp', 'src', 'explorer_templates.json');
+    const templates = JSON.stringify({ catalog_version: catalog.catalogVersion, extension_version: catalog.extensionVersion, templates: CORE_PACK, operators: OPERATORS }, null, 2) + '\n';
+    for (const [file, text] of [[nativeCatalog, schemas], [nativeTemplates, templates]]) {
+        if (process.argv.includes('--write-mcp-catalog')) { fs.writeFileSync(file, text); }
+        else if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== text) {
+            throw new Error(`Native Explorer catalog ${path.basename(file)} differs: run node scripts/build-explorer.cjs --write-mcp-catalog and review the diff.`);
+        }
     }
     const common = { absWorkingDir: root, bundle: true, metafile: true, sourcemap: false, legalComments: 'none', logLevel: 'warning', charset: 'utf8',
         plugins: [helpPlugin(catalog)] };

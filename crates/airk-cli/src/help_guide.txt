@@ -25,7 +25,7 @@ HEADLESS QUICK START (no installation)
   airk --root <src> --data-dir <data> --collection demo service register --runtime-dir <control>
   airk <scope> index                                  # queue indexing; prints a job receipt
   airk <scope> tools call airk_status --args '{}'     # job, coverage and readiness
-  airk <scope> search "words to find" --limit 5       # lexical search with citations
+  airk <scope> search "words to find" --mode lexical # cited search; vectors need setup-model
   airk <scope> watch on                               # keep the index current
   airk <scope> mcp                                    # stdio MCP server for an agent
   airk service shutdown --runtime-dir <control>
@@ -37,6 +37,12 @@ LEARNING THE TOOLS
   airk tools help <tool>           description, input schema and an argument template
   airk tools call airk_help        the engine's own topic guide
   airk <command> --help            arguments of any command below
+
+PROJECTS AND EXPLORER ASSISTANCE
+  airk projects [--runtime-dir <control>]           registered projects and their bindings
+  airk explorer <tool> --args '<json>' --output <new file>
+                                                   draft/template/validation tools; results go
+                                                   to the file, never to an Explorer Inbox
 
 MANAGEMENT WITHOUT VS CODE
   pause / resume / watch on|off / inspect / setup-model   project work

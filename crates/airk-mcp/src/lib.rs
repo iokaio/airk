@@ -16,6 +16,7 @@ mod execution;
 mod lifecycle;
 pub mod response;
 use response::ResponseArgs;
+pub mod explorer_offline;
 pub mod help;
 pub mod local;
 pub mod remote;

@@ -201,7 +201,8 @@ impl ExplorerTools for Explorer {
         })
     }
 }
-fn call_explorer(
+/// One-shot call to a running Explorer window through its verified launch descriptor.
+pub fn call_explorer(
     descriptor: PathBuf,
     project: Option<String>,
     root: Option<PathBuf>,
