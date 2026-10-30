@@ -7,6 +7,10 @@ import { serviceTestHost } from './serviceTestHost';
 import * as cliInstall from '../cliInstall';
 import { assistanceEntry, retrievalEntry, serializeServers, type LaunchSpec } from '../model';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
+import { runText } from '../native';
+import { NativeExecutionDisabled, setNativeExecutionGate } from '../nativeGate';
+import { NativeControlTransport } from '../serviceClient';
+import { McpStdioSession } from '../mcpStdioSession';
 
 test('verified reopen migrates both old definitions quietly before publishing the connection',async context=>{
     const f=await serviceTestHost(context,{automatic:true});
@@ -124,6 +128,29 @@ test('untrusted workspaces expose no MCP servers and cannot discover, start or m
         for(const name of ['airk.index','airk.reindex','airk.openTools','airk.installCli','airk.setupAgent'])await assert.rejects(f.commands.get(name)!(),/runtime_client_no_longer_authorized/);
         assert.equal(f.state.discovered,0);assert.equal(f.state.ensured,0);assert.equal(f.writes.length,0);
     }finally{await f.close();}
+});
+
+test('disabled native execution starts no AIRK process until the user enables it',async context=>{
+    const f=await serviceTestHost(context,{automatic:true,nativeExecution:false});
+    const launches:string[]=[];
+    try{
+        assert.deepEqual(await f.api.getServerDefinitions(),[]);
+        assert.equal(f.state.discovered,0);assert.equal(f.state.ensured,0);
+        assert.match(f.statusBar.text,/native execution off/);
+        for(const name of ['airk.index','airk.reindex','airk.openTools','airk.installCli','airk.status','airk.usage'])
+            await assert.rejects(Promise.resolve(f.commands.get(name)!()),/native_execution_disabled/);
+        // Workspace changes and refreshes stay inert; low-level spawn points refuse first.
+        await f.commands.get('airk.treeRefresh')!().catch(()=>undefined);
+        await assert.rejects(runText(process.execPath,['--version']),NativeExecutionDisabled);
+        assert.throws(()=>new NativeControlTransport('airk',[],1000,(command)=>{launches.push(command);throw new Error('spawned');}),NativeExecutionDisabled);
+        await assert.rejects(McpStdioSession.open({command:'airk',args:[],clientName:'fixture',clientVersion:'0',launch:(command:string)=>{launches.push(command);throw new Error('spawned');}} as any),NativeExecutionDisabled);
+        assert.deepEqual(launches,[]);
+        assert.equal(f.state.discovered,0);assert.equal(f.state.ensured,0);assert.equal(f.writes.length,0);
+        await f.commands.get('airk.enableNativeExecution')!();
+        assert.equal(f.settings.get('runtime.nativeExecution'),true);
+        await f.commands.get('airk.index')!();
+        assert.ok(f.state.discovered>0,'enabling resumes the normal runtime path');
+    }finally{setNativeExecutionGate(()=>true);await f.close();}
 });
 
 test('MCP definitions use reviewed native storage and user response settings while ignoring workspace overrides',async context=>{

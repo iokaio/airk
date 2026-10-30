@@ -108,8 +108,12 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private async privacyChanged():Promise<void>{
         await this.saveQueue;
-        if(this.session&&(!this.persistence()||!this.persistResults())){
-            if(!this.persistence()){await this.store.remove(this.session.project);}else{await this.store.clearResults(this.session.project);}
+        // Turning persistence off applies to every saved project, not only the selected one.
+        if(!this.persistence()||!this.persistResults()){
+            for(const project of await this.store.projects()){
+                if(!this.persistence()){await this.store.remove(project);}else{await this.store.clearResults(project);}
+            }
+            if(this.session&&!this.persistence()){this.recent=[];}
         }
         this.send();
     }

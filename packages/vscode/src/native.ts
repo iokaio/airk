@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { McpSessionError, McpStdioSession } from './mcpStdioSession';
 import { ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from './explorerContracts';
 import { LaunchSpec, launchArgs, ServerEntry, UNIFIED_TOOLS } from './model';
+import { requireNativeExecution } from './nativeGate';
 
 export interface IndexProgress {
     collection: string; phase: string; revision: string | null; processed_artifacts: number; committed_artifacts: number;
@@ -145,7 +146,15 @@ export class NativeProcessError extends Error {
     }
 }
 
+/** Run a native AIRK executable; refused while native execution is disabled. */
 export function runText(command: string, args: string[], cwd?: string, timeout = 300000,
+    onStderrLine?: (line: string) => boolean, idleTimeout = 0, input?: string): Promise<string> {
+    try { requireNativeExecution(); } catch (error) { return Promise.reject(error); }
+    return runSystemText(command, args, cwd, timeout, onStderrLine, idleTimeout, input);
+}
+
+/** Run an operating-system tool (for example PowerShell for user PATH); never AIRK itself. */
+export function runSystemText(command: string, args: string[], cwd?: string, timeout = 300000,
     onStderrLine?: (line: string) => boolean, idleTimeout = 0, input?: string): Promise<string> {
     if (input !== undefined && Buffer.byteLength(input, 'utf8') > 65536) { return Promise.reject(new Error('AIRK native control input exceeds 64 KiB.')); }
     return new Promise((resolve, reject) => {

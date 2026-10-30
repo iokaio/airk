@@ -83,7 +83,7 @@ test('CLI retirement preserves redirected directories, hard links and non-file t
 test('service CLI install retries retirement even when its current wrapper is unchanged',{skip:process.platform!=='win32'},async context=>{
     const root=await fixture(context),old=path.join(root,'cli','bin','airk.exe');
     await fs.mkdir(path.dirname(old),{recursive:true});await fs.writeFile(old,'previous version');
-    context.mock.method(native,'runText',async()=> '');
+    context.mock.method(native,'runSystemText',async()=> '');
     const variables={persistent:false,description:'',prepend:()=>{}};
     const host={globalStorageUri:{fsPath:root},environmentVariableCollection:variables} as any;
     await publishLauncherCommand(process.execPath,root);
@@ -131,6 +131,24 @@ test('shell setup preserves startup commands and login selection, respects custo
     assert.match(await fs.readFile(path.join(env.XDG_CONFIG_HOME, 'fish/conf.d/airk-path.fish'), 'utf8'), /set -gx PATH/);
     assert.deepEqual(await configureShellPath(directory, home, env), []);
     assert.equal(await fs.readFile(path.join(home, '.bashrc'), 'utf8'), bash);
+});
+
+test('automatic shell scope edits only present shells and off edits no startup files', async context => {
+    const root = await fixture(context), home = path.join(root, 'home');
+    await fs.mkdir(home);
+    await fs.writeFile(path.join(home, '.zshrc'), '# existing zsh\n');
+    const env = { SHELL: '/bin/bash', XDG_CONFIG_HOME: path.join(home, '.config') };
+    assert.deepEqual(await configureShellPath('/opt/airk/bin', home, env, 'auto'), []);
+    for (const name of ['.profile', '.bashrc', '.zshrc']) {
+        assert.match(await fs.readFile(path.join(home, name), 'utf8'), /AIRK CLI PATH/, name);
+    }
+    // No profiles are created for shells that are neither current nor configured.
+    await assert.rejects(fs.access(path.join(home, '.zprofile')), /ENOENT/);
+    await assert.rejects(fs.access(path.join(home, '.config', 'fish')), /ENOENT/);
+    const off = path.join(root, 'off');
+    await fs.mkdir(off);
+    assert.deepEqual(await configureShellPath('/opt/airk/bin', off, { SHELL: '/bin/zsh' }, 'off'), []);
+    assert.deepEqual(await fs.readdir(off), []);
 });
 
 test('unsupported PATH characters and blocked profiles report failure without losing other shell setup', async context => {
@@ -214,7 +232,7 @@ ${script}
 ${script}
 @{ value = $airkFake.Value; writes = $airkFake.Writes } | ConvertTo-Json -Compress`;
     const powershell = path.join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe');
-    const result = JSON.parse(await native.runText(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(harness, 'utf16le').toString('base64')]));
+    const result = JSON.parse(await native.runSystemText(powershell, ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(harness, 'utf16le').toString('base64')]));
     assert.equal(result.value, `${directory};%USERPROFILE%\\existing;C:\\Tools`);
     assert.equal(result.writes, 1);
 });
@@ -223,7 +241,7 @@ test('Windows installer exposes a real executable in fresh terminal PATH without
     const root = await fixture(context);
     // A real executable proves command discovery; no Rust build or live registry edit is needed.
     let terminalPath = '';
-    const runner = context.mock.method(native, 'runText', async () => '');
+    const runner = context.mock.method(native, 'runSystemText', async () => '');
     const variables = { persistent: false, description: '', prepend: (name: string, value: string) => {
         assert.equal(name, 'PATH'); terminalPath = value;
     } };

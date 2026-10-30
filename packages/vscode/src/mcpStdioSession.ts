@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { requireNativeExecution } from './nativeGate';
 
 export class McpSessionError extends Error {
     constructor(readonly code: 'exited' | 'invalid_json' | 'oversize' | 'timeout' | 'closed' | 'rpc' | 'overloaded', message: string, readonly detail?: unknown) {
@@ -44,6 +45,7 @@ export class McpStdioSession {
 
     /** Spawn, initialize and acknowledge; rejects (and kills the child) if the handshake fails. */
     static async open(options: McpStdioOptions, handshakeTimeout = 90000): Promise<{ session: McpStdioSession; initialize: any }> {
+        requireNativeExecution();
         const env = { ...process.env, ...options.env };
         const child = (options.launch ?? ((command, args, launch) => spawn(command, args, { ...launch, windowsHide: true, stdio: 'pipe' })))(
             options.command, options.args, { cwd: options.cwd, env });

@@ -8,6 +8,8 @@ import { record } from './serviceClient';
 import { LaunchSpec } from './model';
 import { migrateLocalAgents } from './agentMigration';
 import { readJsonConfig } from './agentConfig';
+import type { ShellTouch } from './cliInstall';
+import { defaultProfiles, removeShellIntegration, ShellRemoval } from './cliRemove';
 
 interface Receipt { schema:1; installDir:string; storage:string; spec?:LaunchSpec }
 const limit=1024, receiptLimit=32768;
@@ -65,6 +67,34 @@ export async function rememberUninstallTarget(launcherDirectory:string,installDi
         await fs.rename(temporary,target);
     }finally{await fs.unlink(temporary).catch(()=>undefined);}
 }
+interface ShellReceipt { schema:1; storage:string; profiles:ShellTouch[] }
+const shellName=(storage:string)=>`shell-${createHash('sha256').update(storage).digest('hex')}.json`;
+function validateShell(value:unknown):ShellReceipt {
+    const item=record(value);if(item.schema!==1||!Array.isArray(item.profiles)||item.profiles.length>64)throw new Error('Invalid shell integration receipt');
+    return {schema:1,storage:absolute(item.storage),profiles:item.profiles.map(raw=>{const entry=record(raw);return {file:absolute(entry.file),created:entry.created===true};})};
+}
+/** Record startup files that hold an AIRK block. "created" stays true once observed so
+ * removal can delete a file AIRK created; files are never deleted otherwise. */
+export async function rememberShellIntegration(launcherDirectory:string,storage:string,touched:readonly ShellTouch[]):Promise<void>{
+    const root=await directory(launcherDirectory),target=path.join(root,shellName(absolute(storage)));
+    const before=await readJsonConfig(target);
+    const merged=new Map<string,ShellTouch>();
+    if(before){for(const entry of validateShell(JSON.parse(before)).profiles)merged.set(entry.file,entry);}
+    for(const entry of touched){const file=absolute(entry.file);merged.set(file,{file,created:entry.created||merged.get(file)?.created===true});}
+    const bytes=JSON.stringify({schema:1,storage,profiles:[...merged.values()].slice(0,64)});
+    if(before===bytes)return;
+    const temporary=path.join(root,`${randomUUID()}.tmp`);
+    try{
+        await fs.writeFile(temporary,bytes,{flag:'wx',mode:0o600});
+        if(await readJsonConfig(target)!==before)throw new Error('Shell integration receipt changed concurrently');
+        await fs.rename(temporary,target);
+    }finally{await fs.unlink(temporary).catch(()=>undefined);}
+}
+/** Recorded startup files for one extension storage root; empty when none were recorded. */
+export async function shellProfiles(launcherDirectory:string,storage:string):Promise<ShellTouch[]>{
+    const source=await readJsonConfig(path.join(absolute(launcherDirectory),'extension-uninstall',shellName(absolute(storage))));
+    return source?validateShell(JSON.parse(source)).profiles:[];
+}
 async function saveConfig(destination:string,before:string,after:string):Promise<void> {
     const temporary=path.join(path.dirname(destination),`.airk-uninstall-${randomUUID()}.tmp`);
     try{
@@ -97,8 +127,11 @@ export async function removeWorkbenchSessions(storage:string):Promise<void>{
     await fs.rmdir(root);
 }
 
-export async function uninstallTargets(main:string,run:NativeRunner,log:(message:string)=>void):Promise<void> {
+type ShellRemover=(storage:string,recorded:ShellTouch[])=>Promise<ShellRemoval>;
+const removeOwnedShell:ShellRemover=(storage,recorded)=>removeShellIntegration(storage,[...defaultProfiles(),...recorded]);
+export async function uninstallTargets(main:string,run:NativeRunner,log:(message:string)=>void,removeShell:ShellRemover=removeOwnedShell):Promise<void> {
     const targets=new Map<string,{receipts:{file:string;item:Receipt}[]}>(),failures:string[]=[];
+    const shells=new Map<string,{files:string[];profiles:ShellTouch[]}>();
     // Native user locations find both fresh and historical default layouts. Receipts
     // also cover custom installation roots and closed workspaces used by this extension.
     for(const channel of ['stable','preview']){
@@ -112,6 +145,14 @@ export async function uninstallTargets(main:string,run:NativeRunner,log:(message
             try{names=await fs.readdir(root);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}
             if(names.length>limit||!same(await fs.realpath(root),root))throw new Error('Unsafe or oversized uninstall receipt directory');
             for(const name of names){
+                if(/^shell-[a-f0-9]{64}\.json$/.test(name)){
+                    const file=path.join(root,name),source=await readJsonConfig(file);
+                    if(!source||Buffer.byteLength(source)>receiptLimit)throw new Error('Invalid shell integration receipt size');
+                    const item=validateShell(JSON.parse(source));
+                    if(shellName(item.storage)!==name)throw new Error('Shell integration receipt identity changed');
+                    const entry=shells.get(item.storage)??{files:[],profiles:[]};entry.files.push(file);entry.profiles.push(...item.profiles);shells.set(item.storage,entry);
+                    continue;
+                }
                 if(!/^[a-f0-9]{64}\.json$/.test(name))continue;
                 const file=path.join(root,name),source=await readJsonConfig(file);
                 if(!source||Buffer.byteLength(source)>receiptLimit)throw new Error('Invalid uninstall receipt size');
@@ -137,8 +178,18 @@ export async function uninstallTargets(main:string,run:NativeRunner,log:(message
                 const result=await run(main,['runtime','uninstall','--install-dir',installDir],180000);
                 if(result.uninstalled!==true)throw new Error(`Runtime uninstall incomplete: ${JSON.stringify(result)}`);
             }
-            if(!clean)throw new Error('Runtime removed; some agent entries require manual review (see messages above)');
-            for(const storage of new Set(target.receipts.map(receipt=>receipt.item.storage)))await removeWorkbenchSessions(storage);
+            // The command no longer has a runtime behind it: retire owned PATH entries,
+            // profile blocks and wrappers. Modified or redirected files are preserved and reported.
+            const storages=new Set(target.receipts.map(receipt=>receipt.item.storage));
+            for(const storage of storages){
+                const shell=shells.get(storage);
+                const removal=await removeShell(storage,shell?.profiles??[]);
+                for(const message of removal.removed)log(message);
+                for(const message of removal.preserved){log(message);clean=false;}
+                if(removal.preserved.length===0)for(const file of shell?.files??[])await fs.unlink(file).catch(()=>undefined);
+            }
+            if(!clean)throw new Error('Runtime removed; some agent entries or shell integration require manual review (see messages above)');
+            for(const storage of storages)await removeWorkbenchSessions(storage);
             for(const {file} of target.receipts)await fs.unlink(file);
         }catch(error){failures.push(`${installDir}: ${String(error)}`);}
     }

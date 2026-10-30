@@ -291,3 +291,78 @@ test('a deleted open folder does not block automatic setup of other trusted fold
         assert.equal(f.writes.filter(value=>value.reserve_project?.setup_watch===true).length,1);
     }finally{await f.close();}
 });
+
+test('first installation waits for review: dismiss and defer change nothing persistent until explicit setup',async context=>{
+    const f=await serviceTestHost(context,{fresh:true,registered:false});
+    try{
+        f.settings.set('cli.autoInstall',true);
+        await f.refreshFolders();
+        const reviews=()=>f.notices.filter(notice=>notice.message==='Set up AIRK on this computer?').length;
+        assert.equal(reviews(),1);
+        assert.equal(f.state.ensured,0);assert.equal(f.registrations.size,0);
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.1.')),false);
+        f.state.noticeAction='Not now';await f.refreshFolders();
+        assert.equal(reviews(),2);assert.equal(f.state.ensured,0);
+        await f.refreshFolders();
+        assert.equal(reviews(),2,'a saved deferral is honored without asking again');
+        assert.equal(f.state.ensured,0);assert.equal(f.registrations.size,0);
+        await f.commands.get('airk.setUp')!();
+        assert.ok(f.state.ensured>0);assert.equal(f.registrations.size,1);
+    }finally{await f.close();}
+});
+
+test('first installation review can disable automatic setup or accept it once',async context=>{
+    const f=await serviceTestHost(context,{fresh:true,registered:false});
+    try{
+        f.settings.set('cli.autoInstall',true);f.state.noticeAction="Don't set up automatically";
+        await f.refreshFolders();
+        assert.equal(f.settings.get('cli.autoInstall'),false);assert.equal(f.state.ensured,0);
+        f.settings.set('cli.autoInstall',true);f.state.noticeAction='Set up';
+        await f.refreshFolders();
+        assert.ok(f.state.ensured>0);assert.equal(f.registrations.size,1);
+        const reviews=f.notices.length;await f.refreshFolders();
+        assert.equal(f.notices.length,reviews,'accepted setup is not reviewed again');
+    }finally{await f.close();}
+});
+
+test('customized first installation registers only selected folders and can skip shell integration',async context=>{
+    const f=await serviceTestHost(context,{fresh:true,registered:false,roots:2});
+    try{
+        f.settings.set('cli.autoInstall',true);f.state.noticeAction='Customize…';
+        let offered:any[]=[];
+        f.state.pick=items=>{offered=items;return items.filter(item=>item.folder===f.folders[1].uri.fsPath);};
+        await f.refreshFolders();
+        assert.equal(offered.length,3);assert.ok(offered.slice(0,2).every(item=>item.picked===true));
+        assert.equal(f.settings.get('cli.shellIntegration'),'off');
+        assert.equal(f.registrations.size,1);
+        assert.equal([...f.registrations.values()][0].root,f.folders[1].uri.fsPath);
+        assert.ok(f.calls.some(line=>line.includes('left out during setup review')));
+    }finally{await f.close();}
+});
+
+test('a home folder is never registered automatically without an explicit choice',async context=>{
+    const os=require('node:os') as typeof import('node:os');
+    const f=await serviceTestHost(context,{fresh:true,registered:false,roots:2});
+    try{
+        context.mock.method(os,'homedir',()=>f.folders[0].uri.fsPath);
+        f.settings.set('cli.autoInstall',true);f.state.noticeAction='Set up';
+        await f.refreshFolders();
+        assert.ok(f.notices.some(notice=>notice.message==='Set up AIRK on this computer?'&&JSON.stringify(notice.actions).includes('Home folders and drive roots')));
+        assert.equal(f.registrations.size,1);
+        assert.equal([...f.registrations.values()][0].root,f.folders[1].uri.fsPath);
+        assert.ok(f.calls.some(line=>line.includes('is a home folder or drive root')));
+    }finally{await f.close();}
+});
+
+test('an uninstall that never wrote a final result is reported as interrupted, never as success',async context=>{
+    const fs=await import('node:fs/promises');
+    const f=await serviceTestHost(context);
+    try{
+        const directory=path.join(f.root,'native-state','extension-uninstall');await fs.mkdir(directory,{recursive:true});
+        await fs.writeFile(path.join(directory,'last-result.json'),JSON.stringify({schema:1,state:'started',startedAt:'2026-10-30T00:00:00Z',pid:2147483646,job:'/tmp/airk-uninstall-fixture'}));
+        await f.commands.get('airk.showLastUninstallResult')!();
+        assert.ok(f.calls.some(line=>line.includes('interrupted or unknown')),f.calls.join('\n'));
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.ok(f.warnings.some(message=>message.includes('did not finish cleanly')));
+    }finally{await f.close();}
+});
