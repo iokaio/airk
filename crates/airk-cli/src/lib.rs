@@ -5,6 +5,12 @@ pub mod embedding_pool_client;
 mod embedding_pool_process;
 pub mod embedding_pool_protocol;
 pub mod local_ipc;
+/// Leaf Windows file-ACL check shared with the Explorer Assistance forwarder,
+/// which must not depend on service or IPC protocol code.
+#[cfg(windows)]
+pub(crate) mod owner_acl {
+    pub(crate) use crate::local_ipc::require_owner_private;
+}
 mod runtime_metadata;
 pub mod runtime_pair;
 pub mod service_configuration;

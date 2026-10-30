@@ -14,7 +14,7 @@ mod platform;
 mod platform;
 pub use platform::{Listener, Stream, connect, current_user, prepare_root};
 #[cfg(windows)]
-pub(crate) use platform::{create_root, process_user};
+pub(crate) use platform::{create_root, process_user, require_owner_private};
 
 /// Stable counter identity for the OS-authenticated user; not a bearer credential.
 pub fn caller_identity() -> Result<airk_core::identity::Incarnation> {

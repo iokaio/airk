@@ -226,6 +226,77 @@ pub fn prepare_root(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Owner-private descriptor check for editor-written files. Unlike AIRK's own
+/// control roots, these inherit the profile ACL, so SYSTEM and Administrators
+/// may also hold access; any other allowed principal, or a null DACL, is refused.
+pub(crate) fn require_owner_private(path: &Path) -> Result<()> {
+    const SYSTEM: &str = "S-1-5-18";
+    const ADMINISTRATORS: &str = "S-1-5-32-544";
+    let user = current_user()?;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let (mut security, mut owner, mut dacl) = (
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+        std::ptr::null_mut(),
+    );
+    // SAFETY: writable output pointers and terminated path remain live; API allocates descriptor.
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            wide.as_ptr(),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            &mut owner,
+            std::ptr::null_mut(),
+            &mut dacl,
+            std::ptr::null_mut(),
+            &mut security,
+        )
+    };
+    if status != 0 {
+        return Err(io::Error::from_raw_os_error(status as i32).into());
+    }
+    let _security = Allocation(security);
+    ensure!(
+        !owner.is_null() && !dacl.is_null(),
+        "unrestricted descriptor ACL"
+    );
+    let owner = sid_string(owner)?;
+    ensure!(
+        owner == user || owner == ADMINISTRATORS,
+        "descriptor is owned by another account"
+    );
+    // SAFETY: nonnull ACL points inside the successful OS-returned live security descriptor.
+    let count = unsafe { (*dacl).AceCount };
+    for index in 0..u32::from(count) {
+        let mut ace = std::ptr::null_mut();
+        // SAFETY: index is below the ACL's entry count; output pointer lives for this call.
+        ensure!(
+            unsafe { GetAce(dacl, index, &mut ace) } != 0 && !ace.is_null(),
+            "invalid descriptor ACL"
+        );
+        // SAFETY: inspect the native ACE header before interpreting its body.
+        let header = unsafe { &*ace.cast::<windows_sys::Win32::Security::ACE_HEADER>() };
+        if header.AceType
+            == windows_sys::Win32::System::SystemServices::ACCESS_DENIED_ACE_TYPE as u8
+        {
+            continue;
+        }
+        ensure!(
+            header.AceType == ACCESS_ALLOWED_ACE_TYPE as u8
+                && header.AceSize as usize >= mem::size_of::<ACCESS_ALLOWED_ACE>(),
+            "unsupported descriptor ACE"
+        );
+        // SAFETY: type and size were checked; native descriptor owns the complete ACE/SID allocation.
+        let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+        let sid = sid_string(std::ptr::addr_of!(allowed.SidStart).cast_mut().cast())?;
+        ensure!(
+            sid == user || sid == SYSTEM || sid == ADMINISTRATORS,
+            "descriptor grants access to another account ({sid})"
+        );
+    }
+    Ok(())
+}
+
 fn pipe(address: &str, first: bool) -> Result<NamedPipeServer> {
     ensure!(
         address.starts_with(r"\\.\pipe\airk-1.4-") && address.len() <= 128,

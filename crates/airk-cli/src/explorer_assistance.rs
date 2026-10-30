@@ -100,6 +100,27 @@ fn owner_only(descriptor: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Windows: the descriptor and its directory grant access only to this user,
+/// SYSTEM and Administrators. Node cannot set a pipe ACL, so this credential
+/// file is the Assistance endpoint's access boundary.
+#[cfg(windows)]
+fn owner_only_windows(descriptor: &Path) -> Result<()> {
+    for path in [
+        descriptor,
+        descriptor
+            .parent()
+            .context("explorer_assistance_descriptor_invalid")?,
+    ] {
+        crate::owner_acl::require_owner_private(path).with_context(|| {
+            format!(
+                "explorer_assistance_descriptor_invalid: {} must be private to this user",
+                path.display()
+            )
+        })?;
+    }
+    Ok(())
+}
+
 /// Validate the descriptor and resolve exactly what will run. Nothing is spawned here.
 pub fn plan(descriptor: &Path) -> Result<Launch> {
     ensure!(
@@ -115,6 +136,8 @@ pub fn plan(descriptor: &Path) -> Result<Launch> {
     let bytes = read_bounded(descriptor, DESCRIPTOR_LIMIT, "descriptor")?;
     #[cfg(unix)]
     owner_only(descriptor)?;
+    #[cfg(windows)]
+    owner_only_windows(descriptor)?;
     let value: Descriptor =
         serde_json::from_slice(&bytes).context("explorer_assistance_descriptor_invalid")?;
     ensure!(
@@ -244,6 +267,22 @@ mod tests {
         }
         let storage = directory.path().join("storage").join("explorer-assistance");
         fs::create_dir_all(&storage)?;
+        // Mirror the extension's writer: replace inherited profile entries.
+        #[cfg(windows)]
+        {
+            let user = crate::local_ipc::current_user()?; // test fixture only
+            let status = std::process::Command::new("icacls")
+                .arg(&storage)
+                .args([
+                    "/inheritance:r",
+                    "/grant:r",
+                    &format!("*{user}:(OI)(CI)F"),
+                    "*S-1-5-18:(OI)(CI)F",
+                    "*S-1-5-32-544:(OI)(CI)F",
+                ])
+                .output()?;
+            assert!(status.status.success(), "{status:?}");
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -303,6 +342,26 @@ mod tests {
                     launch.assistance_dir.as_os_str()
                 ])
                 .collect::<Vec<_>>()
+        );
+        Ok(())
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_descriptor_readable_by_other_accounts_is_refused_on_windows() -> Result<()> {
+        let fixture = fixture()?;
+        write(&fixture, |_| {})?;
+        plan(&fixture.descriptor)?;
+        // Grant the built-in Users group read access, as a shared profile copy might.
+        let status = std::process::Command::new("icacls")
+            .arg(&fixture.descriptor)
+            .args(["/grant", "*S-1-5-32-545:(R)"])
+            .output()?;
+        assert!(status.status.success(), "{status:?}");
+        let error = plan(&fixture.descriptor).expect_err("shared descriptor accepted");
+        assert!(
+            format!("{error:#}").contains("must be private"),
+            "{error:#}"
         );
         Ok(())
     }
