@@ -11,6 +11,9 @@ use std::{
     io::{Cursor, Read},
 };
 
+// Bound per-element work even with a linear-time duplicate-attribute parser.
+const MAX_XML_ATTRIBUTES: usize = 1024;
+
 pub(crate) const MAX_EXTRACTED: usize = airk_core::extraction::MAX_TEXT_BYTES;
 /// Keep costly syntax/structured parsing within the established input bound.
 /// Larger UTF-8 sources retain exact text and locations, with no claimed facts.
@@ -393,7 +396,11 @@ pub(crate) fn read_part(
     loop {
         match reader.read_event()? {
             Event::Start(element) => {
-                for value in element.attributes() {
+                for (index, value) in element.attributes().enumerate() {
+                    ensure!(
+                        index < MAX_XML_ATTRIBUTES,
+                        "XML element exceeds 1024 attributes"
+                    );
                     value?;
                 }
                 if depth == 0 {
@@ -403,7 +410,11 @@ pub(crate) fn read_part(
                 ensure!(depth <= 128, "OOXML nesting exceeds 128 levels");
             }
             Event::Empty(element) => {
-                for value in element.attributes() {
+                for (index, value) in element.attributes().enumerate() {
+                    ensure!(
+                        index < MAX_XML_ATTRIBUTES,
+                        "XML element exceeds 1024 attributes"
+                    );
                     value?;
                 }
                 if depth == 0 {
@@ -778,15 +789,26 @@ fn pptx_title(xml: &str) -> Result<Option<String>> {
 pub(crate) fn entity(name: &str) -> Result<String> {
     Ok(quick_xml::escape::unescape(&format!("&{name};"))?.into_owned())
 }
+/// Preserve the pre-0.41 UTF-8/unescape behavior: the replacement upstream
+/// attribute API also normalizes literal whitespace, changing stored evidence.
+pub(crate) fn attribute_value(
+    attr: &quick_xml::events::attributes::Attribute<'_>,
+) -> Result<String> {
+    Ok(quick_xml::escape::unescape(std::str::from_utf8(attr.value.as_ref())?)?.into_owned())
+}
 pub(crate) fn attribute(
     e: &quick_xml::events::BytesStart<'_>,
     name: &[u8],
 ) -> Result<Option<String>> {
     let mut value = None;
-    for attr in e.attributes() {
+    for (index, attr) in e.attributes().enumerate() {
+        ensure!(
+            index < MAX_XML_ATTRIBUTES,
+            "XML element exceeds 1024 attributes"
+        );
         let attr = attr?;
         if attr.key.as_ref() == name {
-            value = Some(attr.unescape_value()?.into_owned());
+            value = Some(attribute_value(&attr)?);
         }
     }
     Ok(value)
@@ -876,7 +898,11 @@ fn xml_facts(text: &str) -> Result<Vec<Fact>> {
                 let name = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                 let end = reader.buffer_position() as usize;
                 facts.push(line_fact(text, start, end, name, "element", "xml-element"));
-                for attr in e.attributes() {
+                for (index, attr) in e.attributes().enumerate() {
+                    ensure!(
+                        index < MAX_XML_ATTRIBUTES,
+                        "XML element exceeds 1024 attributes"
+                    );
                     let attr = attr?;
                     let key = String::from_utf8_lossy(attr.key.as_ref());
                     if matches!(
@@ -890,7 +916,7 @@ fn xml_facts(text: &str) -> Result<Vec<Fact>> {
                             | "aria-label"
                             | "name"
                     ) {
-                        let value = attr.unescape_value()?;
+                        let value = attribute_value(&attr)?;
                         let name: String = format!("{key}={value}").chars().take(1024).collect();
                         facts.push(line_fact(text, start, end, name, "key", "xml-attribute"));
                     }
@@ -1285,6 +1311,82 @@ mod tests {
         assert!(svg.facts.iter().any(|f| f.name == "id=logo"));
         assert!(svg.facts.iter().any(|f| f.name == "viewBox=0 0 10 10"));
         assert!(extract("a.svg", b"<!DOCTYPE svg SYSTEM 'file:///private'><svg/>").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn xml_attribute_budgets_cover_documents_office_parts_and_lookups() -> Result<()> {
+        for count in [MAX_XML_ATTRIBUTES, MAX_XML_ATTRIBUTES + 1] {
+            let attrs = (0..count)
+                .map(|i| format!(" a{i}=\"v\""))
+                .collect::<String>();
+            let xml = format!("<root{attrs}/>");
+            for path in ["a.xml", "a.svg"] {
+                let result = extract(path, xml.as_bytes());
+                assert_eq!(
+                    result.is_ok(),
+                    count == MAX_XML_ATTRIBUTES,
+                    "{path}: {:?}",
+                    result.err()
+                );
+            }
+            // All Office adapters validate each expanded XML part through read_part.
+            for name in [
+                "word/document.xml",
+                "xl/workbook.xml",
+                "ppt/slides/slide1.xml",
+            ] {
+                for xml in [format!("<root{attrs}/>"), format!("<root{attrs}></root>")] {
+                    let bytes = archive(&[(name, &xml)])?;
+                    let mut zipped = zip::ZipArchive::new(Cursor::new(bytes.as_slice()))?;
+                    let result = read_part(&mut zipped, name);
+                    assert_eq!(
+                        result.is_ok(),
+                        count == MAX_XML_ATTRIBUTES,
+                        "{name}: {result:?}"
+                    );
+                }
+            }
+            let mut reader = Reader::from_str(&xml);
+            let Event::Empty(element) = reader.read_event()? else {
+                panic!("expected tag")
+            };
+            assert_eq!(
+                attribute(&element, b"absent").is_ok(),
+                count == MAX_XML_ATTRIBUTES
+            );
+        }
+        // Keep duplicate-name rejection: disabling checks would change valid-input semantics.
+        let xml = "<root a=\"1\" a=\"2\"/>";
+        assert!(extract("a.xml", xml.as_bytes()).is_err());
+        let bytes = archive(&[("word/document.xml", xml)])?;
+        let mut zipped = zip::ZipArchive::new(Cursor::new(bytes.as_slice()))?;
+        assert!(read_part(&mut zipped, "word/document.xml").is_err());
+        let mut reader = Reader::from_str(xml);
+        let Event::Empty(element) = reader.read_event()? else {
+            panic!("expected tag")
+        };
+        assert!(attribute(&element, b"a").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn xml_attribute_values_preserve_literal_whitespace_and_unescape_entities() -> Result<()> {
+        let xml = "<root id=\"A\tB\nC\rD&amp;&#10;\"/>";
+        let expected = "A\tB\nC\rD&\n";
+        let mut reader = Reader::from_str(xml);
+        let Event::Empty(element) = reader.read_event()? else {
+            panic!("expected tag")
+        };
+        assert_eq!(attribute(&element, b"id")?.as_deref(), Some(expected));
+        for path in ["a.xml", "a.svg"] {
+            assert!(
+                extract(path, xml.as_bytes())?
+                    .facts
+                    .iter()
+                    .any(|f| f.name == format!("id={expected}"))
+            );
+        }
         Ok(())
     }
 

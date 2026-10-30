@@ -4,6 +4,8 @@ Versioned release notes and dated release evidence live here. Each record retain
 
 ## Versions
 
+- [1.7.3](./release-1.7.3.md) — stable release candidate: Marketplace images, release promotion and repository review fixes
+
 - [1.7.2](./release-1.7.2.md) — Explorer toolbar and panel project selection candidate
 - [1.7.1](./release-1.7.1.md) — compact Workbench controls candidate
 - [1.7.0](./release-1.7.0.md) — unreleased Workbench candidate

@@ -63,7 +63,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 0
+          fetch-depth: ${{ inputs.repair_1_4_4 && '0' || '1' }}
           persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
@@ -157,7 +157,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: ${{ inputs.repair_1_4_4 && '0' || '1' }}
       - name: Restore the pinned clean source separately from release tooling
         if: ${{ inputs.repair_1_4_4 }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -169,24 +169,39 @@ jobs:
         with:
           python-version: '3.11'
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        if: ${{ inputs.repair_1_4_4 }}
         with:
           node-version: '24.15.0'
           package-manager-cache: false
       - run: rustup show
+        if: ${{ inputs.repair_1_4_4 }}
       - run: cargo fetch --locked
+        if: ${{ inputs.repair_1_4_4 }}
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
       - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
+        if: ${{ inputs.repair_1_4_4 }}
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
       - run: npm run compile --prefix packages/vscode
+        if: ${{ inputs.repair_1_4_4 }}
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: airk-producer-${{ github.sha }}-${{ github.run_id }}
           path: artifacts
       - name: Authenticate and download the exact producer artifact
+        if: ${{ inputs.repair_1_4_4 }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/${{ inputs.repair_1_4_4 && 'release-1.4.4-repair.py' || 'ci-candidates.py' }} download --target ${{ matrix.target }} --output artifacts/tested-native
+      - name: Download pinned native and compiled VSIX artifacts
+        shell: bash
+        if: ${{ !inputs.repair_1_4_4 }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/ci-candidates.py download --pinned --target ${{ matrix.target }} --output artifacts/tested-native
+          python scripts/ci-candidates.py download --pinned --kind vsix --target ${{ matrix.target }} --output artifacts/tested-vsix
+          python scripts/promote-vsix.py source --native artifacts/tested-native --vsix artifacts/tested-vsix --target ${{ matrix.target }} --output artifacts/source/${{ matrix.target }}
       - name: Verify and restore only the producer's tested executable
         env:
           GH_TOKEN: ${{ github.token }}
@@ -251,14 +266,33 @@ jobs:
         run: python scripts/ci-macos-sign.py --cleanup
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
       - name: Reverify signature and package the signed native copy
+        if: ${{ inputs.repair_1_4_4 }}
         run: python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }}
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
       - name: Repackage matching VSIX with the signed helper
+        if: ${{ inputs.repair_1_4_4 }}
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}
         shell: pwsh
         run: python scripts/package-extension.py --target ${{ matrix.target }} --channel $env:AIRK_CHANNEL
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
+      - name: Package signed bytes using CI metadata and compiled extension
+        if: ${{ !inputs.repair_1_4_4 }}
+        env:
+          AIRK_CHANNEL: ${{ inputs.channel }}
+        shell: pwsh
+        run: |
+          python scripts/package-native.py --target ${{ matrix.target }} --runtime-dir artifacts/runtime/${{ matrix.target }} --signed-dir artifacts/signed/${{ matrix.target }} --source-manifest artifacts/tested-native/manifest.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python scripts/promote-vsix.py package --native artifacts/native/${{ matrix.target }}/publish --original artifacts/tested-native --vsix artifacts/tested-vsix --target ${{ matrix.target }} --channel $env:AIRK_CHANNEL --output artifacts/extension/${{ matrix.target }}/publish
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !inputs.repair_1_4_4 }}
+        with:
+          name: airk-source-${{ matrix.target }}-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
+          path: artifacts/source/${{ matrix.target }}/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: airk-signed-native-${{ matrix.target }}-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
@@ -286,7 +320,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: ${{ inputs.repair_1_4_4 && '0' || '1' }}
       - name: Restore the pinned clean source separately from release tooling
         if: ${{ inputs.repair_1_4_4 }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -298,26 +332,49 @@ jobs:
         with:
           python-version: '3.11'
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        if: ${{ inputs.repair_1_4_4 }}
         with:
           node-version: '24.15.0'
           package-manager-cache: false
       - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
+        if: ${{ inputs.repair_1_4_4 }}
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
       - run: npm run compile --prefix packages/vscode
+        if: ${{ inputs.repair_1_4_4 }}
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: airk-producer-${{ github.sha }}-${{ github.run_id }}
           path: artifacts
       - name: Restore the unchanged tested Linux native package
+        if: ${{ inputs.repair_1_4_4 }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/${{ inputs.repair_1_4_4 && 'release-1.4.4-repair.py' || 'ci-candidates.py' }} download --target x86_64-unknown-linux-gnu --output ${{ env.AIRK_RELEASE_SOURCE_ROOT }}/artifacts/native/x86_64-unknown-linux-gnu/publish
       - name: Package the selected VSIX channel with the tested Linux helper
+        if: ${{ inputs.repair_1_4_4 }}
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}
         run: python scripts/package-extension.py --target x86_64-unknown-linux-gnu --channel "$AIRK_CHANNEL"
         working-directory: ${{ env.AIRK_RELEASE_SOURCE_ROOT }}
+      - name: Promote unchanged Linux CI packages (adjust channel only when requested)
+        if: ${{ !inputs.repair_1_4_4 }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRK_CHANNEL: ${{ inputs.channel }}
+        run: |
+          python scripts/ci-candidates.py download --pinned --target x86_64-unknown-linux-gnu --output artifacts/native/x86_64-unknown-linux-gnu/publish
+          python scripts/ci-candidates.py download --pinned --kind vsix --target x86_64-unknown-linux-gnu --output artifacts/tested-vsix
+          python scripts/promote-vsix.py source --native artifacts/native/x86_64-unknown-linux-gnu/publish --vsix artifacts/tested-vsix --target x86_64-unknown-linux-gnu --output artifacts/source/x86_64-unknown-linux-gnu
+          python scripts/promote-vsix.py package --native artifacts/native/x86_64-unknown-linux-gnu/publish --vsix artifacts/tested-vsix --target x86_64-unknown-linux-gnu --channel "$AIRK_CHANNEL" --output artifacts/extension/x86_64-unknown-linux-gnu/publish
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: ${{ !inputs.repair_1_4_4 }}
+        with:
+          name: airk-source-x86_64-unknown-linux-gnu-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
+          path: artifacts/source/x86_64-unknown-linux-gnu/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 7
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: airk-native-x86_64-unknown-linux-gnu-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
@@ -343,7 +400,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: ${{ inputs.repair_1_4_4 && '0' || '1' }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
@@ -352,19 +409,29 @@ jobs:
           name: airk-producer-${{ github.sha }}-${{ github.run_id }}
           path: artifacts
       - name: Restore authenticated original native packages for comparison
+        if: ${{ inputs.repair_1_4_4 }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: python scripts/${{ inputs.repair_1_4_4 && 'release-1.4.4-repair.py' || 'ci-candidates.py' }} download --output artifacts/candidates
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: ${{ inputs.repair_1_4_4 }}
         with:
           pattern: airk-*-*-${{ needs.preflight.outputs.source_commit }}-${{ github.run_id }}
           path: artifacts/candidates
           merge-multiple: false
+      - name: Authenticate and download this release's outputs and source receipts
+        if: ${{ !inputs.repair_1_4_4 }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/ci-candidates.py release-inputs --output artifacts/candidates
       - name: Verify complete signed platform set and stage public downloads
         env:
           AIRK_CHANNEL: ${{ inputs.channel }}
           GH_TOKEN: ${{ github.token }}
-        run: python scripts/${{ inputs.repair_1_4_4 && 'release-1.4.4-repair.py' || 'github-release.py' }} assemble --directory artifacts/candidates --output artifacts/github-release --channel "$AIRK_CHANNEL" --producer artifacts/producer.json
+        run: |
+          args=()
+          if [ "${{ inputs.repair_1_4_4 }}" != true ]; then args+=(--pinned-producer --source-records); fi
+          python scripts/${{ inputs.repair_1_4_4 && 'release-1.4.4-repair.py' || 'github-release.py' }} assemble --directory artifacts/candidates --output artifacts/github-release --channel "$AIRK_CHANNEL" --producer artifacts/producer.json "${args[@]}"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: airk-release-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -385,7 +452,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          fetch-depth: 0
+          fetch-depth: ${{ inputs.repair_1_4_4 && '0' || '1' }}
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'

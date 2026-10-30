@@ -27,6 +27,7 @@ extension = module("extension_release", "verify-extension-release.py")
 native = module("native_package", "package-native.py")
 signer = module("native_signer", "sign-native.py")
 producers = module("ci_candidates", "ci-candidates.py")
+reads = module("github_read", "github-read.py")
 SIGNED_TARGETS = {"x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin"}
 REPOSITORY = "iokaio/airk"
 WORKFLOW = REPOSITORY + "/.github/workflows/github-release.yml@refs/heads/main"
@@ -219,12 +220,51 @@ def interface_previews(version, commit):
             "Compiled UI previews with fictional project data; installed-editor qualification is separate.\n")
 
 
-def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None, repair=None, *, tree=None):
+def producer_fingerprint(producer):
+    return hashlib.sha256(json.dumps(producer, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def write_source_record(output, directory, producer, target, commit):
+    producers.validate_record(producer, commit)
+    name = producers.native_artifact(producer, target)
+    raw = (directory / "manifest.json").read_bytes().decode("utf-8")
+    record = {"schema": "airk-release-source/1", "commit": commit, "target": target,
+              "producer_sha256": producer_fingerprint(producer), "artifact": producer["artifacts"][name],
+              "manifest_sha256": hashlib.sha256(raw.encode()).hexdigest(), "manifest_json": raw}
+    output.mkdir(parents=True, exist_ok=False)
+    (output / "source.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+
+
+def source_receipt(directory, producer, target, commit, version, tree=None):
+    # A protected platform job emits this after verifying the complete pinned
+    # native/VSIX artifacts. Assembly downloads it from the same release run.
+    record = extension.read_receipt(directory / "source.json")
+    name = producers.native_artifact(producer, target)
+    raw = record.get("manifest_json", "")
+    if (record.get("schema") != "airk-release-source/1" or record.get("commit") != commit
+            or record.get("target") != target or record.get("producer_sha256") != producer_fingerprint(producer)
+            or record.get("artifact") != producer["artifacts"][name]
+            or not isinstance(raw, str) or hashlib.sha256(raw.encode()).hexdigest() != record.get("manifest_sha256")):
+        raise ValueError("Source receipt differs from this release's pinned producer")
+    original = json.loads(raw)
+    if (original.get("schema") != "airk-native-candidate/2" or original.get("target") != target
+            or original.get("vsix_target") != native.TARGETS[target] or original.get("version") != version
+            or not extension.package.same_source(original, commit, tree) or original.get("dirty_checkout") is not False
+            or original.get("signed_distribution") is not False or original.get("signing") is not None
+            or original.get("cargo_lock_sha256") != digest(ROOT / "Cargo.lock")
+            or original.get("toolchain_file_sha256") != digest(ROOT / "rust-toolchain.toml")):
+        raise ValueError("Original native receipt has different provenance")
+    return original
+
+
+def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None, repair=None, *, tree=None, pinned=False, source_records=False):
     if tag != identity(version) or channel not in ("preview", "stable"):
         raise ValueError("Invalid release identity/channel")
+    if source_records and producer is None:
+        raise ValueError("Source receipts require a pinned producer")
     suffix = f"{commit}-{run_id}-{attempt}" if producer is None else f"{commit}-{run_id}"
     if producer is not None:
-        producers.verify_record(producer, commit)
+        (producers.validate_record if pinned else producers.verify_record)(producer, commit)
 
     def original_dir(target):
         if producer is None:
@@ -233,6 +273,12 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
             # Promoted PR artifacts keep their producer's merge-ref name.
             return directory / producers.native_artifact(producer, target)
         return directory / f"airk-native-{target}-{commit}-{producer['run_id']}-{producer['attempt']}"
+    def original_receipt(target):
+        if source_records:
+            return source_receipt(directory / f"airk-source-{target}-{commit}-{run_id}",
+                                  producer, target, commit, version, tree)
+        return verify_native(original_dir(target), target, commit, version, False, tree=tree)[0]
+
     selected = []
     extensions = []
     for target in native.TARGETS:
@@ -245,7 +291,7 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
                 or vsix_receipt["native_archive_sha256"] != receipt["archive_sha256"]):
             raise ValueError("VSIX and native download are not the same build")
         if target in SIGNED_TARGETS:
-            original, _ = verify_native(original_dir(target), target, commit, version, False, tree=tree)
+            original = original_receipt(target)
             executable = "airk.exe" if "windows" in target else "airk"
             if receipt["schema"] == "airk-native-candidate/2":
                 if receipt["signing"]["source_install_sha256"] != original["payload"]["airk-install.json"]:
@@ -256,7 +302,7 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
             elif receipt["signing"]["source_sha256"] != original["payload"][executable]:
                 raise ValueError("Signed binary did not originate in the tested candidate")
         elif producer is not None:
-            original, _ = verify_native(original_dir(target), target, commit, version, False, tree=tree)
+            original = original_receipt(target)
             if receipt != original:
                 raise ValueError("Linux native package differs from the tested producer")
         extensions.append(vsix_dir / "manifest.json")
@@ -307,16 +353,7 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
 
 
 def github(path, *, missing=False, paginate=False):
-    command = ["gh", "api", f"repos/{REPOSITORY}/{path}"]
-    if paginate:
-        command.extend(("--paginate", "--slurp"))
-    result = subprocess.run(command,
-                            capture_output=True, text=True, check=False)
-    if result.returncode:
-        if missing and "(HTTP 404)" in result.stderr:
-            return None
-        raise RuntimeError("GitHub API failed: " + result.stderr)
-    return json.loads(result.stdout)
+    return reads.get(f"repos/{REPOSITORY}/{path}", missing=missing, paginate=paginate)
 
 
 def release_id_for_tag(tag):
@@ -378,6 +415,10 @@ def publish(directory, resume=False, source_commit=None):
         if not 0 < producers.positive(attempt) <= producers.positive(os.environ["GITHUB_RUN_ATTEMPT"]):
             raise ValueError("Release bundle comes from a future attempt")
     record = verify_bundle(directory, commit, version, tag, os.environ["GITHUB_RUN_ID"], attempt)
+    if source_commit is None and record.get("producer") is not None:
+        # Final live authentication catches a changed producer attempt/artifact
+        # after signing. Intermediate jobs use the pinned IDs and verify bytes.
+        producers.verify_record(record["producer"], commit)
     assets = sorted(directory.iterdir())
     release_id = release_id_for_tag(tag) if resume else None
     expected = {p.name: "sha256:" + digest(p) for p in assets}
@@ -440,6 +481,8 @@ def main():
     parser.add_argument("--target", choices=native.TARGETS)
     parser.add_argument("--producer", type=Path)
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--pinned-producer", action="store_true")
+    parser.add_argument("--source-records", action="store_true")
     parser.add_argument("--channel", choices=("preview", "stable"), default="stable")
     args = parser.parse_args()
     commit, version, tag = context()
@@ -454,7 +497,7 @@ def main():
         assemble(args.directory, args.output, commit, version, tag, args.channel,
                  os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
                  json.loads(args.producer.read_text(encoding="utf-8")) if args.producer else None,
-                 tree=extension.package.source_tree(commit))
+                 tree=extension.package.source_tree(commit), pinned=args.pinned_producer, source_records=args.source_records)
         print(f"Verified release assets: {args.output}")
     else:
         publish(args.directory, resume=args.resume)

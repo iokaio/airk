@@ -1,8 +1,12 @@
 # Protected PRs, GitHub downloads and extension release
 
-The current package version is **1.7.2**; see [its candidate and validation record](releases/release-1.7.2.md). Prior build and qualification records below retain their original scope.
+The current package version is **1.7.3**; see [its candidate and validation record](releases/release-1.7.3.md). Prior build and qualification records below retain their original scope.
 
-For current behavior and upgrade guidance, see the [1.7.2 release notes](releases/release-1.7.2.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](releases/release-1.3.2.md); the [1.3.0 release notes](releases/release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](releases/release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases/releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
+For current behavior and upgrade guidance, see the [1.7.3 release notes](releases/release-1.7.3.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](releases/release-1.3.2.md); the [1.3.0 release notes](releases/release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](releases/release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases/releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
+
+Marketplace and GitHub publication are independent manual actions. A merge starts CI and eligible validation/site jobs; it does not publish either destination. To release GitHub downloads without Marketplace publication, dispatch only **GitHub release**. Its `publish` input controls GitHub downloads, not Marketplace.
+
+Normal release promotion authenticates the producer at preflight and immediately before publication. Read-only GitHub API calls and downloads retry recognized transient HTTP/network failures up to four attempts within 90 seconds, truncating partial downloads before retry. Digest/provenance failures, malformed JSON, authorization errors and permanent failures are not retried. Create/upload/publish mutations are not automatically replayed.
 
 ## Versioned GitHub Releases
 
@@ -10,7 +14,7 @@ The [GitHub release workflow](../.github/workflows/github-release.yml) promotes 
 
 Changes to the release workflow or its release/signing contracts on `main` also run a short validation job without signing credentials. This explicit push event registers and validates the workflow independently of manual dispatch. Push runs skip release preflight and all dependent build, signing, publication and deployment jobs; those remain available only through manual dispatch.
 
-New release tags match the checked-in package version (for this branch, **`v1.7.2`**), with no workflow build suffix. Cargo, the extension and both lockfiles must agree. Workflow run IDs/attempts stay in provenance records, not public version names. Existing `-build.N` releases remain supported by tag validation and the downloads page; they are never renamed or overwritten.
+New release tags match the checked-in package version (for this branch, **`v1.7.3`**), with no workflow build suffix. Cargo, the extension and both lockfiles must agree. Workflow run IDs/attempts stay in provenance records, not public version names. Existing `-build.N` releases remain supported by tag validation and the downloads page; they are never renamed or overwritten.
 
 Both manual release workflows check Marketplace and GitHub before promotion when **publish** is enabled:
 
@@ -36,10 +40,10 @@ Before dispatching, wait for successful **CI** on the exact main commit. Leave `
 The workflow:
 
 1. Authenticates the exact main CI workflow, repository, event, commit, successful jobs and run attempt. A complete main build supplies all eight artifacts itself (`airk-ci-producer/1`). A promoted main run supplies the two macOS Intel artifacts and a promotion record (`airk-ci-producer/2`). The workflow then re-authenticates the recorded same-repository PR run: its final head, successful PR jobs, attempt, and the immutable IDs and digests of its six Linux/Windows/Apple Silicon artifacts. It records every artifact ID and server digest in a producer record. Receipts from the PR's merge ref pass verification only when their recorded Git tree equals the main commit's tree; signing receipts, VSIX packaging, the tag and the release notes stay bound to the main commit.
-2. Downloads the producer's native candidates by artifact ID, verifies each downloaded artifact digest, and rechecks producer identity before signing. Separate native signing jobs verify their commit, locks, payloads and checksums, then restore only the tested executable.
-3. Signs Windows through Ioka's Azure Artifact Signing account/profile and signs/notarizes both Mac architectures through the existing Apple environment. Linux remains unsigned. Each native packager rechecks the OS signature, and each platform VSIX contains its matching helper.
-4. Verifies all four native/VSIX pairs, including accepted Apple notarization, Azure identity, clean checkout and binding to the original tested binaries. It stages only the eight packages, eight uniquely named manifests, release record, notes and combined SHA256SUMS.
-5. With publish enabled, creates a draft at the exact source commit, uploads those files, finds the draft through the paginated release list, and compares GitHub's asset digests against the local bundle. It verifies and publishes by the same release ID because GitHub's release-by-tag endpoint only returns published releases. Preview releases are marked prerelease; stable releases are marked latest. An upload/verification failure leaves the draft unpublished, and a retry resumes only an identical draft or a verified subset of its expected assets.
+2. Downloads pinned native and VSIX candidates by artifact ID, verifies their server digests and checks the producer record locally. Platform jobs verify source/tree, locks, complete payloads and checksums before signing. They emit small source receipts bound to the pinned producer and original native manifest. Assembly authenticates the IDs, same-run origin and server digests of its complete twelve-artifact input set (signed/native packages, VSIXs and source receipts), instead of downloading all original native ZIPs again. Intermediate jobs do not repeat live CI-job enumeration.
+3. Signs Windows through Ioka's Azure Artifact Signing account/profile and signs/notarizes both Mac architectures through the existing Apple environment. Native packaging retains CI compiler/build metadata, rechecks the OS signature and runs the packaged runtime self-test. VSIX promotion retains CI's compiled extension files and replaces only the native subtree. Linux ZIP/VSIX packages remain byte-identical when the requested channel matches; another channel changes only VSIX channel metadata and the corresponding receipt. Normal release jobs do not install Node, compile TypeScript or fetch Rust dependencies. The pinned 1.4.4 repair retains its historical packaging path.
+4. Verifies all four native/VSIX pairs, including accepted Apple notarization, Azure identity, clean checkout and binding to the verified source receipts/original tested binaries. It stages only the eight packages, eight uniquely named manifests, release record, notes and combined SHA256SUMS. Source receipts are Actions artifacts and are not public release assets.
+5. With publish enabled, fully reauthenticates the exact producer once more to reject changed attempts/artifact identities, then creates a draft at the exact source commit, uploads those files, finds the draft through the paginated release list, and compares GitHub's asset digests against the local bundle. It verifies and publishes by the same release ID because GitHub's release-by-tag endpoint only returns published releases. Preview releases are marked prerelease; stable releases are marked latest. An upload/verification failure leaves the draft unpublished, and a retry resumes only an identical draft or a verified subset of its expected assets.
 6. After successful publication, invokes the downloads page workflow to refresh the public website. A build/signing rehearsal does not deploy the site.
 
 Published assets live on [AIRK's GitHub Releases page](https://github.com/iokaio/airk/releases). They are release downloads, independent of the seven-day Actions artifact retention. The [downloads website](#downloads-website) provides an overview and direct links to those same files. This workflow does not publish to Visual Studio Marketplace. The Marketplace workflow below remains separate and promotes unsigned native candidates into the requested VSIX channel.
@@ -110,7 +114,7 @@ The new required check names become available when a PR runs these workflow chan
 
 ## Build manually
 
-Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (`1.7.2`), select `stable` (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
+Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (`1.7.3`), select `stable` (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
 
 The [release workflow](../.github/workflows/extension-release.yml) authenticates a successful main [CI workflow](../.github/workflows/ci.yml) containing native tests, actual-helper extension tests, packaging checks and container validation. It rebuilds only the small TypeScript/VSIX layer for the selected channel using those tested native packages. Candidate artifacts expire after seven days; `candidate_run_id` selects an explicit successful manual CI rebuild when needed.
 
@@ -119,7 +123,7 @@ After reviewing a successful rehearsal, publish its exact VSIX files by supplyin
 For example, substitute the reviewed rehearsal's actual run ID:
 
 ~~~console
-gh workflow run extension-release.yml --ref main -f version=1.7.2 -f channel=stable -f publish=true -f rehearsal_run_id=123456789
+gh workflow run extension-release.yml --ref main -f version=1.7.3 -f channel=stable -f publish=true -f rehearsal_run_id=123456789
 ~~~
 
 Only successful, non-publishing rehearsals qualify: preflight and all four packaging jobs must succeed, while publication and identity-only jobs must be skipped. Artifact upload times must belong to those successful jobs in the selected attempt. Preflight records the attempt, artifact IDs and server digests; publication rechecks that record before and after downloading. Rerunning the rehearsal, expired/missing artifacts, another commit, or a mismatched package version/channel stops publication without silently repackaging. Create and review a new rehearsal if needed. Leaving **rehearsal_run_id** empty preserves the existing build-and-publish path. Supplying it for a non-publishing or identity-only run is rejected.

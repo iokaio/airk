@@ -14,6 +14,33 @@ spec.loader.exec_module(package)
 
 
 class ArchiveContracts(unittest.TestCase):
+    def test_signed_packaging_reuses_ci_metadata_without_invoking_rust(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("Cargo.toml", "Cargo.lock", "rust-toolchain.toml"):
+                (root / name).write_bytes((package.ROOT / name).read_bytes())
+            target = "x86_64-pc-windows-msvc"
+            receipt = {"schema": "airk-native-candidate/2", "target": target,
+                       "version": package.tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"], "tree": "a" * 40, "dirty_checkout": False,
+                       "signed_distribution": False, "rustc": "rustc fixture\nhost: " + target,
+                       "cargo": "cargo fixture", "cargo_lock_sha256": package.sha256(root / "Cargo.lock"),
+                       "toolchain_file_sha256": package.sha256(root / "rust-toolchain.toml")}
+            path = root / "manifest.json"
+            def git_only(*command):
+                self.assertEqual(command, ("git", "rev-parse", "HEAD^{tree}"))
+                return "a" * 40
+            with patch.object(package, "ROOT", root), patch.object(package, "capture", side_effect=git_only):
+                for mutation in (None, "version", "target", "tree", "cargo_lock_sha256", "rustc"):
+                    bad = {**receipt, **({mutation: "wrong"} if mutation else {})}
+                    path.write_text(json.dumps(bad), encoding="utf-8")
+                    if mutation:
+                        with self.assertRaises(ValueError):
+                            package.source_packaging_metadata(path, target, True)
+                    else:
+                        self.assertEqual(package.source_packaging_metadata(path, target, True), receipt)
+                        with self.assertRaises(ValueError):
+                            package.source_packaging_metadata(path, target, False)
+
     def test_mac_bundle_archive_has_two_executables_and_rejects_resealed_foreign_resources(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

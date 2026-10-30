@@ -4,6 +4,8 @@ AIRK adds deterministic document facts alongside lexical text. Markdown, plain/o
 
 ## What is extracted
 
+Structured XML/SVG parsing and expanded Office XML parts reject elements with more than 1,024 attributes. Duplicate attribute names remain errors. MSBuild retains its stricter 256-attribute limit. These limits supplement the patched XML parser and existing extraction byte/depth limits; rejected input is reported as an extraction failure rather than silently truncated evidence.
+
 | Evidence | Parsing and returned details |
 |---|---|
 | Headers | Markdown heading hierarchy, DOCX built-in Heading1–Heading9/Title styles or direct outline levels, PPTX title/centered-title placeholders, and conservative plain-text section cues |

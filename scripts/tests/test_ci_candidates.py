@@ -227,9 +227,10 @@ class CandidateTests(unittest.TestCase):
         with zipfile.ZipFile(buffer, "w") as archive:
             archive.writestr("manifest.json", b"original fixture")
         payload = buffer.getvalue()
-        def transfer(command, stdout, check):
-            self.assertEqual(command[-1], "repos/iokaio/airk/actions/artifacts/7/zip")
+        def transfer(command, stdout, **kwargs):
+            self.assertEqual(command[2], "repos/iokaio/airk/actions/artifacts/7/zip")
             stdout.write(payload)
+            return candidates.subprocess.CompletedProcess(command, 0, None, b"")
         for corrupt in (False, True):
             with self.subTest(corrupt=corrupt), tempfile.TemporaryDirectory() as temporary:
                 destination = Path(temporary) / "out"
@@ -389,6 +390,7 @@ class PromotionTests(unittest.TestCase):
     def test_promoted_main_run_combines_pr_targets_with_its_own_intel_build(self):
         record = self.attest_promoted()
         self.assertEqual(record["schema"], "airk-ci-producer/2")
+        candidates.validate_record(record, COMMIT)
         self.assertEqual((record["commit"], record["tree"], record["run_id"], record["attempt"]), (COMMIT, TREE, "123", "1"))
         self.assertEqual(len(record["artifacts"]), 8)
         self.assertEqual(record["promotion"]["producer"]["source_commit"], MERGE)

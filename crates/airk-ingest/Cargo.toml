@@ -78,8 +78,8 @@ tree-sitter-proto = "=0.4.0"
 tree-sitter-graphql = "=0.1.0"
 tree-sitter-cmake = "=0.7.1"
 tree-sitter-make = "=1.1.1"
-quick-xml = "0.39"
-zip = { version = "4", default-features = false, features = ["deflate"] }
+quick-xml = "0.41"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 pdf-extract = "=0.12.1"
 csv = "1"
 pulldown-cmark = { version = "0.10", default-features = false }

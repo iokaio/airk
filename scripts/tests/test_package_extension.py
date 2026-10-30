@@ -15,6 +15,25 @@ spec.loader.exec_module(package)
 
 
 class VsixContracts(unittest.TestCase):
+    def test_finished_vsix_refuses_unresolvable_listing_images_even_with_valid_hashes(self):
+        for image in ('![Workbench](images/workbench.png)', '<img src="images/explorer.png">',
+                      '![Workbench](http://example.com/workbench.png)',
+                      '![Workbench](https://example.com/workbench.png)'):
+            with self.subTest(image=image), tempfile.TemporaryDirectory() as temporary:
+                archive = Path(temporary) / "fixture.vsix"
+                files = {"readme.md": image.encode()}
+                expected = {name: package.digest(data) for name, data in files.items()}
+                with zipfile.ZipFile(archive, "w") as zipped:
+                    for name, data in files.items():
+                        zipped.writestr("extension/" + name, data)
+                    zipped.writestr("[Content_Types].xml", "<Types/>")
+                    zipped.writestr("extension.vsixmanifest", '<PackageManifest><Identity Id="airk" Publisher="iokaio"/></PackageManifest>')
+                if image.startswith('![Workbench](https:'):
+                    package.verify_vsix(archive, expected, "airk")
+                else:
+                    with self.assertRaisesRegex(ValueError, "absolute HTTPS"):
+                        package.verify_vsix(archive, expected, "airk")
+
     def test_uninstall_hook_survives_packaging_without_development_scripts(self):
         source = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
         staged = package.runtime_package(source)
@@ -51,7 +70,7 @@ class VsixContracts(unittest.TestCase):
                     file.write_bytes(b"public packaging fixture")
                 expected = {file.relative_to(root).as_posix(): package.digest(file.read_bytes()) for file in root.rglob("*") if file.is_file()}
                 archive = root / "fixture.vsix"
-                subprocess.run(["node", str(package.EXTENSION / "scripts" / "package.cjs"), str(root), "win32-x64", str(archive), "stable"], check=True, capture_output=True)
+                subprocess.run(["node", str(package.EXTENSION / "scripts" / "package.cjs"), str(root), "win32-x64", str(archive)], check=True, capture_output=True)
                 package.verify_vsix(archive, expected, "airk.exe", "win32-x64", "1.1.2", False)
             source = stage / "lib" / "umd" / "main.js"
             source.write_text('require("./missing");', encoding="utf-8")

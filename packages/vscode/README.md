@@ -75,9 +75,11 @@ Usage reporting can help inspect retrieval activity and supplied measurement sce
 
 ## Version and setup notes
 
-This source is the **1.7.2 development candidate**, moving Workbench access into the Explorer toolbar and project selection into Overview and Management. [Candidate notes and validation limits](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.7.2.md) are separate from publication. Earlier release records remain in the [release archive](https://github.com/iokaio/airk/blob/main/docs/releases/README.md).
+**Version 1.7.3** fixes Marketplace screenshots and updates native parser, ZIP and publishing-tool dependencies. [Release notes and validation limits](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.7.3.md) document the changes. Earlier records remain in the [release archive](https://github.com/iokaio/airk/blob/main/docs/releases/README.md).
 
-VS Code may require **Developer: Reload Window** to replace an already running extension after an upgrade. AIRK keeps a **Reload to finish update** action when it detects a pending replacement. VS Code saves sidebar tab order; drag the AIRK tab to the right if needed. `airk.cli.autoInstall: false` disables automatic installation and registration.
+VS Code may require **Developer: Reload Window** to replace an already running extension after an upgrade. AIRK keeps a **Reload to finish update** action when it detects a pending replacement. VS Code saves sidebar tab order; drag the AIRK tab to the right if needed. `airk.cli.autoInstall: false` disables automatic installation and registration; discovery can still run bundled native probes.
+
+Automatic setup installs the runtime/CLI, updates user PATH or marked shell-profile blocks and starts background indexing of registered folders. Hidden files can be included; ignore sensitive sources before indexing. AIRK is not a secret scanner. Index objects and saved Workbench results can retain excerpts, and evidence returned to an agent may reach its provider. Use private storage, especially for an existing custom folder whose permissions AIRK does not tighten. Uninstall preserves native indexes and may leave shell integration. See [installation and evidence privacy](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md#installation-and-evidence-privacy) for controls and cleanup limits.
 
 AIRK stands for **Artifact Indexing and Retrieval Kernel**. It is an independent local indexing and retrieval engine, licensed under Apache-2.0.
 

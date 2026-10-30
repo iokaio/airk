@@ -149,6 +149,8 @@ The unchanged 200-edit retention test remains the slowest test: 7:12 on Linux, 1
 
 After merging, main CI must produce its own exact-commit candidate and populate trusted dependency caches. Subsequent measurements should establish cache save/restore sizes and time, a warm run on the same platform, and successful candidate authentication before release promotion. A documentation-only PR can independently verify that the classifier skips native/container jobs while the required gate and DCO still pass. Preserve these distinctions when reporting pipeline improvements; release promotion and publication need their own evidence.
 
+The 1.7.3 GitHub-release candidate promotes CI native and compiled VSIX artifacts without release-time TypeScript compilation or Rust dependency fetching. Producer authentication is consolidated at preflight and publication; platform jobs verify pinned artifact digests locally and retain source receipts for assembly. Linux packages are reused unchanged when channels match. Signing, notarization, native self-test, complete payload/source binding and uploaded-asset verification remain required. See [release promotion](release-workflow.md).
+
 ## Controls that reduce unnecessary work
 
 - Branch pushes outside main use PR validation; newer commits cancel superseded runs for that PR. There is no schedule.
