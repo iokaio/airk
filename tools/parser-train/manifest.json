@@ -1,0 +1,48 @@
+{
+  "model_version": "intent-broader/2",
+  "feature_spec": 1,
+  "seed": 84181,
+  "examples": 48000,
+  "datasets": {
+    "train": {
+      "path": "target/parser-train/data/broader-train-50e3c424d0e1fd6a.jsonl",
+      "sha256": "50e3c424d0e1fd6a5eaa7cf22be608f29008e6fdbc2c93e35cbcb363393cac3e",
+      "rows": 48000
+    },
+    "validation": {
+      "path": "target/parser-train/data/broader-validation-90affb5d7a1a89db.jsonl",
+      "sha256": "90affb5d7a1a89db078c3a91cc74f045cea9bfd2533ed528ff5a1a95f55d006f",
+      "rows": 5000
+    },
+    "calibration": {
+      "path": "target/parser-train/data/broader-calibration-326011763dd2074e.jsonl",
+      "sha256": "326011763dd2074e55d251527ab86b85e0fb877fae71c154760348e426b6f7cb",
+      "rows": 5000
+    },
+    "public-test": {
+      "path": "target/parser-train/data/broader-public-test-378a1e3191ff42b5.jsonl",
+      "sha256": "378a1e3191ff42b55eb41c86173163f5435b959e34154216ef52d2c9362a79c0",
+      "rows": 1000
+    }
+  },
+  "asset_bytes": 852116,
+  "asset_sha256": "b18106b34110313fb9d1cd24c9a22d1ad300ffab7b4def80a381cbc0ac0a7c5d",
+  "threshold": -344,
+  "margin": 690,
+  "automatic_execution": false,
+  "proposal_confirmation_required": true,
+  "qualified": false,
+  "qualification_report": "tools/parser-train/qualification-broader-v2.json",
+  "qualification_report_sha256": "7ee89ab95e0586bf5c473a8f57044cc19ff44c01d244131d7782083dbf0d4d40",
+  "gates": {
+    "repository_accuracy": true,
+    "role_accuracy": true,
+    "independent_150": true,
+    "curated_unsupported": false,
+    "public_unsupported": true,
+    "calibration_accepted_precision": true,
+    "supported_ask_rate": false
+  },
+  "online_lock_sha256": "bb45a6dbcb255665d6df3c6070f1d98a631d889a42179cf83a7bc15ce8df61ee",
+  "qualification": "Local VSIX review candidate. Learned text yields inert proposals requiring an explicit plan submission. Rejection and ask-rate qualification remain incomplete."
+}

@@ -284,6 +284,7 @@ class ServicePairReleaseContracts(unittest.TestCase):
                         record = release.assemble(root / "in", root / "out", COMMIT, PAIR_VERSION, "v" + PAIR_VERSION, "stable", "456", "1", producer, repair=repair)
                         self.assertEqual(record["producer"], producer)
                         self.assertEqual(record["release_tooling_repair"], repair)
+                        self.assertIn(f"/blob/{COMMIT}/docs/release-{PAIR_VERSION}.md", (root / "out" / "release-notes.md").read_text())
                         self.assertEqual(record["commit"], COMMIT)
                         self.assertEqual(len(record["assets"]), 16)
                         self.assertEqual(release.verify_bundle(root / "out", COMMIT, PAIR_VERSION, "v" + PAIR_VERSION, "456", "1"), record)
@@ -345,6 +346,13 @@ class ServicePairReleaseContracts(unittest.TestCase):
 
 
 class GithubReleaseContracts(unittest.TestCase):
+    def test_product_screenshot_links_are_bound_to_release_source_and_preserve_old_release_notes(self):
+        notes = release.interface_previews("1.7.1", COMMIT)
+        self.assertIn(f"/{COMMIT}/docs/workbench/images/workbench-1.7.1-results.png", notes)
+        self.assertIn(f"/{COMMIT}/docs/explorer/images/explorer-1.7.1.png", notes)
+        self.assertNotIn("/main/", notes)
+        self.assertEqual(release.interface_previews("1.7.0", COMMIT), "")
+
     def test_service_native_release_requires_paired_inventory_and_rejects_legacy_schema(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary) / "native"
@@ -398,6 +406,7 @@ class GithubReleaseContracts(unittest.TestCase):
             self.assertEqual(record["producer"], producer)
             self.assertEqual(record["run_id"], "456")
             self.assertEqual(record["attempt"], "2")
+            self.assertIn(f"/blob/{COMMIT}/docs/releases/release-{VERSION}.md", (root / "out" / "release-notes.md").read_text())
             release.verify_bundle(root / "out", COMMIT, VERSION, TAG, "456", "2")
 
     def test_resume_uses_original_assembly_and_never_overwrites_conflicts(self):

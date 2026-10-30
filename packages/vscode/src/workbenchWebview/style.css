@@ -1,0 +1,42 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+.tool-form{max-height:40vh;overflow:auto}.tool-form label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:5px}.tool-form label input,.tool-form label select{max-width:65%}
+:root{color-scheme:light dark}body{margin:0;font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);background:var(--vscode-sideBar-background)}*{box-sizing:border-box}button,input,select,textarea{font:inherit;color:inherit}button{cursor:pointer;background:var(--vscode-button-secondaryBackground);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:5px 8px}button:hover{background:var(--vscode-button-secondaryHoverBackground)}button:disabled{opacity:.5;cursor:default}button[aria-pressed=true]{background:var(--vscode-button-background);color:var(--vscode-button-foreground)}button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--vscode-focusBorder);outline-offset:2px}select,input,textarea{background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border,var(--vscode-panel-border));padding:6px;max-width:100%}main{height:100vh;display:flex;flex-direction:column;padding:12px;gap:10px}.toolbar{display:flex;gap:6px}.toolbar select{flex:1;min-width:70px}.session{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.session span,time,small,.counts{color:var(--vscode-descriptionForeground);font-size:.9em}.transcript{flex:1;overflow:auto;min-height:0;padding-bottom:20px}.welcome{padding:24px 6px}.welcome button{display:block;margin:10px 0;text-align:left}.turn{padding:15px 0 25px;border-bottom:1px solid var(--vscode-panel-border)}.input{white-space:pre-wrap;margin-left:10%;padding:10px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);border-radius:10px 10px 0 10px}time{display:block;text-align:right;margin:5px}.plan{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:15px 0}.plan>span{color:var(--vscode-descriptionForeground)}.plan button{font-family:var(--vscode-editor-font-family);overflow:hidden;text-overflow:ellipsis;max-width:100%;white-space:nowrap;border-radius:15px}.result{border:1px solid var(--vscode-panel-border);border-radius:8px;overflow:hidden;margin:10px 0}.result header,footer{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px}.result header{justify-content:space-between;border-bottom:1px solid var(--vscode-panel-border)}pre{font-family:var(--vscode-editor-font-family);font-size:var(--vscode-editor-font-size,13px);overflow:auto;max-height:420px;padding:10px;margin:6px 0;background:var(--vscode-textCodeBlock-background);white-space:pre}.card{padding:10px;border-top:1px solid var(--vscode-panel-border)}.card-title{display:flex;align-items:center;gap:7px}.source{background:none;border:none;text-align:left;color:var(--vscode-textLink-foreground);overflow-wrap:anywhere;min-width:0}.note,.counts,.filter{display:block;margin:8px 10px}.filter input{width:100%}.warning,.error,.notice{padding:9px;border-left:3px solid var(--vscode-editorWarning-foreground);overflow-wrap:anywhere}.error{border-color:var(--vscode-errorForeground);color:var(--vscode-errorForeground)}.notice{margin:0;background:var(--vscode-editorWidget-background)}.composer{position:relative;border:1px solid var(--vscode-panel-border);border-radius:10px;padding:10px;background:var(--vscode-editorWidget-background)}.composer:focus-within{border-color:var(--vscode-focusBorder)}.composer textarea{width:100%;min-height:75px;resize:vertical;background:transparent;border:0}.recipe{display:flex;justify-content:space-between;align-items:center;gap:8px}.recipe select{min-width:0;max-width:70%}.compose-actions{display:flex;align-items:center;gap:6px}.compose-actions small{flex:1}.commands{position:absolute;bottom:100%;left:0;right:0;max-height:250px;overflow:auto;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-panel-border);padding:6px;display:flex;flex-direction:column;align-items:stretch}.commands button{text-align:left}nav{display:flex;flex-direction:column;max-height:280px;overflow:auto;gap:4px}nav button{text-align:left}details{margin:6px 0}.editor textarea{width:100%;min-height:200px;font-family:var(--vscode-editor-font-family)}.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+
+/* Keep the transcript dominant; less frequent controls live in anchored menus. */
+html,body,#root{height:100%;overflow:hidden}
+main{height:100%;padding:8px 12px 12px;gap:6px;min-width:0}
+.toolbar{align-items:center;gap:4px;position:relative;flex:none}
+.toolbar .project{flex:1;width:0;min-width:70px;border:0;background:transparent;padding:5px 0;font-weight:500}
+.icon-button{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;padding:5px;border:0;background:transparent;flex:none;border-radius:6px}
+.icon-button:hover,.icon-button[aria-expanded=true]{background:var(--vscode-toolbar-hoverBackground,var(--vscode-button-secondaryHoverBackground))}
+.menu-anchor{position:relative;flex:none}
+.popover{position:absolute;top:calc(100% + 6px);right:0;z-index:10;width:280px;max-width:calc(100vw - 28px);max-height:60vh;overflow:auto;background:var(--vscode-menu-background,var(--vscode-editorWidget-background));color:var(--vscode-menu-foreground,var(--vscode-foreground));border:1px solid var(--vscode-widget-border,var(--vscode-panel-border));border-radius:8px;padding:8px;box-shadow:0 5px 18px var(--vscode-widget-shadow,#0004)}
+.toolbar .menu-anchor{position:static}.toolbar .popover{right:0}
+.popover h2{font-size:1em;margin:5px 6px 10px;font-weight:600}
+.popover>button,.popover details>button{display:block;width:100%;text-align:left;background:transparent;border:0;padding:7px 8px}
+.popover button:hover{background:var(--vscode-list-hoverBackground,var(--vscode-button-secondaryHoverBackground))}
+.popover label{display:flex;flex-direction:column;gap:5px;margin:8px 6px}
+.popover label input,.popover label select{width:100%;min-width:0}
+.popover details{padding:7px 6px}.popover summary{cursor:pointer}
+.popover pre{max-height:180px}.popover .note{margin:8px 6px}
+.history-row{display:flex;align-items:center}.history-item{min-width:0;flex:1;border:0;background:transparent;text-align:left;overflow-wrap:anywhere}.history-item small{display:block;margin-top:4px}
+.transcript{padding:0 2px 12px;overscroll-behavior:contain}
+.welcome{display:flex;flex-direction:column;justify-content:center;min-height:100%;padding:24px 12px}
+.welcome h1{font-size:1.5em;font-weight:500;margin:0 0 10px}.welcome p{color:var(--vscode-descriptionForeground);line-height:1.5;margin:0 0 16px}
+.suggestions{display:flex;flex-wrap:wrap;gap:6px}.welcome .suggestions button{display:inline-block;margin:0;padding:6px 9px;background:transparent;color:var(--vscode-descriptionForeground);font-size:.9em;border-radius:14px}
+.composer{flex:none;border-radius:16px;padding:10px 8px 6px}
+.composer textarea{display:block;min-height:64px;max-height:25vh;resize:vertical;padding:6px 8px;line-height:1.5;outline:0}
+.compose-actions{gap:5px}.compose-actions small{font-size:.85em;min-width:0;white-space:normal;line-height:1.35}
+.add-button{width:34px;height:34px}.add-button svg{width:23px;height:23px}
+.send-button{border-radius:6px;width:30px;height:30px;background:transparent;color:var(--vscode-foreground)}
+.compose-context{display:flex;flex-wrap:wrap;gap:4px;margin:0 7px 4px}.compose-context button{font-size:.85em;border-radius:12px;padding:3px 7px;max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.above{top:auto;bottom:calc(100% + 12px);left:0;right:auto}
+.commands{bottom:100%;max-height:40vh;z-index:9;border-radius:8px;padding:5px}
+.notice{flex:none;max-height:18vh;overflow:auto;margin:0;font-size:.9em;padding:6px 9px}
+.turn{padding:10px 0 18px}.result header,footer{padding:8px}.result header>span{font-size:.9em;color:var(--vscode-descriptionForeground)}
+@media(max-width:360px){main{padding:6px 8px 8px}.welcome{padding:16px 6px}.result header{align-items:flex-start}.result header button{font-size:.85em;padding:4px 6px}}
+
+.result-tools{padding:0 10px;color:var(--vscode-descriptionForeground)}
+.source-details{font-size:.9em;color:var(--vscode-descriptionForeground)}
+
+.icon-accent{stroke:var(--vscode-charts-yellow,#dfc48b)}

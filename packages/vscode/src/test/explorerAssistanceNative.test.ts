@@ -35,7 +35,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         const result = await probeAssistance(legacy, spec.root, 'native-test');
         assert.deepEqual(result.tools, [...ASSISTANCE_TOOLS]);
         assert.equal(result.version, version);
-        assert.deepEqual(new Set((await probeMcp(spec,27,version,entry)).tools),new Set(UNIFIED_TOOLS));
+        assert.deepEqual(new Set((await probeMcp(spec,28,version,entry)).tools),new Set(UNIFIED_TOOLS));
         fs.writeFileSync(path.join(spec.root,'fixture.txt'),'cobaltmarker native evidence');
         await fixture.configure(spec,{operation:'vectors',enabled:false});await fixture.job(spec);
         let selected=spec.service!.project;
@@ -55,7 +55,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         const call = async (name: string, args = {}) => {
             const result = await requestWithReadRetry(session!, name, args); return result.structuredContent ?? JSON.parse(result.content[0].text);
         };
-        assert.equal((await session.request('tools/list',{})).tools.length,27,'catalog discovery respects explicit Stop');
+        assert.equal((await session.request('tools/list',{})).tools.length,28,'catalog discovery respects explicit Stop');
         assert.ok((await call('help',{topic:'jobs'})).content.includes('job'));
         assert.ok((await call('help',{query:'repair'})).results.length>0);
         const sourceScope=(await call('projects')).default_project;

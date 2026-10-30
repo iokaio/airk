@@ -34,6 +34,9 @@ export interface ExplorerHost {
     readonly version: string;
     extensionUpdate?(): ExplorerViewState['extensionUpdate'];
     connectionCheck?(): ExplorerViewState['connectionCheck'];
+    workbenchVisible?(): boolean;
+    toggleWorkbench?(): Promise<void>;
+    readonly onDidChangeWorkbenchVisibility?: vscode.Event<void>;
     startup?(): ExplorerViewState['startup'];
     reloadUpdatedExtension?(): Promise<void>;
     trusted(): boolean;
@@ -99,6 +102,7 @@ export class ExplorerController implements vscode.Disposable {
             rejected: () => host.log('AIRK Explorer ignored an unrecognized webview message.'),
         });
         this.listeners.push(this.control.onDidChange(() => this.observedControl()), host.onDidChangeSpecs(() => this.specsChanged()), host.suggestions.onDidChange(() => this.publish()));
+        if(host.onDidChangeWorkbenchVisibility)this.listeners.push(host.onDidChangeWorkbenchVisibility(()=>this.publish()));
         this.selectDefault();
         this.rememberSource(vscode.window.activeTextEditor);
         const editorChanges = vscode.window.onDidChangeActiveTextEditor?.(editor => { if (this.rememberSource(editor)) { this.publish(); } });
@@ -151,6 +155,7 @@ export class ExplorerController implements vscode.Disposable {
         return {
             revision: this.revision,
             extensionVersion: this.host.version,
+            workbenchVisible: this.host.workbenchVisible?.()??false,
             ...(this.host.extensionUpdate?.() ? { extensionUpdate: this.host.extensionUpdate() } : {}),
             connectionCheck: this.host.connectionCheck?.(),
             startup: this.host.startup?.(),
@@ -324,6 +329,9 @@ export class ExplorerController implements vscode.Disposable {
                 const text=panelDetails(managementView(this.control.state),message.section,this.host.version,message.project,status);
                 await vscode.env.clipboard.writeText(text);return {copied:true};
             }
+            case 'workbench.toggle':
+                await this.host.toggleWorkbench?.();
+                this.publish();return;
             case 'extension.reload':
                 if(this.host.extensionUpdate?.())await this.host.reloadUpdatedExtension?.();
                 return;

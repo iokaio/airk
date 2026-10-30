@@ -8,7 +8,7 @@ import type { LifecycleIntent } from './serviceIntents';
 
 /**
  * Whether activation may upgrade the installed runtime to the bundled one without asking:
- * Forward upgrades within the explicitly supported 1.4–1.6 service-compatible
+ * Forward upgrades within the explicitly supported 1.4–1.7 service-compatible
  * lines. Downgrades and unknown lines need an explicit, reviewed transition.
  * The onboarding tests target the package version so each release checks this policy.
  */
@@ -16,7 +16,7 @@ export function automaticUpgrade(installed: string, bundled: string): boolean {
     if(!/^\d+\.\d+\.\d+$/.test(installed)||!/^\d+\.\d+\.\d+$/.test(bundled))return false;
     const from = installed.split('.').map(Number), to = bundled.split('.').map(Number);
     if (from.length !== 3 || to.length !== 3 || [...from, ...to].some(part => !Number.isSafeInteger(part) || part < 0) || from[0] !== 1 || to[0] !== 1) { return false; }
-    return from[1]>=4&&to[1]<=6&&(from[1]<to[1]||from[1]===to[1]&&from[2]<=to[2]);
+    return from[1]>=4&&to[1]<=7&&(from[1]<to[1]||from[1]===to[1]&&from[2]<=to[2]);
 }
 export type RuntimeChannel = 'stable' | 'preview';
 export interface RuntimeOptions {

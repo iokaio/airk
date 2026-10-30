@@ -96,7 +96,7 @@ exports.activate=()=>{let reloading=false;void (async()=>{
  assert.equal(extension.packageJSON.version,${JSON.stringify(version)});
  if(${!!previousVsix}){const old=JSON.parse(await fs.readFile(${JSON.stringify(path.join(run,'baseline.json'))},'utf8'));assert.equal(old.project,spec.service.project);assert.equal(old.dataDir,spec.dataDir);assert.equal(old.root,spec.root);}
  if(${!!previousVsix}){
-  const live=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,27,'upgrade-before-reconnect');
+  const live=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,28,'upgrade-before-reconnect');
   assert.ok(live.tools.includes('diagnostics'));const status=await diagnostics();assert.equal(status.runtime.service.version,${JSON.stringify(version)});
   await fs.writeFile(${JSON.stringify(path.join(run,'new-runtime-active.json'))},JSON.stringify(status));
   const deadline=Date.now()+45000;while(!await fs.access(${JSON.stringify(path.join(run,'clients-disconnected.json'))}).then(()=>true,()=>false)){if(Date.now()>deadline)throw new Error('Installer did not terminate preceding clients');await new Promise(resolve=>setTimeout(resolve,100));}
@@ -112,7 +112,7 @@ exports.activate=()=>{let reloading=false;void (async()=>{
  await fs.writeFile(${JSON.stringify(path.join(run,'notification-ready.json'))},JSON.stringify({project:spec.service.project}));
  const noticeDeadline=Date.now()+45000;
  while(!await fs.access(${JSON.stringify(path.join(run,'notification-verified.json'))}).then(()=>true,()=>false)){if(Date.now()>noticeDeadline)throw new Error('Installer notification was not verified');await new Promise(resolve=>setTimeout(resolve,100));}
- const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,27,'installer-acceptance');assert.ok(probe.tools.includes('status'));
+ const probe=await require(path.join(extension.extensionPath,'out/native.js')).probeMcp(spec,28,'installer-acceptance');assert.ok(probe.tools.includes('status'));
  const quick=JSON.parse(probe.status.content[0].text);assert.equal(quick.runtime,undefined);assert.equal(quick.work,undefined);
  const observed=await diagnostics();
  for(const actual of [observed.runtime.mcp_frontend.process.version,observed.runtime.index_worker.process.version,observed.runtime.service.version])assert.equal(actual,${JSON.stringify(version)});

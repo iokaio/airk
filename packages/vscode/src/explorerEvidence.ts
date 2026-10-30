@@ -9,6 +9,8 @@ export const NATIVE_TOOLS = ['airk_search', 'airk_read_file', 'airk_list_files',
     'airk_symbols', 'airk_imports', 'airk_document_facts', 'airk_references', 'airk_context', 'airk_capabilities', 'airk_code_facts',
     'airk_relationships', 'airk_changes'] as const;
 export type NativeTool = typeof NATIVE_TOOLS[number];
+export const WORKBENCH_TOOLS = [...NATIVE_TOOLS, 'airk_parse'] as const;
+export type EvidenceTool = typeof WORKBENCH_TOOLS[number];
 
 /** Usage attribution label recorded by the native worker (ClientFamily::Explorer). */
 export const EXPLORER_CLIENT_NAME = 'airk-explorer';
@@ -89,7 +91,7 @@ function toolFailure(text: string): EvidenceFailure {
     return new EvidenceFailure(explorerError('TOOL_ERROR', detail));
 }
 
-interface Task { tool: NativeTool; args: Record<string, unknown>; options: CallOptions; generation?: number; resolve(value: ToolResult): void; reject(error: Error): void }
+interface Task { tool: EvidenceTool; args: Record<string, unknown>; options: CallOptions; generation?: number; resolve(value: ToolResult): void; reject(error: Error): void }
 type Opener = (options: McpStdioOptions, handshakeTimeout: number) => Promise<{ session: McpStdioSession }>;
 
 /**
@@ -108,15 +110,24 @@ export class EvidenceClient {
 
     constructor(readonly spec: LaunchSpec, private readonly clientVersion: string, private readonly options: {
         open?: Opener; maxInFlight?: number; timeout?: number; retryBudget?: number; handshakeTimeout?: number;
+        clientName?: 'airk-explorer' | 'airk-workbench'; workbench?: boolean;
     } = {}) {
         if (!spec.service) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
     }
 
     get project(): string { return this.spec.service!.project; }
 
-    call(tool: NativeTool, args: Record<string, unknown>, options: CallOptions = {}): Promise<ToolResult> {
+    /** Fence queued and admitted replies without claiming native work was undone. */
+    cancel(key: string): void {
+        this.generations.set(key, (this.generations.get(key) ?? 0) + 1);
+        for (let i=this.queue.length-1;i>=0;i--) {
+            if (this.queue[i].options.supersede===key) { this.queue.splice(i,1)[0].reject(new EvidenceFailure(explorerError('REQUEST_SUPERSEDED'))); }
+        }
+    }
+
+    call(tool: EvidenceTool, args: Record<string, unknown>, options: CallOptions = {}): Promise<ToolResult> {
         if (this.disposed) { return Promise.reject(new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', 'The Explorer evidence session was closed.'))); }
-        if (!(NATIVE_TOOLS as readonly string[]).includes(tool)) { return Promise.reject(new EvidenceFailure(explorerError('INVALID_MESSAGE'))); }
+        if (!((this.options.workbench ? WORKBENCH_TOOLS : NATIVE_TOOLS) as readonly string[]).includes(tool)) { return Promise.reject(new EvidenceFailure(explorerError('INVALID_MESSAGE'))); }
         return new Promise((resolve, reject) => {
             const task: Task = { tool, args, options, resolve, reject };
             if (options.supersede) {
@@ -165,7 +176,7 @@ export class EvidenceClient {
                 if (error instanceof McpSessionError && error.code === 'rpc') { throw new EvidenceFailure(explorerError('TOOL_ERROR', error.message)); }
                 throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', error instanceof Error ? error.message : String(error)));
             }
-            const delay = readRetryDelay(envelope);
+            const delay = task.tool === 'airk_parse' ? undefined : readRetryDelay(envelope);
             if (delay !== undefined && Date.now() + delay < deadline && !this.disposed) {
                 await new Promise(resolve => setTimeout(resolve, delay)); continue;
             }
@@ -185,7 +196,7 @@ export class EvidenceClient {
         if (!this.opening) {
             const open = this.options.open ?? ((options, timeout) => McpStdioSession.open(options, timeout));
             this.opening = open({ command: this.spec.command, args: launchArgs(this.spec,'mcp',true), cwd: path.dirname(this.spec.command),
-                clientName: EXPLORER_CLIENT_NAME, clientVersion: this.clientVersion }, this.options.handshakeTimeout ?? 90000)
+                clientName: this.options.clientName ?? EXPLORER_CLIENT_NAME, clientVersion: this.clientVersion }, this.options.handshakeTimeout ?? 90000)
                 .then(({ session }) => {
                     if (this.disposed) { session.close(); throw new EvidenceFailure(explorerError('SERVICE_UNAVAILABLE', 'The Explorer evidence session was closed.')); }
                     this.session = session; return session;

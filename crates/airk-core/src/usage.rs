@@ -84,6 +84,7 @@ pub enum UsageOperation {
     CodeFacts,
     Relationships,
     Coverage,
+    Parse,
 }
 
 impl UsageOperation {
@@ -126,6 +127,7 @@ pub enum ClientFamily {
     /// The AIRK Explorer's own evidence session in the VS Code extension. Kept last so
     /// existing variant ordering, and therefore report key order, is unchanged.
     Explorer,
+    Workbench,
 }
 
 impl ClientFamily {
@@ -147,6 +149,7 @@ impl ClientFamily {
             "amazon-q" => Self::AmazonQ,
             "windsurf" => Self::Windsurf,
             "airk-explorer" => Self::Explorer,
+            "airk-workbench" => Self::Workbench,
             _ => Self::Unknown,
         }
     }

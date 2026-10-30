@@ -1,0 +1,77 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "id": "codesearchnet-queries",
+      "repository": "github/CodeSearchNet",
+      "branch": "master",
+      "license": "MIT",
+      "files": [
+        "LICENSE",
+        "README.md",
+        "resources/queries.csv"
+      ],
+      "attribution": "Husain, Wu, Gazit, Allamanis and Brockschmidt (2019), CodeSearchNet Challenge; GitHub.",
+      "revision": "106e827405c968597da938f6b373d30183918869",
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/github/CodeSearchNet/106e827405c968597da938f6b373d30183918869/LICENSE",
+          "sha256": "5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22",
+          "bytes": 1063,
+          "local_path": "target/parser-train/online/codesearchnet-queries-106e827405c9/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "url": "https://raw.githubusercontent.com/github/CodeSearchNet/106e827405c968597da938f6b373d30183918869/README.md",
+          "sha256": "1d4794ab520121b37c903bfa890a7c73ad2387a2f6b57a96372f74882faca5c6",
+          "bytes": 20988,
+          "local_path": "target/parser-train/online/codesearchnet-queries-106e827405c9/README.md"
+        },
+        {
+          "path": "resources/queries.csv",
+          "url": "https://raw.githubusercontent.com/github/CodeSearchNet/106e827405c968597da938f6b373d30183918869/resources/queries.csv",
+          "sha256": "037509c717c2e164721f0fd3ea45cb05f36669551af643f53930a92b76b146cf",
+          "bytes": 2493,
+          "local_path": "target/parser-train/online/codesearchnet-queries-106e827405c9/resources/queries.csv"
+        }
+      ]
+    },
+    {
+      "id": "clinc150",
+      "repository": "clinc/oos-eval",
+      "branch": "master",
+      "license": "CC-BY-3.0",
+      "files": [
+        "LICENSE",
+        "README.md",
+        "data/data_full.json"
+      ],
+      "attribution": "Larson et al. (2019), An Evaluation Dataset for Intent Classification and Out-of-Scope Prediction, EMNLP-IJCNLP.",
+      "revision": "828f8093932c8fe6ca7936c3d2e52903b1c523de",
+      "inputs": [
+        {
+          "path": "LICENSE",
+          "url": "https://raw.githubusercontent.com/clinc/oos-eval/828f8093932c8fe6ca7936c3d2e52903b1c523de/LICENSE",
+          "sha256": "e6bc9e9c474700b708f568bac9e5a8a9bcb2b1dad53442f5ba449fcb848b8e76",
+          "bytes": 19467,
+          "local_path": "target/parser-train/online/clinc150-828f8093932c/LICENSE"
+        },
+        {
+          "path": "README.md",
+          "url": "https://raw.githubusercontent.com/clinc/oos-eval/828f8093932c8fe6ca7936c3d2e52903b1c523de/README.md",
+          "sha256": "8a8df26c4de3d25b6c4cff385ca23602c30e4e56828b015206cbc202f6db363a",
+          "bytes": 2668,
+          "local_path": "target/parser-train/online/clinc150-828f8093932c/README.md"
+        },
+        {
+          "path": "data/data_full.json",
+          "url": "https://raw.githubusercontent.com/clinc/oos-eval/828f8093932c8fe6ca7936c3d2e52903b1c523de/data/data_full.json",
+          "sha256": "36923c3705a59e08fe9c3883d8bc2dd966ef93e22cb78ac41171782a698d56e0",
+          "bytes": 2495390,
+          "local_path": "target/parser-train/online/clinc150-828f8093932c/data/data_full.json"
+        }
+      ]
+    }
+  ]
+}

@@ -97,6 +97,7 @@ export interface ConnectionCheck {
 export interface ExplorerViewState {
     readonly revision: number;
     readonly extensionVersion: string;
+    readonly workbenchVisible?: boolean;
     readonly extensionUpdate?: { readonly runningVersion: string; readonly installedVersion: string };
     readonly connectionCheck?: ConnectionCheck;
     readonly startup?: { readonly message: string; readonly startedAt: number; readonly failed?: boolean };
@@ -554,6 +555,7 @@ export const WEBVIEW_MESSAGES = {
     'project.select': { project: PROJECT },
     'status.refresh': {},
     'extension.reload': {},
+    'workbench.toggle': {},
     'details.copy': { section: { kind: 'enum', values: ['index', 'health', 'progress', 'activity', 'semantic', 'service', 'storage', 'recovery'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
     'search.page': { project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER }, page: { kind: 'int', min: 0, max: 4 } },
     'search.form': {

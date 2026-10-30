@@ -1,0 +1,233 @@
+{
+  "schema": 1,
+  "repositories": [
+    {
+      "repository": "backstage/backstage",
+      "split": "train",
+      "paths": [
+        "docs",
+        "packages/backend-defaults/src"
+      ],
+      "revision": "f60f04cc4e31534b18fbfed2e7e64b4e90580de9",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "4310dfbe4acee499cd591f78974b87816958605edef21e7bf395e7fab88d62a7",
+          "detected_license": "Apache-2.0",
+          "revision": "f60f04cc4e31534b18fbfed2e7e64b4e90580de9"
+        }
+      ]
+    },
+    {
+      "repository": "nats-io/nats-server",
+      "split": "train",
+      "paths": [
+        "server"
+      ],
+      "revision": "4e28758e1abbf2968c9438f311b37c13d3c403fa",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+          "detected_license": "Apache-2.0",
+          "revision": "4e28758e1abbf2968c9438f311b37c13d3c403fa"
+        }
+      ]
+    },
+    {
+      "repository": "nats-io/nats-architecture-and-design",
+      "split": "train",
+      "paths": [
+        "adr"
+      ],
+      "revision": "dc0b1c7200f0d716fdee9de1428759594538ed7d",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6",
+          "detected_license": "Apache-2.0",
+          "revision": "dc0b1c7200f0d716fdee9de1428759594538ed7d"
+        }
+      ]
+    },
+    {
+      "repository": "dotnet/runtime",
+      "split": "train",
+      "paths": [
+        "docs/design",
+        "src/libraries/System.Collections/src"
+      ],
+      "revision": "9857961ed10086d04cf981039d12799520577055",
+      "license_files": [
+        {
+          "path": "LICENSE.TXT",
+          "sha256": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b",
+          "detected_license": "MIT",
+          "revision": "9857961ed10086d04cf981039d12799520577055"
+        }
+      ]
+    },
+    {
+      "repository": "actions/runner",
+      "split": "evaluation",
+      "paths": [
+        "docs",
+        "src/Runner.Worker"
+      ],
+      "revision": "110142c2c501c6ae9373d553efa826bedbaab5f7",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "6b4b86a3bacca473f2a838371bc806da4d47654ee2a7a64412711bb33ca203c8",
+          "detected_license": "MIT",
+          "revision": "110142c2c501c6ae9373d553efa826bedbaab5f7"
+        }
+      ]
+    },
+    {
+      "repository": "simpleiot/simpleiot",
+      "split": "evaluation",
+      "paths": [
+        "docs",
+        "client",
+        "data"
+      ],
+      "revision": "a4c5538bc1b3db1aad49a80911e0e7dd5061b254",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5",
+          "detected_license": "Apache-2.0",
+          "revision": "a4c5538bc1b3db1aad49a80911e0e7dd5061b254"
+        }
+      ]
+    },
+    {
+      "repository": "tokio-rs/tokio",
+      "split": "train",
+      "paths": [
+        "tokio/src",
+        "tokio/tests"
+      ],
+      "revision": "6470b5e4b8e943ad014383a5bf6a93ba415678a3",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "794038fa5d69932673a14840d0ea11f754becd0ad659ea38aad94f58d0ed2f4f",
+          "detected_license": "MIT",
+          "revision": "6470b5e4b8e943ad014383a5bf6a93ba415678a3"
+        }
+      ]
+    },
+    {
+      "repository": "rust-lang/rust-analyzer",
+      "split": "train",
+      "paths": [
+        "docs",
+        "crates/ide/src",
+        "crates/parser/src"
+      ],
+      "revision": "c59cdaa4c26ffe036a3403e4948f1681995d4125",
+      "license_files": [
+        {
+          "path": "LICENSE-APACHE",
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a",
+          "detected_license": "Apache-2.0",
+          "revision": "c59cdaa4c26ffe036a3403e4948f1681995d4125"
+        },
+        {
+          "path": "LICENSE-MIT",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+          "detected_license": "MIT",
+          "revision": "c59cdaa4c26ffe036a3403e4948f1681995d4125"
+        }
+      ]
+    },
+    {
+      "repository": "fastapi/fastapi",
+      "split": "evaluation",
+      "paths": [
+        "fastapi",
+        "docs/en/docs",
+        "tests"
+      ],
+      "revision": "79cab5bed28b24d92c185d236feb33f5783dfeb3",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "2853a942962e3bb755239b5fecb736503be392554c1d90f97cea7f29f4465d34",
+          "detected_license": "MIT",
+          "revision": "79cab5bed28b24d92c185d236feb33f5783dfeb3"
+        }
+      ]
+    },
+    {
+      "repository": "etcd-io/etcd",
+      "split": "train",
+      "paths": [
+        "Documentation",
+        "server/etcdserver/api"
+      ],
+      "revision": "1573d59416efa220421c451f5266b24a5d8374ef",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "fd4337568f4759b58b38b581fe2dfe36f1404683e6e80d22141579a8c5427fbe",
+          "detected_license": "Apache-2.0",
+          "revision": "1573d59416efa220421c451f5266b24a5d8374ef"
+        }
+      ]
+    },
+    {
+      "repository": "kubernetes/enhancements",
+      "split": "train",
+      "paths": [
+        "keps/sig-api-machinery",
+        "keps/sig-architecture"
+      ],
+      "revision": "a904b50283fe82d0d4f46988d0fd9d1a35a86c25",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "e03ba41d7fab20700769fe4118bab50d800cb74f990353a05d2f5fff1c228363",
+          "detected_license": "Apache-2.0",
+          "revision": "a904b50283fe82d0d4f46988d0fd9d1a35a86c25"
+        }
+      ]
+    },
+    {
+      "repository": "open-telemetry/opentelemetry-specification",
+      "split": "train",
+      "paths": [
+        "specification",
+        "oteps"
+      ],
+      "revision": "36ccfcfb33aca1e9c70a2cfd26e031ed9180949a",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+          "detected_license": "Apache-2.0",
+          "revision": "36ccfcfb33aca1e9c70a2cfd26e031ed9180949a"
+        }
+      ]
+    },
+    {
+      "repository": "protocolbuffers/protobuf",
+      "split": "train",
+      "paths": [
+        "src/google/protobuf",
+        "docs"
+      ],
+      "revision": "478ccb8c1874495997adefe6aca81f15546867c4",
+      "license_files": [
+        {
+          "path": "LICENSE",
+          "sha256": "f4df8b2457697851385d9ebb93267832c1dfa24e0e61881952f6b0c452663dc9",
+          "detected_license": "BSD-3-Clause",
+          "revision": "478ccb8c1874495997adefe6aca81f15546867c4"
+        }
+      ]
+    }
+  ]
+}

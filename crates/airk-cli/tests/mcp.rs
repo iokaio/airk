@@ -131,6 +131,68 @@ impl Drop for Session {
 }
 
 #[test]
+fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_writes()
+-> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let service = common::Service::start(root.path(), state.path(), "project-a");
+    let source = "pub struct QueueClient;\n";
+    fs::write(root.path().join("client.rs"), source)?;
+    common::call(root.path(), state.path(), "project-a", &["index"])?;
+    let prepared = common::call(
+        root.path(),
+        state.path(),
+        "project-a",
+        &["parse", "/search QueueClient --mode lexical"],
+    )?;
+    assert_eq!(prepared["status"], "prepared", "{prepared}");
+    assert_eq!(prepared["plan"]["tier"], "command");
+    assert_eq!(prepared["executed"], false);
+    let mut session = Session::start(root.path(), state.path())?;
+    session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"airk-workbench","version":"1"}}}))?;
+    assert!(session.receive(1)?.get("error").is_none());
+    session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    let decode = |reply: Value| -> anyhow::Result<Value> {
+        anyhow::ensure!(
+            reply.get("error").is_none() && reply["result"]["isError"] != true,
+            "{reply}"
+        );
+        Ok(serde_json::from_str(
+            reply["result"]["content"][0]["text"].as_str().unwrap(),
+        )?)
+    };
+    let request = json!({"schema":"airk.parse.request/1","plan":prepared["plan"]});
+    let mcp_prepared = decode(session.read_retry(2, "parse", request.clone())?)?;
+    assert_eq!(mcp_prepared["plan"], prepared["plan"]);
+    let mut execution = request.clone();
+    execution["mode"] = json!("execute");
+    // native read: a whole evidence plan executes exactly once, without automatic replay.
+    let mcp = decode(session.call(3, "parse", execution)?)?;
+    assert_eq!(mcp["status"], "complete", "{mcp}");
+    assert_eq!(mcp["executed"], true);
+    let file = state.path().join("workbench-request.json");
+    fs::write(&file, serde_json::to_vec(&request)?)?;
+    let cli = common::call(
+        root.path(),
+        state.path(),
+        "project-a",
+        &[
+            "parse",
+            "--request",
+            file.to_str().unwrap(),
+            "--execute",
+            "--project",
+            &service.project.binding.to_string(),
+        ],
+    )?;
+    assert_eq!(cli["plan"], mcp["plan"]);
+    assert_eq!(cli["evidence"], mcp["evidence"]);
+    assert!(!cli["evidence"].as_array().unwrap().is_empty());
+    assert_eq!(fs::read_to_string(root.path().join("client.rs"))?, source);
+    Ok(())
+}
+
+#[test]
 fn default_terse_stdio_supports_full_and_requested_status_without_changing_revision()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
@@ -339,7 +401,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             .as_array()
             .unwrap()
             .len(),
-        27
+        28
     );
     for (id, command, option, tool, field, key) in [
         (
@@ -693,15 +755,15 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     let catalog: Value = serde_json::from_slice(&catalog.stdout)?;
     assert_eq!(
         catalog["tools"].as_array().unwrap().len(),
-        17,
+        18,
         "terminal evidence adapter retains compatibility aliases"
     );
-    assert_eq!(tools.len(), 27);
+    assert_eq!(tools.len(), 28);
     let names: std::collections::BTreeSet<_> = tools
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names.len(), 27);
+    assert_eq!(names.len(), 28);
     for tool in catalog["tools"].as_array().unwrap() {
         let name = tool["name"]
             .as_str()

@@ -122,10 +122,69 @@ test('connection check publishes preparation, progress and failure, coalesces cl
         assert.equal(probes,2);
         const check=panel.posted.filter((entry:any)=>entry.state?.connectionCheck).at(-1) as any;
         assert.equal(check.state.connectionCheck.phase,'verified');
-        assert.equal(check.state.connectionCheck.tools.length,27);
+        assert.equal(check.state.connectionCheck.tools.length,28);
         assert.equal(check.state.connectionCheck.project,project);
         assert.equal(check.state.connectionCheck.indexState,'unknown');
         assert.match(check.state.connectionCheck.message,/Index readiness is unconfirmed/);
         assert.equal(f.writes.length,0,'checking a connection cannot enqueue indexing or repair');
     }finally{release();await f.close();}
+});
+
+
+test('successful automatic setup opens Workbench once and a saved marker preserves hidden state',async context=>{
+    const f=await serviceTestHost(context,{automatic:true});
+    try{
+        const opens=()=>f.calls.filter(line=>line==='workbench.view.extension.airk-workbench').length;
+        assert.equal(opens(),1,JSON.stringify(f.calls));
+        assert.equal(f.values.get('airk.workbench.welcome.1'),true);
+        await f.refreshFolders();
+        assert.equal(opens(),1,'reconnection must not steal focus or reopen a hidden Workbench');
+    }finally{await f.close();}
+});
+
+test('untrusted setup and pending extension replacement cannot open Workbench',async context=>{
+    for(const options of [{automatic:true,trusted:false},{automatic:true,installedVersion:'1.7.1'}]){
+        const f=await serviceTestHost(context,options);
+        try{assert.equal(f.calls.includes('workbench.view.extension.airk-workbench'),false);assert.equal(f.values.has('airk.workbench.welcome.1'),false);}
+        finally{await f.close();}
+    }
+});
+
+
+test('Explorer Workbench link follows actual visibility and toggles without touching native work',async context=>{
+    const f=await serviceTestHost(context);
+    let changed=()=>{},disposed=()=>{};
+    const view={visible:false,webview:{html:'',options:{},cspSource:'fixture:',asWebviewUri:(uri:unknown)=>uri,postMessage:async()=>true,onDidReceiveMessage:()=>({dispose(){}})},
+        onDidChangeVisibility:(callback:()=>void)=>{changed=callback;return {dispose(){}};},onDidDispose:(callback:()=>void)=>{disposed=callback;return {dispose(){}};},show:()=>{view.visible=true;changed();}};
+    try{
+        await f.commands.get('airk.explorer.open')!();
+        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer')!;
+        await panel.send({v:1,type:'ready',requestId:'visibility-ready'});
+        const visible=()=>panel.posted.filter((m:any)=>m.type==='state').at(-1).state.workbenchVisible;
+        const toggle=async(id:string)=>{await panel.send({v:1,type:'workbench.toggle',requestId:id});};
+        f.views.get('airk.workbench').resolveWebviewView(view);
+        assert.equal(visible(),false);
+        await toggle('show-workbench');assert.equal(visible(),true);
+        const before=f.writes.length;
+        f.stub.commands.executeCommand=async(name:string)=>{f.calls.push(name);if(name==='workbench.action.closeAuxiliaryBar'){view.visible=false;changed();}};
+        await toggle('hide-workbench');assert.equal(visible(),false);assert.equal(f.calls.at(-1),'workbench.action.closeAuxiliaryBar');
+        view.visible=true;changed();assert.equal(visible(),true);
+        view.visible=false;changed();assert.equal(visible(),false,'switching away updates the label without clicking the link');
+        disposed();assert.equal(visible(),false);assert.equal(f.writes.length,before);
+    }finally{await f.close();}
+});
+
+
+test('failed project setup leaves first Workbench opening available for a later successful setup',async context=>{
+    const f=await serviceTestHost(context,{registered:false});
+    const review=RuntimeHost.prototype.reviewProject;
+    try{
+        context.mock.method(RuntimeHost.prototype,'reviewProject',async()=>{throw new Error('fixture source unavailable');});
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.equal(f.calls.includes('workbench.view.extension.airk-workbench'),false);
+        assert.equal(f.values.has('airk.workbench.welcome.1'),false);
+        context.mock.method(RuntimeHost.prototype,'reviewProject',review);await f.refreshFolders();
+        assert.equal(f.calls.filter(line=>line==='workbench.view.extension.airk-workbench').length,1);
+        assert.equal(f.values.get('airk.workbench.welcome.1'),true);
+    }finally{await f.close();}
 });

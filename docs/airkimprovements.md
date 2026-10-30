@@ -19,7 +19,7 @@ The user authorized implementation, validation, documentation, PR merge and publ
 | F11 | Private retrieval candidate, SQLite query/usage/publication, kernel discovery, MCP execution, extension view/tree/setup modules. | Public command identities and legacy response defaults preserved; existing suites check behavior. Broader history/maintenance restructuring is deferred to avoid unrelated churn. |
 | F12 | Binary/source-bound persistent retrieval qualification receipts run in all native CI jobs. | Fixed judgments, latency, process counters, usage modes and worker concurrency. Real models, installed-editor lifecycle, physical full-disk/power-loss and production relevance need separate evidence; publication does not certify them. |
 
-Final local checks and hosted release provenance are recorded in [1.1.4 release notes](release-1.1.4.md). Original review probes have become regression tests; qualification boundaries remain explicit.
+Final local checks and hosted release provenance are recorded in [1.1.4 release notes](releases/release-1.1.4.md). Original review probes have become regression tests; qualification boundaries remain explicit.
 
 ## Original review assessment
 

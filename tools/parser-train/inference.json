@@ -1,0 +1,30 @@
+[
+  {
+    "text": "who calls QueueClient",
+    "intent": "references",
+    "logit": 456,
+    "margin": 755,
+    "accepted": true
+  },
+  {
+    "text": "read \"docs/design.md\":2-8",
+    "intent": "read_file",
+    "logit": 577,
+    "margin": 937,
+    "accepted": true
+  },
+  {
+    "text": "Évidence_client αβ",
+    "intent": "search",
+    "logit": -142,
+    "margin": 94,
+    "accepted": false
+  },
+  {
+    "text": "where is retry_budget defined",
+    "intent": "find_definition",
+    "logit": 581,
+    "margin": 1066,
+    "accepted": true
+  }
+]

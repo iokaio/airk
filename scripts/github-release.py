@@ -207,6 +207,18 @@ def stage_signing(directory, target, commit, version, output_root=None, *, tree=
         (output / name).chmod(0o755)
 
 
+def interface_previews(version, commit):
+    if tuple(map(int, version.split("."))) < (1, 7, 1):
+        return ""
+    base = f"https://raw.githubusercontent.com/{REPOSITORY}/{commit}/docs"
+    return ("\n## Workbench and Explorer\n\n"
+            "Collect cited evidence directly in Workbench, or inspect sources and manage indexing in Explorer. "
+            "Workbench uses no generative AI; supported intent parsing and semantic retrieval use local models.\n\n"
+            f"![AIRK Workbench]({base}/workbench/images/workbench-1.7.1-results.png)\n\n"
+            f"![AIRK Explorer]({base}/explorer/images/explorer-1.7.1.png)\n\n"
+            "Compiled UI previews with fictional project data; installed-editor qualification is separate.\n")
+
+
 def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None, repair=None, *, tree=None):
     if tag != identity(version) or channel not in ("preview", "stable"):
         raise ValueError("Invalid release identity/channel")
@@ -265,13 +277,15 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
     (output / "release.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
     build_run = producer["run_id"] if producer else run_id
     build_attempt = producer["attempt"] if producer else attempt
+    # The pinned 1.4.4 repair references its immutable original source layout.
+    notes_path = f"docs/{'' if repair else 'releases/'}release-{version}.md"
     notes = (f"AIRK {tag} ({channel})\n\n"
              "**Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents "
              "a shared, local index of your workspace.** AIRK returns small, cited passages and facts, each "
              "with its file path, content hash and original location, instead of whole files. Your agent "
              "does the reasoning; you can check exactly what it used.\n\n"
              f"Package version: {version}. Source commit: {commit}.\n"
-             f"Changes and upgrade guidance: https://github.com/{REPOSITORY}/blob/{commit}/docs/release-{version}.md\n"
+             f"Changes and upgrade guidance: https://github.com/{REPOSITORY}/blob/{commit}/{notes_path}\n"
              f"Build and checks: https://github.com/{REPOSITORY}/actions/runs/{build_run}/attempts/{build_attempt}\n"
              f"Signing and assembly: https://github.com/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}\n\n"
              "Downloads include native ZIPs and matching platform VSIX files. Windows uses Ioka LLC "
@@ -283,6 +297,7 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
              "The release tag matches the installed app and extension version.\n\n"
              "Installed-editor and oldest-OS qualification remain separate. Review the release checklist "
              "and dependency notices. This release does not publish to Visual Studio Marketplace.\n")
+    notes += interface_previews(version, commit)
     if repair is not None:
         notes += f"\nRelease-tooling repair commit: {repair['tooling_commit']}. Native binaries retain the source commit and tested producer recorded above.\n"
     (output / "release-notes.md").write_text(notes, encoding="utf-8")

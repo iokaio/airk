@@ -33,7 +33,7 @@ Use `x86_64-apple-darwin` on the Intel native runner. The signer enables hardene
 
 Signing replaces any linker-generated ad-hoc signature on the fresh artifact copy, then verifies the Developer ID signature, team, hardened runtime and timestamp. The tested source executable remains unchanged; the receipt records both source and signed hashes.
 
-Feed the resulting native `publish/` directory to `package-extension.py --native-dir ...`. Candidate payload hashes then cover the signed executable. Continue with [the macOS build guide](macos-build.md) and [release checklist](release-1.1.0.md), retaining actual logs for the final commit. Signing/notarization does not qualify installed services, remote editors or the oldest supported macOS version.
+Feed the resulting native `publish/` directory to `package-extension.py --native-dir ...`. Candidate payload hashes then cover the signed executable. Continue with [the macOS build guide](macos-build.md) and [release checklist](releases/release-1.1.0.md), retaining actual logs for the final commit. Signing/notarization does not qualify installed services, remote editors or the oldest supported macOS version.
 
 The local AIRK keychain is `~/Library/Keychains/airk-signing.keychain-db`; its notary profile is `airk-notary`. It reuses the company’s Developer ID Application identity, with a separate keychain and profile from WritingForgePro. Unlock it in Keychain Access before signing. Its generated unlock password is kept in the login keychain as the generic-password item `airk-signing-keychain-password`, never in the repository.
 

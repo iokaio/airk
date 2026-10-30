@@ -61,7 +61,7 @@ test('Codex update saves and verifies a new native binding with Windows editor n
         assert.equal(saves,1,f.calls.join('\n'));assert.equal(checks,1);
         assert.match(text,/Keep my preferences/);assert.match(text,/model = "fixture"/);
         assert.ok(!text.includes(old.binding));assert.ok(text.includes('--root')&&!text.includes('--data-dir'));
-        assert.match(panel.webview.html,/configuration saved.*27 tools/);
+        assert.match(panel.webview.html,/configuration saved.*28 tools/);
         await panel.send({action:'updateCodex'});
         assert.equal(saves,1);assert.equal(checks,2);assert.match(panel.webview.html,/already matches/);
         failProbe=true;await panel.send({action:'updateCodex'});

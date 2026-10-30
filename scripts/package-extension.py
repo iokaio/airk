@@ -26,9 +26,10 @@ MODULES = ("extension.js", "extensionUninstall.js", "uninstallHook.js", "diagnos
            "explorerFacts.js", "explorerInspect.js", "explorerManagement.js",
            "explorerCommands.js", "explorerAssistanceHost.js", "explorerAssistanceLaunch.js",
            "explorerStrategies.js", "explorerStrategyRunner.js",
-           "explorerDrafts.js", "explorerSuggestions.js", "explorerReview.js", "explorerHandoffs.js", "explorerPlanFiles.js")
+           "explorerDrafts.js", "explorerSuggestions.js", "explorerReview.js", "explorerHandoffs.js", "explorerPlanFiles.js",
+           "workbenchView.js", "workbenchContracts.js", "workbenchRender.js", "workbenchSessions.js", "workbenchStrategies.js")
 # esbuild outputs; referenced by URI or path from host modules, never require()d.
-BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js")
+BUNDLES = ("explorerWebview.js", "explorerWebview.css", "explorerAssistance.js", "workbenchWebview.js", "workbenchWebview.css")
 # Host-only implementations that must never ship a second bundled copy.
 HOST_MARKERS = ("class ServiceClient", "class NativeControlTransport", "class IntentJournal", "function probeMcp",
                 "class ServiceConsoleController", "class RuntimeHost")
@@ -36,6 +37,7 @@ JSONC_FILES = ("package.json", "LICENSE.md", "lib/umd/main.js", "lib/umd/impl/ed
                "lib/umd/impl/format.js", "lib/umd/impl/parser.js", "lib/umd/impl/scanner.js",
                "lib/umd/impl/string-intern.js")
 ILLUSTRATIONS = ("local-evidence.png", "index-to-context.png")
+PRODUCT_ILLUSTRATIONS = {"workbench-1.7.1-results.png": "workbench", "explorer-1.7.1.png": "explorer"}
 ICONS = ("airk.svg", "icon.png")
 
 
@@ -128,7 +130,7 @@ def stage_bundles(compiled, destination, preact_version):
             marker = next((value for value in HOST_MARKERS if value in text), None)
             if marker:
                 raise ValueError("Bundle contains host implementation " + marker + ": " + name)
-        if name == "explorerWebview.js":
+        if name in ("explorerWebview.js", "workbenchWebview.js"):
             if re.search(r"\brequire\s*\(", text):
                 raise ValueError("Webview bundle must not require modules")
             if not text.startswith("/*! AIRK Explorer webview. Includes Preact " + preact_version + " (MIT).\n"):
@@ -304,6 +306,13 @@ def main():
             raise SystemExit("Invalid or oversized extension illustration: " + name)
         shutil.copyfile(source, stage / "images" / name)
         listing = listing.replace("https://raw.githubusercontent.com/iokaio/airk/main/docs/images/" + name,
+                                  "images/" + name)
+    for name, component in PRODUCT_ILLUSTRATIONS.items():
+        source = ROOT / "docs" / component / "images" / name
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 2_097_152:
+            raise SystemExit("Invalid or oversized product illustration: " + name)
+        shutil.copyfile(source, stage / "images" / name)
+        listing = listing.replace(f"https://raw.githubusercontent.com/iokaio/airk/main/docs/{component}/images/" + name,
                                   "images/" + name)
     for name in ICONS:
         source = EXTENSION / "images" / name

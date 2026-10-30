@@ -36,6 +36,8 @@ const dark = { foreground: '#cccccc', descriptionForeground: '#a0a0a0', 'editor-
 const light = { ...dark, foreground: '#333333', descriptionForeground: '#616161', 'editor-background': '#ffffff', 'editorWidget-background': '#f3f3f3', 'sideBar-background': '#f3f3f3',
     'panel-border': '#d4d4d4', 'textLink-foreground': '#005fb8', 'input-background': '#ffffff', 'input-foreground': '#333333', 'input-border': '#999999',
     'list-hoverBackground': '#e8e8e8', 'list-inactiveSelectionBackground': '#e4e6f1', 'textBlockQuote-background': '#f2f2f2', 'textCodeBlock-background': '#eeeeee' };
+const screenshotOnly=process.argv.includes('--screenshots');
+if(screenshotOnly)delete state.management;
 const scenes = [
     ['airk-dark-wide', 1440, 900, 'vscode-dark', true], ['airk-light-wide', 1440, 900, 'vscode-light', true],
     ['vscode-dark-wide', 1440, 900, 'vscode-dark', false], ['vscode-light-wide', 1440, 900, 'vscode-light', false],
@@ -51,7 +53,7 @@ async function html(scene) {
     const style = pathToFileURL(path.join(root, 'packages/vscode/out/explorerWebview.css')).href;
     return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style><link rel="stylesheet" href="${style}"></head>
 <body class="${theme}"><div id="root"></div><script>
-const initial=${JSON.stringify(state)}, key=${JSON.stringify(name)}, defaultState=${JSON.stringify({ route: '#manage/projects', themed })};
+const initial=${JSON.stringify(state)}, key=${JSON.stringify(name)}, defaultState=${JSON.stringify({ route: screenshotOnly?'#overview':'#manage/projects', themed })};
 let saved=JSON.parse(localStorage.getItem(key)||'null')||defaultState;window.bridgeMessages=[];let recipes=[];const libraryFiles=${JSON.stringify(libraryFiles)};
 window.send=(message)=>window.dispatchEvent(new MessageEvent('message',{data:message}));
 window.acquireVsCodeApi=()=>({getState:()=>saved,setState:value=>{saved=value;localStorage.setItem(key,JSON.stringify(value));},postMessage:message=>{
@@ -106,6 +108,11 @@ async function main() {
             const source = path.join(scratch, `${name}.html`); await fs.writeFile(source, await html(scene));
             await call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
             await call('Page.navigate', { url: pathToFileURL(source).href });
+            if(screenshotOnly){
+                await until(`!!document.querySelector('.rail')&&!!document.querySelector('.workspace-heading')`);
+                assert.equal(await evaluate(`document.documentElement.scrollWidth<=innerWidth`),true,`${name} horizontal overflow`);
+                await screenshot(name);checks.push({name,width,height,basis:'Compiled Explorer overview with fictional observations'});console.log(`${name}: screenshot and layout passed`);continue;
+            }
             await until(`document.querySelectorAll('.project-card').length===8`);
             const fits = await evaluate(`(()=>{const body=document.documentElement,content=document.querySelector('.content'),management=document.querySelector('.rail button[aria-label="Management"]');
                 const before=management.getBoundingClientRect();content.scrollTop=content.scrollHeight;

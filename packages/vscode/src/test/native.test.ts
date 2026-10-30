@@ -233,7 +233,7 @@ test('cached old helper survives extension replacement and a changed trusted hel
         // 1.2 builds an independent current-index namespace and leaves the old
         // helper's derived collection untouched.
         await runJson(newAgent, 'index', ['--full']);
-        assert.equal((await probeMcp(newAgent)).tools.length, 27);
+        assert.equal((await probeMcp(newAgent)).tools.length, 28);
         await assert.rejects(runJson(newAgent, 'collections', ['history', 'set', '--json', JSON.stringify({
             version: 1, enabled: true, recent: 3, hourly_hours: 24,
             max_packages: 12, max_bytes: 268435456, quota_basis_points: 1000
@@ -308,7 +308,7 @@ test('extension native clients index, inspect, approve rebuilds, enforce limits 
         await fixture.repair(a,'rebuild');
         const rebuilt=await fixture.publishedStatus(a);
         assert.notEqual(record(rebuilt.publication).incarnation,record(before.publication).incarnation);
-        const probe=await probeMcp(a);assert.equal(probe.tools.length,27);assert.ok(probe.tools.includes('changes'));
+        const probe=await probeMcp(a);assert.equal(probe.tools.length,28);assert.ok(probe.tools.includes('changes'));
         const foreign=await fixture.tool(b,'airk_code_facts',{name:'authenticate_fixture',compact:false});
         assert.deepEqual(foreign.items,[]);
         await assert.rejects(runJson(a,'collections',['remove',b.collection]));

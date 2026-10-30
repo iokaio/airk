@@ -549,10 +549,10 @@ mod tests {
     #[test]
     fn one_catalog_has_unique_unprefixed_names_and_honest_effect_annotations() {
         let catalog = tools();
-        assert_eq!(catalog.len(), 27);
+        assert_eq!(catalog.len(), 28);
         let names: std::collections::BTreeSet<_> =
             catalog.iter().map(|t| t.name.as_ref()).collect();
-        assert_eq!(names.len(), 27);
+        assert_eq!(names.len(), 28);
         assert!(names.iter().all(|n| !n.starts_with("airk_")));
         for tool in catalog {
             let value = serde_json::to_value(&tool).unwrap();

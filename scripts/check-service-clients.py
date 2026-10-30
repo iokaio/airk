@@ -20,7 +20,10 @@ import sys
 
 TOOLS = {"airk_" + name for name in (
     "capabilities", "changes", "code_facts", "context", "document_facts", "file_info", "help", "imports",
-    "list_files", "outline", "read_file", "references", "relationships", "search", "status", "diagnostics", "symbols")}
+    "list_files", "outline", "parse", "read_file", "references", "relationships", "search", "status", "diagnostics", "symbols")}
+
+# Plan execution can already have partial work; never replay a whole plan here.
+RETRYABLE_TOOLS = TOOLS - {"airk_parse"}
 
 # The public MCP catalog is distinct from the native CLI's compatible aliases.
 MCP_TOOLS = {name.removeprefix("airk_") for name in TOOLS} | {
@@ -416,7 +419,7 @@ class Fixture:
 
     def query(self, project, *arguments, deadline=None, retry=True, admission_only=False):
         deadline = min(deadline if deadline is not None else float("inf"), time.monotonic() + 90)
-        assert (arguments[:2] == ("tools", "call") and len(arguments) >= 3 and arguments[2] in TOOLS
+        assert (arguments[:2] == ("tools", "call") and len(arguments) >= 3 and arguments[2] in RETRYABLE_TOOLS
                 or arguments and arguments[0] in ("status", "search", "files", "read", "info", "outline", "symbol",
                                                   "imports", "facts", "refs", "context", "changes", "code-facts", "relationships")), "Expected a read-only fixture query"
         exact = (*self.arguments(project), *arguments)
@@ -500,7 +503,7 @@ class Fixture:
                                       "retry", prepared["prepared"]).stdout)
         return self.wait(receipt, expected)
 
-    def stdio(self, name, lifecycle="initialize", client="airk-native-check"):
+    def stdio(self, name, lifecycle="initialize", client="airk-native-check", *, workbench=False):
         child = subprocess.Popen([str(self.binary), *self.arguments(name), "mcp"], cwd=self.runtime,
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                  text=True, encoding="utf-8", env=self.environment,
@@ -543,7 +546,7 @@ class Fixture:
             params = {"_meta": meta} if lifecycle == "inline" else {}
             send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": params})
             catalog = receive(2)["result"]["tools"]
-            assert len(catalog) == len(MCP_TOOLS) and {item["name"] for item in catalog} == MCP_TOOLS
+            assert len(catalog) == len(MCP_TOOLS) and {item["name"] for item in catalog} == MCP_TOOLS, [item["name"] for item in catalog]
             assert all(not any(key in item["inputSchema"] for key in
                                ("oneOf", "anyOf", "allOf", "not", "if", "then", "else"))
                        for item in catalog), "Assistant-facing tool schemas must use plain object roots"
@@ -561,6 +564,26 @@ class Fixture:
             scopes = tool_value(receive(4)["result"])
             assert scopes["default_project"] == self.projects[name]["binding"]
             assert len(scopes["projects"]) == 1
+            if workbench:
+                # Serial plan acceptance check: learned requests propose only; execution is
+                # sent once, never replayed after a partial/uncertain plan reply.
+                with self.hold_publication(name):
+                    send({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
+                        **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
+                            "text": "Please retrieve the source contents of fixture_0.py", "response_mode": "full"}}})
+                    proposed_reply = receive(5)["result"]
+                    assert proposed_reply.get("isError") is not True, proposed_reply
+                    proposed = tool_value(proposed_reply)
+                    assert proposed["status"] == "needs_input" and proposed["executed"] is False, proposed
+                    assert proposed["plan"]["steps"][0]["args"]["path"] == "fixture_0.py", proposed
+                    send({"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": {
+                        **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
+                            "plan": proposed["plan"], "response_mode": "full"}}})
+                    confirmed_reply = receive(6)["result"]
+                    assert confirmed_reply.get("isError") is not True, confirmed_reply
+                    confirmed = tool_value(confirmed_reply)
+                    assert confirmed["executed"] is True and confirmed["status"] == "complete", confirmed
+                    assert confirmed["evidence"][0]["citation"]["path"] == "fixture_0.py", confirmed
             return len(catalog)
         finally:
             child.stdin.close()
@@ -578,8 +601,8 @@ def mixed_mcp_clients(fixture, project):
     for _ in range(2):
         with ThreadPoolExecutor(max_workers=3) as pool:
             checks = [pool.submit(fixture.stdio, project, lifecycle, client) for lifecycle, client in modes]
-            assert all(check.result() == 27 for check in checks)
-    return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": 27,
+            assert all(check.result() == 28 for check in checks)
+    return {"connections": 6, "simultaneous_clients": 3, "tools_per_connection": 28,
             "lifecycles": [mode for mode, _ in modes], "reconnect": True, "same_project_reads": True}
 
 
@@ -692,7 +715,7 @@ def qualify(runtime, files, model):
             terse = fixture.tool("project-a", "airk_outline", {"path": "fixture_0.py", "response_mode": "terse"})
             full = fixture.tool("project-a", "airk_outline", {"path": "fixture_0.py", "response_mode": "full", "compact": False})
             assert terse["items"][0]["name"] == full["items"][0]["name"] == "polar_fixture_0"
-            mcp_tools = fixture.stdio("project-a")
+            mcp_tools = fixture.stdio("project-a", workbench=True)
             mcp_lifecycles = mixed_mcp_clients(fixture, "project-a")
             offline = owner / "temporarily-offline"
             roots[0].rename(offline)

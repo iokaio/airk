@@ -33,3 +33,32 @@ The AIRK Explorer webview bundle `out/explorerWebview.js` includes [Preact](http
 The VSIX also embeds the native helper's Rust dependency notice bundle and AIRK legal files.
 
 Review the generated inventory for missing/custom licenses and distribution obligations before publishing. Regenerate it when dependencies change. Compiler/system libraries and base-image packages are separate distribution inputs requiring an SBOM/license review at release qualification.
+
+
+## Workbench intent training and evaluation inputs
+
+The 1.7.0 Workbench classifier training protocol uses vocabulary extracted from pinned public repositories, without incorporating their implementations into AIRK code. Root license identities, hashes, exact revisions, corpus splits and attribution links are recorded in [the training record](tools/parser-train/TRAINING.md) and [the pin manifest](tools/parser-train/repositories.lock.json). Generated corpora, checkouts and indexes stay in ignored local storage; model qualification is recorded separately. The initial smoke asset used original fictional templates. The measured local review asset and its additional attribution are described below; learned requests require explicit plan confirmation.
+
+The broader offline candidate additionally uses the [CodeSearchNet query resource](https://github.com/github/CodeSearchNet/blob/106e827405c968597da938f6b373d30183918869/resources/queries.csv), with its MIT repository notice (Copyright 2019 GitHub), and selected [CLINC150 utterances](https://github.com/clinc/oos-eval/tree/828f8093932c8fe6ca7936c3d2e52903b1c523de) under Creative Commons Attribution 3.0 Unported. Attribution: Husain, Wu, Gazit, Allamanis and Brockschmidt, *CodeSearchNet Challenge* (2019); Larson et al., *An Evaluation Dataset for Intent Classification and Out-of-Scope Prediction* (EMNLP-IJCNLP 2019). AIRK wraps CodeSearchNet topics in original explicit retrieval requests and relabels selected non-repository CLINC assistant tasks as unsupported by AIRK; these are AIRK transformations, not upstream AIRK intent labels. Exact pins, hashes and download URLs are recorded in [online.lock.json](tools/parser-train/online.lock.json), with complete upstream licenses retained alongside the ignored local inputs and their durable copies. The local 1.7.0 review build embeds this candidate for explicitly confirmed proposals; automatic learned execution remains disabled. Raw upstream data is excluded from Git and packaging. The CLINC license is [CC BY 3.0 Unported](https://creativecommons.org/licenses/by/3.0/). The CodeSearchNet MIT license notice follows.
+
+MIT License
+
+Copyright (c) 2019 GitHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

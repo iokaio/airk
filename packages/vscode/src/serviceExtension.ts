@@ -16,6 +16,7 @@ import { openUsagePanel } from './usagePanel';
 import { renderUsage } from './usageReport';
 import { COMMAND_ROUTES } from './explorerCommands';
 import { ExplorerSidebar } from './explorerSidebar';
+import { WorkbenchView } from './workbenchView';
 import type { ExplorerController, ExplorerHost } from './explorerController';
 import { hasUnifiedVscodeConfig, migrateLocalAgents } from './agentMigration';
 import { readJsonConfig } from './agentConfig';
@@ -62,6 +63,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private installProgress?:vscode.Progress<{message?:string}>;
     private explorer?:Promise<ExplorerController>;
     private explorerLoaded?:ExplorerController;
+    private workbench?:WorkbenchView;
     private assistanceHost?:AssistanceIpcHost;
     private assistanceGeneration=0;
     /** Agent drafts for this window, kept in memory only; the Explorer Inbox shows them. */
@@ -122,6 +124,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.console=new ServiceConsole(context,runtime,{register:()=>this.registerWorkspace(),currentProjects:()=>this.currentProjects(),removed:async project=>{
             if(this.binding){
                 await this.workspace.withdrawProject(this.binding,project);this.trusted();
+                await this.workbench?.removeProject(project).catch(error=>this.output.appendLine(`Workbench session cleanup: ${String(error)}`));
                 this.specs=this.specs.filter(spec=>spec.service?.project!==project);
                 this.roots=this.roots.filter(root=>this.specs.some(spec=>same(spec.root,root.canonical)));
                 this.checks.delete(project);this.definitions.fire();
@@ -288,7 +291,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(!selected)throw new Error('No project selected. Select a registered project and check again.');
             publish({phase:'preparing',message:`Checking the native registration for ${selected.name}…`});
             selected=await this.resolveAgentSpec(selected);
-            const result=await probeMcp(selected,27,this.runningVersion,this.connectionEntries(selected)[0],
+            const result=await probeMcp(selected,28,this.runningVersion,this.connectionEntries(selected)[0],
                 message=>publish({phase:'checking',message}));
             publish({phase:'verified',tools:result.tools,checkedAt:Date.now(),handshakeMs:result.handshakeMs,
                 message:`AIRK responded with ${result.tools.length} tools. This checks AIRK; each agent must load its saved configuration separately.${record(result.status).state==='index_unknown'?' Index readiness is unconfirmed; call diagnostics or check again.':''}${result.handshakeMs!==undefined&&result.handshakeMs>10000?` The handshake took ${(result.handshakeMs/1000).toFixed(1)} seconds; an agent with a shorter startup deadline may time out.`:''}`,
@@ -488,6 +491,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                     await this.prepareWorkspaceProjects(binding,installed);
                     await this.refresh(installed);
                     this.reportInstall('Connected to AIRK. Saved project work remains with the service.');
+                    await this.openWorkbenchAfterSetup();
                     if(this.installationWarnings)this.output.appendLine('Some agent connections need review in Management > Agents.');
                     return;
                 }
@@ -521,6 +525,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const completed=await this.runtime().discover();
             await this.prepareWorkspaceProjects(binding,completed);await this.refresh(completed);
             this.reportInstall(this.installationWarnings?'Runtime installation finished with issues to review.':'Runtime ready. Project indexing continues in Management.');
+            await this.openWorkbenchAfterSetup();
             if(notify)await this.installationComplete();
             },progressTitle);
         }
@@ -665,10 +670,22 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         }).catch(error=>{this.explorer=undefined;throw error;});
         return this.explorer;
     }
-    private explorerHost():ExplorerHost{
+    attachWorkbench(view:WorkbenchView):void{this.workbench=view;}
+    private async openWorkbenchAfterSetup():Promise<void>{
+        const key='airk.workbench.welcome.1';
+        if(this.disposed||!vscode.workspace.isTrusted||this.checkForExtensionUpdate()||!this.specs.length||!this.workbench||this.context.globalState.get<boolean>(key))return;
+        try{
+            await this.workbench.focus();
+            if(!this.disposed&&vscode.workspace.isTrusted)await this.context.globalState.update(key,true);
+        }catch(error){this.output.appendLine(`Workbench could not open after setup: ${String(error)}. Use AIRK: Open Workbench.`);}
+    }
+
+    explorerHost():ExplorerHost{
         return {extensionUri:this.context.extensionUri,version:this.runningVersion,
             extensionUpdate:()=>this.extensionUpdate,reloadUpdatedExtension:()=>this.reloadUpdatedExtension(),
             connectionCheck:()=>this.connectionCheck,startup:()=>this.startup,
+            workbenchVisible:()=>this.workbench?.visible??false,toggleWorkbench:async()=>{await this.workbench?.toggle();},
+            onDidChangeWorkbenchVisibility:this.workbench?.onDidChangeVisibility,
             trusted:()=>vscode.workspace.isTrusted&&!this.disposed,specs:()=>this.specs,
             activeProject:()=>{
                 const active=vscode.window.activeTextEditor&&vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
@@ -719,7 +736,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();
         const entry=this.connectionEntries(spec)[0];
         writeLaunchDescriptor(this.context.globalStorageUri.fsPath,this.context.extensionPath,this.runningVersion);
-        const result=await probeMcp(spec,27,this.runningVersion,entry);this.trusted();
+        const result=await probeMcp(spec,28,this.runningVersion,entry);this.trusted();
         return result.tools;
     }
     provideAssistanceDefinitions():vscode.McpStdioServerDefinition[]{
@@ -739,6 +756,9 @@ export function deactivate():void{active?.dispose();active=undefined;}
 export async function activate(context:vscode.ExtensionContext):Promise<{getServerDefinitions():Promise<vscode.McpStdioServerDefinition[]>;whenReady():Promise<void>}>{
     const controller=new ServiceExtension(context);active=controller;context.subscriptions.push(controller);
     const explorerOpen=(route?:unknown)=>controller.explorerController().then(explorer=>explorer.open(typeof route==='string'?route:undefined));
+    const workbench=new WorkbenchView(context,controller.explorerHost());
+    controller.attachWorkbench(workbench);
+    context.subscriptions.push(workbench,vscode.window.registerWebviewViewProvider('airk.workbench',workbench));
     const sidebar=new ExplorerSidebar({
         commandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode','airk.manageVscodeMcp','airk.explorer.open','airk.collections','airk.explorer.showSuggestions'],
         folders:()=>(vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme)).length,
@@ -778,6 +798,14 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.usage=()=>controller.usage();
     commands.showExtensionOutput=()=>controller.output.show(false);
     commands['explorer.open']=route=>explorerOpen(route);
+    commands['workbench.focus']=()=>workbench.focus();
+    commands['workbench.newSession']=()=>workbench.newSession();
+    commands['workbench.clearSessions']=()=>workbench.clear();
+    commands['workbench.searchSelection']=async()=>{
+        const editor=vscode.window.activeTextEditor;
+        const text=editor?.document.getText(editor.selection).slice(0,4096);
+        await workbench.focus(text?`/search ${JSON.stringify(text.replace(/\s+/g,' '))}`:undefined);
+    };
     commands['explorer.showSuggestions']=async()=>(await controller.explorerController()).showInbox();
     commands['explorer.search']=async query=>{
         const text=typeof query==='string'?query:await vscode.window.showInputBox({title:'AIRK: Search indexed evidence',prompt:'All words must appear (lexical) unless the project uses vector or hybrid search.'});

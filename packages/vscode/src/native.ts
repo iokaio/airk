@@ -218,7 +218,7 @@ export async function joinScheduledIndex<T>(initialArgs: string[],
 }
 
 /** Real bounded stdio initialization/tool-list/status probe, independent of any coding agent. */
-export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 26 | 27 = 27, clientVersion = 'development', entry?: ServerEntry,
+export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 26 | 27 | 28 = 28, clientVersion = 'development', entry?: ServerEntry,
     report: (message:string)=>void = ()=>{}): Promise<{ tools: string[]; status: unknown; handshakeMs?:number }> {
     const startedAt=Date.now(),deadline = startedAt + (spec.service ? 90000 : 15000);
     const remaining = () => Math.max(1, deadline - Date.now());
@@ -232,7 +232,7 @@ export async function probeMcp(spec: LaunchSpec, expectedTools: 14 | 15 | 16 | 2
         stage='listing MCP tools';report(`MCP handshake completed in ${(handshakeMs/1000).toFixed(1)} seconds. Reading the tool list…`);
         const listed = await session.request('tools/list', {}, remaining());
         const tools: string[] = listed.tools.map((tool: { name: string }) => tool.name);
-        const required = expectedTools>=26?UNIFIED_TOOLS.filter(name=>expectedTools===27||name!=='diagnostics'):['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
+        const required = expectedTools>=26?UNIFIED_TOOLS.filter(name=>(expectedTools>=27||name!=='diagnostics')&&(expectedTools>=28||name!=='parse')):['airk_status', 'airk_symbols', 'airk_code_facts', 'airk_relationships', ...(expectedTools >= 15 ? ['airk_changes'] : []), ...(expectedTools >= 16 ? ['airk_help'] : [])];
         if (tools.length !== expectedTools || !required.every(name => tools.includes(name))) { throw new Error(`AIRK MCP tool inventory differs from the expected ${expectedTools} tools.`); }
         stage='reading index status';report(`${tools.length} MCP tools available. Reading index status…`);
         const status = await session.request('tools/call', { name: expectedTools>=26?'status':'airk_status', arguments: {} }, remaining());

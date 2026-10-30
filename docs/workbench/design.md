@@ -1,6 +1,8 @@
 # AIRK Workbench implementation plan
 
-**Status:** proposed, not implemented. Written 2026-10-29 against the 1.6.4 tree. Nothing in this plan is part of 1.6.4.
+**Design baseline:** written 2026-10-29 against the 1.6.4 tree. This is the target design, with its original implementation and qualification gates. It does not describe the published 1.6.4 release.
+
+**Implementation:** the unreleased `feat/workbench` branch implements the sidebar and shared native `parse` prepare/execute path. See the [implementation record](implementation.md) for current commands, contracts, validation and differences from this target. In particular, the candidate classifier is suggestion-only pending independent qualification; do not infer trained-model acceptance or platform qualification from this plan.
 
 The AIRK Workbench is a second editor surface: a tab titled **AIRK** in the VS Code secondary sidebar. People use it to query an indexed project directly, with no agent. Input is a slash command, a reusable evidence recipe or a plain-English request. A fixed parser shipped in the native runtime turns supported requests into visible, editable plans of read-only AIRK tool calls. Results appear as Structured, JSON or Markdown, and each can be copied. Sessions save automatically, and the newest 10 per project can be reopened.
 

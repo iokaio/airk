@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "repositories": [
+    {"repository":"backstage/backstage","split":"train","paths":["docs","packages/backend-defaults/src"]},
+    {"repository":"nats-io/nats-server","split":"train","paths":["server"]},
+    {"repository":"nats-io/nats-architecture-and-design","split":"train","paths":["adr"]},
+    {"repository":"dotnet/runtime","split":"train","paths":["docs/design","src/libraries/System.Collections/src"]},
+    {"repository":"actions/runner","split":"evaluation","paths":["docs","src/Runner.Worker"]},
+    {"repository":"simpleiot/simpleiot","split":"evaluation","paths":["docs","client","data"]},
+    {"repository":"tokio-rs/tokio","split":"train","paths":["tokio/src","tokio/tests"]},
+    {"repository":"rust-lang/rust-analyzer","split":"train","paths":["docs","crates/ide/src","crates/parser/src"]},
+    {"repository":"fastapi/fastapi","split":"evaluation","paths":["fastapi","docs/en/docs","tests"]},
+    {"repository":"etcd-io/etcd","split":"train","paths":["Documentation","server/etcdserver/api"]},
+    {"repository":"kubernetes/enhancements","split":"train","paths":["keps/sig-api-machinery","keps/sig-architecture"]},
+    {"repository":"open-telemetry/opentelemetry-specification","split":"train","paths":["specification","oteps"]},
+    {"repository":"protocolbuffers/protobuf","split":"train","paths":["src/google/protobuf","docs"]}
+  ]
+}

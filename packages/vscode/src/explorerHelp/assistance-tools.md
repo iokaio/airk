@@ -8,9 +8,9 @@ related_airk_help: explorer, roles, agent-setup, mcp, workflows
 ---
 # Work with an AI agent
 
-AIRK 1.6.4 includes the runtime, project cleanup and diagnostics fixes from the unpublished 1.6.1–1.6.3 candidates. After upgrading, reconnect each agent so it loads the installed runtime and 27-tool catalog.
+AIRK 1.6.4 includes the runtime, project cleanup and diagnostics fixes from the unpublished 1.6.1–1.6.3 candidates. The 1.7.0 Workbench branch adds parse for a 28-tool catalog. After upgrading, reconnect each agent so it loads the installed runtime and catalog.
 
-Connect one MCP server named airk for a registered project. Its 27 tools distinguish indexed evidence (search, read_file, symbols), documentation (help), quick readiness (status), detailed troubleshooting (diagnostics), and reviewed UI drafts (draft_search, draft_strategy, draft_plan, suggest_view). Native evidence remains available when Explorer is closed. Each agent loads its own configuration and completes its trust prompts.
+Connect one MCP server named airk for a registered project. Its 28 tools distinguish indexed evidence (search, read_file, symbols), documentation (help), quick readiness (status), detailed troubleshooting (diagnostics), and reviewed UI drafts (draft_search, draft_strategy, draft_plan, suggest_view). Native evidence remains available when Explorer is closed. Each agent loads its own configuration and completes its trust prompts.
 
 ## Steps
 

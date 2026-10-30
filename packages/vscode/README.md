@@ -1,123 +1,84 @@
-# AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents
+# AIRK: Local Search for Coding Agents
 
-**Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
+**Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
 
-One MCP connection exposes 27 tools. `status` is a lightweight readiness check; `diagnostics` provides detailed runtime, job and watcher observations. Cold MCP verification survives individual status timeouts, so later polls reuse the same authenticated setup. CLI request-epoch preparation uses a bounded wait for explicit busy/uncertain registry responses and retains failure codes. macOS inference shutdown releases the owned ONNX environment after sessions drain, before native library cleanup. Connection checks keep unknown readiness distinct from a confirmed unavailable index. Agent connections follow their configured source folders across index replacement. Explorer bounds status polling, keeps local log actions responsive and reconciles uncertain requests internally without replaying them. Installation migrates registered historical default index roots to `index-v1`, preserving publications and settings; custom roots stay in place. See the [1.6.4 release notes](https://github.com/iokaio/airk/blob/main/docs/release-1.6.4.md).
+AIRK builds a searchable local index of your project so you and your coding tools can retrieve relevant passages, definitions and document facts without loading entire files into every request. Use it with MCP clients such as Claude Code, Codex and GitHub Copilot, or work directly in VS Code with no coding agent required.
 
-**Introduced in 1.6.0 — offline semantic index optimization.** Two bundled INT8 MiniLM exports replace the previous FP32 model. Native CPU detection chooses unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64. Installation and rebuilding require no model download. Upgrade rebuilds semantic vectors and caches while preserving text/fact evidence, pause and semantic opt-out settings. See the [1.6.0 record](https://github.com/iokaio/airk/blob/main/docs/release-1.6.0.md) and [optimization rationale](https://github.com/iokaio/airk/blob/main/docs/semantic-index-optimization.md).
+- **Find useful context:** search code and documents together, then narrow the scope to a file, folder or named definition.
+- **Inspect the evidence:** open cited sources, read surrounding context and keep source locations and indexed revisions with your results.
+- **Keep retrieval local:** indexing, lexical and semantic search run on your machine with bundled models. AIRK needs no cloud service or API key.
 
-The following management and agent improvements were introduced in 1.5.12 and remain available.
+## Meet AIRK Workbench
 
-Management → Agents now offers **Copy instructions** and separate buttons to open Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`) and GitHub Copilot (`.github/copilot-instructions.md`) project instructions. The suggestion teaches agents to discover deferred AIRK tools, confirm status, use focused evidence and verify live files. Existing files stay unchanged; missing files open as unsaved drafts for review and saving. The bundled **Project instructions for AI agents** help topic also covers other assistants.
+Workbench is a compact evidence workspace in VS Code’s secondary sidebar. Type a slash command, prepare an evidence recipe, inspect results and open the original source. Copy cited results as Markdown or JSON, export a session, and return to recent investigations.
 
-Version **1.5.12** includes the index-management and startup improvements described below. Explorer opens while runtime checks continue in the background. Healthy completed installations reconnect without running native startup again, and simultaneous discovery requests share work. Agent configuration uses current native registrations. The Agents panel displays connection-check stages, elapsed time and copyable connection results. The full inline agent setup guide remains a proposal. See the [1.5.12 release record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.12.md).
+A small toolbar holds history, settings and new-session controls. The **+** menu offers scope, recipes and tool forms when you need them, keeping the transcript available for results. Proposed plans remain editable and require an explicit run action. **No generative AI is used in AIRK Workbench**; supported intent parsing uses a fixed local classifier, and semantic retrieval uses local embeddings.
 
-AIRK 1.5.12 also ties MCP process lifetime to its client and gives installed service, index and source workers distinct executable names. Role copies are created locally; downloads still include one main engine. Live agents keep independent MCP connections, while background indexing remains service-owned.
+![AIRK Workbench showing cited source evidence](https://raw.githubusercontent.com/iokaio/airk/main/docs/workbench/images/workbench-1.7.1-results.png)
 
-Overview and Management now lead with published files, text chunks, vectors and semantic file coverage. Current work appears separately with counters appropriate to source indexing, semantic batches or cleanup. The display updates automatically; starting another attempt does not replace saved index counts with zeros.
+*Preview from the compiled Workbench UI with fictional project data. It illustrates the interaction, not a measured retrieval-quality result.*
 
-The 1.5.10 candidate adds **Open raw diagnostic log** and **Save raw diagnostic log…**, continued cleanup of obsolete index objects, explicit failed repair results, and storage-format identities independent of the AIRK release version. Management Storage reports the format and cleanup progress. Existing owned storage locations remain compatible; fresh installations use separate runtime, index-v1 data and service-v1 state defaults. See the [candidate record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.10.md).
+## AIRK Explorer: search, inspect and manage
 
-Version 1.5.9 fixes MCP discovery followed by a legacy handshake: a delayed discovery response no longer leaves a successfully initialized connection rejecting its tool requests. Protocol state stays per connection, so assistants can share one project using different handshake styles. Modern requests still require valid metadata. See the [1.5.9 compatibility record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.9.md).
+Explorer brings search, code navigation, document facts, evidence review and indexing controls into one editor workspace. Check what is indexed, inspect source citations, and manage projects, storage and agent connections.
 
-One **AIRK MCP connection** now exposes 27 unique tools without repeated `airk_` prefixes: evidence reads, documentation and reviewed UI drafts. `search` returns indexed evidence; `draft_search` prepares a form for user review. `status` reports index readiness; `diagnostics` reports detailed work and Explorer attachment, and multi-root connections require an explicit configured project. Trusted startup replaces recognized earlier Retrieval and Explorer definitions together with one `airk` entry. See the [unified catalog and migration contract](https://github.com/iokaio/airk/blob/main/docs/unified-mcp.md).
+![AIRK Explorer showing indexed project evidence and navigation](https://raw.githubusercontent.com/iokaio/airk/main/docs/explorer/images/explorer-1.7.1.png)
 
-Failed jobs observed by the service now produce retained `job_failed` events with the exact job and safe failure code. Index preparation and discovery preserve stage and recognized native causes. Older generic failures cannot be reconstructed; unknown causes remain explicit.
+*Explorer 1.7.1 preview with fictional observations. In 1.7.2, Workbench moves to the toolbar and project selection moves into Overview and Management. Not installed-editor qualification.*
 
-**Management features introduced in 1.5.12.** Management uses consistent horizontal tabs for Indexing, Activity, Storage, Recovery, Service, Agents, Usage and Logs. Indexing contains a health banner, current progress, published search availability, and three everyday settings: search mode, updates and evidence detail. Semantic enablement verifies/prepares the offline model before saving the policy and requests source and semantic work. Registration records native setup durably, so closing the editor does not strand a newly registered project before its initial index requests. See the [1.5.8 development record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.8.md).
+## Get your first result
 
-Queued repair requests whose plan has finished or lost its owner are settled without replaying old approvals, so they cannot indefinitely block otherwise eligible source work. Overview and Management update automatically while visible. Management exposes plan gates, confirms manual diagnostic status checks, separates old counters from queued work, and provides Copy details for troubleshooting panels.
+1. **Install AIRK** for your workspace host’s OS and architecture. The native runtime and local models are bundled; no Docker, Rust toolchain or separate API key is needed to use the extension. VS Code 1.140 or newer is required.
+2. **Open a trusted project.** With automatic setup enabled, AIRK registers the folder and starts indexing saved files. Open **AIRK Explorer → Management** to inspect progress, readiness and any skipped or failed files.
+3. **Try Workbench.** It opens once after successful setup, or run **AIRK: Open Workbench**. Start with `/files` to see indexed paths. Then try `/search retry --mode lexical`, replacing `retry` with a term in your project, and open a cited result.
+4. **Connect an agent when you want one.** Run **AIRK: Connect Coding Agent**, review its scoped configuration, and enable or approve AIRK in that client. Ask the agent to discover AIRK’s tools, check `status`, search the relevant scope and verify the cited live files before editing.
 
-Updates distinguish the installed extension, the running interface and native runtime activation. A detected pending extension update presents one **Reload to finish update** action and retains that action in Explorer and the status bar. Runtime progress says Installing or Updating AIRK runtime; successful activation finishes quietly and project indexing remains in Management. VS Code controls extension replacement, so an already running version without these changes retains its earlier messages until reloaded.
+Success means a query returns evidence for the intended project and its citations open the expected source. Indexing or connection failures remain visible; an enabled-server badge alone does not prove that your agent can retrieve evidence.
 
-Indexing recovery now belongs to the native service: accepted search/detail settings finish without the editor, temporary source/storage failures wait for restored conditions, and worker/helper retry budgets survive service restarts. Version 1.5.7 corrects a completed-bootstrap marker that repeatedly requested recovery, resumes outstanding source work after successful recovery, and prevents source hints from replenishing repeated failure budgets. Pause, Cancel, manual updates, custom models and guarded cleanup remain authoritative. Management can open/copy/save a captured diagnostic report and export the full retained service log ring. Verified completed installations reopen quietly without repeating terminal installation or runtime cleanup.
+## Three workflows to try
 
-Studio **Save** writes the complete draft inputs to `.airk/strategies/<name>.studio.airk.json` in the selected local project without a folder picker. It preserves the objective, parameters, path scope, steps, prompt profile and edited prompt under a `user/<name>` definition. Save again to update it, or change the name for a copy; outside edits are guarded. Browse saved strategies restores these inputs, with evidence recollected after loading. Accepting a suggestion does not save automatically. **Export…** continues to save only a strategy definition.
+| Your task | Use AIRK to collect |
+|---|---|
+| Understand a feature | Matching code, named definitions and the design or requirement that describes it. |
+| Investigate a bug | Relevant source passages, textual references and test mentions to inspect before changing behavior. |
+| Prepare a change | A scoped evidence set with citations, an editable read-only plan, and Markdown or JSON you can share with your agent. |
 
-Management separates current work from published evidence. Captured files, newly extracted payloads, publications, phase time and last advancement remain distinct; unknown totals stay unknown. Each Management section has its own tab; inactive sections are unmounted, and project selection persists across tabs. Existing Management URLs open the corresponding tab. In 1.6.4, removal preserves source files and automatically deletes AIRK index data and saved project settings after owned workers drain. Only opaque identifiers and a removal timestamp remain in native history; incomplete cleanup resumes automatically.
+In Workbench, try `/symbols YourSymbol`, `/outline path/to/file`, or `/read path/to/file:1-20` with names and paths from your project. The **+** menu includes recipes for definitions, document evidence, possible impact, test mentions, components and readiness. These workflows collect evidence; they do not edit source files or execute your tests.
 
-**Published 1.5.4:** Installer upgrades stop verified previous AIRK processes, including older versions and Windows clients holding the launcher open. Existing watcher metadata migrates at service startup; shutdown ownership checks read saved metadata without migration and preserve the actual failure cause. See the [1.5.4 development record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.4.md). Earlier candidate and validation records retain their original scope. This release also carries the previously unpublished 1.5.3 semantic preparation fix, Semantic/Hybrid search controls, missing-source project removal and bounded watcher directory diagnostics.
+## Code and documents in one index
 
-Explorer review fixes in this 1.5.0 local candidate guard plan saves, keep evidence and drafts bound to their project/publication, settle failed parallel reads, refuse expired proposals and preserve complete task instructions. Remote plan saving uses an untitled draft and the editor Save command. Platform qualification is recorded separately in the 1.5.0 release notes.
+AIRK combines lexical and local semantic search with bounded reads and structured evidence. Supported formats include source code, Markdown, text, PDF, DOCX, XLSX and PPTX. Document citations retain original locations such as pages, slides, paragraphs and worksheet cells where extraction supports them. See [format support and limits](https://github.com/iokaio/airk/blob/main/docs/document-indexing.md).
 
-Explorer help, template discovery, dry-run validation, reviewed proposals and shared snapshots are available through the unified AIRK connection. Help searches offline UI and engine guidance for supported workflows, indexing choices and document types. Planner can load Markdown as unverified drafts or complete plan JSON. Friendly failures release waiting controls and explain recovery without replaying actions.
+Results identify the indexed revision and source hash. Unsaved edits, pending indexing, skipped extraction and parser limitations can affect what is available. Code references and relationships are candidates unless supported by stronger provider evidence; AIRK does not claim complete language understanding or complete impact analysis.
 
-**1.5.0 adds the AIRK Explorer**, an editor workbench that replaces the Service Console: search and inspect indexed evidence, review Git changes against the index, build evidence strategies and agent plans, and manage project indexing and the native service. The original 1.5.0 **Explorer Assistance** server answered how-to questions about the Explorer and delivered inert drafts to a Suggestions Inbox; it never calls AIRK Retrieval, runs commands or writes files. That release used a separate connection; 1.5.7 consolidates it into the unified endpoint. External agents reach AIRK through the stable launcher, so no system Node is needed. See the [1.5.0 release record](https://github.com/iokaio/airk/blob/main/docs/release-1.5.0.md) and the [extension guide](https://github.com/iokaio/airk/blob/main/docs/vscode-extension.md).
+## Use your existing coding agent
 
-Open it with **AIRK: Open Explorer** or the AIRK activity bar. **Connect a Coding Agent** configures one AIRK endpoint; VS Code offers one workspace definition. The old separate Assistance provider withdraws its entries.
+One AIRK MCP endpoint gives independently configured clients access to the same project index. Your agent handles reasoning and code changes; AIRK supplies bounded evidence.
 
-Historical 1.4.4 release: corrects Unix cleanup after a child exits naturally. Cleanup confirms that the owned child has exited and its process group has drained before releasing it; transient native errors remain bounded by the existing deadline.
+| Client | AIRK setup route |
+|---|---|
+| VS Code / GitHub Copilot | Workspace MCP registration and VS Code’s MCP controls. |
+| Claude Code | Project MCP configuration and client approval. |
+| Codex | Scoped TOML configuration and the client’s MCP controls. |
+| Gemini CLI / Antigravity | Project configuration and client-specific enablement. |
+| Cursor, Cline, Roo, Junie and others | Configuration previews or connection guidance for the selected client. |
 
-1.4.4 also creates staged Windows runtime directories with explicit current-user ownership and owner-only access, including nested payload directories, so elevated installations satisfy the same strict ownership checks. Installed macOS runtime validation, self-test and retirement read the complete app payload from its outer root. Cold service starts coordinate registration-metadata setup before source watching.
+These are configuration routes, not a claim that every client/version has passed end-to-end testing. Use the built-in setup guide and [integration documentation](https://github.com/iokaio/airk/blob/main/docs/agent-integration.md). AIRK’s connection check verifies its helper; a successful request in your agent verifies that client’s access.
 
-1.4.4 corrects a fixed WAL limit that could block indexing and repeatedly fail recovery despite free disk space. WAL and shared-memory allowances now scale with admitted database capacity; retained reads and pending replay inputs are preserved. SQLite growth admission includes uncheckpointed pages. See the [storage-recovery release record](https://github.com/iokaio/airk/blob/main/docs/release-1.4.4.md). This source fix still requires installation and recovery verification in affected workspaces.
+## Local control and transparent limits
 
-1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits.
+Project indexes stay separate from source files. Native background watching updates saved-file evidence; pause, manual-update and semantic opt-out settings remain available. Explorer’s Management tabs show indexing progress, published readiness, storage, service state, agent setup and logs. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens.
 
-Installation and upgrades now display a VS Code progress notification with the current stage: version and payload checks, staging, native activation, agent connection updates, workspace setup and cleanup. Progress uses actual stages without an invented percentage. On Windows and Linux, an admitted upgrade hard-stops verified preceding AIRK processes and disconnects their clients; success and failure remain explicit. VS Code owns the earlier VSIX installation UI, before AIRK can activate.
+AIRK does not use a remote inference service. If you give retrieved evidence to an external coding agent, that agent’s provider, privacy and approval policies still apply. Local retrieval does not make the agent itself offline.
 
-Successful runtime activation finishes quietly. A detected extension update offers **Reload to finish update**; external coding-agent sessions may need their own restart to load the new tool connection. Connection or cleanup issues produce a specific warning and details instead of a clean success message.
+Usage reporting can help inspect retrieval activity and supplied measurement scenarios. Context, token or cost savings depend on the task and agent; AIRK does not promise a universal reduction in tokens, time or bills.
 
-Trusted startup and **Install or Repair CLI** migrate recognized project-local agent connections to one stable-launcher endpoint. Codex, Claude Code, Copilot, Gemini, Antigravity, Cursor, Roo and Junie files are supported. Other servers, environment values and disabled state are preserved; conflicts, unsafe files and unsaved edits remain for review. Restart the coding agent and approve the renamed tools after migration.
+## Version and setup notes
 
-The current release package version is **1.6.4**. The published **1.5.4** release and earlier candidate records retain their original validation scope.
+This source is the **1.7.2 development candidate**, moving Workbench access into the Explorer toolbar and project selection into Overview and Management. [Candidate notes and validation limits](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.7.2.md) are separate from publication. Earlier release records remain in the [release archive](https://github.com/iokaio/airk/blob/main/docs/releases/README.md).
 
-CLI installation removes previous extension-managed terminal executable copies regardless of version. It also retires the previous native rollback payload after successful activation, preserving the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to retry. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
+VS Code may require **Developer: Reload Window** to replace an already running extension after an upgrade. AIRK keeps a **Reload to finish update** action when it detects a pending replacement. VS Code saves sidebar tab order; drag the AIRK tab to the right if needed. `airk.cli.autoInstall: false` disables automatic installation and registration.
 
-Trusted VSIX activation now installs the native runtime and the `airk` terminal command, registers new workspace folders, prepares the bundled offline model and queues indexing with automatic watching. No setup links are required. Open a new VS Code terminal after installation; restart external terminal applications to refresh PATH. User `airk.cli.autoInstall: false` disables automatic installation and registration. Existing 1.4 registrations, selected index-data locations and watching preferences are preserved, including after a storage change. Compatible 1.4 runtime updates use the native fenced activation and schema-migration path; no fresh registration or reindex is requested for saved projects. Managed runtime ownership and explicit Stop remain authoritative. Use **Choose Index Storage Folder** or **Choose Native Automatic Watching** to change defaults later. Storage selection creates a reviewed binding and retains old index files for separate cleanup. Agent connection remains a separate explicit action.
+AIRK stands for **Artifact Indexing and Retrieval Kernel**. It is an independent local indexing and retrieval engine, licensed under Apache-2.0.
 
-Managed installations support a verified lightweight client launcher in user metadata while leaving the approved provider payload read-only and preserving its lifecycle policy. See the [native installation contract](https://github.com/iokaio/airk/blob/main/docs/service-installation.md).
-
-**1.4.4 native service and storage recovery.** See the [release record](https://github.com/iokaio/airk/blob/main/docs/release-1.4.4.md). Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical; this candidate requires its own validation. Publication is controlled by protected-main CI and the release workflows. [Routine CI](https://github.com/iokaio/airk/blob/main/docs/ci-and-builds.md) runs the full workspace on Linux, focused Windows/macOS regressions and all native/VSIX build and smoke gates; full platform and multi-project lifecycle qualification is opt-in.
-
-Private editor acceptance now exercises reviewed native registrations and Full/Terse panel choices. Development-stage tests and installed-VSIX qualification are recorded separately; neither implies native Mac qualification.
-
-AIRK gives coding agents bounded, cited evidence from local code and documents. Its read-only MCP tools preserve indexed revision identities and original document locations. A native service owns indexing and resources; agents retrieve evidence directly from project workers. The offline inference helper embeds MiniLM and shares compatible model sessions across projects. No cloud service or API key is required.
-
-## First registration
-
-The unified 27-tool catalog includes `help` for usage topics, CLI command help and public tool schemas. `diagnostics.work` separately reports scoped jobs, progress, bounded queues, watcher observations and matched waits. Missing/stale samples remain explicit. Draft tools can propose management guidance; the user performs management actions.
-
-Use `diagnostics` in your coding agent to inspect the connected MCP frontend, index worker and native service versions, process identities, executable/payload hashes and available build metadata. These observations identify running processes separately from the extension version and index extractor version.
-
-Trust the workspace to start automatic setup. Use **AIRK: Index Now** for later explicit indexing. Automatic native watching continues after editor windows close; change it to manual with **AIRK: Choose Native Automatic Watching**. Login startup is a separate choice.
-
-1.4 uses a fresh namespace and rebuilds indexes from sources. It does not convert or share live 1.3 stores, jobs or tokens. Existing indexes, old registrations and agent settings remain for explicit review. Allow additional disk space for the runtime pair and fresh indexes. Sources stay separate from derived state.
-
-## Service Console
-
-Open **AIRK: Connect / Reconnect Service** for project and worker observations, accepted jobs, phase/readiness information, sampled native wait reasons, source/helper failures, project settings, resource presets and logs. Closed registered projects and paused queued jobs remain visible; queued cancellation is explicit. Native maintenance has guarded previews and separate approval for execution. Runtime upgrades and rollback review exact approved targets and preserve saved recovery intent.
-
-A deliberate Stop stays stopped until **Start service**. Reconnecting, advertising MCP definitions or closing a window does not silently repeat work. Unacknowledged requests retain their exact saved key internally, with diagnostic logging and background read-only receipt checks.
-
-Old startup has a separate review and removal confirmation. The verified new runtime checks saved and native OS ownership without executing the selected old command. Startup removal preserves sources, settings and old indexes. A separate [offline native CLI preview and deletion](https://github.com/iokaio/airk/blob/main/docs/service-legacy-transition.md) retires owner-verified 1.3 derived files while preserving sources, settings and usage history. Process candidates remain observations; unknown registrations are preserved. Mac loaded-registration proof is implemented; actual native removal qualification remains pending.
-
-The runtime contains two executables: lightweight `airk` service/client/worker roles and `airk-embed` inference with offline model assets. Native ownership is independent of the extension directory. Windows, Linux and both Mac architectures are targets; installed-platform qualification is recorded separately and native Mac/editor acceptance remains pending.
-
-The Mac payload contains those same two executables in a GUI-less app bundle, targeting macOS 13.3. Optional signed-bundle login preserves system consent and refuses unverifiable registrations. Native Mac signing/login and installed-editor qualification remain pending.
-
-## Coding agents and response mode
-
-Use **AIRK: Connect Coding Agent**. The guide supplies stable-launcher arguments for the reviewed collection and preserves unrelated settings. Recognized old project JSON entries have an explicit diff and approved replacement with fresh file/trust checks. TOML and other formats require manual review. In remote windows, configure the agent on the same execution host as its sources.
-
-**Terse is the default.** The Service Console offers **Full** for provenance audits, parser/coverage limitations, readiness diagnosis and surprising results. Agents can request `response_mode: full` for one call. Compact navigation keeps names, kinds, lines and signatures; fact tools share bindings and consistently use `items`.
-
-MCP verification checks the bounded native connection; it does not prove a coding agent has enabled that server. Results describe indexed evidence. `index-current` does not mean current live files. Syntax references and method-name matches remain candidates.
-
-## Commands and settings
-
-**Usage & Savings** reads the collection directly and supports JSON, CSV, Markdown and explicit price assumptions. Recording, clear, import and feedback actions use guarded durable native jobs and wait for completion. Imported measurements bind the bytes shown in their preview. Source/extraction limits and shared storage quotas are available through the native project configuration view.
-
-Index Now accepts durable native work. Rebuild and maintenance commands open guarded repair previews. The tools terminal and status use the direct project client. The CLI PATH command points to the approved stable launcher and preserves existing entries. Project settings and automatic watching are native service controls, replacing the former window-owned indexing modes and direct-store maintenance paths.
-
-Project settings offer **Remove project**, including paused projects. Removal stops admission and source watching, drains the owned worker and automatically deletes its index, saved settings and usage ledger. Source files and shared model assets are untouched. Only opaque identifiers and removal time remain in native history; Add Project can register a fresh index after cleanup.
-
-The settings page and walkthrough describe native manual/automatic watching. Retired editor idle/save timers and soft storage-budget settings are removed. Native project settings can reset a source-scan override to automatic limits; native quotas continue to apply to manual and automatic work.
-
-Only user/machine settings select installation policy and storage preferences. A workspace cannot nominate an executable, approval digest or service endpoint. Changing a storage preference does not move an existing index: a new native binding requires review. The previous collection remains independently registered.
-
-## Scope and records
-
-AIRK indexes supported local source/document formats and preserves original citations. It does not claim complete language understanding, resolved references or live-file verification. Models and calibration inputs stay local; usage measurements are content-free, while diagnostic reports redact paths by default.
-
-Read the [service plan](https://github.com/iokaio/airk/blob/main/docs/airkservice-architecture.md), [client adapter contract](https://github.com/iokaio/airk/blob/main/docs/service-client-adapters.md), [installation](https://github.com/iokaio/airk/blob/main/docs/service-installation.md) and [response modes](https://github.com/iokaio/airk/blob/main/docs/mcp-response-modes.md). The 1.3 release notes and their direct-helper instructions are historical. This development branch is not a Marketplace publication.
+[Source and issues](https://github.com/iokaio/airk) · [Documentation](https://github.com/iokaio/airk/blob/main/docs/README.md) · [Installation and troubleshooting](https://github.com/iokaio/airk/blob/main/docs/service-installation.md)

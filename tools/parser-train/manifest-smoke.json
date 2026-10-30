@@ -1,0 +1,16 @@
+{
+  "seed": 84173,
+  "examples": 12480,
+  "dataset": {
+    "path": "target/parser-train/data/synthetic-72c125d2b8944a60.jsonl",
+    "sha256": "72c125d2b8944a60049d562a64a71ab899dcc72a07e8f27e6d4045f80d137434",
+    "rows": 12480
+  },
+  "asset_bytes": 852116,
+  "asset_sha256": "3ee9bd302614e565fe829dd50a305d77eababa053194fd8621f6a6df91b4ade6",
+  "feature_spec": 1,
+  "threshold": 0,
+  "margin": 80,
+  "corpus": "original fictional templates; no public repository clones or source text",
+  "qualification": "candidate; held-out repository and independent 150-utterance acceptance remain unmeasured"
+}

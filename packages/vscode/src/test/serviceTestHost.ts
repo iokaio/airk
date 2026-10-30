@@ -47,6 +47,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     const disposable={dispose(){}},event=()=>disposable;
     let foldersChanged:()=>Promise<void>;
     let extensionsChanged:()=>void,windowFocused:(state:{focused:boolean})=>void;
+    const views=new Map<string,any>();
     const statusBar={text:'',tooltip:'',command:'',show(){},dispose(){}};
     const stub:any={extensions:{getExtension:()=>({packageJSON:{version:state.installedVersion}}),onDidChange:(callback:()=>void)=>{extensionsChanged=callback;return disposable;}},workspace:{isTrusted:options.trusted??true,workspaceFolders:folders,textDocuments:[],
         getWorkspaceFolder:(uri:any)=>folders.find(folder=>uri.fsPath===folder.uri.fsPath||uri.fsPath.startsWith(folder.uri.fsPath+path.sep)),
@@ -57,7 +58,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watcher is forbidden');}},
     window:{activeTextEditor:{document:{uri:folders[0]?.uri}},createOutputChannel:()=>({appendLine:(text:string)=>calls.push(text),show(){calls.push('output-shown');},dispose(){}}),
         withProgress:async(options:any,task:any)=>{const run={title:options.title,messages:[] as string[]};progressRuns.push(run);return task({report:(value:any)=>run.messages.push(value.message)});},
-        createStatusBarItem:()=>statusBar,createTreeView:()=>disposable,registerWebviewViewProvider:()=>disposable,
+        createStatusBarItem:()=>statusBar,createTreeView:()=>disposable,registerWebviewViewProvider:(id:string,provider:any)=>{views.set(id,provider);return disposable;},
         onDidChangeWindowState:(callback:(state:{focused:boolean})=>void)=>{windowFocused=callback;return disposable;},
         onDidChangeActiveTextEditor:event,showErrorMessage:async(message:string)=>calls.push(message),
         showInformationMessage:async(message:string,...actions:string[])=>{notices.push({message,actions});return state.noticeAction;},
@@ -127,7 +128,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     test.mock.method(native,'prepareHelper',async()=>{throw new Error('Legacy helper preparation is forbidden');});
     test.mock.method(native,'runJson',async()=>{throw new Error('Direct collection command is forbidden');});
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;
-    const modules=['../extension','../serviceExtension','../serviceConsole','../agentSetup','../explorerController','../explorerPanel'];
+    const modules=['../extension','../serviceExtension','../serviceConsole','../agentSetup','../explorerController','../explorerPanel','../workbenchView'];
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     let extension:any;
@@ -135,7 +136,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
         if(!options.deferStartup)await api.whenReady();
-        return {root,folders,binding,registrations,inactiveRegistrations,values,settings,commands,writes,calls,warnings,clipboard,panels,openedDocuments,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
+        return {views,root,folders,binding,registrations,inactiveRegistrations,values,settings,commands,writes,calls,warnings,clipboard,panels,openedDocuments,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
             extensionsChanged(){extensionsChanged!();},focus(){windowFocused!({focused:true});},
             async refreshFolders(){await foldersChanged!();},
             async close(){extension.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});}};

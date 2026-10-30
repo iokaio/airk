@@ -18,6 +18,7 @@ PLATFORMS = (
     ("darwin-x64", "x86_64-apple-darwin", "macOS", "Intel x64", "MAC / X64"),
     ("linux-x64", "x86_64-unknown-linux-gnu", "Linux", "x64", "LINUX"),
 )
+PRODUCT_SCREENSHOTS = {"workbench-1.7.1-results.png": "workbench", "explorer-1.7.1.png": "explorer"}
 NUMBER = r"(?:0|[1-9][0-9]*)"
 TAG = re.compile(rf"v({NUMBER}\.{NUMBER}\.{NUMBER})(?:-build\.([1-9][0-9]*))?")
 
@@ -112,6 +113,13 @@ def build(catalog, output):
     (output / "index.html").write_text(template.replace(marker, rendered), encoding="utf-8")
     for name in ("style.css", "favicon.svg"):
         shutil.copyfile(ROOT / "site" / name, output / name)
+    (output / "images").mkdir()
+    for name, component in PRODUCT_SCREENSHOTS.items():
+        source = ROOT / "docs" / component / "images" / name
+        if source.is_symlink() or not source.is_file() or source.stat().st_size > 2_097_152:
+            raise ValueError("Invalid or oversized product screenshot: " + name)
+        shutil.copyfile(source, output / "images" / name)
+
 
 
 def main():

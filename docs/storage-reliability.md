@@ -1,6 +1,6 @@
 # Storage reliability and embedded engine review
 
-October 25, 2026. This is an incident analysis and recommendation, not a claim that all listed improvements are implemented. The 1.4.3 source fix is described in the [release record](release-1.4.3.md).
+October 25, 2026. This is an incident analysis and recommendation, not a claim that all listed improvements are implemented. The 1.4.3 source fix is described in the [release record](releases/release-1.4.3.md).
 
 ## Failure and immediate correction
 
@@ -12,7 +12,7 @@ Retained reads can use the preceding smaller allowance only while all files fit 
 
 The integrated large-publication regression captures over 64 MiB of map values, interrupts Applying, reopens the writer, and commits while an older snapshot remains pinned. It verifies every mapped value, old/new revision isolation, actual WAL growth beyond the former cap, logical size beyond main-file size and admitted file bounds. A second regression checks retained reads and recovery from the previous lifetime allowance. These generated fixtures do not copy private indexes.
 
-The larger bound removes the demonstrated fixed-cap mismatch. It is not a proof that every permitted workload fits: cache spills, repeated page updates and long-lived snapshots can still amplify WAL growth. SQLite documents those [large-transaction and checkpoint constraints](https://www.sqlite.org/wal.html). The installed failing projects have not yet been replayed with the new build. A generated native comparison reproduces SQLite FULL on the 1.4.2 distributable, then opens the same generated index with 1.4.3 and completes 128 files / 131,072 functions with unchanged sources and Ready state. That failure leaves Ready after preparation rollback; interrupted Applying replay is verified by the separate storage regression. See the [candidate receipts](release-1.4.3.md).
+The larger bound removes the demonstrated fixed-cap mismatch. It is not a proof that every permitted workload fits: cache spills, repeated page updates and long-lived snapshots can still amplify WAL growth. SQLite documents those [large-transaction and checkpoint constraints](https://www.sqlite.org/wal.html). The installed failing projects have not yet been replayed with the new build. A generated native comparison reproduces SQLite FULL on the 1.4.2 distributable, then opens the same generated index with 1.4.3 and completes 128 files / 131,072 functions with unchanged sources and Ready state. That failure leaves Ready after preparation rollback; interrupted Applying replay is verified by the separate storage regression. See the [candidate receipts](releases/release-1.4.3.md).
 
 ## Prioritized hardening
 

@@ -89,10 +89,15 @@ class DownloadSiteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary) / "site"
             site.build([release()], output)
-            self.assertEqual({p.name for p in output.iterdir()}, {"index.html", "style.css", "favicon.svg"})
+            self.assertEqual({p.name for p in output.iterdir()}, {"index.html", "style.css", "favicon.svg", "images"})
             html = (output / "index.html").read_text(encoding="utf-8")
             self.assertNotIn("<!-- RELEASE_DOWNLOADS -->", html)
             self.assertIn("https://airk.ioka.io/", html)
+            self.assertEqual({p.name for p in (output / "images").iterdir()}, set(site.PRODUCT_SCREENSHOTS))
+            for name, component in site.PRODUCT_SCREENSHOTS.items():
+                self.assertEqual((output / "images" / name).read_bytes(), (site.ROOT / "docs" / component / "images" / name).read_bytes())
+                self.assertIn(f'./images/{name}', html)
+
             self.assertEqual(html.count(">Download VSIX "), 4)
             with self.assertRaises(FileExistsError):
                 site.build([], output)

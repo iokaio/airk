@@ -53,6 +53,7 @@ pub mod usage;
 pub mod usage_page;
 pub mod vectors;
 pub mod watcher;
+pub mod workbench;
 use airk_retrieval::truncate_utf8;
 use airk_store::{CollectionUsage, FileStore};
 use anyhow::{Context, Result, ensure};
