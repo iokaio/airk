@@ -14,6 +14,63 @@ use std::{
 
 const LIMIT: usize = 64;
 const BYTES: u64 = 65536;
+
+/// Epoch acquisition precedes journal creation and submission. It may prune
+/// terminal receipts, so this is deliberately not a general read retry helper.
+pub(crate) async fn request_epoch(control: &Path) -> Result<(Incarnation, u64)> {
+    acquire_epoch(
+        || crate::console_client::request(control, ControlMethod::RequestEpoch),
+        std::time::Duration::from_secs(15),
+    )
+    .await
+}
+
+async fn acquire_epoch<F, Fut>(
+    mut request: F,
+    budget: std::time::Duration,
+) -> Result<(Incarnation, u64)>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<ControlResponse>>,
+{
+    let until = tokio::time::Instant::now() + budget;
+    let mut last = None;
+    loop {
+        let response = match tokio::time::timeout_at(until, request()).await {
+            Ok(response) => response?,
+            Err(_) => anyhow::bail!(
+                "request epoch deadline exceeded; last response: {}",
+                last.as_deref().unwrap_or("none")
+            ),
+        };
+        match response {
+            ControlResponse::RequestEpoch { namespace, epoch } => return Ok((namespace, epoch)),
+            ControlResponse::Failure { code }
+                if matches!(
+                    code.as_str(),
+                    "registry_busy" | "registry_response_unknown_retry_with_key"
+                ) =>
+            {
+                // No job/configuration request or nonce exists yet. Reacquire
+                // current authority; never replay the subsequent mutation here.
+                last = Some(code);
+                tokio::time::sleep_until(
+                    until.min(tokio::time::Instant::now() + std::time::Duration::from_millis(50)),
+                )
+                .await;
+                ensure!(
+                    tokio::time::Instant::now() < until,
+                    "request epoch deadline exceeded; last response: {}",
+                    last.as_deref().unwrap()
+                );
+            }
+            response => anyhow::bail!(
+                "request epoch unavailable: {}",
+                serde_json::to_string(&response)?
+            ),
+        }
+    }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Saved {
@@ -205,11 +262,7 @@ pub async fn prepare(
     kind: JobKind,
 ) -> Result<Incarnation> {
     let control = control.canonicalize()?;
-    let ControlResponse::RequestEpoch { namespace, epoch } =
-        crate::console_client::request(&control, ControlMethod::RequestEpoch).await?
-    else {
-        anyhow::bail!("request epoch unavailable")
-    };
+    let (namespace, epoch) = request_epoch(&control).await?;
     persist(
         &control,
         ControlMethod::Enqueue {
@@ -231,11 +284,7 @@ pub async fn prepare_configuration(
 ) -> Result<Incarnation> {
     let control = control.canonicalize()?;
     let request = crate::service_configuration::prepare(&control, project, draft).await?;
-    let ControlResponse::RequestEpoch { namespace, epoch } =
-        crate::console_client::request(&control, ControlMethod::RequestEpoch).await?
-    else {
-        anyhow::bail!("request epoch unavailable")
-    };
+    let (namespace, epoch) = request_epoch(&control).await?;
     persist(
         &control,
         ControlMethod::ConfigureProject {
@@ -311,6 +360,92 @@ pub fn forget(control: &Path, nonce: Incarnation) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn epoch_acquisition_retries_only_explicit_registry_waits() -> Result<()> {
+        tokio::runtime::Runtime::new()?.block_on(async {
+            let namespace = Incarnation::from_bytes([7; 16]);
+            let mut responses = vec![
+                ControlResponse::Failure {
+                    code: "registry_busy".into(),
+                },
+                ControlResponse::Failure {
+                    code: "registry_response_unknown_retry_with_key".into(),
+                },
+                ControlResponse::RequestEpoch {
+                    namespace,
+                    epoch: 42,
+                },
+            ]
+            .into_iter();
+            let result = acquire_epoch(
+                || std::future::ready(Ok(responses.next().expect("unexpected replay"))),
+                std::time::Duration::from_secs(2),
+            )
+            .await?;
+            assert_eq!(result, (namespace, 42));
+            assert!(responses.next().is_none());
+            for code in [
+                "registry_unavailable",
+                "invalid_registry_request",
+                "service_rebind_required",
+                "service_request_outcome_unknown",
+            ] {
+                let mut calls = 0;
+                let error = acquire_epoch(
+                    || {
+                        calls += 1;
+                        std::future::ready(Ok(ControlResponse::Failure { code: code.into() }))
+                    },
+                    std::time::Duration::from_secs(2),
+                )
+                .await
+                .unwrap_err();
+                assert_eq!(calls, 1, "must not retry {code}");
+                assert!(error.to_string().contains(code), "{error}");
+            }
+            let mut calls = 0;
+            let error = acquire_epoch(
+                || {
+                    calls += 1;
+                    std::future::ready(Err(anyhow::anyhow!("transport fixture failure")))
+                },
+                std::time::Duration::from_secs(2),
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(calls, 1);
+            assert!(error.to_string().contains("transport fixture failure"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn epoch_acquisition_bounds_busy_and_blocked_requests() -> Result<()> {
+        tokio::runtime::Runtime::new()?.block_on(async {
+            let error = acquire_epoch(
+                || {
+                    std::future::ready(Ok(ControlResponse::Failure {
+                        code: "registry_busy".into(),
+                    }))
+                },
+                std::time::Duration::from_millis(20),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.to_string().contains("deadline exceeded"));
+            assert!(error.to_string().contains("registry_busy"));
+            let error = acquire_epoch(
+                std::future::pending::<Result<ControlResponse>>,
+                std::time::Duration::from_millis(20),
+            )
+            .await
+            .unwrap_err();
+            assert!(error.to_string().contains("deadline exceeded"));
+            Ok(())
+        })
+    }
+
     #[test]
     fn exact_requests_survive_reopen_and_capacity_refuses_before_more_work() -> Result<()> {
         let fixture = tempfile::tempdir()?;

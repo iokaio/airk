@@ -449,13 +449,16 @@ fn manually_changed_extra_roots_cannot_capture_another_projects_private_data() -
 }
 
 #[test]
-fn missing_registered_source_keeps_retained_evidence_and_cancelable_typed_recovery() -> Result<()> {
+fn unavailable_source_ancestor_keeps_retained_evidence_and_cancelable_typed_recovery() -> Result<()>
+{
     use airk_core::service::{
         ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome, RequestKey,
     };
     let owner = tempfile::tempdir()?;
     let runtime = owner.path().join("runtime");
-    let source = owner.path().join("source");
+    let source_parent = owner.path().join("source-volume");
+    fs::create_dir(&source_parent)?;
+    let source = source_parent.join("source");
     let data = owner.path().join("data");
     fs::create_dir(&source)?;
     fs::create_dir(&data)?;
@@ -489,7 +492,9 @@ fn missing_registered_source_keeps_retained_evidence_and_cancelable_typed_recove
             "registration failed"
         );
         let moved = owner.path().join("temporarily offline");
-        fs::rename(&source, &moved)?;
+        // Simulate an unavailable volume/ancestor, not a confirmed deleted leaf
+        // whose accessible parent authorizes automatic project removal.
+        fs::rename(&source_parent, &moved)?;
         // The first project owner starts after the registered root disappears.
         let mut connection =
             airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
@@ -551,12 +556,14 @@ fn missing_registered_source_keeps_retained_evidence_and_cancelable_typed_recove
         };
         let until = tokio::time::Instant::now() + Duration::from_secs(30);
         loop {
-            let Response::Job { job: observed } = request(Method::Job { id: job.id }).await? else {
-                anyhow::bail!("job receipt missing")
-            };
             let registry = airk_store::service::registry::ServiceRegistry::open_saved(&runtime)?;
             if registry.recovery_observations(project.binding)?.iter().any(|recovery|
                 recovery.job == Some(job.id) && recovery.reason == "source_unavailable" && recovery.state == "waiting") {
+                // Read after observing recovery: a receipt sampled before the
+                // atomic defer transaction may legitimately still say Running.
+                let Response::Job { job: observed } = request(Method::Job { id: job.id }).await? else {
+                    anyhow::bail!("job receipt missing")
+                };
                 ensure!(observed.state == airk_core::service::JobState::Pending && observed.outcome.is_none(),
                     "missing source must wait without losing the accepted request");
                 let mut cached = airk_cli::project_client::Connection::connect(&runtime, project.binding).await?;
@@ -682,7 +689,7 @@ fn missing_registered_source_keeps_retained_evidence_and_cancelable_typed_recove
             "missing-root scan changed retained evidence"
         );
         ensure!(
-            fs::read_to_string(moved.join("memo.md"))?
+            fs::read_to_string(moved.join("source/memo.md"))?
                 == "# Copper harbor\nRetained copper harbor fixture.\n",
             "source bytes changed"
         );

@@ -198,11 +198,7 @@ pub async fn prepare(
         &draft,
         Draft::PrepareDerivedCleanup | Draft::DeleteDerived { .. }
     ) {
-        let ControlResponse::RequestEpoch { namespace, .. } =
-            crate::service_runtime::request(runtime, ControlMethod::RequestEpoch).await?
-        else {
-            anyhow::bail!("native cleanup authority is unavailable")
-        };
+        let (namespace, _) = crate::client_requests::request_epoch(runtime).await?;
         let request = ConfigurationRequest {
             prepare: false,
             incarnation: namespace,

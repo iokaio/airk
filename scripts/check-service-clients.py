@@ -6,6 +6,7 @@ from contextlib import closing, contextmanager
 import errno
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -217,6 +218,63 @@ def runtime_root(directory):
     if not root.is_dir():
         raise ValueError("Expected a native runtime directory")
     return root
+
+
+def verify_inference_worker_result(result, version, identity, dimensions):
+    # A worker may emit every successful reply and still abort in native exit
+    # destructors. Process completion is part of the qualification contract.
+    assert result.returncode == 0, f"Inference worker exited with {result.returncode}: {result.stderr[-4096:]!r}"
+    assert len(result.stdout) <= 3 * ((4 << 20) + 4), "Inference worker output exceeds frame budget"
+    responses, offset = [], 0
+    while offset < len(result.stdout):
+        assert offset + 4 <= len(result.stdout), "Incomplete inference worker frame header"
+        size = int.from_bytes(result.stdout[offset:offset + 4], "big")
+        offset += 4
+        assert 0 < size <= 4 << 20 and offset + size <= len(result.stdout), "Invalid inference worker frame"
+        responses.append(json.loads(result.stdout[offset:offset + size]))
+        offset += size
+    assert len(responses) == 3 and responses[0] == {"status": "extracted"}, "Missing model extraction reply"
+    assert responses[1] == {"status": "opened", "protocol": 1, "version": version, "identity": identity}, "Model handshake differs"
+    assert responses[2].get("status") == "embedded", "Missing real inference reply"
+    vectors = responses[2].get("vectors")
+    assert isinstance(vectors, list) and len(vectors) == 1 and isinstance(vectors[0], list), "Missing inference vector"
+    assert len(vectors[0]) == dimensions and all(type(value) in (int, float) and math.isfinite(value) for value in vectors[0]), "Invalid inference vector"
+
+
+def inference_worker_clean_exit(fixture):
+    references = list((fixture.control / "model-files-1.4").glob("default-*.json"))
+    assert len(references) == 1, "Expected one verified shared default model"
+    identity = json.loads(references[0].read_text(encoding="utf-8"))["legacy_identity"]
+    version = json.loads((fixture.runtime / "airk-runtime.json").read_text(encoding="utf-8"))["version"]
+    directory = fixture.owner / "worker-exit-model"
+    directory.mkdir()
+    requests = [
+        {"method": "extract", "directory": str(directory)},
+        {"method": "open", "protocol": 1, "version": version, "location": {"kind": "directory", "path": str(directory)}, "identity": identity},
+        {"method": "embed", "texts": ["Verified native inference worker exit."], "workers": 1, "memory_bytes": 256 << 20},
+    ]
+    payload = b""
+    for request in requests:
+        encoded = json.dumps(request, separators=(",", ":")).encode()
+        payload += len(encoded).to_bytes(4, "big") + encoded
+    helper = fixture.binary.with_name("airk-embed.exe" if os.name == "nt" else "airk-embed")
+    child = subprocess.Popen([str(helper), "worker"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             cwd=fixture.runtime, env=fixture.environment,
+                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    try:
+        output, errors = child.communicate(payload, timeout=60)
+    except subprocess.TimeoutExpired:
+        child.kill()  # Only our owned leaf worker; no PID discovery or foreign process control.
+        child.communicate(timeout=10)
+        raise AssertionError("Inference worker did not drain after input EOF") from None
+    finally:
+        if child.poll() is None:
+            child.kill()
+            child.wait(timeout=10)
+    assert child.returncode == 0, f"Inference worker exited with {child.returncode}: {errors[-4096:]!r}"
+    dimensions = json.loads((directory / "model.json").read_text(encoding="utf-8"))["dimensions"]
+    verify_inference_worker_result(subprocess.CompletedProcess(child.args, child.returncode, output, errors), version, identity, dimensions)
+    return True
 
 
 class Fixture:
@@ -660,8 +718,12 @@ def qualify(runtime, files, model):
             recovered = fixture.wait(interrupted)
             assert recovered["id"] == interrupted["job"]["id"] and recovered["attempts"] == 2, recovered
             failure_diagnostics = retained_job_failure(fixture, "project-a")
+            worker_clean_exit = None
             if model:
                 fixture.job("project-a", "setup-model")
+                # Diagnose native loader/exit failures before the shared pool
+                # can reduce a crashed helper to a capability/availability error.
+                worker_clean_exit = inference_worker_clean_exit(fixture)
                 fixture.job("project-a", "index")
                 deadline = time.monotonic() + 180
                 while True:
@@ -680,6 +742,7 @@ def qualify(runtime, files, model):
                       "runtime_manifest_sha256": hashlib.sha256((runtime / "airk-install.json").read_bytes()).hexdigest(),
                       "projects": 2, "files_per_project": files, "tools": len(TOOLS), "mcp_tools": mcp_tools, "model_checked": model, "missing_source_recovered_same_job": True,
                       "obsolete_request_automatically_published": automatic_healed,
+                      "inference_worker_clean_exit": worker_clean_exit,
                       "mcp_lifecycles": mcp_lifecycles,
                       "failure_diagnostics": failure_diagnostics,
                       "terse_bytes": len(json.dumps(terse).encode()), "full_bytes": len(json.dumps(full).encode()),

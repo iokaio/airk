@@ -7,6 +7,10 @@ use ort::{
     session::{Session, builder::GraphOptimizationLevel},
     value::Tensor,
 };
+
+#[cfg(target_os = "macos")]
+#[path = "onnx_macos.rs"]
+mod process_environment;
 use std::{path::Path, sync::Mutex};
 use tokenizers::{Encoding, PostProcessor, Tokenizer, TruncationDirection};
 
@@ -24,6 +28,10 @@ pub struct OnnxModel {
     tokenizer: Tokenizer,
     raw_tokenizer: Tokenizer,
     session: Mutex<Session>,
+    // Struct fields drop in declaration order: release the native session
+    // before allowing process-global environment teardown.
+    #[cfg(target_os = "macos")]
+    _environment_user: process_environment::SessionLease,
     pad_id: u32,
     special_tokens: usize,
 }
@@ -175,6 +183,8 @@ impl OnnxModel {
             &manifest.model_sha256,
         )?;
         initialize_runtime()?;
+        #[cfg(target_os = "macos")]
+        let environment_user = process_environment::SessionLease::acquire()?;
         let session = Session::builder()?
             .with_intra_threads(1)?
             .with_inter_threads(1)?
@@ -211,6 +221,8 @@ impl OnnxModel {
             tokenizer,
             raw_tokenizer,
             session: Mutex::new(session),
+            #[cfg(target_os = "macos")]
+            _environment_user: environment_user,
             pad_id,
             special_tokens,
         })
@@ -442,6 +454,8 @@ fn initialize_runtime() -> Result<()> {
                         .commit()?,
                     "INT8 runtime was initialized outside AIRK"
                 );
+                #[cfg(target_os = "macos")]
+                process_environment::install()?;
                 Ok(())
             })()
             .map_err(|e| format!("{e:#}"))
