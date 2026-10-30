@@ -9,8 +9,17 @@
     "noImplicitOverride": true,
     "esModuleInterop": true,
     "skipLibCheck": false,
-    "types": ["node", "vscode"]
+    "types": [
+      "node",
+      "vscode"
+    ]
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/explorerWebview/**", "src/explorerAssistance/**"]
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "src/explorerWebview/**",
+    "src/explorerAssistance/**",
+    "src/workbenchWebview/**"
+  ]
 }

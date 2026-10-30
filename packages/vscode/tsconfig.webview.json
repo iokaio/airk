@@ -31,6 +31,10 @@
     "src/explorerErrors.ts",
     "src/explorerStatus.ts",
     "src/explorerStrategies.ts",
-    "src/explorerDrafts.ts"
+    "src/explorerDrafts.ts",
+    "src/workbenchWebview/**/*.tsx",
+    "src/workbenchWebview/**/*.ts",
+    "src/workbenchContracts.ts",
+    "src/workbenchRender.ts"
   ]
 }

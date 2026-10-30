@@ -39,7 +39,7 @@ fn tools_help_works_without_a_workspace_and_exposes_live_schemas() {
             .unwrap(),
     );
     let tools = list["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 17);
+    assert_eq!(tools.len(), 18);
     assert!(tools.iter().any(|tool| tool["name"] == "airk_help"));
     let help = evidence(
         command(&root, &state)

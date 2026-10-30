@@ -8,6 +8,8 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
+#[cfg(feature = "parser-training")]
+mod parser_training;
 mod tools;
 #[derive(clap::Args, Default, serde::Serialize)]
 struct EvidenceOptions {
@@ -53,6 +55,27 @@ struct Cli {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// Developer-only native extraction for the offline intent corpus.
+    #[cfg(feature = "parser-training")]
+    #[command(hide = true)]
+    DumpVocab {
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Prepare or execute a bounded read-only evidence plan. No source writes.
+    Parse {
+        text: Option<String>,
+        /// Configured native project binding (alias for global --service-project).
+        #[arg(long)]
+        project: Option<airk_core::service::ProjectBinding>,
+        #[arg(long)]
+        execute: bool,
+        /// Structured request file; '-' reads bounded JSON from stdin.
+        #[arg(long, conflicts_with = "text")]
+        request: Option<PathBuf>,
+        #[arg(long, default_value = "")]
+        path_prefix: String,
+    },
     /// Read registered project settings through exact bounded direct pages.
     Settings {
         #[arg(value_parser = ["extraction_policy", "vector_selection", "vector_status", "roots", "scan_limits", "quota_policy", "quota_status"])]
@@ -624,7 +647,20 @@ async fn run() -> Result<()> {
             std::env::args_os().skip(1).collect(),
         );
     }
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    if let Command::Parse {
+        project: Some(project),
+        ..
+    } = &cli.command
+    {
+        ensure!(
+            cli.service_project
+                .as_ref()
+                .is_none_or(|selected| selected == project),
+            "conflicting project selections"
+        );
+        cli.service_project = Some(*project);
+    }
     if !matches!(cli.command, Command::Runtime { .. })
         && executable.file_name()
             == Some(std::ffi::OsStr::new(if cfg!(windows) {
@@ -642,6 +678,16 @@ async fn run() -> Result<()> {
         .await;
     }
     match &cli.command {
+        #[cfg(feature = "parser-training")]
+        Command::DumpVocab { output } => {
+            return parser_training::dump(
+                &cli.root,
+                cli.data_dir
+                    .as_deref()
+                    .context("dump-vocab requires explicit --data-dir outside the source")?,
+                output,
+            );
+        }
         Command::Runtime { action } => return airk_cli::runtime_install::run(action).await,
         // Hands stdio to the extension's server; prints nothing and never contacts the service.
         Command::ExplorerAssistance { descriptor } => {
@@ -1271,6 +1317,41 @@ fn evidence(mut value: Value, evidence: EvidenceOptions) -> Result<Value> {
 fn query(command: Command) -> Result<(&'static str, Value)> {
     Ok(match command {
         Command::Status => ("airk_status", json!({})),
+        Command::Parse {
+            text,
+            execute,
+            request,
+            path_prefix,
+            ..
+        } => {
+            let mut value: Value = if let Some(path) = request {
+                let mut bytes = Vec::new();
+                if path == Path::new("-") {
+                    std::io::stdin().take(32769).read_to_end(&mut bytes)?;
+                } else {
+                    std::fs::File::open(path)?
+                        .take(32769)
+                        .read_to_end(&mut bytes)?;
+                }
+                ensure!(bytes.len() <= 32768, "parse request exceeds 32 KiB");
+                serde_json::from_slice(&bytes)?
+            } else {
+                json!({"schema":"airk.parse.request/1","text":text.context("provide text or --request")?,"mode":if execute {"execute"} else {"prepare"},"path_prefix":path_prefix})
+            };
+            if execute {
+                value
+                    .as_object_mut()
+                    .context("parse request must be an object")?
+                    .insert("mode".into(), json!("execute"));
+            }
+            if !path_prefix.is_empty() {
+                value
+                    .as_object_mut()
+                    .context("parse request must be an object")?
+                    .insert("path_prefix".into(), json!(path_prefix));
+            }
+            ("airk_parse", value)
+        }
         Command::Search {
             query,
             mode,

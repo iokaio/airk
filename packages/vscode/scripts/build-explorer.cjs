@@ -127,6 +127,9 @@ async function build() {
         banner: { js: preactBanner() },
     });
     checkInputs('Webview', webview.metafile, [/^src\/explorerWebview\//, ...CONTRACTS, /^node_modules\/preact\//, /^airk-explorer-help:/]);
+    const workbench = await esbuild.build({ ...common, entryPoints: ['src/workbenchWebview/main.tsx'], outfile: 'out/workbenchWebview.js',
+        format: 'iife', platform: 'browser', target: 'es2022', jsx: 'automatic', jsxImportSource: 'preact', banner: { js: preactBanner() } });
+    checkInputs('Workbench', workbench.metafile, [/^src\/workbenchWebview\//, 'src/workbenchContracts.ts', 'src/workbenchRender.ts', /^node_modules\/preact\//]);
     const assistance = await esbuild.build({
         ...common,
         entryPoints: ['src/explorerAssistance/main.ts'],

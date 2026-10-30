@@ -186,3 +186,9 @@ nav a:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
 }
+
+/* Original compiled product previews; click through for full resolution. */
+.preview-grid{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.6fr);gap:30px;align-items:start}
+.preview-grid figure{margin:0;min-width:0}.preview-grid figure>a{display:block;border:1px solid var(--line);background:var(--ink);overflow:hidden}
+.preview-grid img{display:block;max-width:100%;height:auto;width:100%}.preview-grid figcaption{padding:18px 0}.preview-grid figcaption strong{font-size:1.1rem}.preview-grid figcaption p,.preview-note{font-size:.85rem;color:var(--muted);line-height:1.6}.preview-grid figcaption p{margin-top:9px}.preview-note{margin-top:12px}
+@media(max-width:760px){.preview-grid{grid-template-columns:1fr}.preview-grid figure:first-child img{max-height:560px;object-fit:contain}.product-previews .section-heading{display:block}}

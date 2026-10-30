@@ -1,14 +1,16 @@
 # MCP tools
 
+`parse` prepares or executes finite read-only evidence plans with schema `airk.parse.request/1`, one of text/recipe/plan and mode prepare/execute. It shares the Workbench native runner, exact publication checks, scope and aggregate budgets. See [examples, limits and qualification](workbench/implementation.md). It works without Explorer and never writes sources, indexes or invokes an agent.
+
 AIRK uses the official Rust SDK and [stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports). Its stdio lifecycle adapter keeps protocol negotiation per connection; the SDK retains framing, cancellation and request dispatch. Stdout contains only protocol messages during MCP operation; diagnostics use stderr.
 
-Version 1.5.9 corrects discovery followed by a timed-out client's legacy fallback. After a successful `initialize`, requests may use that connection's negotiated version/capabilities without modern per-request metadata, even if `server/discover` was received first or replies late. Discovery never changes an initialized session. Modern connections still require valid version/capability metadata on every request; explicitly malformed or unsupported metadata is rejected. A reconnect negotiates afresh. Client names do not select protocol behavior. See the [compatibility regression and limits](release-1.5.9.md).
+Version 1.5.9 corrects discovery followed by a timed-out client's legacy fallback. After a successful `initialize`, requests may use that connection's negotiated version/capabilities without modern per-request metadata, even if `server/discover` was received first or replies late. Discovery never changes an initialized session. Modern connections still require valid version/capability metadata on every request; explicitly malformed or unsupported metadata is rejected. A reconnect negotiates afresh. Client names do not select protocol behavior. See the [compatibility regression and limits](releases/release-1.5.9.md).
 
 Each launch fixes an explicit allowlist of configured source scopes (or legacy pinned project bindings), with a single-project default when configured. Tools cannot register projects or escape that scope, index source, run commands, remove collections or access another collection. Use CLI/extension operations for setup, indexing and maintenance.
 
 Multiple agents can launch independent stdio connections against the same root/data-directory/collection and query one shared disk index concurrently. No agent owns the collection. Reads continue during indexing and later requests reopen the published generation; compare exact publication tokens when combining results from multiple calls. A numerical generation alone does not establish identity. See [shared-collection behavior](collections.md#multiple-agents-sharing-one-collection).
 
-Current AIRK serves one `airk` connection with 27 unprefixed tools. The seventeen native read-only tools below are joined by projects, reviewed Explorer drafts, template discovery, validation, proposal status and shared handoffs. See [the complete catalog, rationale and migration contract](unified-mcp.md). Old prefixed calls remain hidden compatibility aliases. Evidence scope never follows UI selection; multiple configured bindings require project explicitly. The editor adapter is optional and native evidence does not depend on an open window.
+The Workbench development branch serves one `airk` connection with 28 unprefixed tools (published 1.6.4 has 27). The eighteen native read-only tools including `parse` are joined by projects, reviewed Explorer drafts, template discovery, validation, proposal status and shared handoffs. See [the complete catalog, rationale and migration contract](unified-mcp.md). Old prefixed calls remain hidden compatibility aliases. Evidence scope never follows UI selection; multiple configured bindings require project explicitly. The editor adapter is optional and native evidence does not depend on an open window.
 
 `status {}` is intended for routine agent preflight. Its response modes all stay lightweight, with no imported fact payload loads, process hashing, detailed service work probes or editor process. The unified call has a two-second response budget; timeout means readiness is unknown. The timed-out native query can still hold its admission slot briefly, so an immediate repeat may return the typed unsubmitted `direct_query_admission`/`busy` refusal below; repeat the same call after `retry_after_ms`. Neither reply is readiness evidence. Use `diagnostics {}` explicitly for the larger troubleshooting view. Internal binding resolution follows the configured canonical root and never rewrites evidence tokens from an earlier index. See [source scopes](unified-mcp.md#scope-and-availability).
 
@@ -107,7 +109,7 @@ This CLI command exercises native retrieval directly; `airk mcp` starts the stdi
 
 ## Call tools without a coding agent
 
-The native CLI retains the seventeen native evidence aliases, schemas and handlers for terminal compatibility; the public unified stdio catalog is described above:
+The native CLI exposes eighteen native read-only aliases including `airk_parse`, schemas and handlers for terminal compatibility; the public unified stdio catalog is described above:
 
 ```console
 airk tools list

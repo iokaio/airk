@@ -22,7 +22,7 @@ test('one root-scoped MCP session survives late registration and rejects ambiguo
     try{
         const root=path.join(fixture.owner,'late-source');await fs.mkdir(root);
         session=(await McpStdioSession.open({command:fixture.launcher,args:['runtime','launch','--install-dir',fixture.install,'--','--root',root,'mcp'],cwd:fixture.owner,clientName:'root-recovery-test',clientVersion:'1.6.1'},60000)).session;
-        assert.equal((await session.request('tools/list',{},10000)).tools.length,27);
+        assert.equal((await session.request('tools/list',{},10000)).tools.length,28);
         const body=(result:any)=>JSON.parse(result.content[0].text);
         // Repeated quick reads must complete cold verification without a diagnostics warm-up.
         let status=await quickStatus(session);
@@ -48,7 +48,7 @@ test('registered native MCP verifies before the first publication without starti
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
     try{
         const spec=await fixture.register('unindexed');
-        const result=await probeMcp(spec);assert.equal(result.tools.length,27);
+        const result=await probeMcp(spec);assert.equal(result.tools.length,28);
         const quick=JSON.parse((record(result.status).content as {text:string}[])[0].text);
         if(quick.index_state==='unknown'){assertQuickStatusTimeout(quick);assert.equal(record(result.status).state,'index_unknown');}
         else {assert.equal(quick.index_state,'unavailable');assert.equal(quick.files,null);assert.equal(record(result.status).state,'index_unavailable');}

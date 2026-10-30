@@ -1,0 +1,179 @@
+{
+  "schema": 1,
+  "protocol": 4,
+  "seed": 84173,
+  "datasets": {
+    "train": {
+      "path": "target/parser-train/data/train-ea149bbdd266ff3b.jsonl",
+      "sha256": "ea149bbdd266ff3b89e05b68183e8c911fa0ac3749bf4baa5ebf69a062002425",
+      "rows": 40000
+    },
+    "validation": {
+      "path": "target/parser-train/data/validation-ae0a5c7cb28f45f2.jsonl",
+      "sha256": "ae0a5c7cb28f45f2f0518e658bb754097788b244ab76a615a35c468307bf5b62",
+      "rows": 4000
+    },
+    "calibration": {
+      "path": "target/parser-train/data/calibration-7a7ee01a4de0366f.jsonl",
+      "sha256": "7a7ee01a4de0366fe658e2f2e9eff25da640c1fc827eb5ef824e16285d40ea63",
+      "rows": 4000
+    },
+    "actions/runner": {
+      "path": "target/parser-train/data/held-actions--runner-5a131a6066882d1f.jsonl",
+      "sha256": "5a131a6066882d1f5515828ec9ccc094413c026863c2f756b7b89e2b2d82b622",
+      "rows": 2600
+    },
+    "simpleiot/simpleiot": {
+      "path": "target/parser-train/data/held-simpleiot--simpleiot-713e05d17a8bbf7f.jsonl",
+      "sha256": "713e05d17a8bbf7f3b73e026d989da7702b6bcfdf8c3aeb835060704be1d48c5",
+      "rows": 2600
+    },
+    "fastapi/fastapi": {
+      "path": "target/parser-train/data/held-fastapi--fastapi-44bbd0b400b85bb4.jsonl",
+      "sha256": "44bbd0b400b85bb498bae76c22e0a23f767d055b4bca542d23db7152ec4d208e",
+      "rows": 2600
+    }
+  },
+  "templates_sha256": "8ec6bd62981136800567b0400449bcae32c630fb395e4315289b144b8797558b",
+  "evaluation_fixture_sha256": "4ce9eab31744187d4f6c447bd56a7acc5d2262c6409e23c2614152f9bc3ec0ef",
+  "safety_fixture_sha256": "fe51eb5da92be5861ef6786c30c7e0a4d8ac56c98f96715271f0e7d4d1ceecce",
+  "learning_curve": [
+    {
+      "training_rows": 10000,
+      "validation": {
+        "rows": 4000,
+        "accuracy": 0.952,
+        "per_role": {
+          "developer": 0.959,
+          "tester": 0.948,
+          "architect": 0.945,
+          "writer": 0.956
+        },
+        "accepted_precision": 0.9958145524790728,
+        "ask_rate": 0.2235,
+        "wrong_accepted": 13
+      }
+    },
+    {
+      "training_rows": 20000,
+      "validation": {
+        "rows": 4000,
+        "accuracy": 0.9555,
+        "per_role": {
+          "developer": 0.964,
+          "tester": 0.953,
+          "architect": 0.952,
+          "writer": 0.953
+        },
+        "accepted_precision": 0.9951814969482814,
+        "ask_rate": 0.22175,
+        "wrong_accepted": 15
+      }
+    },
+    {
+      "training_rows": 40000,
+      "validation": {
+        "rows": 4000,
+        "accuracy": 0.95225,
+        "per_role": {
+          "developer": 0.963,
+          "tester": 0.951,
+          "architect": 0.949,
+          "writer": 0.946
+        },
+        "accepted_precision": 0.9964539007092199,
+        "ask_rate": 0.2245,
+        "wrong_accepted": 11
+      }
+    }
+  ],
+  "selected_training_rows": 20000,
+  "selection": "Highest validation accuracy; smallest corpus breaks ties. No calibration or test results select the training size.",
+  "threshold": -180,
+  "margin": 412,
+  "calibration": {
+    "rows": 4000,
+    "accuracy": 0.87975,
+    "per_role": {
+      "developer": 0.884,
+      "tester": 0.885,
+      "architect": 0.874,
+      "writer": 0.876
+    },
+    "accepted_precision": 0.9960026648900733,
+    "ask_rate": 0.2495,
+    "wrong_accepted": 12
+  },
+  "repository_evaluation": {
+    "actions/runner": {
+      "rows": 2600,
+      "accuracy": 0.9615384615384616,
+      "per_role": {
+        "developer": 0.9553846153846154,
+        "tester": 0.963076923076923,
+        "architect": 0.9676923076923077,
+        "writer": 0.96
+      },
+      "accepted_precision": 0.9995670995670995,
+      "ask_rate": 0.11153846153846154,
+      "wrong_accepted": 1
+    },
+    "simpleiot/simpleiot": {
+      "rows": 2600,
+      "accuracy": 0.9746153846153847,
+      "per_role": {
+        "developer": 0.9692307692307692,
+        "tester": 0.98,
+        "architect": 0.9738461538461538,
+        "writer": 0.9753846153846154
+      },
+      "accepted_precision": 0.9995812395309883,
+      "ask_rate": 0.08153846153846153,
+      "wrong_accepted": 1
+    },
+    "fastapi/fastapi": {
+      "rows": 2600,
+      "accuracy": 0.9715384615384616,
+      "per_role": {
+        "developer": 0.9753846153846154,
+        "tester": 0.9723076923076923,
+        "architect": 0.9646153846153847,
+        "writer": 0.9738461538461538
+      },
+      "accepted_precision": 0.9991582491582491,
+      "ask_rate": 0.08615384615384615,
+      "wrong_accepted": 2
+    }
+  },
+  "independent_150": {
+    "rows": 150,
+    "accuracy": 0.9133333333333333,
+    "per_role": {
+      "developer": 0.9473684210526315,
+      "tester": 0.8947368421052632,
+      "architect": 0.9459459459459459,
+      "writer": 0.8648648648648649
+    },
+    "accepted_precision": 0.9827586206896551,
+    "ask_rate": 0.22666666666666666,
+    "wrong_accepted": 2
+  },
+  "safety": {
+    "rows": 20,
+    "model_accepted_unsupported": 1,
+    "scope": "Raw classifier rejection only; runtime scope/slot/operation validation is tested separately."
+  },
+  "gates": {
+    "repository_accuracy": true,
+    "role_accuracy": true,
+    "independent_150": false,
+    "independent_safety_fixture": false,
+    "calibration_accepted_precision": true,
+    "supported_ask_rate": false
+  },
+  "qualified": false,
+  "model_path": "target/parser-train/models/intent-c92de155587bafa9.bin",
+  "asset_sha256": "c92de155587bafa9e2d86086a62dd23ae38e91b31c45e5bcd6c0ba9f73bc6828",
+  "asset_bytes": 852116,
+  "scope": "Deterministic bounded source samples; generated evaluation varies repository vocabulary independently of training. Independent fixture labels require review. The fixtures were previously measured in the retained initial run; this is a regression measurement, not a fresh unseen test."
+}

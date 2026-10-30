@@ -51,7 +51,7 @@ export interface ServerEntry { readonly key: string; readonly command: string; r
 export const ASSISTANCE_KEY = 'airk_explorer';
 export const UNIFIED_KEY = 'airk';
 export const RETRIEVAL_TOOLS = ['capabilities','changes','code_facts','context','document_facts','file_info','help','imports','list_files','outline','read_file','references','relationships','search','status','diagnostics','symbols'] as const;
-export const UNIFIED_TOOLS = [...RETRIEVAL_TOOLS, 'projects', 'draft_search', 'draft_strategy', 'draft_plan', 'suggest_view', 'list_templates', 'get_template', 'validate_draft', 'proposal_status', 'get_handoff'] as const;
+export const UNIFIED_TOOLS = [...RETRIEVAL_TOOLS, 'parse', 'projects', 'draft_search', 'draft_strategy', 'draft_plan', 'suggest_view', 'list_templates', 'get_template', 'validate_draft', 'proposal_status', 'get_handoff'] as const;
 export const EXPLORER_TOOL_RENAMES: Readonly<Record<string,string>> = {
     airk_explorer_help_search:'help', airk_explorer_help_get:'help', airk_explorer_ui_status:'status',
     airk_explorer_suggest_search:'draft_search', airk_explorer_suggest_strategy:'draft_strategy', airk_explorer_suggest_plan:'draft_plan',

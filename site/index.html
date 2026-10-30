@@ -6,13 +6,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="AIRK gives coding agents local code and document evidence with source locations. Download the native VS Code extension for Windows, macOS and Linux.">
   <meta name="theme-color" content="#112e3c">
-  <meta property="og:title" content="AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents">
+  <meta property="og:title" content="AIRK: Local Search for Coding Agents">
   <meta property="og:description" content="Index your workspace. Retrieve bounded evidence. Follow it back to the source.">
   <meta property="og:url" content="https://airk.ioka.io/">
   <link rel="canonical" href="https://airk.ioka.io/">
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="./style.css">
-  <title>AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents</title>
+  <title>AIRK: Local Search for Coding Agents</title>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -20,6 +20,7 @@
     <div class="wrap header-inner">
       <div class="brand"><a class="wordmark" href="./" aria-label="AIRK home"><img class="mark" src="./favicon.svg" width="36" height="36" alt="">AIRK</a><a class="brand-parent" href="https://ioka.io/">by Ioka</a></div>
       <nav aria-label="Main navigation">
+        <a href="#screenshots">See AIRK</a>
         <a href="#how-it-works">How it works</a>
         <a href="https://github.com/iokaio/airk/tree/main/docs">Docs <span aria-hidden="true">↗</span></a>
         <a class="nav-download" href="#downloads">Downloads <span aria-hidden="true">↓</span></a>
@@ -30,9 +31,9 @@
     <section class="hero wrap" aria-labelledby="hero-title">
       <div class="hero-copy">
         <p class="eyebrow">Open source · Local first · Stable releases</p>
-        <h1 id="hero-title">AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents</h1>
-        <p class="intro">Local code and document evidence, ready for your coding agent.</p>
-        <p class="hero-detail">Give Claude Code, Codex, Gemini CLI/Antigravity, GitHub Copilot and other MCP-capable agents a shared, local index of your workspace. AIRK returns cited facts and passages with their file paths, content hashes and original locations. Your agent does the reasoning; you can check exactly what it used.</p>
+        <h1 id="hero-title">AIRK: Local Search for Coding Agents</h1>
+        <p class="intro">Find the code and documents behind a feature.</p>
+        <p class="hero-detail">Give your coding agent cited evidence, or explore it yourself in AIRK Workbench. Search a local index of code and documents, inspect relevant passages and open their sources. Indexing and retrieval run on your machine without a cloud service or API key.</p>
         <div class="hero-actions">
           <a class="button primary" href="#downloads">Get the VS Code extension <span aria-hidden="true">↓</span></a>
           <a class="button secondary" href="https://github.com/iokaio/airk">Explore the source <span aria-hidden="true">↗</span></a>
@@ -59,10 +60,18 @@
     <div class="principles">
       <div class="wrap principles-inner">
         <p><strong>Local runtime</strong><span>Memory and disk on your machine</span></p>
-        <p><strong>16 read-only MCP tools</strong><span>Scoped to your workspace collection</span></p>
+        <p><strong>Workbench + coding agents</strong><span>Two ways to inspect the same local evidence</span></p>
         <p><strong>Native helper included</strong><span>No Docker or build tools to install</span></p>
       </div>
     </div>
+    <section class="product-previews wrap section" id="screenshots" aria-labelledby="screenshots-title">
+      <div class="section-heading"><div><p class="eyebrow">See AIRK in action</p><h2 id="screenshots-title">Explore it yourself.<br>Share evidence with your agent.</h2></div><p>Workbench keeps direct evidence collection close to your code. Explorer brings search, source inspection and indexing controls into one workspace.</p></div>
+      <div class="preview-grid">
+        <figure><a href="./images/workbench-1.7.1-results.png"><img src="./images/workbench-1.7.1-results.png" width="650" height="1000" alt="AIRK Workbench with a cited source result, compact toolbar and request composer" loading="lazy"></a><figcaption><strong>AIRK Workbench</strong><p>Collect cited evidence, review an editable plan and export results. History, settings and new-session icons stay compact; the + menu holds scope, recipes and tools. No generative AI is used; intent parsing and semantic retrieval use local models.</p></figcaption></figure>
+        <figure><a href="./images/explorer-1.7.1.png"><img src="./images/explorer-1.7.1.png" width="1440" height="900" alt="AIRK Explorer showing indexed files, evidence navigation and the Show Workbench link above Management" loading="lazy"></a><figcaption><strong>AIRK Explorer</strong><p>Search code and documents, follow citations, inspect indexed readiness and manage projects and coding-agent connections.</p></figcaption></figure>
+      </div>
+      <p class="preview-note">Compiled UI previews use fictional project data. They illustrate the 1.7.1 development candidate; download cards below describe published releases. Click either screenshot to open the full image.</p>
+    </section>
     <section class="downloads-section wrap section" id="downloads" aria-labelledby="downloads-title">
       <div class="section-heading">
         <div><p class="eyebrow">01 / Get AIRK</p><h2 id="downloads-title">Your workspace.<br>Your platform.</h2></div>
@@ -83,8 +92,8 @@
           <p>Keep the index on your machine, see what is covered, and give your agent a way back to the original material.</p>
         </div>
         <ol class="workflow-steps">
-          <li><span class="step-number">1</span><h3>Index your workspace</h3><p>Click the AIRK status item to index. Review measured coverage, choose an indexing mode, or pause automatic updates from AIRK controls.</p></li>
-          <li><span class="step-number">2</span><h3>Connect your agent</h3><p>Run <strong>AIRK: Set Up Coding Agent</strong> to preview scoped configuration for clients such as Claude Code, Codex, Gemini CLI/Antigravity and GitHub Copilot. Enable the connection in your client.</p></li>
+          <li><span class="step-number">1</span><h3>Index your workspace</h3><p>Open a trusted project. Automatic setup registers the folder and starts indexing saved files. Review readiness and extraction failures in Explorer’s Management tabs.</p></li>
+          <li><span class="step-number">2</span><h3>Open Workbench or connect an agent</h3><p>Use <strong>AIRK: Open Workbench</strong> to run /files and inspect a cited result. Or run <strong>AIRK: Connect Coding Agent</strong>, review its scoped configuration and enable AIRK in that client.</p></li>
           <li><span class="step-number">3</span><h3>Retrieve with a reference</h3><p>Your agent can search, inspect definitions and read document evidence. Results retain source paths, content hashes and original locations within a published index revision.</p></li>
         </ol>
         <p class="privacy-note">AIRK runs locally without a service account or API key. Your chosen agent controls whether it sends retrieved evidence to its model provider.</p>
@@ -106,7 +115,7 @@
   <footer class="site-footer">
     <div class="wrap footer-inner">
       <a class="wordmark" href="./"><img class="mark" src="./favicon.svg" width="36" height="36" alt="">AIRK</a>
-      <p>AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents · by <a href="https://ioka.io/">Ioka</a></p>
+      <p>AIRK: Local Search for Coding Agents · by <a href="https://ioka.io/">Ioka</a></p>
       <nav aria-label="Footer navigation"><a href="https://github.com/iokaio/airk/releases">All releases</a><a href="https://github.com/iokaio/airk/blob/main/SUPPORT.md">Support</a><a href="https://github.com/iokaio/airk/blob/main/LICENSE">License</a></nav>
     </div>
   </footer>

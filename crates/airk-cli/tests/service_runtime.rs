@@ -1185,7 +1185,7 @@ fn probe_stdio_bridge(
             .context("bridge tool list missing")?;
         if unified {
             ensure!(
-                tools.len() == 27
+                tools.len() == 28
                     && tools
                         .iter()
                         .all(|tool| !tool["name"].as_str().unwrap_or("").starts_with("airk_")),
@@ -1193,7 +1193,7 @@ fn probe_stdio_bridge(
             );
         } else {
             ensure!(
-                tools.len() == 17
+                tools.len() == 18
                     && tools
                         .iter()
                         .all(|tool| tool["annotations"]["readOnlyHint"] == true),

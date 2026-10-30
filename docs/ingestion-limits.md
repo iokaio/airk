@@ -47,7 +47,7 @@ Written definition and heading spans are captured independently of optional fact
 
 `airk execution` reports CPU/memory admission and the storage-root slot policy. `AIRK_EXECUTION_MODE` selects `automatic`, `interactive` or `throughput`; existing worker settings remain bounded ceilings. These estimates do not enforce an RSS limit. `airk index --scheduled --progress` emits committed progress as JSON on stderr, preserving final stdout JSON. Discovery totals remain unknown until a complete inventory.
 
-Optional retained-object compression is off by default. `airk compression set automatic` affects future immutable writes; `airk compression repack --max-files 32` rewrites a bounded batch through the recovery journal. Continue with the returned `next_after` using `--after`. See [the release notes](release-1.2.0.md#optional-lossless-retained-object-compression) for byte limits, exact evidence guarantees and accounting scope.
+Optional retained-object compression is off by default. `airk compression set automatic` affects future immutable writes; `airk compression repack --max-files 32` rewrites a bounded batch through the recovery journal. Continue with the returned `next_after` using `--after`. See [the release notes](releases/release-1.2.0.md#optional-lossless-retained-object-compression) for byte limits, exact evidence guarantees and accounting scope.
 
 ## Inspect and configure
 

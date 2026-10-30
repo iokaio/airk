@@ -21,6 +21,70 @@ pub mod local;
 pub mod remote;
 pub mod unified;
 
+#[cfg(test)]
+mod workbench_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn parse_prepares_and_executes_without_an_editor_and_rejects_write_operations()
+    -> anyhow::Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().join("source");
+        std::fs::create_dir(&root)?;
+        let original = "# Queue policy\nRequests must preserve their retry budget.\n";
+        std::fs::write(root.join("policy.md"), original)?;
+        let kernel = Kernel::open(&root, Some(temporary.path().join("state")))?;
+        kernel.index()?;
+        let mut tools = local::LocalTools::new(kernel).await?;
+        let reply = tools
+            .call(
+                "airk_parse".into(),
+                json!({"schema":"airk.parse.request/1","text":"/search retry --mode lexical"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+            .await?;
+        assert!(!reply.is_error.unwrap_or(false), "{reply:?}");
+        let value: serde_json::Value =
+            serde_json::from_str(&reply.content[0].as_text().unwrap().text)?;
+        assert_eq!(value["status"], "prepared");
+        assert_eq!(value["executed"], false);
+        let run=tools.call("airk_parse".into(),json!({"schema":"airk.parse.request/1","mode":"execute","plan":value["plan"],"response_mode":"full"}).as_object().unwrap().clone()).await?;
+        assert!(!run.is_error.unwrap_or(false), "{run:?}");
+        let body: serde_json::Value =
+            serde_json::from_str(&run.content[0].as_text().unwrap().text)?;
+        assert_eq!(body["status"], "complete");
+        assert_eq!(body["executed"], true);
+        assert!(!body["evidence"].as_array().unwrap().is_empty());
+        let bad=tools.call("airk_parse".into(),json!({"schema":"airk.parse.request/1","mode":"execute","plan":{"steps":[{"id":"bad","tool":"draft_plan","args":{}}]}}).as_object().unwrap().clone()).await?;
+        assert!(bad.is_error.unwrap_or(false));
+        assert_eq!(std::fs::read_to_string(root.join("policy.md"))?, original);
+        tools.close().await?;
+        Ok(())
+    }
+}
+
+/// Strict envelope; nested plans are validated by the transport-independent kernel contract.
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ParseArgs {
+    #[serde(flatten, skip_serializing)]
+    pub response: ResponseArgs,
+    pub schema: String,
+    /// prepare (default) validates; execute collects read-only evidence.
+    pub mode: Option<String>,
+    pub text: Option<String>,
+    pub recipe: Option<serde_json::Value>,
+    pub plan: Option<serde_json::Value>,
+    #[serde(default)]
+    pub path_prefix: String,
+    pub budgets: Option<serde_json::Value>,
+    pub output: Option<serde_json::Value>,
+    pub expected_digest: Option<String>,
+}
+
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CapabilitiesArgs {
@@ -415,6 +479,27 @@ impl AirkServer {
     )]
     async fn help(&self, Parameters(args): Parameters<help::HelpArgs>) -> CallToolResult {
         help::reply(args)
+    }
+
+    #[tool(
+        name = "airk_parse",
+        description = "Prepare or execute a bounded read-only AIRK evidence plan. Supply schema airk.parse.request/1, mode prepare or execute, and exactly one of text, recipe, plan. Explicit plans contain steps {id,tool,args,bind}; public operation names only. Bindings use earlier step IDs and named selectors. At most 6 steps, 12 reads, a 30-second budget checked between reads, 512 KiB. Learned text in this review build returns an inert proposed plan with needs_input; review its arguments and resubmit the explicit plan to execute. Other uncertainty, partial coverage and failures stay explicit. No writes, commands, management, recursive plans or agent reasoning. Works without Explorer. Use response_mode=full for provenance/coverage audits; raw inner evidence retains its full kernel representation.",
+        annotations(
+            read_only_hint = true,
+            destructive_hint = false,
+            open_world_hint = false
+        )
+    )]
+    async fn parse(&self, Parameters(args): Parameters<ParseArgs>) -> CallToolResult {
+        let observations = serde_json::json!({"runtime":self.runtime.read().ok().and_then(|v|v.clone()),"work":self.work.read().ok().and_then(|v|v.clone())});
+        self.execute_response(UsageOperation::Parse, args.response, move |kernel| {
+            let mut value = serde_json::to_value(args)?;
+            if value["mode"].is_null() {
+                value["mode"] = serde_json::json!("prepare");
+            }
+            kernel.evidence_plan_observed(serde_json::from_value(value)?, &observations)
+        })
+        .await
     }
 
     #[tool(
@@ -845,6 +930,7 @@ impl AirkServer {
             anyhow::ensure!(args.adapter.is_none() || !adapters.is_empty(), "unknown adapter ID");
             Ok(serde_json::json!({
             "request_admission": admission,
+            "workbench": airk_kernel::workbench::operation_catalog(),
             "discovery": {"cursor_tools":["airk_list_files","airk_outline","airk_symbols","airk_imports","airk_code_facts","airk_document_facts"], "binding":"exact publication, filters and representation", "compact_outline":true, "compact_symbols":true, "fact_result_key":"items", "compact_false":"rich facts with symbol IDs; independent of response mode", "budget":"complete serialized records plus new file/provenance bindings; framing is additional", "expired_cursor":"restart discovery"},
             "adapters": adapters,
             "index_detail": {"new_collection_default":"agent_lean", "levels":["agent_lean","essential","balanced","detailed"], "labels":{"agent_lean":"Agent Lean","balanced":"Rich Structure","essential":"Search Only","detailed":"Detailed"}, "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},

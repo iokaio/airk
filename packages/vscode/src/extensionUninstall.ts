@@ -74,6 +74,29 @@ async function saveConfig(destination:string,before:string,after:string):Promise
     }finally{await fs.unlink(temporary).catch(()=>undefined);}
 }
 
+/** Delete only the owned, bounded Workbench hierarchy. Never follow directory links. */
+export async function removeWorkbenchSessions(storage:string):Promise<void>{
+    const base=absolute(storage),root=path.join(base,'workbench');
+    if(path.relative(base,root)!=='workbench')throw new Error('Unsafe Workbench cleanup target');
+    let directories:string[];
+    try{if((await fs.lstat(root)).isSymbolicLink())throw new Error('Workbench storage redirected');directories=await fs.readdir(root);}
+    catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}
+    if(directories.length>1024)throw new Error('Workbench cleanup inventory exceeds its bound');
+    let count=0;
+    for(const project of directories){
+        if(!/^[a-f0-9]{64}$/.test(project))throw new Error('Unknown Workbench project directory');
+        const directory=path.join(root,project),info=await fs.lstat(directory);
+        if(!info.isDirectory()||info.isSymbolicLink())throw new Error('Workbench project redirected');
+        const files=await fs.readdir(directory);count+=files.length;if(count>4096)throw new Error('Workbench cleanup exceeds file budget');
+        for(const name of files){
+            if(!/^(?:[a-f0-9-]{36}\.json|[a-f0-9-]{36}\.[a-f0-9-]{36}\.tmp|shortcuts\.json|\.writer)$/.test(name))throw new Error('Unknown Workbench session file');
+            const target=path.join(directory,name),stat=await fs.lstat(target);if(stat.isDirectory())throw new Error('Unexpected Workbench subdirectory');await fs.unlink(target);
+        }
+        await fs.rmdir(directory);
+    }
+    await fs.rmdir(root);
+}
+
 export async function uninstallTargets(main:string,run:NativeRunner,log:(message:string)=>void):Promise<void> {
     const targets=new Map<string,{receipts:{file:string;item:Receipt}[]}>(),failures:string[]=[];
     // Native user locations find both fresh and historical default layouts. Receipts
@@ -115,6 +138,7 @@ export async function uninstallTargets(main:string,run:NativeRunner,log:(message
                 if(result.uninstalled!==true)throw new Error(`Runtime uninstall incomplete: ${JSON.stringify(result)}`);
             }
             if(!clean)throw new Error('Runtime removed; some agent entries require manual review (see messages above)');
+            for(const storage of new Set(target.receipts.map(receipt=>receipt.item.storage)))await removeWorkbenchSessions(storage);
             for(const {file} of target.receipts)await fs.unlink(file);
         }catch(error){failures.push(`${installDir}: ${String(error)}`);}
     }

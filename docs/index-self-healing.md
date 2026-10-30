@@ -1,6 +1,6 @@
 # Automatic indexing recovery in 1.5.7
 
-28 October 2026. Development behavior on `feat/manageindices`; published and platform qualification are recorded separately in [the release record](release-1.5.7.md). The [1.5.6 record](release-1.5.6.md) retains its original validation scope.
+28 October 2026. Development behavior on `feat/manageindices`; published and platform qualification are recorded separately in [the release record](releases/release-1.5.7.md). The [1.5.6 record](releases/release-1.5.6.md) retains its original validation scope.
 
 The native service owns accepted setup, scalar indexing preferences, job continuations and recovery. Closing every editor does not discard them. Management observes this work and presents its reason, attempt budget and next condition check. A usable prior publication remains subject to the existing native integrity rules; recovery never edits original source files.
 

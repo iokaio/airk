@@ -1,6 +1,6 @@
 # Service-owned saved-source reconciliation
 
-This describes implemented native behavior through [1.6.4](release-1.6.4.md). The default extension and CLI use service-owned scheduling; the old editor scheduler is retired from those paths. See the [completion checklist](service-implementation-checklist.md) for remaining qualification.
+This describes implemented native behavior through [1.6.4](releases/release-1.6.4.md). The default extension and CLI use service-owned scheduling; the old editor scheduler is retired from those paths. See the [completion checklist](service-implementation-checklist.md) for remaining qualification.
 
 Version 1.5.5 applies ingestion's shared ignore policy to directory planning before child metadata or listing access. Hierarchical `.gitignore`, `.ignore`, `.airkignore`, parent and Git exclude rules retain discovery's precedence and negation semantics. The hard source/data/private-directory exclusions remain. A fully ignored output subtree is pruned instead of making source monitoring unavailable; a permission failure in an included directory still reports `root_unavailable`. Ignore-load errors returned by the matcher report `metadata_unavailable` rather than claiming complete notification coverage.
 

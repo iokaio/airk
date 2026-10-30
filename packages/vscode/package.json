@@ -1,8 +1,8 @@
 {
   "name": "airk",
-  "displayName": "AIRK — Artifact Indexing and Retrieval Kernel, the Local MCP Power Tool for Coding Agents",
-  "description": "Local indexed evidence for coding agents, with a native service, direct MCP retrieval and a shared offline model. No cloud service or API key.",
-  "version": "1.6.4",
+  "displayName": "AIRK: Local Search for Coding Agents",
+  "description": "Local code and document search for coding agents, plus AIRK Workbench for cited evidence in VS Code. No cloud service or API key.",
+  "version": "1.7.2",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -37,11 +37,11 @@
     "evidence",
     "citations",
     "provenance",
-    "requirements",
-    "pdf",
-    "docx",
-    "xlsx",
-    "pptx"
+    "local search",
+    "document search",
+    "code indexing",
+    "semantic search",
+    "workbench"
   ],
   "main": "./out/extension.js",
   "files": [
@@ -96,6 +96,13 @@
           "title": "AIRK",
           "icon": "images/airk.svg"
         }
+      ],
+      "secondarySidebar": [
+        {
+          "id": "airk-workbench",
+          "title": "AIRK",
+          "icon": "images/airk.svg"
+        }
       ]
     },
     "views": {
@@ -110,6 +117,14 @@
           "name": "Workspace Projects",
           "when": "airk.explorerUnavailable",
           "visibility": "collapsed"
+        }
+      ],
+      "airk-workbench": [
+        {
+          "id": "airk.workbench",
+          "name": "AIRK Workbench",
+          "icon": "images/airk.svg",
+          "type": "webview"
         }
       ]
     },
@@ -433,6 +448,22 @@
         "command": "airk.showExtensionOutput",
         "title": "Show Extension Output",
         "category": "AIRK"
+      },
+      {
+        "command": "airk.workbench.focus",
+        "title": "AIRK: Open Workbench"
+      },
+      {
+        "command": "airk.workbench.newSession",
+        "title": "AIRK: New Workbench Session"
+      },
+      {
+        "command": "airk.workbench.clearSessions",
+        "title": "AIRK: Clear Workbench Sessions"
+      },
+      {
+        "command": "airk.workbench.searchSelection",
+        "title": "AIRK: Search Selection in Workbench"
       }
     ],
     "configuration": [
@@ -526,6 +557,18 @@
             "default": "(^|/)(tests?|__tests__|specs?)/|[._-](test|spec)\\.[A-Za-z0-9]+$|_test\\.[A-Za-z0-9]+$",
             "scope": "resource",
             "markdownDescription": "Regular expression for collection-relative paths that Review › Tests and Review › Impact treat as test files. Matches are candidates; tests are never executed."
+          },
+          "airk.workbench.persistSessions": {
+            "type": "boolean",
+            "default": true,
+            "description": "Save Workbench sessions locally. Turning off removes saved sessions for the selected project.",
+            "scope": "window"
+          },
+          "airk.workbench.persistResults": {
+            "type": "boolean",
+            "default": true,
+            "description": "Include evidence excerpts in locally saved Workbench sessions. Turning off removes saved results for the selected project.",
+            "scope": "window"
           }
         }
       },

@@ -1,6 +1,6 @@
 # 0.1.0 implementation review
 
-This review covers native ingestion, collection storage, retrieval, usage recording, scheduling, MCP, the VS Code extension, packaging and repository controls. It includes newly implemented roadmap components. It is not a security certification or approval to release. The [validation record](validation.md) distinguishes observed tests from untested release requirements; the [release checklist](release-checklist-0.1.0.md) remains the candidate approval record.
+This review covers native ingestion, collection storage, retrieval, usage recording, scheduling, MCP, the VS Code extension, packaging and repository controls. It includes newly implemented roadmap components. It is not a security certification or approval to release. The [validation record](validation.md) distinguishes observed tests from untested release requirements; the [release checklist](releases/release-checklist-0.1.0.md) remains the candidate approval record.
 
 ## Correctness findings addressed
 

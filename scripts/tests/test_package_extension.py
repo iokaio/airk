@@ -58,6 +58,15 @@ class VsixContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "Unpackaged jsonc-parser dependency"):
                 package.stage_jsonc_parser(stage, root / "rejected")
 
+    def test_listing_product_screenshots_are_explicit_bounded_public_assets(self):
+        listing = (package.EXTENSION / "README.md").read_text(encoding="utf-8")
+        for name, component in package.PRODUCT_ILLUSTRATIONS.items():
+            source = package.ROOT / "docs" / component / "images" / name
+            self.assertFalse(source.is_symlink())
+            self.assertTrue(source.is_file())
+            self.assertLessEqual(source.stat().st_size, 2_097_152)
+            self.assertIn(f"https://raw.githubusercontent.com/iokaio/airk/main/docs/{component}/images/{name}", listing)
+
     def test_walkthrough_commands_and_media_are_packaged(self):
         manifest = json.loads((package.EXTENSION / "package.json").read_text(encoding="utf-8"))
         commands = {entry["command"] for entry in manifest["contributes"]["commands"]}
@@ -116,6 +125,8 @@ class VsixContracts(unittest.TestCase):
             compiled.mkdir()
             (compiled / "explorerWebview.js").write_bytes((banner + "(()=>{document.body;})();\n").encode("utf-8"))
             (compiled / "explorerWebview.css").write_bytes(b"body{margin:0}\n")
+            (compiled / "workbenchWebview.js").write_bytes((banner + "(()=>{document.body;})();\n").encode("utf-8"))
+            (compiled / "workbenchWebview.css").write_bytes(b"body{margin:0}\n")
             assistance = "/*! AIRK Explorer Assistance MCP server 1.0.0. No third-party code. */\n"
             (compiled / "explorerAssistance.js").write_bytes((assistance + 'require("node:crypto");\n').encode("utf-8"))
             stage = Path(directory) / "stage"

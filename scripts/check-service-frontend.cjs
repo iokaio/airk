@@ -51,7 +51,7 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
         }
         const spec={command:binding.launcher,root:review.root,dataDir:review.data_root,collection:review.collection,name:'Frontend fixture',
             service:{installDir:install,project:review.binding}};
-        const first=await probeMcp(spec,27,inventory.version);assert.equal(first.tools.length,27);assert.notEqual(first.status.state,'not_indexed');
+        const first=await probeMcp(spec,28,inventory.version);assert.equal(first.tools.length,28);assert.notEqual(first.status.state,'not_indexed');
         const quick=JSON.parse(first.status.content.find(part=>part.type==='text').text);
         assert.equal(quick.runtime,undefined);assert.equal(quick.work,undefined);
         const detailed=await nativeRunner(binding.executable,['--service-install-dir',install,'--service-project',review.binding,'tools','call','airk_diagnostics'],180000);
@@ -89,7 +89,7 @@ const {probeMcp,runText}=require('../packages/vscode/out/native.js');
         assert.equal(await fs.readFile(path.join(source,'memo.txt'),'utf8'),original);
         // An unavailable ancestor is not a confirmed deleted source leaf.
         await fs.rename(sourceParent,path.join(fixture,'temporarily-offline-parent'));
-        const retained=await probeMcp(spec,27,inventory.version);assert.notEqual(retained.status.state,'not_indexed');
+        const retained=await probeMcp(spec,28,inventory.version);assert.notEqual(retained.status.state,'not_indexed');
         const offline=await nativeRunner(binding.executable,['--service-install-dir',install,'--service-project',review.binding,'tools','call','airk_diagnostics'],180000);
         assert.notEqual(offline.isError,true);
         const saved=JSON.parse(offline.content.find(part=>part.type==='text').text);

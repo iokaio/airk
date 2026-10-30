@@ -108,7 +108,7 @@ For macOS delivery:
 4. For signed distribution, use AIRK's separate keychain and `airk-notary` profile with the existing company Developer ID identity, or the manual hosted workflow described in [native signing/notarization](native-signing.md). The public certificate alone cannot sign; the matching private key is required. Signing creates a fresh artifact copy and does not publish it. See [Apple's Developer ID guidance](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/).
 5. Review the generated Mac VSIX and verify clean installation on its intended architecture. CI bundles the matching helper in each platform package; local packaging needs Node/npm for the pinned extension build tools. See [extension deployment](extension-deployment.md).
 
-DiskANN uses AIRK's portable disk provider; local embeddings support explicitly provisioned static word vectors and CPU ONNX transformer inference. Their disk-I/O, locking, memory-mapping, CPU and model behavior must still be qualified on both Mac architectures. Windows tests do not establish that compatibility or representative semantic quality; see [local models](local-models.md), [ONNX qualification](onnx-models.md) and the [release checklist](release-1.1.0.md).
+DiskANN uses AIRK's portable disk provider; local embeddings support explicitly provisioned static word vectors and CPU ONNX transformer inference. Their disk-I/O, locking, memory-mapping, CPU and model behavior must still be qualified on both Mac architectures. Windows tests do not establish that compatibility or representative semantic quality; see [local models](local-models.md), [ONNX qualification](onnx-models.md) and the [release checklist](releases/release-1.1.0.md).
 
 ## Troubleshooting
 

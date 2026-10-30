@@ -8,7 +8,7 @@
       "runtime": "onnxruntime-cpu/1.22.1/airk-int8-b1-1",
       "qualification": {
         "verified_platforms": [],
-        "evidence": "docs/release-1.6.0.md",
+        "evidence": "docs/releases/release-1.6.0.md",
         "scope": "Native INT8 qualification pending; experimental Windows AVX2 results are not installed-platform qualification."
       },
       "manifest": {
@@ -55,7 +55,7 @@
       "runtime": "onnxruntime-cpu/1.22.1/airk-int8-b1-1",
       "qualification": {
         "verified_platforms": [],
-        "evidence": "docs/release-1.6.0.md",
+        "evidence": "docs/releases/release-1.6.0.md",
         "scope": "Native INT8 qualification pending; experimental Windows AVX2 results are not installed-platform qualification."
       },
       "manifest": {

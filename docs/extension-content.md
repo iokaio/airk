@@ -1,6 +1,11 @@
 # VS Code extension content and illustrations
 
-This is a historical content specification prepared for the 1.1.2 stable candidate. Its retained-generation examples and checklist are not current 1.2 instructions. The current shipped listing source is [packages/vscode/README.md](../packages/vscode/README.md), the command/settings source is [package.json](../packages/vscode/package.json), and the current behavior is described in the [1.2 release notes](release-1.2.0.md) and [extension guide](vscode-extension.md).
+Current 1.7.2 listing: [packages/vscode/README.md](../packages/vscode/README.md) leads with the practical value of local code/document retrieval, direct Workbench use and coding-agent setup. The main README uses the same introductory copy. Both show compiled Workbench and Explorer PNGs with fictional-data captions. The VSIX packager bundles those two explicitly allowlisted images and rewrites the listing to local image paths; GitHub renders relative image links in the repository README. The downloads-site builder includes the same two original screenshots. Generated GitHub release notes for 1.7.1 and later pin image URLs to the release source commit. No Marketplace, website or GitHub release publication is implied by these local source edits.
+
+The Marketplace display name is **AIRK: Local Search for Coding Agents**. The stable extension identity remains `iokaio.airk`; Artifact Indexing and Retrieval Kernel remains the project expansion. Workbench uses the original **Facet** icon family selected for 1.7.1, with angular outlines and a restrained chevron accent. The earlier specification below remains historical.
+
+
+This is a historical content specification prepared for the 1.1.2 stable candidate. Its retained-generation examples and checklist are not current 1.2 instructions. The current shipped listing source is [packages/vscode/README.md](../packages/vscode/README.md), the command/settings source is [package.json](../packages/vscode/package.json), and the current behavior is described in the [1.2 release notes](releases/release-1.2.0.md) and [extension guide](vscode-extension.md).
 
 The package includes the two original PNG illustrations and rewrites their listing links to those bundled assets. The installed listing can display them without fetching repository images; package verification includes their exact digests.
 
@@ -86,7 +91,7 @@ Before publication, add genuine screenshots from the packaged extension using on
 
 ## Limits shown near installation
 
-State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the current [1.2 release notes](release-1.2.0.md). Clearly separate local runtime behavior from the selected agent's network behavior.
+State the tested host matrix and current capacity bounds, model readiness, source-read-only behavior, derived-state privacy, remote-host requirement, unsupported browser-only use, signing/publication status and extraction limitations. Link [formats](formats.md), [operations](operations.md), [security](../SECURITY.md) and the current [1.2 release notes](releases/release-1.2.0.md). Clearly separate local runtime behavior from the selected agent's network behavior.
 
 The listing may describe configured native ingestion bounds, shared logical quotas and available-drive checks, while keeping the editor's soft storage setting distinct. Automatic defaults allow up to 256 MiB/source and 100,000 files, with eligible source sized to one eighth of detected memory and capped at 4 GiB. Extracted text gets twice that allowance; unknown memory uses 512 MiB eligible source. Existing explicit policies remain unchanged. Larger limits do not establish scale performance. Remote editor hosts require an actual test on supplied infrastructure; a matching package and local helper test alone do not qualify SSH, WSL, Containers or Codespaces.
 

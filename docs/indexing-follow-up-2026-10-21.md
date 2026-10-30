@@ -28,4 +28,4 @@ Preparation, rollback and captured replay remain. Changed row groups are still r
 
 Regression tests cover a full intent while the writer is held, the durable earlier full report after a later scoped pass, coalesced revisions/history expiration/root isolation, close/reopen editor bindings, reconciliation retry suppression, progress-prefixed error envelopes through persisted history, model-selection retries, hash disagreement before provisioning, fixed cache expiry, Windows deletion with an idle cache, and SQL/raw-write invalidation with restored modification time.
 
-Final build, suite and packaging results are recorded in the [1.2.5 candidate notes](release-1.2.5.md). Installed-editor acceptance and other-platform qualification remain separate.
+Final build, suite and packaging results are recorded in the [1.2.5 candidate notes](releases/release-1.2.5.md). Installed-editor acceptance and other-platform qualification remain separate.

@@ -1,0 +1,902 @@
+[
+  {
+    "text": "Locate passages about connection backoff.",
+    "intent": "search",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find indexed text discussing cancellation budgets.",
+    "intent": "search",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Look up documentation mentioning publication races.",
+    "intent": "search",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Retrieve evidence about source isolation.",
+    "intent": "search",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Search the collection for cache eviction.",
+    "intent": "search",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show matches for the phrase reader lease.",
+    "intent": "search",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find files containing discussion of request admission.",
+    "intent": "search",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Look for material about native worker shutdown.",
+    "intent": "search",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Collect search hits on extraction policy.",
+    "intent": "search",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find evidence mentioning retained snapshots.",
+    "intent": "search",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Locate indexed passages describing service registration.",
+    "intent": "search",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Where is the QueueClient declaration?",
+    "intent": "find_definition",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Locate the definition named retry_budget.",
+    "intent": "find_definition",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show where PacketStore is declared.",
+    "intent": "find_definition",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find the class declaration for CacheReader.",
+    "intent": "find_definition",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Which definition introduces RenderPanel?",
+    "intent": "find_definition",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Take me to the declaration of EventSource.",
+    "intent": "find_definition",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Locate the function definition called open_reader.",
+    "intent": "find_definition",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Where was RequestGate defined?",
+    "intent": "find_definition",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find the type declaration named SampleOptions.",
+    "intent": "find_definition",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the declaration site for PipelineState.",
+    "intent": "find_definition",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Locate the symbol definition for begin_capture.",
+    "intent": "find_definition",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find every textual mention of QueueClient.",
+    "intent": "references",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Where does retry_budget appear as an identifier?",
+    "intent": "references",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "List occurrences of PacketStore across the project.",
+    "intent": "references",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the places CacheReader is used.",
+    "intent": "references",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find references mentioning RenderPanel.",
+    "intent": "references",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Which files mention EventSource?",
+    "intent": "references",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show textual usages of open_reader.",
+    "intent": "references",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Locate all occurrences of RequestGate.",
+    "intent": "references",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find identifier references for SampleOptions.",
+    "intent": "references",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show where PipelineState appears in code or comments.",
+    "intent": "references",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find whole-identifier mentions of begin_capture.",
+    "intent": "references",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Retrieve the saved indexed text from src/client.rs.",
+    "intent": "read_file",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Read lines 12 through 25 of docs/guide.md.",
+    "intent": "read_file",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the contents of lib/cache.py.",
+    "intent": "read_file",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Give me the indexed excerpt at src/panel.ts:8-19.",
+    "intent": "read_file",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Display the text of tests/request.rs.",
+    "intent": "read_file",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Read the first section of docs/notes.md as indexed lines.",
+    "intent": "read_file",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Fetch lines 4 to 10 from src/worker.go.",
+    "intent": "read_file",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Open an indexed excerpt from lib/store.cs.",
+    "intent": "read_file",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show me the lines in src/gate.cpp.",
+    "intent": "read_file",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Read the file docs/policy.md from the index.",
+    "intent": "read_file",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Retrieve source lines from src/reader.rs.",
+    "intent": "read_file",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Give me a structural outline of src/client.rs.",
+    "intent": "outline",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the heading hierarchy in docs/guide.md.",
+    "intent": "outline",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "List the declarations inside lib/cache.py.",
+    "intent": "outline",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Display the structure of src/panel.ts.",
+    "intent": "outline",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "What headings are in docs/notes.md?",
+    "intent": "outline",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Give an outline for tests/request.rs.",
+    "intent": "outline",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the declaration list in src/worker.go.",
+    "intent": "outline",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "List the structural items in lib/store.cs.",
+    "intent": "outline",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Outline the definitions within src/gate.cpp.",
+    "intent": "outline",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show me a map of headings in docs/policy.md.",
+    "intent": "outline",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Get the file outline of src/reader.rs.",
+    "intent": "outline",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Enumerate the indexed filenames beneath src/.",
+    "intent": "list_files",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Which paths exist in the collection under docs/?",
+    "intent": "list_files",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Give me the indexed file inventory for tests/.",
+    "intent": "list_files",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "List all captured file paths in lib/.",
+    "intent": "list_files",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the files available under packages/.",
+    "intent": "list_files",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Browse the indexed path list for crates/.",
+    "intent": "list_files",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Which source files are indexed in tools/?",
+    "intent": "list_files",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "List collection paths starting with src/cache/.",
+    "intent": "list_files",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Enumerate files from the indexed docs/design/ folder.",
+    "intent": "list_files",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the inventory of indexed files in examples/.",
+    "intent": "list_files",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Give me filenames under server/.",
+    "intent": "list_files",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Inspect metadata for src/client.rs.",
+    "intent": "file_info",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "What parser profile was used for lib/cache.py?",
+    "intent": "file_info",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the indexed hash of docs/guide.md.",
+    "intent": "file_info",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "What extraction method processed docs/policy.md?",
+    "intent": "file_info",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Give file information for src/panel.ts.",
+    "intent": "file_info",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Was src/worker.go parsed successfully?",
+    "intent": "file_info",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the indexed byte count of lib/store.cs.",
+    "intent": "file_info",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Which language profile belongs to src/gate.cpp?",
+    "intent": "file_info",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Get extraction metadata for docs/notes.md.",
+    "intent": "file_info",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the file identity for tests/request.rs.",
+    "intent": "file_info",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "What line coordinate basis does docs/report.pdf use?",
+    "intent": "file_info",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Locate import statements mentioning QueueClient.",
+    "intent": "imports",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Which include declarations mention PacketStore?",
+    "intent": "imports",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show written dependencies imported by src/client.rs.",
+    "intent": "imports",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find the import declarations in lib/cache.py.",
+    "intent": "imports",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "List the use statements referring to RequestGate.",
+    "intent": "imports",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show imports under src/panel/.",
+    "intent": "imports",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Retrieve static include statements for CacheReader.",
+    "intent": "imports",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Where is EventSource brought in by imports?",
+    "intent": "imports",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "List import evidence for SampleOptions.",
+    "intent": "imports",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find module import statements naming PipelineState.",
+    "intent": "imports",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show dependency import declarations in server/.",
+    "intent": "imports",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Collect written requirements about retry budgets.",
+    "intent": "facts",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show documented decisions regarding worker admission.",
+    "intent": "facts",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find architecture facts about source isolation.",
+    "intent": "facts",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Retrieve configuration statements mentioning storage quotas.",
+    "intent": "facts",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "List acceptance statements about request cancellation.",
+    "intent": "facts",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find design statements about retained evidence.",
+    "intent": "facts",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show requirements that mention index freshness.",
+    "intent": "facts",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Locate written decisions on publication identity.",
+    "intent": "facts",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Collect document facts about extraction limits.",
+    "intent": "facts",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show acceptance criteria for safe source opening.",
+    "intent": "facts",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Retrieve documented architecture statements on helper ownership.",
+    "intent": "facts",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Check indexed changes from the previous publication.",
+    "intent": "changes",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Which remembered evidence is different now?",
+    "intent": "changes",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Validate the references retained from the last index.",
+    "intent": "changes",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Compare the current index with a remembered baseline.",
+    "intent": "changes",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show changes since the saved publication token.",
+    "intent": "changes",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Which captured paths changed between index publications?",
+    "intent": "changes",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Report removed or changed remembered evidence.",
+    "intent": "changes",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Check whether the saved citations are still index-current.",
+    "intent": "changes",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Inspect observed changes after the baseline publication.",
+    "intent": "changes",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "What indexed evidence changed since my saved token?",
+    "intent": "changes",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find changes relative to the remembered index revision.",
+    "intent": "changes",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Is the collection ready for retrieval?",
+    "intent": "status",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "How much content is indexed right now?",
+    "intent": "status",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the current publication and file count.",
+    "intent": "status",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Are semantic vectors ready for searching?",
+    "intent": "status",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "What is the present index health?",
+    "intent": "status",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Report basic retrieval readiness.",
+    "intent": "status",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Is there a published searchable index?",
+    "intent": "status",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "How many indexed chunks are available?",
+    "intent": "status",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the collection readiness state.",
+    "intent": "status",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "What publication is currently available to search?",
+    "intent": "status",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Check whether indexing has produced search results yet.",
+    "intent": "status",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Inspect the detailed native worker state.",
+    "intent": "diagnostics",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show runtime process identities and queued jobs.",
+    "intent": "diagnostics",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "What are the source watchers doing?",
+    "intent": "diagnostics",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Report job progress for the native service.",
+    "intent": "diagnostics",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Give detailed runtime troubleshooting observations.",
+    "intent": "diagnostics",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Inspect worker waits and admission queues.",
+    "intent": "diagnostics",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Which native processes own the current jobs?",
+    "intent": "diagnostics",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show the service runtime versions and worker progress.",
+    "intent": "diagnostics",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Gather diagnostics for a stalled source watcher.",
+    "intent": "diagnostics",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Report process and job observations for troubleshooting.",
+    "intent": "diagnostics",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Inspect background worker activity and queue state.",
+    "intent": "diagnostics",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Explain how to use AIRK search commands.",
+    "intent": "help",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Where can I read the AIRK CLI usage guide?",
+    "intent": "help",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show instructions for querying AIRK.",
+    "intent": "help",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Explain the meaning of AIRK tool arguments.",
+    "intent": "help",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Give me the built-in help for AIRK.",
+    "intent": "help",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "How do the AIRK slash commands work?",
+    "intent": "help",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show usage guidance for AIRK MCP tools.",
+    "intent": "help",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Explain how I should select an AIRK project.",
+    "intent": "help",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "List the bundled AIRK help topics.",
+    "intent": "help",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Where are the AIRK command usage instructions?",
+    "intent": "help",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Explain AIRK citation and evidence conventions.",
+    "intent": "help",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find indexed material about quota accounting.",
+    "intent": "search",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Locate the declaration that defines WorkerLease.",
+    "intent": "find_definition",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Find textual identifier occurrences of WorkerLease.",
+    "intent": "references",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Read the indexed lines in docs/runtime.md.",
+    "intent": "read_file",
+    "role": "architect",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Show headings and declarations from docs/runtime.md.",
+    "intent": "outline",
+    "role": "writer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Enumerate indexed filenames in src/runtime/.",
+    "intent": "list_files",
+    "role": "developer",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  },
+  {
+    "text": "Inspect the extraction and source hash metadata of docs/runtime.md.",
+    "intent": "file_info",
+    "role": "tester",
+    "label_provenance": "independently authored by the implementation agent; human review pending"
+  }
+]

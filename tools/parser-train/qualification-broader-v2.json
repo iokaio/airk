@@ -1,0 +1,301 @@
+{
+  "schema": 1,
+  "protocol": "broader-phrasing/2",
+  "seed": 84181,
+  "datasets": {
+    "train": {
+      "path": "target/parser-train/data/broader-train-50e3c424d0e1fd6a.jsonl",
+      "sha256": "50e3c424d0e1fd6a5eaa7cf22be608f29008e6fdbc2c93e35cbcb363393cac3e",
+      "rows": 48000
+    },
+    "validation": {
+      "path": "target/parser-train/data/broader-validation-90affb5d7a1a89db.jsonl",
+      "sha256": "90affb5d7a1a89db078c3a91cc74f045cea9bfd2533ed528ff5a1a95f55d006f",
+      "rows": 5000
+    },
+    "calibration": {
+      "path": "target/parser-train/data/broader-calibration-326011763dd2074e.jsonl",
+      "sha256": "326011763dd2074e55d251527ab86b85e0fb877fae71c154760348e426b6f7cb",
+      "rows": 5000
+    },
+    "public-test": {
+      "path": "target/parser-train/data/broader-public-test-378a1e3191ff42b5.jsonl",
+      "sha256": "378a1e3191ff42b55eb41c86173163f5435b959e34154216ef52d2c9362a79c0",
+      "rows": 1000
+    }
+  },
+  "selected_positive_training_rows": 40000,
+  "selected_C": 0.5,
+  "selection": "Maximum validation intent accuracy minus twice unsupported acceptance at fixed development thresholds; ties retain the earlier smaller candidate. Calibration and final fixtures do not select the model.",
+  "learning_curve": [
+    {
+      "positive_training_rows": 10000,
+      "total_training_rows": 12000,
+      "C": 0.5,
+      "selection_score": 0.96925,
+      "validation": {
+        "rows": 5000,
+        "supported_rows": 4000,
+        "intent_accuracy": 0.98925,
+        "accepted_precision": 0.9964778397417082,
+        "supported_ask_rate": 0.15075,
+        "unsupported_accepted": 10,
+        "unsupported_accept_rate": 0.01,
+        "wrong_accepted": 12,
+        "per_role": {
+          "developer": 0.986,
+          "tester": 0.99,
+          "architect": 0.989,
+          "writer": 0.992
+        }
+      }
+    },
+    {
+      "positive_training_rows": 10000,
+      "total_training_rows": 12000,
+      "C": 2.0,
+      "selection_score": 0.97275,
+      "validation": {
+        "rows": 5000,
+        "supported_rows": 4000,
+        "intent_accuracy": 0.99075,
+        "accepted_precision": 0.997092177958709,
+        "supported_ask_rate": 0.1425,
+        "unsupported_accepted": 9,
+        "unsupported_accept_rate": 0.009,
+        "wrong_accepted": 10,
+        "per_role": {
+          "developer": 0.986,
+          "tester": 0.992,
+          "architect": 0.991,
+          "writer": 0.994
+        }
+      }
+    },
+    {
+      "positive_training_rows": 20000,
+      "total_training_rows": 24000,
+      "C": 0.5,
+      "selection_score": 0.979,
+      "validation": {
+        "rows": 5000,
+        "supported_rows": 4000,
+        "intent_accuracy": 0.993,
+        "accepted_precision": 0.9973860005808888,
+        "supported_ask_rate": 0.141,
+        "unsupported_accepted": 7,
+        "unsupported_accept_rate": 0.007,
+        "wrong_accepted": 9,
+        "per_role": {
+          "developer": 0.993,
+          "tester": 0.994,
+          "architect": 0.993,
+          "writer": 0.992
+        }
+      }
+    },
+    {
+      "positive_training_rows": 20000,
+      "total_training_rows": 24000,
+      "C": 2.0,
+      "selection_score": 0.98025,
+      "validation": {
+        "rows": 5000,
+        "supported_rows": 4000,
+        "intent_accuracy": 0.99225,
+        "accepted_precision": 0.9982723869853153,
+        "supported_ask_rate": 0.13325,
+        "unsupported_accepted": 6,
+        "unsupported_accept_rate": 0.006,
+        "wrong_accepted": 6,
+        "per_role": {
+          "developer": 0.989,
+          "tester": 0.995,
+          "architect": 0.992,
+          "writer": 0.993
+        }
+      }
+    },
+    {
+      "positive_training_rows": 40000,
+      "total_training_rows": 48000,
+      "C": 0.5,
+      "selection_score": 0.9845,
+      "validation": {
+        "rows": 5000,
+        "supported_rows": 4000,
+        "intent_accuracy": 0.9965,
+        "accepted_precision": 0.9979908151549942,
+        "supported_ask_rate": 0.1305,
+        "unsupported_accepted": 6,
+        "unsupported_accept_rate": 0.006,
+        "wrong_accepted": 7,
+        "per_role": {
+          "developer": 0.996,
+          "tester": 0.997,
+          "architect": 0.998,
+          "writer": 0.995
+        }
+      }
+    },
+    {
+      "positive_training_rows": 40000,
+      "total_training_rows": 48000,
+      "C": 2.0,
+      "selection_score": 0.9845,
+      "validation": {
+        "rows": 5000,
+        "supported_rows": 4000,
+        "intent_accuracy": 0.9965,
+        "accepted_precision": 0.9980113636363637,
+        "supported_ask_rate": 0.1215,
+        "unsupported_accepted": 6,
+        "unsupported_accept_rate": 0.006,
+        "wrong_accepted": 7,
+        "per_role": {
+          "developer": 0.996,
+          "tester": 0.997,
+          "architect": 0.997,
+          "writer": 0.996
+        }
+      }
+    }
+  ],
+  "threshold": -344,
+  "margin": 690,
+  "calibration": {
+    "rows": 5000,
+    "supported_rows": 4000,
+    "intent_accuracy": 0.988,
+    "accepted_precision": 0.9985367281240854,
+    "supported_ask_rate": 0.147,
+    "unsupported_accepted": 5,
+    "unsupported_accept_rate": 0.005,
+    "wrong_accepted": 5,
+    "per_role": {
+      "developer": 0.988,
+      "tester": 0.993,
+      "architect": 0.983,
+      "writer": 0.988
+    }
+  },
+  "asset_sha256": "b18106b34110313fb9d1cd24c9a22d1ad300ffab7b4def80a381cbc0ac0a7c5d",
+  "asset_bytes": 852116,
+  "model_path": "target/parser-train/models/intent-b18106b34110313f.bin",
+  "online_lock_sha256": "bb45a6dbcb255665d6df3c6070f1d98a631d889a42179cf83a7bc15ce8df61ee",
+  "phrasing_sha256": "4a227f16895b5febdd2267041a533f07ec42b93ec1c2da23f6ec9608d530d46f",
+  "frozen_fixture_sha256": {
+    "evaluation": "4ce9eab31744187d4f6c447bd56a7acc5d2262c6409e23c2614152f9bc3ec0ef",
+    "safety": "fe51eb5da92be5861ef6786c30c7e0a4d8ac56c98f96715271f0e7d4d1ceecce"
+  },
+  "runtime_promoted": false,
+  "scope": "Intent classification with original phrase-family splits, query-wrapped CodeSearchNet topics, and explicitly unsupported software tasks and CLINC assistant requests. No source bodies or workspace sessions are training inputs.",
+  "repository_evaluation": {
+    "actions/runner": {
+      "rows": 2600,
+      "supported_rows": 2600,
+      "intent_accuracy": 0.95,
+      "accepted_precision": 0.9915343915343915,
+      "supported_ask_rate": 0.27307692307692305,
+      "unsupported_accepted": 0,
+      "unsupported_accept_rate": null,
+      "wrong_accepted": 16,
+      "per_role": {
+        "developer": 0.9507692307692308,
+        "tester": 0.9461538461538461,
+        "architect": 0.9569230769230769,
+        "writer": 0.9461538461538461
+      }
+    },
+    "simpleiot/simpleiot": {
+      "rows": 2600,
+      "supported_rows": 2600,
+      "intent_accuracy": 0.9615384615384616,
+      "accepted_precision": 0.9995448338643604,
+      "supported_ask_rate": 0.155,
+      "unsupported_accepted": 0,
+      "unsupported_accept_rate": null,
+      "wrong_accepted": 1,
+      "per_role": {
+        "developer": 0.9569230769230769,
+        "tester": 0.963076923076923,
+        "architect": 0.9661538461538461,
+        "writer": 0.96
+      }
+    },
+    "fastapi/fastapi": {
+      "rows": 2600,
+      "supported_rows": 2600,
+      "intent_accuracy": 0.9661538461538461,
+      "accepted_precision": 1.0,
+      "supported_ask_rate": 0.2103846153846154,
+      "unsupported_accepted": 0,
+      "unsupported_accept_rate": null,
+      "wrong_accepted": 0,
+      "per_role": {
+        "developer": 0.9723076923076923,
+        "tester": 0.9615384615384616,
+        "architect": 0.963076923076923,
+        "writer": 0.9676923076923077
+      }
+    }
+  },
+  "regression_fixtures": {
+    "evaluation": {
+      "rows": 150,
+      "supported_rows": 150,
+      "intent_accuracy": 0.9733333333333334,
+      "accepted_precision": 1.0,
+      "supported_ask_rate": 0.23333333333333334,
+      "unsupported_accepted": 0,
+      "unsupported_accept_rate": null,
+      "wrong_accepted": 0,
+      "per_role": {
+        "developer": 0.9473684210526315,
+        "tester": 0.9736842105263158,
+        "architect": 1.0,
+        "writer": 0.972972972972973
+      }
+    },
+    "safety": {
+      "rows": 20,
+      "supported_rows": 0,
+      "intent_accuracy": null,
+      "accepted_precision": 0.0,
+      "supported_ask_rate": null,
+      "unsupported_accepted": 1,
+      "unsupported_accept_rate": 0.05,
+      "wrong_accepted": 1,
+      "per_role": {}
+    }
+  },
+  "public_unsupported": {
+    "rows": 1000,
+    "supported_rows": 0,
+    "intent_accuracy": null,
+    "accepted_precision": 0.0,
+    "supported_ask_rate": null,
+    "unsupported_accepted": 4,
+    "unsupported_accept_rate": 0.004,
+    "wrong_accepted": 4,
+    "per_role": {}
+  },
+  "training_text_overlap_audit": {
+    "actions/runner": 0,
+    "simpleiot/simpleiot": 0,
+    "fastapi/fastapi": 0,
+    "evaluation": 0,
+    "safety": 0
+  },
+  "gates": {
+    "repository_accuracy": true,
+    "role_accuracy": true,
+    "independent_150": true,
+    "curated_unsupported": false,
+    "public_unsupported": true,
+    "calibration_accepted_precision": true,
+    "supported_ask_rate": false
+  },
+  "qualified": false,
+  "evaluation_scope": "Existing repository/150/safety fixtures are retained regression tests, not fresh unseen tests. CLINC official test rows were not used to fit or calibrate. Agent-authored intent labels still require review."
+}

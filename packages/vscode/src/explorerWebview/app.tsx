@@ -96,13 +96,15 @@ export function App() {
         <div class={`airk-explorer${themed ? ' airk-themed' : ''}`}>
             <header class="topbar">
                 <strong class="brand" title={`Running AIRK ${state.extensionVersion}`}><BrandMark /><span>AIRK <span class="brand-subtitle">Explorer</span></span></strong>
-                <ProjectPicker projects={state.projects} selected={state.selectedProject} loading={state.connection === 'connecting'} />
                 <button type="button" class={`pill ${status.severity}`} aria-expanded={pill} onClick={() => setPill(open => !open)}
                     title="Service, published index, source work and semantic coverage">{status.word}</button>
                 <div class="topbar-actions">
                 <button type="button" class="ghost" onClick={() => setPalette(true)} title="Go to a screen (Ctrl/⌘+K)">Go to… <kbd>Ctrl K</kbd></button>
                 <button type="button" class={state.suggestions?.open ? '' : 'ghost'} aria-expanded={inbox} onClick={() => setInbox(open => !open)}
                     title="Drafts proposed by coding agents">Suggestions <span aria-live="polite">{state.suggestions?.open ?? 0}</span></button>
+                <button type="button" class={`workbench-toggle ghost${state.workbenchVisible ? ' active' : ''}`} aria-pressed={state.workbenchVisible ?? false}
+                    title={state.workbenchVisible ? 'Hide Workbench' : 'Show Workbench'}
+                    onClick={() => { void request('workbench.toggle', {}).catch(() => undefined); }}>Workbench</button>
                 <button type="button" class="ghost" aria-haspopup="listbox" onClick={() => void openHelp()}>Help <span aria-hidden="true">⌄</span></button>
                 <button type="button" class="ghost" onClick={() => go({ workspace: 'help', focus: 'about-airk' })}>About</button>
                 <button type="button" class={`theme-toggle ghost${themed ? ' active' : ''}`} aria-pressed={themed}
@@ -129,6 +131,9 @@ export function App() {
             <div class="frame">
                 <Rail route={route} state={state} go={go} />
                 <main class="content" aria-label={WORKSPACES.find(entry => entry.id === route.workspace)?.title}>
+                    {(route.workspace === 'overview' || route.workspace === 'manage') && <div class="project-context">
+                        <ProjectPicker projects={state.projects} selected={state.selectedProject} loading={state.connection === 'connecting'} />
+                    </div>}
                     {state.startup&&!state.extensionUpdate&&<StartupProgress startup={state.startup} />}
                     {state.extensionUpdate ? <section class="workspace"><article class="card" role="status">
                         <h1>Reload to finish the AIRK update</h1>
@@ -159,7 +164,7 @@ function ProjectPicker(props: { projects: readonly ProjectSummary[]; selected?: 
     if (!props.projects.length) { return <span class="muted">{props.loading ? 'Loading projects…' : 'No registered project'}</span>; }
     return (
         <label class="picker">
-            <span class="sr-only">Project</span>
+            <span>Project</span>
             <select value={props.selected ?? ''} onChange={event => {
                 const project = (event.target as HTMLSelectElement).value;
                 if (/^[0-9a-f]{64}$/.test(project)) { void request('project.select', { project }).catch(() => undefined); }

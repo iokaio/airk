@@ -1,0 +1,122 @@
+[
+  {
+    "text": "Delete src/client.rs and remove its tests.",
+    "expected": "abstain",
+    "reason": "unsupported_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Fix the bug in QueueClient.",
+    "expected": "abstain",
+    "reason": "unsupported_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Run the regression test suite.",
+    "expected": "abstain",
+    "reason": "unsupported_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Install a package from the network.",
+    "expected": "abstain",
+    "reason": "unsupported_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Rewrite the architecture document.",
+    "expected": "abstain",
+    "reason": "unsupported_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Commit and push my changes.",
+    "expected": "abstain",
+    "reason": "unsupported_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Repair the index and enable semantic vectors.",
+    "expected": "abstain",
+    "reason": "management_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Unregister the project and delete derived storage.",
+    "expected": "abstain",
+    "reason": "management_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Start indexing every workspace folder.",
+    "expected": "abstain",
+    "reason": "management_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Send these source files to an external model.",
+    "expected": "abstain",
+    "reason": "external_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Explain why this algorithm is incorrect.",
+    "expected": "abstain",
+    "reason": "reasoning_request",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Design a new authentication architecture.",
+    "expected": "abstain",
+    "reason": "generation_request",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Summarize the entire codebase.",
+    "expected": "abstain",
+    "reason": "generation_request",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Implement retries and then run tests.",
+    "expected": "abstain",
+    "reason": "unsupported_compound_action",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "publication busy",
+    "expected": "abstain",
+    "reason": "ambiguous_intent",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "QueueClient",
+    "expected": "abstain",
+    "reason": "missing_intent",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "What about it?",
+    "expected": "abstain",
+    "reason": "missing_selection",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Do the thing we discussed earlier.",
+    "expected": "abstain",
+    "reason": "missing_selection",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Which one is better?",
+    "expected": "abstain",
+    "reason": "reasoning_request",
+    "label_provenance": "agent-authored; human review pending"
+  },
+  {
+    "text": "Make the failing service healthy.",
+    "expected": "abstain",
+    "reason": "unsupported_action",
+    "label_provenance": "agent-authored; human review pending"
+  }
+]

@@ -38,13 +38,13 @@ Recent activity shows bounded native job history. Unacknowledged local requests 
 
 ## Reports and retained logs
 
-Version 1.5.9 adds `job_failed` records for failed jobs observed by the supervisor, including failures that leave their worker running. Records carry the exact project, job ID and durable safe code. Preparation and discovery codes identify their observed stage and recognized SQLite/OS or inventory cause. Unknown causes stay unspecified; raw exceptions, SQL, paths and file content are excluded. These records diagnose new failures; they cannot recover missing details from earlier generic receipts. See the [1.5.9 record](release-1.5.9.md).
+Version 1.5.9 adds `job_failed` records for failed jobs observed by the supervisor, including failures that leave their worker running. Records carry the exact project, job ID and durable safe code. Preparation and discovery codes identify their observed stage and recognized SQLite/OS or inventory cause. Unknown causes stay unspecified; raw exceptions, SQL, paths and file content are excluded. These records diagnose new failures; they cannot recover missing details from earlier generic receipts. See the [1.5.9 record](releases/release-1.5.9.md).
 
 Logs offers Generate report, Open report, Copy report and Save report. Open/copy/save use the exact captured report, even if background observations have changed. Reports include the visible project page, cached job/configuration outcomes, recovery budgets, watcher observations and up to 128 cached native events, within a 256 KiB report bound; omissions are explicit. Paths and user/machine names are redacted by default. Reports are not uploaded.
 
 Save retained service logs exports the complete available finite native ring separately: FIFO segments within a 200 MB high-water mark, purged oldest-first to at most 100 MB, rather than the recent 32-record display. Invalid records are counted and omitted; rotated-away records cannot be recovered. This is a local CLI export, not an enlarged service IPC response. The equivalent terminal command is `airk service logs --runtime-dir <private-control-directory> --all --format json`; use the inspected installation's log control directory, not its executable or project data directory.
 
-Checks are recorded in the [release record](release-1.5.7.md). The repeated-recovery eligibility bug is reproduced and fixed; the original remote two-second operation failure remains unattributed. Local test evidence does not establish Linux/macOS or installed-editor qualification.
+Checks are recorded in the [release record](releases/release-1.5.7.md). The repeated-recovery eligibility bug is reproduced and fixed; the original remote two-second operation failure remains unattributed. Local test evidence does not establish Linux/macOS or installed-editor qualification.
 
 ## Troubleshooting in 1.5.8
 
