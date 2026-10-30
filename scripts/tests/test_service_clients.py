@@ -17,6 +17,24 @@ SPEC.loader.exec_module(CLIENTS)
 
 
 class ServiceClientTests(unittest.TestCase):
+    def test_inference_replies_cannot_hide_a_native_exit_abort(self):
+        responses = [{"status": "extracted"},
+                     {"status": "opened", "protocol": 1, "version": "1.6.4", "identity": "fixture-model"},
+                     {"status": "embedded", "vectors": [[0.25, 0.75]], "execution": {}}]
+        output = b""
+        for response in responses:
+            data = json.dumps(response).encode()
+            output += len(data).to_bytes(4, "big") + data
+        result = subprocess.CompletedProcess([], 0, output, b"")
+        CLIENTS.verify_inference_worker_result(result, "1.6.4", "fixture-model", 2)
+        for code in (-6, 1):
+            failed = subprocess.CompletedProcess([], code, output, b"native exit failure")
+            with self.assertRaisesRegex(AssertionError, "Inference worker exited"):
+                CLIENTS.verify_inference_worker_result(failed, "1.6.4", "fixture-model", 2)
+        for malformed in (output[:-1], output + b"x", (4 << 20 | 1).to_bytes(4, "big")):
+            with self.assertRaises(AssertionError):
+                CLIENTS.verify_inference_worker_result(subprocess.CompletedProcess([], 0, malformed, b""), "1.6.4", "fixture-model", 2)
+
     def test_removal_requires_exact_history_proof_and_never_replays_a_pruned_request(self):
         project, job = "a" * 64, "b" * 64
         for outcome in ("confirmed", "crossed", "expired"):

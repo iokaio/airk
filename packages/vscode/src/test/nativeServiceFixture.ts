@@ -87,6 +87,21 @@ export class NativeServiceFixture {
         try{return record(JSON.parse(await runText(this.binary,args,path.dirname(this.binary),timeout,undefined,undefined,input)));}
         catch(error){process.stderr.write(`[native fixture] ${phase} failed: ${String(error)}\n`);throw error;}
     }
+    async requireResidentProjects(count:number):Promise<void>{
+        assert.ok(Number.isInteger(count)&&count>=1&&count<=4);
+        const before=record((await this.client!.rpc('resources','resources')).observation);
+        if(Number(before.resident_limit)>=count)return;
+        // These tests keep multiple project transports live simultaneously.
+        // The default 2 GiB budget on an 8 GiB host intentionally admits one.
+        // Request only the missing 512 MiB resident reservations through the
+        // public policy API on this disposable service; keep admission enabled.
+        const memory=Number(before.memory_limit_bytes)+(count-Number(before.resident_limit))*512*1024*1024;
+        assert.ok(memory<=Number(before.detected_memory_bytes),'Native test needs enough detected memory for its concurrent projects');
+        const configuration={...record(before.configuration),memory_bytes:memory};
+        const after=record((await this.client!.rpc({configure_resources:{configuration}},'resources')).observation);
+        assert.ok(Number(after.resident_limit)>=count,'Requested test residency was not admitted');
+        assert.ok(Number(after.memory_limit_bytes)<=Number(after.detected_memory_bytes));
+    }
     async register(name:string,source?:string):Promise<LaunchSpec>{
         const root=source??path.join(this.owner,name);await fs.mkdir(root,{recursive:true});
         const data=path.join(this.owner,'data');await fs.mkdir(data,{recursive:true});

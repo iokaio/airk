@@ -270,6 +270,7 @@ test('bundled helper rejects mismatched platforms and tampered bytes before exec
 test('extension native clients index, inspect, approve rebuilds, enforce limits and preserve isolated sources', {skip:!process.env.AIRK_TEST_BINARY,timeout:480000}, async()=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
     try{
+        await fixture.requireResidentProjects(2);
         const a=await fixture.register('project-a'),b=await fixture.register('project-b');
         await fs.writeFile(path.join(a.root,'a.py'),'def authenticate_fixture():\n    return True\n');
         await fs.writeFile(path.join(b.root,'b.py'),'def second_fixture():\n    return False\n');

@@ -204,11 +204,14 @@ def arrange_macos_bundle(staging, version):
 def sign_development_macos_bundle(staging):
     # An ad-hoc signature enables native development fixtures. It is never a
     # Developer ID, notarization or independent distribution-approval claim.
-    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--timestamp=none",
+    # Ad-hoc code has no Team ID for hardened-runtime library validation.
+    # Clear runtime flags on these development copies; sign-native.py applies
+    # Developer ID and hardened runtime to every release signing component.
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "0", "--timestamp=none",
                     str(staging / "AIRK.app/Contents/MacOS/libonnxruntime.dylib")], check=True)
-    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "runtime",
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "0",
                     "--timestamp=none", str(staging / runtime_names("macos")[1])], check=True)
-    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "runtime",
+    subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "0",
                     "--timestamp=none", str(staging / "AIRK.app")], check=True)
     subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(staging / "AIRK.app")], check=True)
 

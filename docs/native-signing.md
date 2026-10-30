@@ -2,6 +2,8 @@
 
 Signing is opt-in and operates on a fresh copy under ignored `artifacts/`. It does not import certificates, export keys, change the original build or publish a package. `scripts/sign-native.py` only writes a success receipt after OS signature verification succeeds. The native packager accepts `--signed-dir` and re-verifies the signature, source binary digest, target, commit and dependency lock before including the signed copy.
 
+The runtime builder gives macOS development/CI candidates ad-hoc signatures with runtime flags cleared. Ad-hoc code has no Team ID, so hardened-runtime library validation would reject its bundled ONNX library even after successful signature verification. A small native helper/library load test covers this boundary on Mac hosts. Developer ID release signing applies the requested identity and hardened runtime to both executables and the ONNX library, then verifies the team, timestamp and enclosing app before notarization. See [Apple's library-validation rules](https://developer.apple.com/documentation/BundleResources/Entitlements/com.apple.security.cs.disable-library-validation).
+
 On Windows, provision a trusted code-signing identity in the current user's certificate store, then run:
 
 ```powershell

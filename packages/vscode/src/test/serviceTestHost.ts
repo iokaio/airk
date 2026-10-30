@@ -15,7 +15,9 @@ import * as cliInstall from '../cliInstall';
 
 export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean}={}){
     const bundledVersion=options.bundledVersion??(options.upgrade?'1.4.1':'1.4.0');
-    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-service-'));
+    // The fixture must honor the production receipt guard's canonical directory
+    // identity, including macOS's /var -> /private/var temporary-path alias.
+    const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-service-')));
     const values=new Map<string,unknown>(),settings=new Map<string,unknown>(),commands=new Map<string,(...args:unknown[])=>Promise<unknown>>();
     const assistance=new Map<string,any>(),writes:any[]=[],calls:string[]=[],warnings:string[]=[],clipboard:string[]=[],panels:any[]=[],events:any[]=[],openedDocuments:any[]=[],notices:{message:string;actions:string[]}[]=[],progressRuns:{title:string;messages:string[]}[]=[];
     // Explorer Assistance listens on a real endpoint; only tests that exercise it turn it on.

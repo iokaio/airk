@@ -19,6 +19,8 @@ The default 1.4 adapter also supports [direct usage/settings pages and guarded c
 
 The native CLI saves an immutable request before submitting it. Each record binds its control location, registry namespace, caller, nonce, request epoch, project and job kind. The same-version/engine metadata adapter checks health and sends to the observed service instance. A changed instance or uncertain response preserves the record. There is no automatic fresh-key replay.
 
+Before creating that record, index and configuration preparation acquire the current request epoch within a fifteen-second total deadline. Only explicit `registry_busy` and `registry_response_unknown_retry_with_key` responses permit another epoch acquisition. This operation can prune terminal receipts and is not a general read-only retry. No job or configuration mutation is submitted by this loop; transport, identity and permanent registry failures remain immediate errors. Failure reports retain the response code, including the last observed code on deadline expiry. Derived-cleanup authority uses the same verified acquisition path.
+
 The private control directory contains a `client-requests` journal with at most 64 records, each at most 64 KiB: an additional bounded 4 MiB of client metadata, separate from the registry database. A short file lock serializes admission and file changes; it is released before network waits. Writes sync the prepared file and, on Unix, the containing directory before submission. Existing control/state source isolation protects this journal. Unknown/unfinished files, changed record bytes or scope, and exhausted capacity are explicit errors; they are preserved for inspection. No sample or source content is copied into these enqueue records.
 
 ```console

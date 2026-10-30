@@ -243,6 +243,10 @@ mod tests {
         let data = owner.path().join("data");
         std::fs::create_dir(&source)?;
         std::fs::create_dir(&data)?;
+        // Retained diagnostic opens require the saved canonical source identity.
+        // macOS temporary paths can otherwise retain the /var -> /private/var alias.
+        let source = source.canonicalize()?;
+        let data = data.canonicalize()?;
         std::fs::write(
             source.join("memo.txt"),
             "retained evidence remains searchable",
