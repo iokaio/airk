@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { LaunchSpec, launchArgs } from '../model';
 import { probeMcp, runJson } from '../native';
+import { readRetryDelay } from '../explorerEvidence';
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -67,10 +68,9 @@ class Mcp {
             const result = await this.request('tools/call', { name, arguments: {response_mode:'full',...args} }, Math.max(1,deadline-Date.now()));
             let body:any;
             try { body=JSON.parse(result.result?.content?.[0]?.text); } catch { /* Preserve protocol errors below. */ }
-            const busy=body?.error;
-            if(result.result?.isError&&busy?.code==='direct_query_admission'&&busy.query_submitted===false&&busy.retryable===true&&busy.reason==='busy'&&busy.fresh_brokerage_required===false&&Date.now()<deadline){
-                await sleep(Math.min(100,Math.max(25,Number(busy.retry_after_ms)||25)));continue;
-            }
+            // Only the shared typed read-retry contract authorizes repeating the exact call.
+            const delay=readRetryDelay(result.result);
+            if(delay!==undefined&&Date.now()+delay<deadline){await sleep(delay);continue;}
             const error = !!(result.error || result.result?.isError);
             assert.equal(error, rejected, JSON.stringify(result));
             return rejected ? undefined : body;

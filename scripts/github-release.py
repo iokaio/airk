@@ -83,13 +83,13 @@ def candidate(directory):
     return receipt, archive
 
 
-def verify_native(directory, target, commit, version, signed):
+def verify_native(directory, target, commit, version, signed, *, tree=None):
     receipt, archive = candidate(directory)
     paired = tuple(int(part) for part in version.split(".")[:2]) >= (1, 4)
     schema = "airk-native-candidate/2" if paired else "airk-native-candidate/1"
     if (receipt.get("schema") != schema
             or receipt.get("target") != target or receipt.get("vsix_target") != native.TARGETS[target]
-            or receipt.get("commit") != commit or receipt.get("version") != version
+            or not extension.package.same_source(receipt, commit, tree) or receipt.get("version") != version
             or receipt.get("dirty_checkout") is not False
             or receipt.get("cargo_lock_sha256") != digest(ROOT / "Cargo.lock")
             or receipt.get("toolchain_file_sha256") != digest(ROOT / "rust-toolchain.toml")
@@ -187,11 +187,11 @@ def verify_native(directory, target, commit, version, signed):
     return receipt, archive
 
 
-def stage_signing(directory, target, commit, version, output_root=None):
+def stage_signing(directory, target, commit, version, output_root=None, *, tree=None):
     """Restore only the tested executable, never arbitrary artifact paths."""
     if target not in SIGNED_TARGETS:
         raise ValueError("Unsupported signing target")
-    receipt, archive = verify_native(directory, target, commit, version, False)
+    receipt, archive = verify_native(directory, target, commit, version, False, tree=tree)
     paired = receipt["schema"] == "airk-native-candidate/2"
     executable = "airk.exe" if "windows" in target else "airk"
     executables = native.runtime_builder().runtime_names("windows" if "windows" in target else "macos") if paired else (executable,)
@@ -207,27 +207,33 @@ def stage_signing(directory, target, commit, version, output_root=None):
         (output / name).chmod(0o755)
 
 
-def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None, repair=None):
+def assemble(directory, output, commit, version, tag, channel, run_id, attempt, producer=None, repair=None, *, tree=None):
     if tag != identity(version) or channel not in ("preview", "stable"):
         raise ValueError("Invalid release identity/channel")
     suffix = f"{commit}-{run_id}-{attempt}" if producer is None else f"{commit}-{run_id}"
-    producer_suffix = suffix
     if producer is not None:
         producers.verify_record(producer, commit)
-        producer_suffix = f"{commit}-{producer['run_id']}-{producer['attempt']}"
+
+    def original_dir(target):
+        if producer is None:
+            return directory / f"airk-native-{target}-{suffix}"
+        if producer.get("schema") == "airk-ci-producer/2":
+            # Promoted PR artifacts keep their producer's merge-ref name.
+            return directory / producers.native_artifact(producer, target)
+        return directory / f"airk-native-{target}-{commit}-{producer['run_id']}-{producer['attempt']}"
     selected = []
     extensions = []
     for target in native.TARGETS:
         prefix = "airk-signed" if target in SIGNED_TARGETS else "airk"
         native_dir = directory / f"{prefix}-native-{target}-{suffix}"
         vsix_dir = directory / f"{prefix}-vsix-{target}-{suffix}"
-        receipt, archive = verify_native(native_dir, target, commit, version, target in SIGNED_TARGETS)
+        receipt, archive = verify_native(native_dir, target, commit, version, target in SIGNED_TARGETS, tree=tree)
         vsix_receipt, vsix = candidate(vsix_dir)
         if (vsix_receipt["native_manifest_sha256"] != digest(native_dir / "manifest.json")
                 or vsix_receipt["native_archive_sha256"] != receipt["archive_sha256"]):
             raise ValueError("VSIX and native download are not the same build")
         if target in SIGNED_TARGETS:
-            original, _ = verify_native(directory / f"airk-native-{target}-{producer_suffix}", target, commit, version, False)
+            original, _ = verify_native(original_dir(target), target, commit, version, False, tree=tree)
             executable = "airk.exe" if "windows" in target else "airk"
             if receipt["schema"] == "airk-native-candidate/2":
                 if receipt["signing"]["source_install_sha256"] != original["payload"]["airk-install.json"]:
@@ -238,19 +244,19 @@ def assemble(directory, output, commit, version, tag, channel, run_id, attempt, 
             elif receipt["signing"]["source_sha256"] != original["payload"][executable]:
                 raise ValueError("Signed binary did not originate in the tested candidate")
         elif producer is not None:
-            original, _ = verify_native(directory / f"airk-native-{target}-{producer_suffix}", target, commit, version, False)
+            original, _ = verify_native(original_dir(target), target, commit, version, False, tree=tree)
             if receipt != original:
                 raise ValueError("Linux native package differs from the tested producer")
         extensions.append(vsix_dir / "manifest.json")
         selected.extend(((archive, archive.name), (vsix, vsix.name),
                          (native_dir / "manifest.json", f"airk-{version}-{target}.native-manifest.json"),
                          (vsix_dir / "manifest.json", f"airk-{version}-{native.TARGETS[target]}.vsix-manifest.json")))
-    extension.verify(directory, commit, version, channel, receipts=extensions)
+    extension.verify(directory, commit, version, channel, receipts=extensions, tree=tree)
     output.mkdir(parents=True, exist_ok=False)
     for source, name in selected:
         shutil.copyfile(source, output / name)
     record = {"schema": "airk-github-release/1", "tag": tag, "package_version": version,
-              "commit": commit, "channel": channel, "run_id": str(run_id), "attempt": str(attempt),
+              "commit": commit, "tree": tree, "channel": channel, "run_id": str(run_id), "attempt": str(attempt),
               "assets": {name: digest(output / name) for _, name in selected}}
     if producer is not None:
         record["producer"] = producer
@@ -428,11 +434,12 @@ def main():
             output.write(f"version={version}\ntag={tag}\n")
         print(f"Release {tag}, package version {version}, source {commit}")
     elif args.command == "stage-signing":
-        stage_signing(args.directory, args.target, commit, version)
+        stage_signing(args.directory, args.target, commit, version, tree=extension.package.source_tree(commit))
     elif args.command == "assemble":
         assemble(args.directory, args.output, commit, version, tag, args.channel,
                  os.environ["GITHUB_RUN_ID"], os.environ["GITHUB_RUN_ATTEMPT"],
-                 json.loads(args.producer.read_text(encoding="utf-8")) if args.producer else None)
+                 json.loads(args.producer.read_text(encoding="utf-8")) if args.producer else None,
+                 tree=extension.package.source_tree(commit))
         print(f"Verified release assets: {args.output}")
     else:
         publish(args.directory, resume=args.resume)

@@ -255,6 +255,7 @@ def main():
         "source": builder.source_identity(), "install_manifest_sha256": files["airk-install.json"],
         "target": args.target, "vsix_target": TARGETS[args.target],
         "commit": capture("git", "rev-parse", "HEAD"),
+        "tree": capture("git", "rev-parse", "HEAD^{tree}"),
         "dirty_checkout": bool(capture("git", "status", "--porcelain")),
         "cargo_lock_sha256": sha256(ROOT / "Cargo.lock"),
         "toolchain_file_sha256": sha256(ROOT / "rust-toolchain.toml"),

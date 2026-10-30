@@ -559,7 +559,8 @@
   "scripts": {
     "vscode:uninstall": "node ./out/uninstallHook.js",
     "compile": "tsc -p . && tsc -p tsconfig.webview.json && tsc -p tsconfig.assistance.json && node scripts/build-explorer.cjs",
-    "test": "npm run compile && node --test out/test/*.test.js"
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "test:status": "npm run compile && node --test out/test/nativeReadRetry.test.js out/test/nativeReadRetryProcess.test.js out/test/nativeSmoke.test.js"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

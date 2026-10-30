@@ -3,6 +3,7 @@ import copy
 import hashlib
 import importlib.util
 import io
+import json
 from pathlib import Path
 import tempfile
 import unittest
@@ -262,6 +263,180 @@ class CandidateTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError, "assembly did not succeed"):
                         candidates.release_bundle(COMMIT, "123", "2", Path("unused"))
                     download.assert_not_called()
+
+
+TREE, MERGE, HEAD = "c" * 40, "d" * 40, "e" * 40
+
+
+def pull_fixture():
+    return dict(number=5, merged_at="2026-10-30T01:25:30Z", merge_commit_sha=COMMIT, base=dict(ref="main"),
+                head=dict(sha=HEAD, ref="feature", repo=dict(full_name="iokaio/airk")))
+
+
+def pr_run_fixture():
+    return {**run_fixture(), "id": 777, "head_sha": HEAD, "head_branch": "feature", "event": "pull_request"}
+
+
+def pr_jobs_fixture():
+    names = ["Required checks", "container", "quick", "plan", "extension"]
+    names += [f"Native / {target}" for target in candidates.PR_TARGETS]
+    names += [f"Contracts / {os_name}" for os_name in candidates.CONTRACT_HOSTS]
+    return [dict(name=name, conclusion="success") for name in names]
+
+
+def pr_artifacts_fixture():
+    return [dict(id=100 + i, name=f"airk-{kind}-{target}-{MERGE}-777-1", expired=False, digest="sha256:" + str(i) * 64,
+                 workflow_run=dict(id=777, head_sha=HEAD, head_branch="feature"))
+            for i, (kind, target) in enumerate((kind, target) for target in candidates.PR_TARGETS for kind in ("native", "vsix"))]
+
+
+def main_artifacts_fixture():
+    intel = candidates.MAIN_TARGETS[0]
+    return [dict(id=200 + i, name=f"airk-{kind}-{intel}-{COMMIT}-123-1", expired=False, digest="sha256:" + "f" * 64,
+                 workflow_run=dict(id=123, head_sha=COMMIT, head_branch="main"))
+            for i, kind in enumerate(("native", "vsix"))] + [
+        dict(id=300, name=f"airk-promotion-{COMMIT}-123-1", expired=False, digest="sha256:" + "9" * 64,
+             workflow_run=dict(id=123, head_sha=COMMIT, head_branch="main"))]
+
+
+def promotion_api(pulls=None, pr_run=None, pr_jobs=None, pr_artifacts=None, main_jobs=None, main_artifacts=None, main_run=None):
+    def respond(path, paginate=False):
+        if path == f"commits/{COMMIT}/pulls":
+            return pull_fixture_list if pulls is None else pulls
+        if path.startswith("actions/workflows/ci.yml/runs?"):
+            assert f"head_sha={HEAD}" in path and "event=pull_request" in path
+            return [dict(workflow_runs=[pr_run or pr_run_fixture()])]
+        if path == "actions/workflows/ci.yml":
+            return dict(id=42)
+        if path == "actions/runs/777":
+            return pr_run or pr_run_fixture()
+        if path == "actions/runs/777/attempts/1/jobs?per_page=100":
+            return [dict(jobs=pr_jobs_fixture() if pr_jobs is None else pr_jobs)]
+        if path == "actions/runs/777/artifacts?per_page=100":
+            return [dict(artifacts=pr_artifacts_fixture() if pr_artifacts is None else pr_artifacts)]
+        if path == "actions/runs/123":
+            return main_run or run_fixture()
+        if path == "actions/runs/123/attempts/1/jobs?per_page=100":
+            names = ["Required checks", "quick", "plan", f"Native / {candidates.MAIN_TARGETS[0]}"]
+            return [dict(jobs=[dict(name=name, conclusion="success") for name in names] if main_jobs is None else main_jobs)]
+        if path == "actions/runs/123/artifacts?per_page=100":
+            return [dict(artifacts=main_artifacts_fixture() if main_artifacts is None else main_artifacts)]
+        raise AssertionError(f"Unexpected API call: {path}")
+    pull_fixture_list = [pull_fixture()]
+    return respond
+
+
+def receipt_download(tree=TREE, commit=MERGE, dirty=False):
+    def write(artifact, destination):
+        destination.mkdir(parents=True)
+        target = next(t for t in candidates.PR_TARGETS if any(artifact["id"] == a["id"] and t in a["name"]
+                                                                for a in pr_artifacts_fixture()))
+        receipt = dict(commit=commit, tree=tree, dirty_checkout=dirty, target=target)
+        (destination / "manifest.json").write_text(json.dumps(receipt), encoding="utf-8")
+    return write
+
+
+class PromotionTests(unittest.TestCase):
+    def promote(self, api=None, download=None):
+        with tempfile.TemporaryDirectory() as temporary, \
+                patch.object(candidates, "api", side_effect=api or promotion_api()), \
+                patch.object(candidates, "download", side_effect=download or receipt_download()):
+            return candidates.promote(COMMIT, TREE, Path(temporary))
+
+    def test_merged_same_repository_pr_with_identical_tree_is_promoted(self):
+        record = self.promote()
+        self.assertEqual(record["schema"], "airk-ci-promotion/1")
+        self.assertEqual((record["commit"], record["tree"], record["pull_request"]), (COMMIT, TREE, 5))
+        producer = record["producer"]
+        self.assertEqual((producer["run_id"], producer["attempt"], producer["source_commit"]), ("777", "1", MERGE))
+        self.assertEqual(sorted(producer["artifacts"]), sorted(a["name"] for a in pr_artifacts_fixture()))
+
+    def test_promotion_refuses_unmerged_forked_or_ambiguous_pull_requests(self):
+        merged = pull_fixture()
+        for pulls in ([], [merged, merged], [{**merged, "merged_at": None}], [{**merged, "merge_commit_sha": "b" * 40}],
+                      [{**merged, "base": dict(ref="release")}],
+                      [{**merged, "head": {**merged["head"], "repo": dict(full_name="fork/airk")}}]):
+            with self.subTest(pulls=pulls), self.assertRaises(ValueError):
+                self.promote(promotion_api(pulls=pulls))
+
+    def test_promotion_refuses_incomplete_or_mismatched_pr_producers(self):
+        jobs_without_windows = [job for job in pr_jobs_fixture() if "windows-msvc" not in job["name"]]
+        failed_container = [{**job, "conclusion": "failure"} if job["name"] == "container" else job for job in pr_jobs_fixture()]
+        two_sources = pr_artifacts_fixture() + [{**pr_artifacts_fixture()[0], "id": 999, "name": f"airk-native-{candidates.PR_TARGETS[0]}-{'b' * 40}-777-1"}]
+        for name, api in (("skipped native", promotion_api(pr_jobs=jobs_without_windows)),
+                          ("failed container", promotion_api(pr_jobs=failed_container)),
+                          ("missing artifact", promotion_api(pr_artifacts=pr_artifacts_fixture()[:-1])),
+                          ("expired artifact", promotion_api(pr_artifacts=[{**a, "expired": True} for a in pr_artifacts_fixture()])),
+                          ("ambiguous merge ref", promotion_api(pr_artifacts=two_sources)),
+                          ("fork run", promotion_api(pr_run={**pr_run_fixture(), "head_repository": dict(full_name="fork/airk")})),
+                          ("stale head", promotion_api(pr_run={**pr_run_fixture(), "head_sha": "b" * 40}))):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.promote(api)
+        for name, download in (("tree", receipt_download(tree="b" * 40)), ("commit", receipt_download(commit="b" * 40)),
+                               ("dirty", receipt_download(dirty=True))):
+            with self.subTest(receipt=name), self.assertRaisesRegex(ValueError, "No eligible PR candidate"):
+                self.promote(download=download)
+
+    def attest_promoted(self, api=None, promotion=None):
+        record = promotion or self.promote()
+        def fetch(artifact, destination):
+            self.assertEqual(artifact, dict(id=300, digest="sha256:" + "9" * 64))
+            destination.mkdir(parents=True)
+            (destination / "promotion.json").write_text(json.dumps(record), encoding="utf-8")
+        with patch.object(candidates, "api", side_effect=api or promotion_api()), patch.object(candidates, "download", side_effect=fetch):
+            return candidates.attest(123, COMMIT)
+
+    def test_promoted_main_run_combines_pr_targets_with_its_own_intel_build(self):
+        record = self.attest_promoted()
+        self.assertEqual(record["schema"], "airk-ci-producer/2")
+        self.assertEqual((record["commit"], record["tree"], record["run_id"], record["attempt"]), (COMMIT, TREE, "123", "1"))
+        self.assertEqual(len(record["artifacts"]), 8)
+        self.assertEqual(record["promotion"]["producer"]["source_commit"], MERGE)
+        for target in candidates.PR_TARGETS:
+            self.assertEqual(candidates.native_artifact(record, target), f"airk-native-{target}-{MERGE}-777-1")
+        intel = candidates.MAIN_TARGETS[0]
+        self.assertEqual(candidates.native_artifact(record, intel), f"airk-native-{intel}-{COMMIT}-123-1")
+        with patch.object(candidates, "attest", return_value=record):
+            candidates.verify_record(record, COMMIT)
+
+    def test_promoted_main_run_rejects_changed_producers_and_missing_intel(self):
+        intel_failed = [dict(name=name, conclusion="failure" if "apple" in name else "success")
+                        for name in ("Required checks", "quick", "plan", f"Native / {candidates.MAIN_TARGETS[0]}")]
+        promotion = self.promote()
+        for name, api, record in (
+                ("intel failed", promotion_api(main_jobs=intel_failed), None),
+                ("intel artifact missing", promotion_api(main_artifacts=main_artifacts_fixture()[1:]), None),
+                ("duplicate promotion", promotion_api(main_artifacts=main_artifacts_fixture() + main_artifacts_fixture()[-1:]), None),
+                ("manual run", promotion_api(main_run={**run_fixture(), "event": "workflow_dispatch"}), None),
+                ("PR artifacts replaced", promotion_api(pr_artifacts=[{**a, "digest": "sha256:" + "8" * 64} for a in pr_artifacts_fixture()]), None),
+                ("other commit", None, {**promotion, "commit": "b" * 40}),
+                ("other schema", None, {**promotion, "schema": "airk-ci-promotion/0"})):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                if name == "manual run":
+                    with patch.object(candidates, "api", side_effect=api), patch.object(candidates, "download"):
+                        candidates.attest(123, COMMIT, allow_manual=True)
+                else:
+                    self.attest_promoted(api, record or promotion)
+
+    def test_partial_rerun_cannot_reuse_an_earlier_attempts_promotion(self):
+        base = promotion_api()
+        def api(path, paginate=False):
+            if path == "actions/runs/123":
+                return {**run_fixture(), "run_attempt": 2}
+            return base(path, paginate)
+        with patch.object(candidates, "api", side_effect=api), patch.object(candidates, "download") as download, \
+                self.assertRaisesRegex(ValueError, "rerun all CI jobs"):
+            candidates.attest(123, COMMIT)
+        download.assert_not_called()
+
+    def test_unpromoted_records_keep_the_exact_single_run_contract(self):
+        record = dict(schema="airk-ci-producer/1", commit=COMMIT, run_id="123", attempt="1",
+                      artifacts={f"airk-native-{t}-{COMMIT}-123-1": {} for t in candidates.TARGETS})
+        self.assertEqual(candidates.native_artifact(record, candidates.TARGETS[0]), f"airk-native-{candidates.TARGETS[0]}-{COMMIT}-123-1")
+        with self.assertRaises(ValueError):
+            candidates.native_artifact({"artifacts": {}}, candidates.TARGETS[0])
+        with self.assertRaisesRegex(ValueError, "another commit/schema"):
+            candidates.verify_record({**record, "schema": "airk-ci-producer/3"}, COMMIT)
 
 
 if __name__ == "__main__":

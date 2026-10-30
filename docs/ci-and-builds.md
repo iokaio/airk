@@ -47,10 +47,13 @@ Jobs install the repository-pinned Rust compiler/components, Python 3.11 and Nod
 
 - Linux runs workspace Clippy, all-feature workspace tests with the `ci` default filter, and doctests once. The separate extension job runs its mocked contracts; Python packaging/protocol contracts run on each host.
 - Every native host runs the short `airk-process` ownership regressions. Windows and both Macs compile only the CLI library plus `native_read_retry`, `legacy_native`, `pdf_worker` and `unix_guardian` integration binaries. These use the default lightweight-main features and at most two test processes. The selected targets do not require inference/model features; on Windows the default and all-feature inventories contain the same 157 test identities (156 runnable, one ignored). These cover installer behavior, typed contention, source preservation and the native process regressions without compiling the entire workspace test matrix.
-- All four hosts build the release executable pair, exercise short direct-client/shared offline-model and DOCX/XLSX smoke, verify managed installation and registered MCP before first publication, and verify native archives and platform VSIX packages. The VSIX includes digest-verified listing illustrations.
+- All four hosts build the release executable pair, exercise short direct-client/shared offline-model and DOCX/XLSX smoke, verify managed installation and registered MCP before first publication, and verify native archives and platform VSIX packages. The VSIX includes digest-verified listing illustrations. The managed-install/MCP smoke runs three independent passes per host with no retries, so cold-verification and admission races surface before merge.
+- PR CI runs the Linux x64, Windows x64 and Apple Silicon native jobs. macOS Intel runs on main after merge. The [plan script](../scripts/ci-plan.py) emits the native matrix; manual and qualification dispatches always cover all four hosts.
 - The Linux container job builds the runtime image and runs the one-container collection smoke. It does not repeat workspace compilation/tests in routine builds. Container timing reports explicitly record this scope and contain no synthetic test results.
 
 Dispatch **Actions / CI** with `qualification` enabled to restore workspace Clippy/tests/doctests on every native host, the full real native extension lifecycle and multi-project suite, container workspace tests/doctests, and the long workload, performance and fault campaigns. Those campaigns include the 200-edit retention plateau, large-catalog measurements, multi-page maintenance backlog, sparse-catalog measurements, ignored real-model performance regressions, model retrieval, code benchmark, ranking/recall, quota/relocation lifecycle, usage calibration and process-termination checks. Full qualification uses `--ignore-default-filter`; its assertions and workloads remain intact. Local `cargo test` is still unfiltered. A local container qualification build uses `docker build --build-arg AIRK_QUALIFICATION=true .`; default container builds omit the duplicate workspace suite.
+
+On October 29, 2026, at the repository owner's request, main stopped rebuilding the targets that the merged PR had already tested. Measured runs for one change had built the full matrix twice: PR CI 40824252870 took 41 minutes and main CI 40828289966 took 38 minutes on the same tree. The releases that followed took 7 and 2 minutes. In the 16 failed CI runs from October 25 to 29, Windows failed most often (10 runs), so it stays in the PR gate. Every CI failure on macOS Intel coincided with an Apple Silicon failure, so Intel moved after merge, where it is also the slowest host. Main CI 40985769764 then failed on Windows in the pinned quick-status smoke, while PR CI 40980983335 passed on the identical tree. That fixture treated a documented typed read refusal as fatal. Shared retry helpers, repeated smoke passes and a local four-processor runner now target that class of failure; see [focused status regressions](#focused-status-and-mac-loader-regressions).
 
 This policy changed on October 26, 2026 at the repository owner's request after per-platform workspace execution alone took 16-25 minutes on the Windows/macOS runners, in addition to test compilation and release builds. Dated pilot measurements below describe earlier policies. Exact-main candidate authentication, all four native artifact sets, version agreement and publication provenance remain mandatory. Routine CI does not claim the optional qualification campaigns or manual multi-project/multi-editor acceptance ran.
 
@@ -77,7 +80,7 @@ Ordinary CI and local extension packaging default to the stable channel for the 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 
 - `airk-<version>-<target>.zip`: native executable, AIRK legal files and dependency notices.
-- `manifest.json`: commit, dirty-checkout flag, compiler versions, lock/toolchain hashes, full payload digests and archive digest.
+- `manifest.json`: commit, Git tree, dirty-checkout flag, compiler versions, lock/toolchain hashes, full payload digests and archive digest. PR runs build GitHub's merge ref, so their artifact names and receipts carry that merge-ref commit; releases accept such a receipt only when its tree equals the released main commit's tree.
 - `SHA256SUMS`: SHA-256 digests for the ZIP and manifest.
 
 [The packager](../scripts/package-native.py) stages only these allowed inputs. It verifies every archive entry against the inventory, preserves Unix executable permissions, and runs the archived executable's version/help commands. It refuses an existing staging destination. Neither the repository tree nor `temp/`, index state, Cargo build directories or credentials are archived. GitHub retains build and test output in the run logs; failed jobs do not upload a successful candidate.
@@ -95,15 +98,24 @@ Use Python 3.9+ locally. Output is under ignored `artifacts/native/<target>/`. R
 
 ## Checks selected by the change
 
-Every PR starts the complete-diff classifier and quick checks. The classifier uses the PR merge base and both paths of moves/deletions. Unknown paths, workflow/build inputs and Rust changes select full validation. Main pushes and manual CI always build complete candidates.
+Every PR starts the complete-diff classifier and quick checks. The classifier uses the PR merge base and both paths of moves/deletions. Unknown paths, workflow/build inputs and Rust changes select full validation, which on a PR means the three PR native hosts plus container, extension and four-host contract checks. Manual CI always builds complete candidates.
+
+On a main push, the plan job tries to promote the merged PR's candidates before selecting work:
+
+1. The main commit must be the merge commit of exactly one merged PR from `iokaio/airk`; forks are never promoted.
+2. The newest successful `pull_request` CI run on that PR's final head must have succeeded in its plan, quick, container, extension, `Required checks`, all four contract jobs and the three PR native jobs.
+3. Its six native/VSIX artifacts must be unexpired, digest-bound to that run and attempt, and named for one merge-ref commit.
+4. Each downloaded native receipt must record that merge-ref commit, a clean checkout and a Git tree identical to the main commit's tree.
+
+When all four conditions hold, main uploads `airk-promotion-<commit>-<run>-<attempt>` and runs only quick checks and the macOS Intel native job; `Required checks` then requires exactly those. Anything else falls back to the complete four-host main build, including any API failure or a push that changes `Cargo.lock`, a `Cargo.toml`, `rust-toolchain.toml`, `.cargo/`, `Dockerfile`, `scripts/ci-prune-target.py`, `.config/nextest.toml` or `.github/workflows/ci.yml`. Those inputs key the main-only dependency caches, so the fallback also refreshes the caches through real jobs.
 
 | PR change | Required work |
 |---|---|
 | Markdown documentation only | Formatting, workflow validation, repository/link checks, classifier tests and whitespace |
 | Extension README/media or listing illustrations | Quick checks plus extension compilation/tests and packaging contracts; illustrations also select platform script contracts |
-| Extension TypeScript/package configuration | Real native adapter and candidate checks on all four platforms, plus extension checks |
+| Extension TypeScript/package configuration | Real native adapter and candidate checks on Linux, Windows and Apple Silicon (Intel after merge), plus extension checks |
 | Script contract tests only | Quick checks and Python contracts on all four platforms |
-| Rust, dependency, Docker, workflow, executable script or unknown input | Complete four-platform native checks, Python/extension contracts and container validation |
+| Rust, dependency, Docker, workflow, executable script or unknown input | Native checks on Linux, Windows and Apple Silicon (Intel after merge), four-host Python contracts, extension and container validation |
 
 `Required checks` always runs. It requires success for every selected job and an intentional skip for every unselected job. A failed plan, cancellation, unexpected skip or missing result cannot pass. `signed-off` remains independently required; branch protection is unchanged.
 
@@ -140,7 +152,7 @@ After merging, main CI must produce its own exact-commit candidate and populate 
 ## Controls that reduce unnecessary work
 
 - Branch pushes outside main use PR validation; newer commits cancel superseded runs for that PR. There is no schedule.
-- Main produces the complete authoritative candidate once. GitHub and Marketplace release workflows authenticate and promote its exact artifacts instead of invoking the Rust matrix again. A separate tag workflow verifies published release provenance; unverified tags fail with an instruction to validate a main candidate.
+- Each native target is built and tested once per merged change: Linux, Windows and Apple Silicon in PR CI, macOS Intel on main. Main records the identical-tree PR producer and its own Intel build as one candidate (`airk-ci-producer/2`), or builds all four itself when promotion does not apply (`airk-ci-producer/1`). GitHub and Marketplace release workflows authenticate and promote those exact artifacts instead of invoking the Rust matrix again. A separate tag workflow verifies published release provenance; unverified tags fail with an instruction to validate a main candidate.
 - The native matrix runs together. Compiler concurrency is four on x64 and remains two on Apple Silicon for memory headroom. Test scheduling is independently bounded. Platform clippy checks remain; formatting runs once. Intel's existing 120-minute job ceiling remains until hosted measurements justify reducing it; other full jobs retain 90 minutes.
 - SHA-pinned `rust-cache` keeps dependency outputs, excludes workspace crates and writes only from main push CI. PRs may restore main caches but cannot update them. Incremental compilation remains disabled; runtime/release optimization settings are unchanged.
 - Docker tests precede optimized compilation. BuildKit layer caching is supplemented by explicit registry/git/target cache-mount injection and extraction. Workspace outputs are pruned before exporting dependency caches. PR builds do not write shared Docker caches. A cache miss performs the same required checks.
@@ -176,7 +188,25 @@ The separate [Extended qualification workflow](../.github/workflows/qualificatio
 
 Debug/test builds optimize the SHA-256 dependency because integration fixtures authenticate complete native images and offline model assets. Existing digest, ownership and deadline checks remain enabled; release builds retain their existing optimization profile. macOS installer fixtures use canonical temporary roots and app-bundle-aware payload paths rather than relaxing redirect checks.
 
-Managed MCP smoke separates cold quick status from a confirmed observation. A two-second `status_timeout` must disclose unknown readiness and null evidence; it is not proof that an index is unavailable. Source-bound and pinned MCP frontends retain one session-owned installation-verification task across request timeouts, report its real failures, and cancel it when the session closes. Smoke requires cold quick-status recovery without a diagnostics warm-up, then checks registration, publication counts and cache invalidation. Only explicit timeout hints allow bounded same-scope status observations; pre-publication diagnostics still require confirmed unavailable evidence and zero inference loads/sessions. Production deadlines, payload/control/health verification and direct-query receipt safeguards remain enabled.
+Managed MCP smoke separates cold quick status from a confirmed observation. A two-second `status_timeout` must disclose unknown readiness and null evidence; it is not proof that an index is unavailable. Source-bound and pinned MCP frontends retain one session-owned installation-verification task across request timeouts, report its real failures, and cancel it when the session closes. Smoke requires cold quick-status recovery without a diagnostics warm-up, then checks registration, publication counts and cache invalidation. Explicit timeout hints and the existing typed safe-read refusals permit bounded same-scope observations within the original deadline; neither counts as readiness. Permanent errors, submitted queries and transport failures do not authorize replay. Pre-publication diagnostics still require confirmed unavailable evidence and zero inference loads/sessions. Production deadlines, payload/control/health verification and direct-query receipt safeguards remain enabled.
+
+### Focused status and Mac loader regressions
+
+Run these checks while investigating cold-status timing, before another hosted run:
+
+```text
+npm run test:status --prefix packages/vscode
+cargo test -p airk-mcp quick_status -- --nocapture
+python -m unittest scripts.tests.test_service_runtime_build.ServiceRuntimeBuildTests.test_development_mac_helper_loads_its_adhoc_signed_library -v
+```
+
+The process tests launch small Node children to verify actual exit codes, typed refusal handling, diagnostic preservation and admission deadlines. The Rust tests cover timeout, refusal and recovery without invented evidence; `quick_status_forwards_typed_admission_refusal_after_a_deadline_without_evidence` reproduces the hosted sequence deterministically: a deadline expires, then the abandoned query's admission slot causes an unsubmitted busy refusal that the frontend forwards unchanged.
+
+Session reads in native tests go through `requestWithReadRetry` or `observeQuickStatus`, which repeat only a complete typed hint within the original deadline and report any other failure with a bounded copy of the reply. [The contract test](../scripts/tests/test_native_read_contract.py) rejects unexplained raw native MCP calls and error assertions that omit the reply.
+
+To reproduce hosted Windows timing, run `pwsh -File scripts/ci-local.ps1 -Cores 4 -Repeat 5` (add `-Load 2` for competing CPU work). It restricts itself and every child process, including detached service roles, to the requested processors, then repeats the routine native smokes without retries. The loader test runs a real ad-hoc signed helper/library pair on macOS and explicitly skips other hosts; it does not qualify ONNX inference.
+
+For real native cold-status coverage, set `AIRK_TEST_BINARY` to the main executable in an existing qualified runtime pair, then run `node --test packages/vscode/out/test/nativeSmoke.test.js`. This covers source-bound and pinned frontends, registration, cache invalidation and zero inference loads. It skips when the binary is unset. Actual semantic inference and helper shutdown remain covered separately by `python scripts/check-service-clients.py --runtime-dir <runtime-directory> --files 16 --model --report <report.json>`; a loader or status pass alone does not establish semantic readiness.
 
 The real-model kernel step passes an absolute `AIRK_TEST_MODEL_DIR` rooted at the checked-out GitHub workspace. Cargo runs each integration target from its crate directory, so a repository-relative asset path is not a valid test input. The pinned asset verification and model/retrieval assertions remain unchanged.
 
