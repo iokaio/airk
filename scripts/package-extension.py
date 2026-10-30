@@ -39,6 +39,23 @@ ILLUSTRATIONS = ("local-evidence.png", "index-to-context.png")
 ICONS = ("airk.svg", "icon.png")
 
 
+def source_tree(revision="HEAD"):
+    """Git tree identity of a checked-out revision; None fails source comparisons closed."""
+    try:
+        tree = subprocess.check_output(["git", "rev-parse", f"{revision}^{{tree}}"], cwd=ROOT, text=True,
+                                       stderr=subprocess.DEVNULL).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return tree if re.fullmatch(r"[0-9a-f]{40}", tree) else None
+
+
+def same_source(receipt, commit, tree):
+    """A PR merge-ref candidate is the same source only when its recorded tree is identical."""
+    return receipt.get("commit") == commit or (
+        tree is not None and re.fullmatch(r"[0-9a-f]{40}", str(receipt.get("tree", ""))) is not None
+        and receipt["tree"] == tree)
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -217,7 +234,8 @@ def main():
     if manifest["target"] != args.target or manifest["vsix_target"] != TARGETS[args.target] or manifest["version"] != package["version"]:
         raise SystemExit("Native candidate and extension version/platform differ")
     commit = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-    if manifest["commit"] != commit or manifest["cargo_lock_sha256"] != digest((ROOT / "Cargo.lock").read_bytes()):
+    tree = source_tree()
+    if not same_source(manifest, commit, tree) or manifest["cargo_lock_sha256"] != digest((ROOT / "Cargo.lock").read_bytes()):
         raise SystemExit("Native candidate and current source/lock identity differ")
     safe_name(manifest["archive"])
     archive = native / manifest["archive"]
@@ -307,7 +325,7 @@ def main():
     vsix = publish / ("airk-" + package["version"] + "-" + TARGETS[args.target] + ".vsix")
     subprocess.run(["node", str(EXTENSION / "scripts" / "package.cjs"), str(stage), TARGETS[args.target], str(vsix), args.channel], cwd=ROOT, check=True)
     verify_vsix(vsix, expected, executable, TARGETS[args.target], package["version"], pre_release, package["displayName"])
-    receipt = {"schema": "airk-extension-candidate/1", "version": package["version"], "commit": commit,
+    receipt = {"schema": "airk-extension-candidate/1", "version": package["version"], "commit": commit, "tree": tree,
                "extension_id": package["publisher"] + "." + package["name"],
                "display_name": package["displayName"], "pre_release": pre_release,
                "platform": TARGETS[args.target], "native_archive_sha256": manifest["archive_sha256"],

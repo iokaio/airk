@@ -41,10 +41,16 @@ env:
 jobs:
   plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
       plan: ${{ steps.plan.outputs.plan }}
       native: ${{ steps.plan.outputs.native }}
+      native_matrix: ${{ steps.plan.outputs.native_matrix }}
+      promoted: ${{ steps.plan.outputs.promoted }}
       container: ${{ steps.plan.outputs.container }}
       extension: ${{ steps.plan.outputs.extension }}
       contracts: ${{ steps.plan.outputs.contracts }}
@@ -53,8 +59,20 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - id: plan
-        run: python scripts/ci-plan.py plan
+      - name: Select checks and promote the merged PR's identical-tree candidate on main
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AIRK_QUALIFICATION: ${{ inputs.qualification }}
+        run: python scripts/ci-plan.py plan --promotion artifacts/promotion
+      - name: Retain the verified promotion record
+        if: ${{ steps.plan.outputs.promoted == 'true' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: airk-promotion-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/promotion/promotion.json
+          if-no-files-found: error
+          retention-days: 7
   quick:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -123,29 +141,9 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 4
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            executable: airk
-            cargo_jobs: 4
-            test_threads: 4
-          - os: windows-2025
-            target: x86_64-pc-windows-msvc
-            executable: airk.exe
-            cargo_jobs: 4
-            test_threads: 4
-          - os: macos-15
-            target: aarch64-apple-darwin
-            executable: AIRK.app/Contents/MacOS/airk
-            cargo_jobs: 2
-            test_threads: 2
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            executable: AIRK.app/Contents/MacOS/airk
-            cargo_jobs: 4
-            test_threads: 4
-            timeout_minutes: 120
+      # PRs: Linux, Windows and Apple Silicon. Promoted main: macOS Intel only.
+      # Other main, manual and qualification builds: all four (scripts/ci-plan.py).
+      matrix: ${{ fromJSON(needs.plan.outputs.native_matrix) }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes || 90 }}
     steps:
@@ -234,13 +232,19 @@ jobs:
       - name: Abrupt process termination preserves a coherent published revision
         if: ${{ inputs.qualification }}
         run: python scripts/check-publication-faults.py --binary artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }} --attempts 3 --output artifacts/benchmarks/${{ matrix.target }}-faults.json
-      - name: Managed installation and registered native MCP smoke
+      - name: Managed installation and registered native MCP smoke (repeated for deadline races)
         if: ${{ !inputs.qualification }}
+        shell: bash
         env:
           AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
+        # Cold-verification and admission races depend on runner speed. Three
+        # independent passes, never retries, make them visible before merge.
         run: |
           npm run compile --prefix packages/vscode
-          node --test packages/vscode/out/test/nativeSmoke.test.js
+          for pass in 1 2 3; do
+            echo "Native MCP smoke pass $pass of 3"
+            node --test packages/vscode/out/test/nativeSmoke.test.js
+          done
       - name: Full extension and native lifecycle qualification
         if: ${{ inputs.qualification }}
         env:

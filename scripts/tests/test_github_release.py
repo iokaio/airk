@@ -237,6 +237,24 @@ class ServicePairReleaseContracts(unittest.TestCase):
                     with self.assertRaises(FileExistsError):
                         release.stage_signing(root / "candidate", target, COMMIT, PAIR_VERSION)
 
+    def test_promoted_merge_ref_candidate_verifies_only_with_the_identical_tree(self):
+        target = "x86_64-pc-windows-msvc"
+        for case in ("same tree", "no tree expected", "other tree", "missing receipt tree"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                directory = Path(temporary) / "candidate"
+                files, receipt, executables = pair_fixture(directory, target)
+                receipt = {**receipt, "commit": "d" * 40}
+                if case != "missing receipt tree":
+                    receipt["tree"] = "c" * 40
+                save_pair_candidate(directory, files, receipt, executables)
+                expected = None if case == "no tree expected" else "b" * 40 if case == "other tree" else "c" * 40
+                if case == "same tree":
+                    observed, _ = release.verify_native(directory, target, COMMIT, PAIR_VERSION, False, tree=expected)
+                    self.assertEqual(observed["commit"], "d" * 40)
+                else:
+                    with self.assertRaisesRegex(ValueError, "provenance"):
+                        release.verify_native(directory, target, COMMIT, PAIR_VERSION, False, tree=expected)
+
     def test_paired_release_assembles_all_platforms_with_original_producer_bindings(self):
         for mutation in (None, "component_source", "source_install"):
             with self.subTest(mutation=mutation), tempfile.TemporaryDirectory() as temporary:

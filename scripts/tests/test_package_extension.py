@@ -210,6 +210,22 @@ class VsixContracts(unittest.TestCase):
             with self.assertRaises(ValueError):
                 package.safe_name(name)
 
+    def test_merge_ref_candidates_match_only_an_identical_source_tree(self):
+        commit, tree = "a" * 40, "c" * 40
+        self.assertTrue(package.same_source({"commit": commit}, commit, None))
+        self.assertTrue(package.same_source({"commit": "d" * 40, "tree": tree}, commit, tree))
+        for receipt, expected_tree in (({"commit": "d" * 40, "tree": tree}, None),
+                                       ({"commit": "d" * 40, "tree": "b" * 40}, tree),
+                                       ({"commit": "d" * 40}, tree),
+                                       ({"commit": "d" * 40, "tree": tree.upper()}, tree.upper()),
+                                       ({"commit": "d" * 40, "tree": None}, None)):
+            with self.subTest(receipt=receipt, tree=expected_tree):
+                self.assertFalse(package.same_source(receipt, commit, expected_tree))
+        actual = package.source_tree()
+        self.assertRegex(actual, r"^[0-9a-f]{40}$")
+        self.assertEqual(actual, subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=package.ROOT, text=True).strip())
+        self.assertIsNone(package.source_tree("0" * 40), "an unknown revision fails comparisons closed")
+
 
 if __name__ == "__main__":
     unittest.main()

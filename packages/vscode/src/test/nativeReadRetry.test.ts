@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 import {strict as assert} from 'node:assert';
 import {test} from 'node:test';
-import {assertQuickStatusTimeout,observeQuickStatus,readRetryDelay} from './nativeReadRetry';
+import {assertQuickStatusTimeout,boundedReply,observeQuickStatus,readRetryDelay,requestWithReadRetry} from './nativeReadRetry';
+import {McpStdioSession} from '../mcpStdioSession';
 import {publishedStatusPending} from './nativeServiceFixture';
 
 test('quick-status timeouts disclose unknown readiness without fabricated evidence',()=>{
@@ -36,6 +37,41 @@ test('native read fixtures require the complete safe replay contract',()=>{
             assert.equal(readRetryDelay(wrap({error:{...error,...changed}})),undefined);
         }
     }
+});
+
+test('quick-status observation waits for explicit native refusals without treating them as readiness',async()=>{
+    const timeout={project:'a'.repeat(64),health:'unknown',index_state:'unknown',publication:null,files:null,chunks:null,index_error:{code:'status_timeout',retryable:true}};
+    const confirmed={project:timeout.project,index_state:'unavailable',publication:null,files:null,chunks:null};
+    const wrap=(hint:unknown)=>({isError:true,content:[{type:'text',text:JSON.stringify(hint)}]});
+    const busy=wrap({error:{code:'direct_query_admission',reason:'busy',query_submitted:false,retryable:true,retry_after_ms:1,fresh_brokerage_required:false}});
+    const selection=wrap({status:'retry',code:'selection_busy',retryable:true,action:'repeat_same_request',retry_after_ms:1});
+    const replies=[timeout,busy,selection,confirmed];let calls=0;const deadlines:number[]=[];
+    assert.equal(await observeQuickStatus(async deadline=>{deadlines.push(deadline);return replies[calls++];}),confirmed);assert.equal(calls,4);
+    assert.equal(new Set(deadlines).size,1,'Native refusal retries retain the original deadline');
+    calls=0;await assert.rejects(observeQuickStatus(async()=>[timeout,busy,{...confirmed,project:'b'.repeat(64)}][calls++]),/source scope/);
+    for(const refused of [wrap({error:{code:'direct_query_admission',reason:'expired',query_submitted:false,retryable:false}}),
+        wrap({error:{code:'direct_query_admission',reason:'busy',query_submitted:true,retryable:true,retry_after_ms:1,fresh_brokerage_required:false}}),
+        wrap({status:'retry',code:'unknown_busy',retryable:true,action:'repeat_same_request',retry_after_ms:1}),
+        {isError:true,content:[{type:'text',text:'permanent fixture failure'}]}]){
+        calls=0;await assert.rejects(observeQuickStatus(async()=>{calls++;return refused;}),assert.AssertionError);assert.equal(calls,1);
+    }
+    calls=0;await assert.rejects(observeQuickStatus(async()=>{calls++;return busy;},performance.now()),/observation budget/);assert.equal(calls,0);
+    calls=0;await assert.rejects(observeQuickStatus(async()=>{calls++;return wrap({status:'retry',code:'selection_busy',retryable:true,action:'repeat_same_request',retry_after_ms:1000});},performance.now()+500),/observation budget/);assert.ok(calls<=1,'An oversized retry hint cannot admit another read');
+    calls=0;await assert.rejects(observeQuickStatus(async()=>{calls++;throw new Error('transport fixture failure');}),/transport fixture failure/);assert.equal(calls,1);
+});
+
+test('MCP fixture reads repeat only typed rejections and report every other failure with its payload',async()=>{
+    const wrap=(hint:unknown)=>({isError:true,content:[{type:'text',text:JSON.stringify(hint)}]});
+    const busy=wrap({error:{code:'direct_query_admission',reason:'busy',query_submitted:false,retryable:true,retry_after_ms:1,fresh_brokerage_required:false}});
+    const ok={content:[{type:'text',text:'{"hits":[]}'}]};
+    const session=(replies:unknown[],seen:unknown[]=[])=>({request:async(method:string,params:unknown)=>{seen.push([method,params]);return replies.shift();}}) as unknown as McpStdioSession;
+    const seen:unknown[]=[];
+    assert.equal(await requestWithReadRetry(session([busy,busy,ok],seen),'search',{query:'q'}),ok);
+    assert.equal(seen.length,3);for(const call of seen)assert.deepEqual(call,['tools/call',{name:'search',arguments:{query:'q'}}],'Retries repeat the exact arguments');
+    const permanent=wrap({error:{code:'PROJECT_AMBIGUOUS',detail:'x'.repeat(5000)}});
+    await assert.rejects(requestWithReadRetry(session([permanent]),'search'),(error:unknown)=>error instanceof assert.AssertionError&&/search failed: .*PROJECT_AMBIGUOUS/.test(error.message)&&error.message.length<2200);
+    await assert.rejects(requestWithReadRetry(session([busy,busy]),'search',{},0),/search failed: .*direct_query_admission/,'An exhausted budget reports the last typed rejection');
+    assert.equal(boundedReply({a:1}),'{"a":1}');assert.match(boundedReply('y'.repeat(3000),10),/^"y{9}\.\.\. \(3002 bytes\)$/);
 });
 
 test('publication fixtures reject unhealthy, foreign and incomplete worker observations',()=>{

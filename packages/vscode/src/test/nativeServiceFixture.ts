@@ -7,7 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {LaunchSpec,launchArgs} from '../model';
 import {runText} from '../native';
-import {readNative} from './nativeReadRetry';
+import {boundedReply,readNative} from './nativeReadRetry';
 import {NativeControlTransport,RecordValue,ServiceClient,record,JobKind,ServiceError} from '../serviceClient';
 
 export function nativePayloadDirectory(binary:string):string {
@@ -117,7 +117,7 @@ export class NativeServiceFixture {
         process.stderr.write(`[native fixture] tool ${name}\n`);
         const envelope=record(await readNative(spec.command,[...launchArgs(spec,'tools'),'call',name,'--args',
             JSON.stringify({response_mode:'full',...args})],path.dirname(spec.command),deadline));
-        assert.notEqual(envelope.isError,true);assert.ok(Array.isArray(envelope.content));
+        assert.notEqual(envelope.isError,true,`${name} failed: ${boundedReply(envelope)}`);assert.ok(Array.isArray(envelope.content),boundedReply(envelope));
         return record(JSON.parse(String(record(envelope.content[0]).text)));
     }
     async publishedStatus(spec:LaunchSpec,deadline=performance.now()+120000):Promise<RecordValue>{

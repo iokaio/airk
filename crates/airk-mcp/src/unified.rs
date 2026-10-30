@@ -464,6 +464,7 @@ mod tests {
     struct Native {
         calls: Mutex<Vec<(String, Map<String, Value>)>>,
         stall_status: std::sync::atomic::AtomicBool,
+        busy_status: std::sync::atomic::AtomicBool,
     }
     impl RemoteTools for Native {
         fn call(&self, tool: String, args: Map<String, Value>) -> RemoteFuture<'_> {
@@ -472,6 +473,16 @@ mod tests {
                 self.calls.lock().unwrap().push((tool, args));
                 if status && self.stall_status.load(std::sync::atomic::Ordering::SeqCst) {
                     return std::future::pending().await;
+                }
+                if status && self.busy_status.load(std::sync::atomic::Ordering::SeqCst) {
+                    // The native worker's unsubmitted admission refusal while an
+                    // abandoned quick-status query still holds its slot.
+                    let detail = json!({"error":{"code":"direct_query_admission","reason":"busy",
+                        "query_submitted":false,"retryable":true,"retry_after_ms":25,
+                        "fresh_brokerage_required":false}});
+                    return Ok(
+                        json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true}),
+                    );
                 }
                 Ok(success(
                     json!({"index_state":"available","publication":{"token":"fixture"},"freshness":{"state":"idle"}}),
@@ -618,6 +629,46 @@ mod tests {
             );
         }
         assert_eq!(ui.calls.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn quick_status_forwards_typed_admission_refusal_after_a_deadline_without_evidence() {
+        // Slow hosts expire the quick deadline while the native query still
+        // holds admission; the next read is refused with a typed retry hint.
+        let (u, native, _, ui) = fixture(false, true);
+        native
+            .stall_status
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let expired = body(&call(&u, "status", json!({})).await).unwrap();
+        assert_eq!(expired["index_error"]["code"], "status_timeout");
+        native
+            .stall_status
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        native
+            .busy_status
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let refused = call(&u, "status", json!({})).await;
+        assert_eq!(refused["isError"], true);
+        let hint = body(&refused).unwrap();
+        assert_eq!(hint["error"]["code"], "direct_query_admission");
+        assert_eq!(hint["error"]["reason"], "busy");
+        assert_eq!(hint["error"]["query_submitted"], false);
+        assert_eq!(hint["error"]["retryable"], true);
+        assert_eq!(hint["error"]["retry_after_ms"], 25);
+        for field in ["publication", "files", "chunks", "index_state"] {
+            assert!(
+                hint.get(field).is_none(),
+                "a refusal must not invent {field}"
+            );
+        }
+        native
+            .busy_status
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+        let recovered = body(&call(&u, "status", json!({})).await).unwrap();
+        assert_eq!(recovered["index_state"], "available");
+        assert_eq!(recovered["project"], "aa".repeat(32));
+        assert_eq!(native.calls.lock().unwrap().len(), 3);
+        assert!(ui.calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

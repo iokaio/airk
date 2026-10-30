@@ -19,7 +19,7 @@ def read_receipt(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def verify(directory, commit, version, channel, *, receipts=None):
+def verify(directory, commit, version, channel, *, receipts=None, tree=None):
     if not re.fullmatch(r"[0-9a-f]{40}", commit) or not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise ValueError("Expected full commit SHA and numeric extension version")
     if channel not in ("preview", "stable"):
@@ -38,7 +38,7 @@ def verify(directory, commit, version, channel, *, receipts=None):
         if platform not in platforms:
             raise ValueError("Unexpected or duplicate release platform")
         platforms.remove(platform)
-        if (receipt["schema"] != "airk-extension-candidate/1" or receipt["commit"] != commit
+        if (receipt["schema"] != "airk-extension-candidate/1" or not package.same_source(receipt, commit, tree)
                 or receipt["version"] != version or receipt["extension_id"] != "iokaio.airk"
                 or receipt["pre_release"] is not (channel == "preview")
                 or receipt["npm_lock_sha256"] != lock_digest):
@@ -61,7 +61,7 @@ def verify(directory, commit, version, channel, *, receipts=None):
                     or native.get("schema") != ("airk-native-candidate/2" if paired else "airk-native-candidate/1")
                     or native.get("target") != targets[platform]
                     or native.get("toolchain_file_sha256") != toolchain_digest
-                    or native["commit"] != commit or native["version"] != version
+                    or not package.same_source(native, commit, tree) or native["version"] != version
                     or native["vsix_target"] != platform or native["dirty_checkout"]
                     or native["archive_sha256"] != receipt["native_archive_sha256"]
                     or native["cargo_lock_sha256"] != package.digest((ROOT / "Cargo.lock").read_bytes())):
@@ -97,7 +97,7 @@ def main():
     parser.add_argument("--channel", choices=("preview", "stable"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    archives = verify(args.directory, args.commit, args.version, args.channel)
+    archives = verify(args.directory, args.commit, args.version, args.channel, tree=package.source_tree(args.commit))
     args.output.write_text(json.dumps(archives, indent=2) + "\n", encoding="utf-8")
     print(f"Verified all {len(archives)} VSIX packages for {args.version} ({args.channel}) at {args.commit}")
 

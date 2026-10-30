@@ -13,6 +13,7 @@ import { McpStdioSession } from '../mcpStdioSession';
 import { assistanceEntry, unifiedEntry, UNIFIED_TOOLS } from '../model';
 import { probeAssistance, probeMcp } from '../native';
 import { NativeServiceFixture } from './nativeServiceFixture';
+import { requestWithReadRetry } from './nativeReadRetry';
 import { record } from '../serviceClient';
 
 // The agent entry runs: stable launcher → runtime `explorer-assistance` forwarder → bundled server.
@@ -52,7 +53,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
             JSON.stringify({caller:key.caller,key:key.key,action:'stop',expected_instance:health.instance,runtime:health.runtime_sha256}));
         session = (await McpStdioSession.open({ command: entry.command, args: [...entry.args], cwd: spec.root, clientName: 'native-test', clientVersion: version })).session;
         const call = async (name: string, args = {}) => {
-            const result = await session!.request('tools/call', { name, arguments: args }); assert.ok(!result.isError, JSON.stringify(result)); return result.structuredContent ?? JSON.parse(result.content[0].text);
+            const result = await requestWithReadRetry(session!, name, args); return result.structuredContent ?? JSON.parse(result.content[0].text);
         };
         assert.equal((await session.request('tools/list',{})).tools.length,27,'catalog discovery respects explicit Stop');
         assert.ok((await call('help',{topic:'jobs'})).content.includes('job'));
@@ -75,6 +76,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         assert.equal((await call('get_handoff', { token: shared.token })).content, shared.content);
 
         selected='cd'.repeat(32);
+        // native read: a deliberate negative test must receive exactly STALE_BINDING once.
         const wrong=await session.request('tools/call',{name:'draft_search',arguments:{schema_version:'1.0',idempotency_key:'wrong-project',title:'Must reject',draft:{query:'x'}}});
         assert.equal(wrong.isError,true);assert.equal(wrong.structuredContent.error.code,'STALE_BINDING');
         assert.equal((await call('status')).project,sourceScope,'UI selection never switches the indexed project');
@@ -94,13 +96,14 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         const multiple=unifiedEntry(spec,undefined,[other]);
         const multi=(await McpStdioSession.open({command:multiple.command,args:[...multiple.args],cwd:spec.root,clientName:'native-test',clientVersion:version})).session;
         try{
+            // native read: projects is answered by the frontend scope table without a native query.
             const scopes=await multi.request('tools/call',{name:'projects',arguments:{}});
             assert.equal(scopes.structuredContent.projects.length,2);assert.equal(scopes.structuredContent.default_project,null);
+            // native read: a deliberate negative test must receive exactly PROJECT_REQUIRED once.
             const ambiguous=await multi.request('tools/call',{name:'search',arguments:{query:'cobaltmarker',mode:'lexical'}});
             assert.equal(ambiguous.isError,true);assert.equal(ambiguous.structuredContent.error.code,'PROJECT_REQUIRED');
             for(const [project,query,file] of [[scopes.structuredContent.projects.find((p:any)=>p.name===spec.root).project,'cobaltmarker','fixture.txt'],[scopes.structuredContent.projects.find((p:any)=>p.name===other.root).project,'berylmarker','other.txt']]){
-                const result=await multi.request('tools/call',{name:'search',arguments:{project,query,mode:'lexical'}});
-                assert.notEqual(result.isError,true);assert.ok(JSON.stringify(result).includes(file));
+                const result=await requestWithReadRetry(multi,'search',{project,query,mode:'lexical'});assert.ok(JSON.stringify(result).includes(file));
             }
         }finally{multi.close();}
     } finally {

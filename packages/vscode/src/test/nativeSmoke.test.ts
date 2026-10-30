@@ -7,12 +7,13 @@ import {NativeServiceFixture} from './nativeServiceFixture';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {McpStdioSession} from '../mcpStdioSession';
-import {assertQuickStatusTimeout,observeQuickStatus} from './nativeReadRetry';
+import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry} from './nativeReadRetry';
 
 async function quickStatus(session:McpStdioSession):Promise<any>{
     return observeQuickStatus(async deadline=>{
+        // native read: observeQuickStatus applies the typed retry contract to this reply.
         const result=await session.request('tools/call',{name:'status',arguments:{}},Math.max(1,deadline-performance.now()));
-        assert.notEqual(result.isError,true);return JSON.parse(result.content[0].text);
+        return result.isError===true?result:JSON.parse(result.content[0].text);
     });
 }
 
@@ -26,6 +27,7 @@ test('one root-scoped MCP session survives late registration and rejects ambiguo
         // Repeated quick reads must complete cold verification without a diagnostics warm-up.
         let status=await quickStatus(session);
         assert.equal(status.registration_state,'missing');
+        // native read: projects is answered by the frontend scope table without a native query.
         const scopes=body(await session.request('tools/call',{name:'projects',arguments:{}},10000));
         const spec=await fixture.register('new-index',root);
         status=await quickStatus(session);
@@ -34,6 +36,7 @@ test('one root-scoped MCP session survives late registration and rejects ambiguo
         await fixture.register('another-index',root);
         status=await quickStatus(session);
         assert.equal(status.registration_state,'ambiguous');
+        // native read: a deliberate negative test must receive exactly PROJECT_AMBIGUOUS once.
         const search=await session.request('tools/call',{name:'search',arguments:{query:'fixture'}},10000);
         assert.equal(search.isError,true);assert.equal(body(search).error.code,'PROJECT_AMBIGUOUS');
         assert.equal((await fixture.embedding()).loads,0,'metadata and rejected reads do not start inference');
@@ -75,7 +78,7 @@ test('basic status includes version and health, caches snapshots and diagnostics
         const {launchArgs}=await import('../model');
         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec),cwd:fixture.owner,clientName:'status-cache-test',clientVersion:'1.6.1'},60000)).session;
         const read=async(name:string,args:Record<string,unknown>={})=>{
-            const result=await session!.request('tools/call',{name,arguments:args},name==='diagnostics'?60000:10000);assert.notEqual(result.isError,true);return JSON.parse(result.content[0].text);
+            const result=await requestWithReadRetry(session!,name,args,name==='diagnostics'?60000:10000);return JSON.parse(result.content[0].text);
         };
         const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
         const first=await quickStatus(session);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
