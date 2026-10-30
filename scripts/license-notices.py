@@ -18,8 +18,21 @@ def declaration_provenance(source, record):
         manifest = source / "Cargo.toml"
     if hashlib.sha256(manifest.read_bytes()).hexdigest() != record["declaration"]["sha256"]:
         raise ValueError("Pinned publisher declaration digest mismatch: " + record["name"])
-    return {key: record[key] for key in ("revision", "revision_basis", "declaration", "standalone_text_review")
-            if key in record}
+    return {key: record[key] for key in ("revision", "revision_basis", "declaration", "standalone_text_review",
+                                         "release_disposition") if key in record}
+
+
+def release_disposition(record, version):
+    """A maintainer decision for exactly this package version and pinned revision, or None.
+    A changed dependency never inherits an approval recorded for another version."""
+    disposition = (record or {}).get("release_disposition")
+    if not disposition:
+        return None
+    if (disposition.get("decision") != "accepted-publisher-declaration" or disposition.get("version") != version
+            or disposition.get("revision") != record.get("revision") or not disposition.get("date")
+            or not disposition.get("decided_by") or not disposition.get("evidence")):
+        return None
+    return disposition
 
 
 def software_bill_of_materials(metadata):
@@ -49,6 +62,8 @@ def software_bill_of_materials(metadata):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--release", action="store_true",
+                        help="fail when a package without separate license text has no matching maintainer disposition")
     args = parser.parse_args()
     metadata = json.loads(subprocess.check_output([
         "cargo", "metadata", "--format-version", "1", "--locked"
@@ -66,6 +81,7 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
     inventory = []
     missing = []
+    unresolved = []
     for package in metadata["packages"]:
         if package["id"] in workspace_ids:
             continue
@@ -97,9 +113,16 @@ def main():
                            "license": package.get("license"), "authors": package.get("authors"),
                            "repository": package.get("repository"),
                            "note": "Publisher declares a license but supplies no separate license text. Review before publishing."}
-            declaration.update(declaration_provenance(source, pinned_records.get((package["name"], package["version"]))))
+            record = pinned_records.get((package["name"], package["version"]))
+            declaration.update(declaration_provenance(source, record))
+            disposition = release_disposition(record, package["version"])
+            declaration["release_review"] = "accepted" if disposition else "unresolved"
             (destination / "UPSTREAM-LICENSE-DECLARATION.json").write_text(json.dumps(declaration, indent=2) + "\n", encoding="utf-8")
-            print("Release review needed for license declaration without separate text: " + package["name"])
+            if disposition:
+                print(f"License declaration accepted for release on {disposition['date']}: {package['name']} {package['version']}")
+            else:
+                unresolved.append(package["name"] + " " + package["version"])
+                print("Release review needed for license declaration without separate text: " + package["name"])
     catalog = json.loads(Path("crates/airk-retrieval/src/model_catalog.json").read_text(encoding="utf-8"))
     profile = catalog["profiles"][0]
     model_notices = args.output / "all-MiniLM-L6-v2"
@@ -123,6 +146,8 @@ def main():
     (args.output / "bom.cdx.json").write_text(json.dumps(bom, indent=2) + "\n", encoding="utf-8")
     if missing:
         raise SystemExit("Missing license declarations: " + ", ".join(missing))
+    if args.release and unresolved:
+        raise SystemExit("Release license review unresolved: " + ", ".join(unresolved))
     print(f"Bundled notices for {len(inventory)} third-party packages in {args.output}")
 
 

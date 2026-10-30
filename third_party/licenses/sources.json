@@ -15,6 +15,14 @@
     "standalone_text_review": {
       "date": "2026-10-18",
       "result": "No standalone legal text found in the complete pinned upstream Git tree; publisher declaration retained, release legal review unresolved."
+    },
+    "release_disposition": {
+      "date": "2026-10-30",
+      "decision": "accepted-publisher-declaration",
+      "version": "0.4.1",
+      "revision": "ac107d55f0d31a9d47955082238ab9e4fb157cdb",
+      "evidence": "Pinned publisher Cargo.toml declaration (sha256 a213b5a96e692c1473cb156fc19028fee007014656c3dfa6c40e24135ef3a769) matches the published crate archive; the complete pinned upstream tree has no standalone legal text. The declared license identifier is redistributed with the declaration record; no substitute text was created.",
+      "decided_by": "maintainer"
     }
   },
   {
@@ -197,6 +205,14 @@
     "standalone_text_review": {
       "date": "2026-10-18",
       "result": "No standalone legal text found in the complete pinned upstream Git tree; publisher declaration retained, release legal review unresolved."
+    },
+    "release_disposition": {
+      "date": "2026-10-30",
+      "decision": "accepted-publisher-declaration",
+      "version": "0.12.1",
+      "revision": "47b792ba04c5f3b6e478072b2efb8e1a2a06ec7e",
+      "evidence": "Pinned publisher Cargo.toml declaration (sha256 58c439e4f241594ee5318cac623f17d28ed41ec6e7d67eaae1a84703691cd1d0) matches the published crate archive; the complete pinned upstream tree has no standalone legal text. The declared license identifier is redistributed with the declaration record; no substitute text was created.",
+      "decided_by": "maintainer"
     }
   },
   {
@@ -701,6 +717,14 @@
     "standalone_text_review": {
       "date": "2026-10-18",
       "result": "No standalone legal text found in the complete pinned upstream Git tree; publisher declaration retained, release legal review unresolved."
+    },
+    "release_disposition": {
+      "date": "2026-10-30",
+      "decision": "accepted-publisher-declaration",
+      "version": "0.1.1",
+      "revision": "55d193e28c9a5909be02a5b1f91fd3f76b076747",
+      "evidence": "Pinned publisher Cargo.toml declaration (sha256 3ecd26d53abb6ed11e82871d5d633d4bb49463df9be71c7e32f32bed81b4506f) matches the published crate archive; the complete pinned upstream tree has no standalone legal text. The declared license identifier is redistributed with the declaration record; no substitute text was created.",
+      "decided_by": "maintainer"
     }
   },
   {

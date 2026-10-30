@@ -40,5 +40,28 @@ class DeclarationTests(unittest.TestCase):
             self.assertEqual(MODULE.declaration_provenance(source, None), {})
 
 
+
+class ReleaseDispositionTests(unittest.TestCase):
+    def test_disposition_applies_only_to_its_exact_version_and_revision(self):
+        record = {"name": "fictional", "version": "1.0.0", "revision": "a" * 40,
+                  "release_disposition": {"date": "2026-10-30", "decision": "accepted-publisher-declaration",
+                                          "version": "1.0.0", "revision": "a" * 40, "evidence": "fixture",
+                                          "decided_by": "maintainer"}}
+        self.assertIsNotNone(MODULE.release_disposition(record, "1.0.0"))
+        self.assertIsNone(MODULE.release_disposition(record, "1.0.1"), "a changed version needs re-review")
+        self.assertIsNone(MODULE.release_disposition(dict(record, revision="b" * 40), "1.0.0"))
+        self.assertIsNone(MODULE.release_disposition({"name": "fictional", "version": "1.0.0"}, "1.0.0"))
+
+    def test_checked_in_unresolved_cases_have_complete_dispositions(self):
+        import json
+        sources = json.loads((Path(__file__).resolve().parents[2] / "third_party" / "licenses" / "sources.json").read_text(encoding="utf-8"))
+        lock = (Path(__file__).resolve().parents[2] / "Cargo.lock").read_text(encoding="utf-8")
+        # Historical records (for example htmlescape) left the graph and need no current disposition.
+        current = [item for item in sources if item.get("missing_text")
+                   and f'name = "{item["name"]}"\nversion = "{item["version"]}"' in lock]
+        self.assertEqual(len(current), 3)
+        for record in current:
+            self.assertIsNotNone(MODULE.release_disposition(record, record["version"]), record["name"])
+
 if __name__ == "__main__":
     unittest.main()
