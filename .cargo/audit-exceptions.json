@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "exceptions": [
+    {
+      "ecosystem": "cargo",
+      "package": "paste",
+      "version": "1.0.15",
+      "id": "RUSTSEC-2024-0436",
+      "scope": "Compile-time proc-macro used only by tokenizers 0.23.2; no runtime code is shipped from it.",
+      "evidence": "cargo tree -i paste: tokenizers 0.23.2 -> airk-kernel, airk-retrieval. Unmaintained notice, no vulnerability. No compatible tokenizers release removes it.",
+      "reviewer": "maintainer",
+      "reviewed": "2026-10-30",
+      "review_by": "2027-01-31"
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "ttf-parser",
+      "version": "0.25.1",
+      "id": "RUSTSEC-2026-0192",
+      "scope": "Font parsing inside lopdf 0.42.0 for pdf-extract 0.12.1; runs only in the bounded PDF worker subprocess.",
+      "evidence": "cargo tree -i ttf-parser: lopdf 0.42.0 -> pdf-extract =0.12.1 -> airk-ingest. Unmaintained notice, no vulnerability. pdf-extract is pinned; replacing it is tracked separately.",
+      "reviewer": "maintainer",
+      "reviewed": "2026-10-30",
+      "review_by": "2027-01-31"
+    }
+  ]
+}
