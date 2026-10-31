@@ -9,7 +9,8 @@ looks installed while the old code keeps running. This script runs
 `code --install-extension <vsix> --force`, which replaces the same-version copy, then
 verifies that the installed extension code matches the VSIX byte for byte.
 A forced reinstall is an update, not an uninstall, so AIRK's uninstall cleanup does
-not run and indexes are untouched. Reload VS Code windows afterwards.
+not run and indexes are untouched. On Windows, VS Code locks the installed folder while
+it runs: close every VS Code window first, or install a higher version instead.
 
 .PARAMETER Vsix
 The VSIX to install. Defaults to the newest artifacts\**\extension\publish\*.vsix.
@@ -31,7 +32,14 @@ if (-not $Vsix) {
     $Vsix = $latest.FullName
 }
 $Vsix = (Resolve-Path -LiteralPath $Vsix).Path
-if (-not (Get-Command $Code -ErrorAction SilentlyContinue)) { throw "$Code was not found on PATH. In VS Code run 'Shell Command: Install code command in PATH', or pass -Code." }
+if (-not (Get-Command $Code -ErrorAction SilentlyContinue)) {
+    # The per-user and system installers place the CLI here even when it is not on PATH.
+    $product = if ($Code -like '*insiders*') { 'Microsoft VS Code Insiders' } else { 'Microsoft VS Code' }
+    $found = @("$env:LOCALAPPDATA\Programs\$product\bin\$Code.cmd", "$env:ProgramFiles\$product\bin\$Code.cmd") |
+        Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $found) { throw "$Code was not found on PATH or in the standard install folders. In VS Code run 'Shell Command: Install code command in PATH', or pass -Code <path to code.cmd>." }
+    $Code = $found
+}
 if (-not $ExtensionsDir) {
     $ExtensionsDir = Join-Path $env:USERPROFILE ($(if ($Code -like '*insiders*') { '.vscode-insiders' } else { '.vscode' }) + '\extensions')
 }
@@ -56,7 +64,9 @@ try {
 $id = "$($package.publisher).$($package.name)"
 Write-Host "Installing $id $($package.version) from $Vsix (forced; replaces the same version)"
 & $Code --install-extension $Vsix --force
-if ($LASTEXITCODE -ne 0) { throw "$Code --install-extension failed with exit code $LASTEXITCODE" }
+if ($LASTEXITCODE -ne 0) {
+    throw "$Code --install-extension failed with exit code $LASTEXITCODE. On Windows a running VS Code locks the installed $id-$($package.version) folder, so a same-version reinstall needs every VS Code window closed (run this script from another terminal). A VSIX with a higher version installs beside it without closing VS Code."
+}
 
 $installed = Join-Path $ExtensionsDir "$id-$($package.version)"
 $file = Join-Path $installed 'out\serviceExtension.js'
