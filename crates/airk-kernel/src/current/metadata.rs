@@ -15,6 +15,11 @@ use airk_store::{
 use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 
+pub(super) struct PreparedMetadata {
+    pub references: Vec<FileMetadataRef>,
+    pub optional: Vec<airk_store::current::native_projection::PreparedNativeProjection>,
+}
+
 pub(super) fn prepare(
     store: &FileStore,
     writer: &airk_store::WriterLock,
@@ -23,7 +28,7 @@ pub(super) fn prepare(
     configuration: Option<&CollectionConfiguration>,
     reservation: &Reservation,
     moves: Option<&BTreeMap<String, String>>,
-) -> Result<Vec<FileMetadataRef>> {
+) -> Result<PreparedMetadata> {
     let sequence = read
         .head()
         .sequence
@@ -33,6 +38,9 @@ pub(super) fn prepare(
     let mut references = Vec::new();
     let mut prior_bytes = 0usize;
     let mut captured_bytes = 0usize;
+    let mut optional = Vec::new();
+    let mut optional_memory = 0usize;
+    let mut preparation_limited = false;
     let compression = store.compression_mode(&read.head().scope.root)?;
     for change in changes {
         let ArtifactChange::Upsert(input) = change else {
@@ -109,21 +117,9 @@ pub(super) fn prepare(
                 .filter(|s| s.evidence_digest == evidence_digest)
                 .map_or(sequence, |s| s.stamps.evidence_generation),
         };
-        let payload = store.load_extraction_payload(artifact)?;
-        let indexed_lines = if profile.contract_version == 2 && artifact.extraction_method == "utf8"
-        {
-            std::str::from_utf8(&store.read_retained_source(artifact)?)?
-                .split_inclusive('\n')
-                .count()
-        } else {
-            store
-                .load_retained(artifact)?
-                .chunks
-                .iter()
-                .map(|c| c.end_line)
-                .max()
-                .unwrap_or(0)
-        };
+        let prepared = store.prepare_current_metadata_input(artifact)?;
+        let payload = prepared.payload();
+        let indexed_lines = prepared.indexed_lines();
         let mut file = InventoryFile {
             continuity: vec![],
             continuity_coverage: Default::default(),
@@ -148,7 +144,7 @@ pub(super) fn prepare(
             extraction_method: artifact.extraction_method.clone(),
             parse_status: artifact.parse_status.clone(),
         };
-        crate::continuity::assign(prior, path, &mut file, &payload, sequence)?;
+        crate::continuity::assign(prior, path, &mut file, payload, sequence)?;
         captured_bytes = captured_bytes
             .checked_add(serde_json::to_vec(&file)?.len())
             .context("current metadata budget overflow")?;
@@ -156,13 +152,51 @@ pub(super) fn prepare(
             captured_bytes <= airk_store::current::MAX_CURRENT_METADATA_READ_BYTES,
             "current captured metadata admission exceeded"
         );
-        references.push(store.retain_current_metadata_encoded_owned(
+        let reference = store.retain_current_metadata_scalars_prepared_owned(
             writer,
             path,
             &file,
+            &prepared,
             reservation,
             compression,
-        )?);
+        )?;
+        if !preparation_limited {
+            use airk_store::current::native_projection::{
+                MAX_PREPARED_NATIVE_BYTES, ProjectionPreparationLimit,
+            };
+            match store.prepare_native_fact_projection(prepared.artifact(), &file, compression) {
+                Ok(plan)
+                    if optional_memory.saturating_add(plan.memory_bytes())
+                        <= MAX_PREPARED_NATIVE_BYTES =>
+                {
+                    optional_memory += plan.memory_bytes();
+                    optional.push(plan);
+                }
+                Ok(_) => {
+                    preparation_limited = true;
+                    optional.clear();
+                }
+                Err(error) if error.is::<ProjectionPreparationLimit>() => {
+                    preparation_limited = true;
+                    optional.clear();
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        references.push(reference);
     }
-    Ok(references)
+    use airk_store::current::metadata::ProjectionOmission;
+    if preparation_limited {
+        for reference in &mut references {
+            reference.native_facts_omission = Some(ProjectionOmission::PreparationLimit);
+        }
+    } else {
+        for reference in &mut references {
+            reference.native_facts_omission = Some(ProjectionOmission::Budget);
+        }
+    }
+    Ok(PreparedMetadata {
+        references,
+        optional,
+    })
 }

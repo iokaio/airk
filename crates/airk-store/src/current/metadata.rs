@@ -18,6 +18,12 @@ use std::{
 
 pub const MAX_METADATA_BYTES: usize = 16 * 1024 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectionOmission {
+    Budget,
+    PreparationLimit,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileMetadataRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -25,6 +31,142 @@ pub struct FileMetadataRef {
     pub path: String,
     pub digest: Sha256Digest,
     pub bytes: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scalars: Option<FileScalars>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_facts: Option<super::resources::ResourceReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_facts_omission: Option<ProjectionOmission>,
+    #[serde(skip)]
+    line_witness: Option<std::sync::Arc<IndexedLinesWitness>>,
+}
+impl FileMetadataRef {
+    fn validate_projection_declaration(&self) -> Result<()> {
+        ensure!(
+            self.native_facts.is_none() || self.native_facts_omission.is_none(),
+            "conflicting native projection declaration"
+        );
+        Ok(())
+    }
+}
+
+/// Ephemeral content-bound producer input, never serialized or query authority.
+/// The accepting journal still revalidates captured source/payload hashes.
+#[derive(Debug)]
+struct IndexedLinesWitness {
+    source: Sha256Digest,
+    payload: Sha256Digest,
+    profile: Sha256Digest,
+    lines: usize,
+}
+pub struct PreparedMetadataInput {
+    retrieval: airk_core::RetrievalArtifact,
+    witness: std::sync::Arc<IndexedLinesWitness>,
+}
+impl PreparedMetadataInput {
+    pub fn artifact(&self) -> &airk_core::Artifact {
+        &self.retrieval.artifact
+    }
+    pub fn payload(&self) -> &airk_core::extraction::ExtractionPayload {
+        &self.retrieval.payload
+    }
+    pub fn indexed_lines(&self) -> usize {
+        self.witness.lines
+    }
+}
+impl IndexedLinesWitness {
+    fn matches(&self, artifact: &airk_core::Artifact) -> Result<bool> {
+        let retained = artifact
+            .retained
+            .as_ref()
+            .context("line witness extraction missing")?;
+        Ok(self.source == artifact.content_hash.parse()?
+            && self.payload == retained.object.parse()?
+            && self.profile
+                == retained
+                    .profile
+                    .as_ref()
+                    .context("line witness profile missing")?
+                    .identity()?)
+    }
+}
+
+/// Publication-derived scalars, authenticated by the existing current map.
+/// Absence on legacy heads means no projection; it is never an empty file claim.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileScalars {
+    pub version: u32,
+    pub indexed_lines: usize,
+    /// Exact content/profile binding; all other file-info scalars already live
+    /// in the compact Artifact. Do not duplicate FileState/root/continuity here.
+    pub binding: Sha256Digest,
+}
+impl FileScalars {
+    fn binding(source: Sha256Digest, payload: Sha256Digest, profile: Sha256Digest) -> Sha256Digest {
+        framed_digest(
+            b"current-file-scalars/1",
+            &[source.as_bytes(), payload.as_bytes(), profile.as_bytes()],
+        )
+    }
+    fn from_file(file: &InventoryFile) -> Self {
+        Self {
+            version: 1,
+            indexed_lines: file.indexed_lines,
+            binding: Self::binding(
+                file.state.source_hash,
+                file.state.payload_digest,
+                file.state.profile_id,
+            ),
+        }
+    }
+    fn verify(&self, artifact: &airk_core::Artifact, _sequence: u64) -> Result<()> {
+        let retained = artifact
+            .retained
+            .as_ref()
+            .context("current scalar extraction missing")?;
+        let expected = Self::binding(
+            artifact.content_hash.parse()?,
+            retained.object.parse()?,
+            retained
+                .profile
+                .as_ref()
+                .context("current scalar profile missing")?
+                .identity()?,
+        );
+        ensure!(
+            self.version == 1 && self.binding == expected,
+            "current scalar metadata source/profile mismatch"
+        );
+        Ok(())
+    }
+}
+
+fn verify_indexed_lines(
+    store: &FileStore,
+    artifact: &airk_core::Artifact,
+    scalars: &FileScalars,
+) -> Result<()> {
+    let profile = artifact
+        .retained
+        .as_ref()
+        .and_then(|retained| retained.profile.as_ref())
+        .context("scalar producer extraction profile missing")?;
+    let lines = if profile.contract_version == 2 && artifact.extraction_method == "utf8" {
+        store.verify_retained_source_utf8_lines(artifact)?
+    } else {
+        artifact
+            .chunks
+            .iter()
+            .map(|chunk| chunk.end_line)
+            .max()
+            .unwrap_or(0)
+    };
+    ensure!(
+        scalars.indexed_lines == lines,
+        "scalar producer indexed line count mismatch"
+    );
+    Ok(())
 }
 
 fn object(store: &FileStore, digest: Sha256Digest) -> PathBuf {
@@ -35,6 +177,16 @@ fn object(store: &FileStore, digest: Sha256Digest) -> PathBuf {
 }
 
 impl FileStore {
+    /// A private producer view keeps the authenticated compact reference with
+    /// materialized facts. General evidence materialization retains its schema.
+    pub(crate) fn load_projection_artifact(
+        &self,
+        compact: &airk_core::Artifact,
+    ) -> Result<airk_core::Artifact> {
+        let mut artifact = self.load_retained(compact)?;
+        artifact.retained = compact.retained.clone();
+        Ok(artifact)
+    }
     pub fn retain_current_metadata_encoded_owned(
         &self,
         writer: &crate::WriterLock,
@@ -84,6 +236,10 @@ impl FileStore {
             path: path.into(),
             digest,
             bytes: bytes.len(),
+            scalars: Some(FileScalars::from_file(file)),
+            native_facts: None,
+            native_facts_omission: None,
+            line_witness: None,
         };
         let destination = object(
             self,
@@ -121,7 +277,111 @@ impl FileStore {
         Ok(reference)
     }
 
+    pub fn prepare_current_metadata_input(
+        &self,
+        artifact: &airk_core::Artifact,
+    ) -> Result<PreparedMetadataInput> {
+        let mut compact = artifact.clone();
+        compact.facts.clear();
+        compact.chunks.clear();
+        let mut retrieval = self.load_retrieval_artifact(&compact)?;
+        retrieval.artifact.retained = compact.retained.clone();
+        let lines = if retrieval.profile.contract_version == 2
+            && retrieval.artifact.extraction_method == "utf8"
+        {
+            self.verify_retained_source_utf8_lines(&compact)?
+        } else {
+            retrieval
+                .artifact
+                .chunks
+                .iter()
+                .map(|chunk| chunk.end_line)
+                .max()
+                .unwrap_or(0)
+        };
+        let witness = std::sync::Arc::new(IndexedLinesWitness {
+            source: compact.content_hash.parse()?,
+            payload: retrieval.payload_digest,
+            profile: retrieval.profile.identity()?,
+            lines,
+        });
+        Ok(PreparedMetadataInput { retrieval, witness })
+    }
+    /// Writer-owned F13 projection production preserves F10 invalidation before all writes.
+    pub fn retain_current_metadata_prepared_owned(
+        &self,
+        writer: &crate::WriterLock,
+        path: &str,
+        file: &InventoryFile,
+        prepared: &PreparedMetadataInput,
+        reservation: &Reservation,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<FileMetadataRef> {
+        super::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
+        self.retain_current_metadata_prepared(path, file, prepared, reservation, mode)
+    }
+    pub fn retain_current_metadata_scalars_prepared_owned(
+        &self,
+        writer: &crate::WriterLock,
+        path: &str,
+        file: &InventoryFile,
+        prepared: &PreparedMetadataInput,
+        reservation: &Reservation,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<FileMetadataRef> {
+        super::gate::check_writer(self, writer)?;
+        ensure!(
+            prepared.artifact().path == path
+                && prepared.witness.matches(prepared.artifact())?
+                && file.indexed_lines == prepared.indexed_lines(),
+            "prepared scalar/source binding mismatch"
+        );
+        writer.invalidate_census_before_mutation()?;
+        let mut reference = self.retain_current_metadata_encoded(path, file, reservation, mode)?;
+        reference.line_witness = Some(prepared.witness.clone());
+        Ok(reference)
+    }
+    pub fn retain_current_metadata_prepared(
+        &self,
+        path: &str,
+        file: &InventoryFile,
+        prepared: &PreparedMetadataInput,
+        reservation: &Reservation,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<FileMetadataRef> {
+        ensure!(
+            prepared.artifact().path == path
+                && prepared.witness.matches(prepared.artifact())?
+                && file.indexed_lines == prepared.indexed_lines(),
+            "prepared scalar/source binding mismatch"
+        );
+        let mut reference = self.retain_current_metadata_encoded(path, file, reservation, mode)?;
+        reference.native_facts = Some(self.retain_native_fact_projection_bound(
+            prepared.artifact(),
+            file,
+            reference.digest,
+            reservation,
+            mode,
+            None,
+        )?);
+        reference.line_witness = Some(prepared.witness.clone());
+        Ok(reference)
+    }
+    pub fn retain_current_metadata_with_facts_encoded(
+        &self,
+        path: &str,
+        file: &InventoryFile,
+        artifact: &airk_core::Artifact,
+        reservation: &Reservation,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<FileMetadataRef> {
+        let prepared = self.prepare_current_metadata_input(artifact)?;
+        self.retain_current_metadata_prepared(path, file, &prepared, reservation, mode)
+    }
+
     pub fn read_current_metadata(&self, reference: &FileMetadataRef) -> Result<InventoryFile> {
+        reference.validate_projection_declaration()?;
         ensure!(
             reference.bytes <= MAX_METADATA_BYTES
                 && super::journal::valid_current_path(&reference.path),
@@ -178,6 +438,13 @@ impl FileStore {
             serde_json::to_vec(&value)? == bytes,
             "noncanonical current metadata"
         );
+        ensure!(
+            reference
+                .scalars
+                .as_ref()
+                .is_none_or(|scalars| *scalars == FileScalars::from_file(&value)),
+            "current metadata scalar projection mismatch"
+        );
         Ok(value)
     }
 }
@@ -188,6 +455,7 @@ impl CurrentRead {
             return Ok(0);
         };
         let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
+        reference.validate_projection_declaration()?;
         ensure!(
             reference.path == path
                 && reference.bytes <= MAX_METADATA_BYTES
@@ -195,6 +463,89 @@ impl CurrentRead {
             "invalid current metadata reference"
         );
         Ok(reference.bytes)
+    }
+    /// Selected authenticated scalar bytes only. This does not authorize relaxing
+    /// private-root/physical integrity checks or certify legacy absent projections.
+    pub fn file_scalars(&self, path: &str) -> Result<Option<FileScalars>> {
+        if self.query_projection_version()?.is_none() {
+            return Ok(None);
+        }
+        let Some(bytes) = self.map_get(MapDomain::FileMetadata, path.as_bytes())? else {
+            return Ok(None);
+        };
+        let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
+        reference.validate_projection_declaration()?;
+        ensure!(
+            reference.path == path
+                && reference.bytes <= MAX_METADATA_BYTES
+                && serde_json::to_vec(&reference)? == bytes,
+            "invalid current scalar metadata reference"
+        );
+        let Some(scalars) = reference.scalars else {
+            return Ok(None);
+        };
+        let artifact = self
+            .artifact(path)?
+            .context("current scalar artifact missing")?;
+        scalars.verify(&artifact, self.head().sequence)?;
+        Ok(Some(scalars))
+    }
+    pub(super) fn audit_scalars_from_verified(
+        &self,
+        path: &str,
+        artifact: &airk_core::Artifact,
+        indexed_lines: Option<usize>,
+    ) -> Result<bool> {
+        let Some(scalars) = self.file_scalars(path)? else {
+            return Ok(false);
+        };
+        scalars.verify(artifact, self.head().sequence)?;
+        ensure!(
+            Some(scalars.indexed_lines) == indexed_lines,
+            "scalar producer indexed line count mismatch"
+        );
+        Ok(true)
+    }
+    /// Strict audit compares the publication-derived scalars with the original
+    /// retained inventory. Publication prepare uses the same full reader/check.
+    pub fn audit_file_scalars(&self, store: &FileStore, path: &str) -> Result<bool> {
+        let scalars = self.file_scalars(path)?;
+        let _ = self.file_metadata(store, path)?;
+        if let Some(scalars) = &scalars {
+            let compact = self
+                .artifact(path)?
+                .context("scalar audit artifact missing")?;
+            verify_indexed_lines(store, &store.load_projection_artifact(&compact)?, scalars)?;
+        }
+        Ok(scalars.is_some())
+    }
+    pub(super) fn native_fact_reference(
+        &self,
+        path: &str,
+    ) -> Result<Option<(super::resources::ResourceReference, Sha256Digest)>> {
+        if self.query_projection_version()?.is_none() {
+            return Ok(None);
+        }
+        let Some(bytes) = self.map_get(MapDomain::FileMetadata, path.as_bytes())? else {
+            return Ok(None);
+        };
+        let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
+        reference.validate_projection_declaration()?;
+        ensure!(
+            reference.path == path
+                && reference.bytes <= MAX_METADATA_BYTES
+                && serde_json::to_vec(&reference)? == bytes,
+            "native projection metadata reference mismatch"
+        );
+        if let Some(native) = &reference.native_facts {
+            ensure!(
+                native.bytes <= super::native_projection::MAX_MANIFEST_BYTES,
+                "native projection manifest reference exceeds bound"
+            );
+        }
+        Ok(reference
+            .native_facts
+            .map(|native| (native, reference.digest)))
     }
     pub fn artifact_path(
         &self,
@@ -239,6 +590,7 @@ impl CurrentRead {
             return Ok(None);
         };
         let reference: FileMetadataRef = serde_json::from_slice(&bytes)?;
+        reference.validate_projection_declaration()?;
         ensure!(
             reference.path == path && serde_json::to_vec(&reference)? == bytes,
             "current metadata path mismatch"
@@ -279,6 +631,33 @@ pub(crate) fn verify(
     Ok(())
 }
 
+pub(super) fn verify_projected_metadata(
+    store: &FileStore,
+    reference: &FileMetadataRef,
+    file: &InventoryFile,
+    artifact: &airk_core::Artifact,
+    indexed_lines: usize,
+    sequence: u64,
+) -> Result<()> {
+    if let Some(scalars) = &reference.scalars {
+        scalars.verify(artifact, sequence)?;
+        ensure!(
+            scalars.indexed_lines == indexed_lines,
+            "replayed scalar line count mismatch"
+        );
+    }
+    if let Some(native) = &reference.native_facts {
+        super::native_projection::verify_projection(
+            store,
+            native,
+            artifact,
+            file,
+            reference.digest,
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) fn prepare(
     store: &FileStore,
     scope: &CurrentScope,
@@ -313,14 +692,20 @@ pub(crate) fn prepare(
     }
     for change in artifacts {
         let path = change.path();
-        let measurement = match change {
-            super::ArtifactChange::Upsert(input) => Some(serde_json::to_vec(
-                &airk_core::usage::SourceContextSize::measure(
-                    &store.load_retained(&input.artifact)?,
-                )?,
-            )?),
+        let materialized = match change {
+            super::ArtifactChange::Upsert(input) => {
+                Some(store.load_projection_artifact(&input.artifact)?)
+            }
             super::ArtifactChange::Delete(_) => None,
         };
+        let measurement = materialized
+            .as_ref()
+            .map(|artifact| {
+                Ok::<_, anyhow::Error>(serde_json::to_vec(
+                    &airk_core::usage::SourceContextSize::measure(artifact)?,
+                )?)
+            })
+            .transpose()?;
         let measured = map::MapChange::new(
             scope,
             MapDomain::SourceMeasurement,
@@ -347,6 +732,34 @@ pub(crate) fn prepare(
             };
             let file = store.read_current_metadata(reference)?;
             verify(&input.artifact, &file, sequence)?;
+            if let Some(scalars) = &reference.scalars {
+                scalars.verify(&input.artifact, sequence)?;
+                if let Some(witness) = &reference.line_witness {
+                    ensure!(
+                        witness.matches(&input.artifact)? && witness.lines == scalars.indexed_lines,
+                        "scalar content witness mismatch"
+                    );
+                } else {
+                    verify_indexed_lines(
+                        store,
+                        materialized
+                            .as_ref()
+                            .context("scalar producer materialization missing")?,
+                        scalars,
+                    )?;
+                }
+            }
+            if let Some(native) = &reference.native_facts {
+                super::native_projection::verify_projection(
+                    store,
+                    native,
+                    materialized
+                        .as_ref()
+                        .context("native producer materialization missing")?,
+                    &file,
+                    reference.digest,
+                )?;
+            }
             for (domain, identity) in handles(&file)? {
                 let c =
                     map::MapChange::new(scope, domain, &identity, Some(path.as_bytes().to_vec()))?;

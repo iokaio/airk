@@ -39,3 +39,11 @@ Local October 28 investigation: the shipped 1.5.9 runtime indexed the local Book
 ## 1.6.4 project removal
 
 Registry schema 10 adds minimal completed-removal history and schedules full cleanup for existing inactive registrations. A removal barrier persists until the collection and its saved settings are deleted. Detailed project metadata is then deleted. Index-v1 and service-v1 locations remain unchanged; earlier native executables reject the newer registry schema. Ordinary obsolete-object cleanup continues to preserve active project settings; explicit project removal deletes them.
+
+## Candidate query projection capability
+
+The unpublished 1.8.0 writer may add `query_projection_version: 1` to the existing current owner header before publishing optional metadata. Ordinary SQLite schema 126, service schema 140 and index-v1 stay unchanged. Compatible legacy headers remain readable and missing projections use existing strict evidence. Older readers that reject unknown owner fields refuse the new capability rather than silently ignoring retained page ownership. `StorageFormats.query_projection_records` reports binary support, not selected-publication coverage.
+
+Current file metadata can bind indexed-line scalars and immutable native fact manifests/pages to the exact retained source, extraction profile and inventory metadata. Pages retain original fact ordinals and canonical discovery order. Preparation/budget omissions are explicit. Existing reference/replay/cleanup walks retain every declared page; the capability does not enable relaxed ordinary reads.
+
+Projection preparation can use internal current-quota grant record version 2: its stable allocation filename is retained while the exact final transaction scope is atomically rebound. Version-1 grants remain readable. Old deny-unknown-field/version readers refuse these records. Recovery searches only the existing bounded current-grant directory when the final transaction differs from the allocation name. No public index-format or SQLite schema number changes.

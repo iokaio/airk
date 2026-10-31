@@ -38,6 +38,7 @@ fn read_error(error: anyhow::Error) -> anyhow::Error {
 pub struct CurrentRead {
     connection: Mutex<Connection>,
     head: CurrentHead,
+    query_projection_version: Option<u32>,
     pub(super) lexical_path: std::path::PathBuf,
     pub(super) lexical_verified: std::sync::OnceLock<()>,
     deadline: Option<std::time::Instant>,
@@ -46,6 +47,10 @@ pub struct CurrentRead {
 }
 
 impl CurrentRead {
+    pub fn query_projection_version(&self) -> Result<Option<u32>> {
+        self.live()?;
+        Ok(self.query_projection_version)
+    }
     pub(super) fn reclaim_exclusive(&mut self) -> Result<bool> {
         self._gate.try_exclusive()
     }
@@ -334,7 +339,8 @@ impl FileStore {
             .then(|| std::time::Instant::now() + std::time::Duration::from_secs(120));
         database::reject_legacy_collection(self.directory())?;
         self.ensure_index_ready()?;
-        let capacity = database::check_owner(self.directory(), scope)?;
+        let (capacity, query_projection_version) =
+            database::check_owner_with_projection(self.directory(), scope)?;
         let mut legacy_budget = false;
         if super::wal::enabled(self.directory()) {
             let allowance = crate::quota::Quota::for_store(self)?.verify_current_allowance(
@@ -381,6 +387,7 @@ impl FileStore {
         Ok(Arc::new(CurrentRead {
             connection: Mutex::new(connection),
             head,
+            query_projection_version,
             lexical_path: self.directory().join("current.sqlite3"),
             lexical_verified: std::sync::OnceLock::new(),
             deadline,

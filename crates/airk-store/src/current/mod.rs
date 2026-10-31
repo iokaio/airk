@@ -12,6 +12,7 @@ pub mod lexical;
 pub mod maintenance;
 pub mod map;
 pub mod metadata;
+pub mod native_projection;
 pub mod postings;
 #[cfg(test)]
 mod publication_spike_tests;

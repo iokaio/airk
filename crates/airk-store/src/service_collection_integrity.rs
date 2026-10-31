@@ -67,6 +67,7 @@ pub(super) fn owned_scratch(path: &Path, owner: Sha256Digest) -> bool {
             && value.known_damage.len() <= MAX_DAMAGE
             && value.head.validate().is_ok()
     }) || verify::owned_recovery_scratch(path, owner)
+        || verify::owned_projection_scratch(path, owner)
 }
 
 /// Non-Clone borrow retains the actual process lease and rechecks its registry

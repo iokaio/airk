@@ -246,10 +246,28 @@ impl CapturedInput {
         Ok(bytes)
     }
     pub(super) fn verify(&self, store: &FileStore) -> Result<()> {
+        self.verify_owned(store).map(|_| ())
+    }
+    fn verify_owned(&self, store: &FileStore) -> Result<(Artifact, usize)> {
         self.bytes()?;
-        store.load_retrieval_artifact(&self.artifact)?;
-        store.read_retained_source(&self.artifact)?;
-        Ok(())
+        let artifact = store.load_projection_artifact(&self.artifact)?;
+        let profile = artifact
+            .retained
+            .as_ref()
+            .and_then(|retained| retained.profile.as_ref())
+            .context("captured profile missing")?;
+        let lines = if profile.contract_version == 2 && artifact.extraction_method == "utf8" {
+            store.verify_retained_source_utf8_lines(&self.artifact)?
+        } else {
+            store.verify_retained_source_deep(&self.artifact)?;
+            artifact
+                .chunks
+                .iter()
+                .map(|chunk| chunk.end_line)
+                .max()
+                .unwrap_or(0)
+        };
+        Ok((artifact, lines))
     }
 }
 
@@ -629,6 +647,8 @@ pub struct CurrentWriter<'a> {
     lexical_base:
         std::cell::RefCell<Option<(Sha256Digest, std::sync::Arc<super::lexical::Snapshot>)>>,
     lexical_committed: bool,
+    preparation_grant: Option<crate::quota::CurrentGrant>,
+    optional_reservation: Option<crate::quota::Reservation>,
 }
 
 impl Drop for CurrentWriter<'_> {
@@ -712,6 +732,7 @@ impl FileStore {
                 database::check_owner(self.directory(), scope)? == database_capacity_bytes,
                 "current writer capacity differs from captured owner"
             );
+            database::admit_query_projections(self.directory(), scope)?;
             let recovery = self
                 .directory()
                 .join("current.sqlite3-journal")
@@ -768,6 +789,8 @@ impl FileStore {
             _gate: gate,
             lexical_base: std::cell::RefCell::new(None),
             lexical_committed: false,
+            preparation_grant: None,
+            optional_reservation: None,
         };
         if let Some(bootstrap) = pending_bootstrap {
             ensure!(
@@ -787,6 +810,17 @@ impl FileStore {
 impl CurrentWriter<'_> {
     pub fn database_capacity_bytes(&self) -> u64 {
         self.capacity
+    }
+
+    /// Observation of this writer's current SQL growth and recovery requirement.
+    /// This does not reserve capacity or authorize a later transaction.
+    pub fn required_publication_allowance(&mut self) -> Result<u64> {
+        database::allowance(
+            self.connection
+                .as_mut()
+                .context("current database missing")?,
+            self.capacity,
+        )
     }
 
     /// Grow the admitted SQLite limit while Ready, before preparing a transaction.
@@ -1446,6 +1480,7 @@ impl CurrentWriter<'_> {
             metadata,
             resources,
             None,
+            &[],
         )
     }
 
@@ -1460,6 +1495,30 @@ impl CurrentWriter<'_> {
         metadata: &[super::metadata::FileMetadataRef],
         resources: &[super::resources::ResourceChange],
     ) -> Result<(PendingTransaction, super::lexical::LexicalWork)> {
+        self.prepare_artifacts_with_optional_projections(
+            expected,
+            target,
+            graph_delta,
+            update,
+            model,
+            metadata,
+            resources,
+            &[],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_artifacts_with_optional_projections(
+        &mut self,
+        expected: &CurrentToken,
+        target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        update: ArtifactVectorChanges<'_>,
+        model: Option<ModelObjectSet>,
+        metadata: &[super::metadata::FileMetadataRef],
+        resources: &[super::resources::ResourceChange],
+        optional: &[super::native_projection::PreparedNativeProjection],
+    ) -> Result<(PendingTransaction, super::lexical::LexicalWork)> {
         let prepared = self.prepare_fts(expected, update.artifacts)?;
         let pending = self.prepare_artifacts_inner(
             expected,
@@ -1471,6 +1530,7 @@ impl CurrentWriter<'_> {
             metadata,
             resources,
             Some(&prepared.updates),
+            optional,
         )?;
         Ok((pending, prepared.work))
     }
@@ -1487,6 +1547,7 @@ impl CurrentWriter<'_> {
         metadata: &[super::metadata::FileMetadataRef],
         resources: &[super::resources::ResourceChange],
         fts_updates: Option<&fts::Updates>,
+        optional: &[super::native_projection::PreparedNativeProjection],
     ) -> Result<PendingTransaction> {
         let changes = update.artifacts;
         let vector_inputs = update.vector_inputs;
@@ -1691,7 +1752,7 @@ impl CurrentWriter<'_> {
         for change in map_changes {
             final_changes.insert(change.key(), change);
         }
-        let map_changes = final_changes.into_values().collect::<Vec<_>>();
+        let mut map_changes = final_changes.into_values().collect::<Vec<_>>();
         ensure!(
             map_changes
                 .windows(2)
@@ -1730,6 +1791,81 @@ impl CurrentWriter<'_> {
                     .checked_next_power_of_two()
                     .context("current capacity overflow")?,
             )?;
+        }
+        // Optional map references may use existing admitted SQL slack. They
+        // must never force a capacity increase needed only by acceleration.
+        let optional_growth = (optional.len() as u64)
+            .checked_mul(4096 * 8)
+            .and_then(|extra| needed.checked_add(extra))
+            .context("projection map bound overflow")?;
+        if !optional.is_empty() && optional_growth <= self.capacity {
+            ensure!(
+                optional.len() == metadata.len(),
+                "optional metadata batch mismatch"
+            );
+            self.release_orphan_grants()?;
+            let allowance = database::allowance(
+                self.connection
+                    .as_mut()
+                    .context("current database missing")?,
+                self.capacity,
+            )?;
+            // Protect mandatory SQL growth/journal capacity before the optional
+            // resource reservation. This durable grant survives process loss.
+            self.preparation_grant = Some(self.quota.reserve_current(
+                self.writer,
+                self.grant_scope(transaction_id(
+                    expected,
+                    &target,
+                    graph_delta.descriptor(),
+                    &model,
+                )?),
+                allowance,
+            )?);
+            let admitted =
+                self.store
+                    .stage_optional_native_projections(self.writer, &self.quota, optional)?;
+            self.optional_reservation = admitted.reservation;
+            if let Some(roots) = admitted.roots {
+                let mut projected = metadata.to_vec();
+                for (reference, root) in projected.iter_mut().zip(roots) {
+                    reference.native_facts = Some(root);
+                    reference.native_facts_omission = None;
+                }
+                let mut plan =
+                    map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+                for change in &map_changes {
+                    plan.put(change.key(), change.value())?;
+                }
+                let additions = super::metadata::prepare(
+                    &self.store,
+                    &self.scope,
+                    &mut plan,
+                    changes,
+                    &projected,
+                    target.sequence,
+                )?;
+                let artifact_root = plan.root()?;
+                drop(plan);
+                let mut final_changes = map_changes
+                    .into_iter()
+                    .map(|change| (change.key(), change))
+                    .collect::<BTreeMap<_, _>>();
+                for change in additions {
+                    final_changes.insert(change.key(), change);
+                }
+                map_changes = final_changes.into_values().collect();
+                let projected_bytes = map_changes.iter().try_fold(0u64, |total, change| {
+                    total
+                        .checked_add(change.value().map_or(0, |v| v.len()) as u64 + 128)
+                        .context("projected map bound overflow")
+                })?;
+                ensure!(
+                    projected_bytes <= map_bytes + optional.len() as u64 * 4096,
+                    "projected metadata exceeds admitted map bound"
+                );
+                target.artifact_root = artifact_root;
+            }
         }
         self.prepare_components(
             expected,
@@ -1925,15 +2061,22 @@ impl CurrentWriter<'_> {
         // A failed pre-Prepared SQL transaction preserves its durable allowance.
         // This writer has verified Ready with no pending journal, so retire
         // those allowances before reserving this exact transaction again.
-        self.release_orphan_grants()?;
+        if self.preparation_grant.is_none() {
+            self.release_orphan_grants()?;
+        }
         let connection = self
             .connection
             .as_mut()
             .context("current database missing")?;
         let allowance = database::allowance(connection, self.capacity)?;
-        let _grant = self
-            .quota
-            .reserve_current(self.writer, grant_scope, allowance)?;
+        let _grant = if let Some(grant) = self.preparation_grant.take() {
+            let mut grant = grant.rebind(self.writer, grant_scope)?;
+            grant.resize(self.writer, allowance)?;
+            grant
+        } else {
+            self.quota
+                .reserve_current(self.writer, grant_scope, allowance)?
+        };
         crate::capacity::require_growth(self.quota.root(), allowance)?;
         let transaction = connection.transaction()?;
         let staged_graph = graph::stage(&transaction, graph_delta, id)?;
@@ -2037,7 +2180,7 @@ impl CurrentWriter<'_> {
                 "captured input metadata binding mismatch"
             );
             digest.add(&input, &bytes)?;
-            input.verify(&self.store)?;
+            let (verified, indexed_lines) = input.verify_owned(&self.store)?;
             visitor(&input)?;
             let key = map::key(&self.scope, map::MapDomain::FileMetadata, path.as_bytes())?;
             let reference: Option<Vec<u8>> = connection.query_row(
@@ -2048,6 +2191,14 @@ impl CurrentWriter<'_> {
                 ensure!(reference.path == path, "pending metadata path mismatch");
                 let file = self.store.read_current_metadata(&reference)?;
                 super::metadata::verify(&input.artifact, &file, transaction.target.sequence)?;
+                super::metadata::verify_projected_metadata(
+                    &self.store,
+                    &reference,
+                    &file,
+                    &verified,
+                    indexed_lines,
+                    transaction.target.sequence,
+                )?;
             }
             after = path;
         }

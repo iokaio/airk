@@ -278,6 +278,61 @@ pub(crate) fn read_all(
     Ok(decoded)
 }
 
+/// One bounded decoded-block pass for producer/audit observations. Retains the
+/// same frame/index/size proof, and checks both complete stored and logical SHA.
+pub(crate) fn visit_decoded(
+    path: &Path,
+    reference: &EncodedObject,
+    logical: &str,
+    maximum: u64,
+    mut visit: impl FnMut(&[u8]) -> Result<()>,
+) -> Result<usize> {
+    let (mut file, index, start) = open(path, reference, logical, maximum)?;
+    file.seek(SeekFrom::Start(0))?;
+    let mut prefix = vec![0u8; usize::try_from(start)?];
+    file.read_exact(&mut prefix)?;
+    let mut stored = Sha256::new();
+    stored.update(&prefix);
+    drop(prefix);
+    let mut decoded_hash = Sha256::new();
+    let mut count = 0usize;
+    for block in &index.blocks {
+        let mut bytes = vec![0u8; block.encoded];
+        file.read_exact(&mut bytes)?;
+        stored.update(&bytes);
+        ensure!(
+            digest(&bytes) == block.stored_digest,
+            "encoded block digest mismatch"
+        );
+        let decoded = if block.compressed {
+            lz4_flex::block::decompress(&bytes, block.decoded)?
+        } else {
+            bytes
+        };
+        ensure!(
+            decoded.len() == block.decoded && digest(&decoded) == block.logical_digest,
+            "decoded block digest mismatch"
+        );
+        decoded_hash.update(&decoded);
+        visit(&decoded)?;
+        count = count
+            .checked_add(decoded.len())
+            .context("decoded size overflow")?;
+    }
+    let mut extra = [0u8; 1];
+    ensure!(
+        file.read(&mut extra)? == 0 && file.metadata()?.len() == reference.stored_bytes,
+        "encoded object grew during verification"
+    );
+    ensure!(
+        count == index.decoded
+            && format!("{:x}", stored.finalize()) == reference.stored_digest
+            && format!("{:x}", decoded_hash.finalize()) == logical,
+        "complete encoded/logical digest mismatch"
+    );
+    Ok(count)
+}
+
 pub(crate) fn verify(
     path: &Path,
     reference: &EncodedObject,

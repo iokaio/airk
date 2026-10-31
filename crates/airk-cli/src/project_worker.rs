@@ -711,13 +711,17 @@ pub async fn run() -> Result<()> {
                                     &job_storage,
                                     job.id,
                                 )?;
-                                if turn.blocked_large || turn.progress.requires_repair() {
+                                if turn.blocked_large
+                                    || turn.progress.requires_repair()
+                                    || (turn.work_complete()
+                                        && !turn.projection_coverage_complete())
+                                {
                                     audit_drain = turn.drained;
                                     return Ok(JobOutcome::Failed {
                                         code: "integrity_coverage_incomplete".into(),
                                     });
                                 }
-                                if turn.progress.complete() {
+                                if turn.work_complete() && turn.progress.complete() {
                                     let complete = turn
                                         .completed
                                         .context("complete audit lacks physical proof")?;

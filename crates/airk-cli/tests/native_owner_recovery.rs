@@ -391,7 +391,11 @@ fn native_owner_recovery_process() -> Result<()> {
         done.verified_files == 1 && done.progress.complete(),
         "fresh required EOF did not finish two physical inputs"
     );
-    let global = done.completed.context("actual global baseline proof")?;
+    ensure!(
+        done.completed.is_none(),
+        "baseline recovery fabricated global projection coverage"
+    );
+    let drained = done.drained.context("actual baseline drain")?;
     let required = done
         .recovery_completed
         .context("actual fresh required proof")?;
@@ -400,15 +404,15 @@ fn native_owner_recovery_process() -> Result<()> {
     registry.complete_job_with_maintenance_and_audit_at(
         &lease,
         job.id,
-        JobOutcome::Succeeded {
-            revision: Some(global.revision()?),
+        JobOutcome::Failed {
+            code: "integrity_coverage_incomplete".into(),
         },
         now + 2,
         None,
-        Some(AuditEvidence::Complete(&global)),
+        Some(AuditEvidence::Drained(&drained)),
     )?;
     ensure!(
-        registry.job(job.id)?.state == JobState::Succeeded
+        registry.job(job.id)?.state == JobState::Failed
             && registry.integrity_audit_veto(&lease)?.is_none(),
         "fresh recovery failed actual settlement"
     );

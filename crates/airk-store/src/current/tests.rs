@@ -276,6 +276,15 @@ fn retained_input_with_facts(
     text: &str,
     facts: Vec<airk_core::extraction::LocalFact>,
 ) -> Result<CapturedInput> {
+    retained_input_with_facts_budget(fixture, path, text, facts, 1024 * 1024)
+}
+fn retained_input_with_facts_budget(
+    fixture: &Fixture,
+    path: &str,
+    text: &str,
+    facts: Vec<airk_core::extraction::LocalFact>,
+    capture_bytes: u64,
+) -> Result<CapturedInput> {
     use airk_core::extraction::{ExtractionPayload, ExtractionProfile, LocalChunk, LocalSpan};
     use std::collections::BTreeMap;
     let profile = ExtractionProfile {
@@ -339,7 +348,7 @@ fn retained_input_with_facts(
     )?;
     let reservation = fixture
         .quota
-        .reserve(&fixture.scope.collection, 1024 * 1024)?;
+        .reserve(&fixture.scope.collection, capture_bytes)?;
     let artifact = fixture.store.retain_payload_with_budget(
         &artifact,
         &payload,
@@ -2474,3 +2483,6 @@ fn killed_capacity_growth_keeps_old_or_new_bound_and_releases_only_orphans() -> 
     }
     Ok(())
 }
+
+#[path = "native_projection_tests.rs"]
+mod native_projection_tests;

@@ -886,7 +886,7 @@ impl CurrentUpdater<'_> {
             .store
             .current_write(self.writer, self.quota, self.scope, capacity)?;
         let (pending, lexical_work) = writer
-            .prepare_artifacts_with_fts(
+            .prepare_artifacts_with_optional_projections(
                 &base.token()?,
                 target,
                 &sealed,
@@ -897,8 +897,9 @@ impl CurrentUpdater<'_> {
                     configuration: self.configuration,
                 },
                 captured_model,
-                &metadata,
+                &metadata.references,
                 &resources,
+                &metadata.optional,
             )
             .context("prepare current journal")?;
         crate::service_execution::progress_prepared(

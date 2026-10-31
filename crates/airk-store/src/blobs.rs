@@ -12,6 +12,7 @@ use std::{
 };
 
 const MAX_ARTIFACT_BYTES: u64 = airk_core::extraction::MAX_PAYLOAD_BYTES as u64;
+type SourceObserver<'a> = &'a mut dyn FnMut(&[u8]) -> Result<()>;
 pub const MAX_CATALOG_BYTES: u64 = airk_core::publication::MAX_INVENTORY_BYTES as u64;
 
 /// A missing derived source/extraction object. This typed context is attached
@@ -1226,6 +1227,79 @@ impl FileStore {
     /// Authenticate retained source identity without allocating/decoding a copy
     /// when evidence materialization uses the independently verified payload.
     pub fn verify_retained_source(&self, entry: &Artifact) -> Result<()> {
+        self.verify_retained_source_observed(entry, None)
+    }
+    /// Independent maintenance verifies decoded source SHA as well as stored
+    /// compression bytes, retaining only existing bounded codec buffers.
+    pub fn verify_retained_source_deep(&self, entry: &Artifact) -> Result<()> {
+        let mut observe = |_bytes: &[u8]| Ok(());
+        self.verify_retained_source_observed(entry, Some(&mut observe))
+    }
+    /// Exact split_inclusive newline count, with streaming UTF-8/hash validation.
+    /// At most one existing decoded block plus a three-byte UTF-8 tail is retained.
+    pub fn verify_retained_source_utf8_lines(&self, entry: &Artifact) -> Result<usize> {
+        let mut tail = Vec::<u8>::new();
+        let mut newlines = 0usize;
+        let mut last = None;
+        let mut utf8_error = None;
+        let mut observer = |chunk: &[u8]| -> Result<()> {
+            newlines = newlines
+                .checked_add(chunk.iter().filter(|byte| **byte == b'\n').count())
+                .context("source line count overflow")?;
+            if let Some(byte) = chunk.last() {
+                last = Some(*byte);
+            }
+            if utf8_error.is_some() {
+                return Ok(());
+            }
+            let mut offset = 0;
+            if !tail.is_empty() {
+                let width = match tail[0] {
+                    0xc2..=0xdf => 2,
+                    0xe0..=0xef => 3,
+                    0xf0..=0xf4 => 4,
+                    _ => anyhow::bail!("invalid UTF-8 tail lead"),
+                };
+                let needed = width - tail.len();
+                let take = needed.min(chunk.len());
+                tail.extend_from_slice(&chunk[..take]);
+                offset = take;
+                if take < needed {
+                    return Ok(());
+                }
+                if let Err(error) = std::str::from_utf8(&tail) {
+                    utf8_error = Some(error);
+                    return Ok(());
+                }
+                tail.clear();
+            }
+            let suffix = &chunk[offset..];
+            match std::str::from_utf8(suffix) {
+                Ok(_) => {}
+                Err(error) if error.error_len().is_none() => {
+                    tail.extend_from_slice(&suffix[error.valid_up_to()..])
+                }
+                Err(error) => utf8_error = Some(error),
+            }
+            ensure!(tail.len() <= 3, "invalid UTF-8 continuation tail");
+            Ok(())
+        };
+        self.verify_retained_source_observed(entry, Some(&mut observer))?;
+        if let Some(error) = utf8_error {
+            return Err(error.into());
+        }
+        if !tail.is_empty() {
+            std::str::from_utf8(&tail)?;
+        }
+        newlines
+            .checked_add(usize::from(last.is_some_and(|byte| byte != b'\n')))
+            .context("source line count overflow")
+    }
+    fn verify_retained_source_observed(
+        &self,
+        entry: &Artifact,
+        mut observer: Option<SourceObserver<'_>>,
+    ) -> Result<()> {
         ensure!(
             entry.bytes <= airk_core::extraction::MAX_SOURCE_BYTES
                 && entry.retained.as_ref().is_some_and(|r| r.raw_source),
@@ -1239,12 +1313,22 @@ impl FileStore {
             let path = object_path(self.directory(), "sources", &encoding.stored_digest)?;
             ensure!(
                 retained_read_context(
-                    crate::compression::verify(
-                        &path,
-                        encoding,
-                        &entry.content_hash,
-                        entry.bytes as u64,
-                    ),
+                    if let Some(observer) = observer.as_deref_mut() {
+                        crate::compression::visit_decoded(
+                            &path,
+                            encoding,
+                            &entry.content_hash,
+                            entry.bytes as u64,
+                            observer,
+                        )
+                    } else {
+                        crate::compression::verify(
+                            &path,
+                            encoding,
+                            &entry.content_hash,
+                            entry.bytes as u64,
+                        )
+                    },
                     "sources",
                     &path,
                     &entry.content_hash,
@@ -1294,6 +1378,9 @@ impl FileStore {
                     "retained source grew during verification"
                 );
                 hash.update(&buffer[..count]);
+                if let Some(observer) = observer.as_deref_mut() {
+                    observer(&buffer[..count])?;
+                }
             }
             ensure!(
                 total == entry.bytes && format!("{:x}", hash.finalize()) == entry.content_hash,

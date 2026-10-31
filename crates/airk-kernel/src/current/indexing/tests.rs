@@ -1457,3 +1457,255 @@ fn scalar_summary_preserves_policy_semantic_and_discovery_corruption_precedence(
     assert!(kernel.status_summary().is_ok());
     Ok(())
 }
+
+#[test]
+fn optional_projection_quota_refusal_still_publishes_original_values_and_scalars() -> Result<()> {
+    use airk_store::current::{
+        map::MapDomain,
+        metadata::{FileMetadataRef, ProjectionOmission},
+    };
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let text = (0..200)
+        .map(|i| format!("pub fn source_{i}() {{}}\n"))
+        .collect::<String>();
+    std::fs::write(root.path().join("original.rs"), &text)?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let read = kernel.current_reader()?;
+    let before = read.token()?;
+    let original_metadata: FileMetadataRef = serde_json::from_slice(
+        &read
+            .map_get(MapDomain::FileMetadata, b"original.rs")?
+            .context("original metadata missing")?,
+    )?;
+    let metadata_bytes = original_metadata
+        .encoding
+        .as_ref()
+        .map_or(original_metadata.bytes as u64, |encoding| {
+            encoding.stored_bytes
+        });
+    let mut input = read
+        .captured_input("original.rs")?
+        .context("captured original missing")?;
+    input.artifact.path = "copy.rs".into();
+    drop(read);
+    let scope = kernel.current_scope()?.context("scope missing")?;
+    let quota = kernel.collection_quota()?;
+    let writer = kernel.store.lock()?;
+    let mandatory = kernel.publication_reservation()?;
+    let capacity = kernel.store.current_database_capacity(&scope)?;
+    let allowance = kernel
+        .store
+        .current_write(&writer, &quota, &scope, capacity)?
+        .required_publication_allowance()?;
+    let old_policy = quota.policy()?;
+    let status = quota.status()?;
+    let mut tight = old_policy.clone();
+    // Preserve the exact mandatory SQL allowance plus the new immutable
+    // metadata and a bounded ledger margin. Optional pages exceed that margin.
+    tight.root_bytes =
+        status.used_bytes + status.reserved_bytes + allowance + metadata_bytes + 16384;
+    quota.configure(tight)?;
+    let result = CurrentUpdater {
+        store: &kernel.store,
+        quota: &quota,
+        scope: &scope,
+        writer: &writer,
+        reservation: &mandatory,
+        configuration: None,
+    }
+    .apply(&[ArtifactChange::Upsert(Box::new(input))], None);
+    quota.configure(old_policy)?;
+    result?;
+    drop(writer);
+    drop(mandatory);
+    let read = kernel.current_reader()?;
+    assert_ne!(read.token()?, before);
+    let copy = read
+        .artifact("copy.rs")?
+        .context("mandatory source was not published")?;
+    assert_eq!(
+        kernel.store.load_retrieval_artifact(&copy)?.payload.text,
+        text
+    );
+    assert!(read.file_scalars("copy.rs")?.is_some());
+    assert!(
+        read.native_fact_projection(&kernel.store, "copy.rs")?
+            .is_none()
+    );
+    let reference: FileMetadataRef = serde_json::from_slice(
+        &read
+            .map_get(MapDomain::FileMetadata, b"copy.rs")?
+            .context("metadata reference missing")?,
+    )?;
+    assert!(matches!(
+        reference.native_facts_omission,
+        Some(ProjectionOmission::Budget)
+    ));
+    assert!(
+        read.native_fact_projection(&kernel.store, "original.rs")?
+            .is_some()
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("original.rs"))?,
+        text
+    );
+    assert!(
+        !root.path().join("copy.rs").exists(),
+        "publication wrote a source file"
+    );
+    Ok(())
+}
+
+#[test]
+fn canonical_native_projection_preserves_partial_syntax_profiles_modes_and_cursors() -> Result<()> {
+    use airk_core::{
+        FactQuery,
+        discovery::{CompactFact, DiscoveryOptions, MinimalFacts},
+        extraction::IndexDetail,
+    };
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(
+        root.path().join("partial.rs"),
+        "pub fn first() {}\npub fn second() {}\npub fn broken(",
+    )?;
+    std::fs::write(root.path().join("complete.rs"), "pub fn stable() {}\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    let mut prior_profile = None;
+    let mut old_cursor = None;
+    for detail in [IndexDetail::Detailed, IndexDetail::AgentLean] {
+        kernel.configure_index_detail(detail)?;
+        kernel.index()?;
+        let read = kernel.current_reader()?;
+        let projected = read
+            .native_fact_projection(&kernel.store, "partial.rs")?
+            .context("kernel writer omitted projection")?;
+        assert_eq!(projected.artifact().parse_status, "partial-syntax");
+        if let Some(prior) = prior_profile {
+            assert_ne!(
+                projected.header().profile,
+                prior,
+                "profile change reused old certification"
+            );
+        }
+        prior_profile = Some(projected.header().profile);
+        let query = FactQuery {
+            path_prefix: "partial.rs".into(),
+            name: None,
+            kind: None,
+            language: None,
+            exact_name: false,
+            limit: 100,
+            max_bytes: 65536,
+            path_exact: true,
+            document_only: false,
+        };
+        let mut hits = Vec::new();
+        let mut minimal = MinimalFacts::default();
+        for page in 0..projected.header().pages.len() {
+            for row in projected.page(page)?.rows {
+                let hit = projected.hit(&row);
+                let candidate = minimal
+                    .candidate(&hit, projected.artifact(), true)?
+                    .context("minimal candidate omitted")?;
+                minimal.admit(candidate)?;
+                hits.push(hit);
+            }
+        }
+        assert!(
+            hits.len() >= 2,
+            "partial syntax discarded valid definitions"
+        );
+        if detail == IndexDetail::Detailed {
+            let complete = read
+                .native_fact_projection(&kernel.store, "complete.rs")?
+                .context("complete syntax projection absent")?;
+            assert!(
+                complete
+                    .page(0)?
+                    .rows
+                    .iter()
+                    .any(|row| row.continuity_key.is_some()),
+                "native continuity identity was discarded"
+            );
+        }
+        let rich =
+            read.native_facts_page(&kernel.store, &query, false, &DiscoveryOptions::default())?;
+        assert_eq!(
+            serde_json::to_value(&rich.facts)?,
+            serde_json::to_value(&hits)?
+        );
+        let compact = read.native_facts_page(
+            &kernel.store,
+            &query,
+            false,
+            &DiscoveryOptions {
+                compact: true,
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(
+            serde_json::to_value(&compact.outline)?,
+            serde_json::to_value(hits.iter().map(CompactFact::from).collect::<Vec<_>>())?
+        );
+        let small = read.native_facts_page(
+            &kernel.store,
+            &query,
+            false,
+            &DiscoveryOptions {
+                minimal: true,
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(
+            serde_json::to_value(&small.minimal)?,
+            serde_json::to_value(Some(minimal))?
+        );
+        if let Some(cursor) = old_cursor.take() {
+            assert!(
+                read.native_facts_page(
+                    &kernel.store,
+                    &query,
+                    false,
+                    &DiscoveryOptions {
+                        cursor: Some(cursor),
+                        ..Default::default()
+                    }
+                )
+                .is_err()
+            );
+        }
+        let mut options = DiscoveryOptions::default();
+        let mut one = query.clone();
+        one.limit = 1;
+        let mut continued = Vec::new();
+        for _ in 0..=hits.len() {
+            let page = read.native_facts_page(&kernel.store, &one, false, &options)?;
+            continued.extend(page.facts);
+            if old_cursor.is_none() {
+                old_cursor = page.page.cursor.clone();
+            }
+            options.cursor = page.page.cursor;
+            if options.cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(
+            serde_json::to_value(&continued)?,
+            serde_json::to_value(&hits)?
+        );
+        let mut tiny = query.clone();
+        tiny.max_bytes = 1;
+        assert_eq!(
+            read.native_facts_page(&kernel.store, &tiny, false, &Default::default())?
+                .page
+                .required_record_bytes,
+            Some(serde_json::to_vec(&hits[0])?.len())
+        );
+    }
+    Ok(())
+}

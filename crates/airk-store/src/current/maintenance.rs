@@ -15,6 +15,19 @@ pub struct ReclamationPlan {
     token: CurrentToken,
     collection: PathBuf,
     retained: BTreeSet<PathBuf>,
+    projection_manifest_references: u64,
+    projection_leaf_references: u64,
+    projection_encoded_bytes: u64,
+}
+impl ReclamationPlan {
+    /// Logical reference/object-byte counts, not physical I/O or unique allocations.
+    pub fn projection_counts(&self) -> (u64, u64, u64) {
+        (
+            self.projection_manifest_references,
+            self.projection_leaf_references,
+            self.projection_encoded_bytes,
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default, serde::Serialize)]
@@ -36,6 +49,9 @@ impl CurrentRead {
         );
         let mut retained = BTreeSet::new();
         let mut metadata_bytes = 0usize;
+        let mut projection_manifest_references = 0u64;
+        let mut projection_leaf_references = 0u64;
+        let mut projection_encoded_bytes = 0u64;
         for path in page.paths {
             let artifact = self
                 .artifact(&path)?
@@ -75,6 +91,31 @@ impl CurrentRead {
                 );
                 let file = store.read_current_metadata(&reference)?;
                 super::metadata::verify(&artifact, &file, self.head().sequence)?;
+                if let Some(native) = &reference.native_facts {
+                    metadata_bytes = metadata_bytes
+                        .checked_add(native.bytes)
+                        .context("projection retention metadata overflow")?;
+                    ensure!(
+                        metadata_bytes <= super::MAX_CURRENT_METADATA_READ_BYTES,
+                        "current reclamation metadata budget exceeded"
+                    );
+                    let projection = self
+                        .native_fact_projection(store, &path)?
+                        .context("native retention projection missing")?;
+                    let counts = projection.stats();
+                    projection.retain_paths(&mut retained)?;
+                    projection_manifest_references = projection_manifest_references
+                        .checked_add(1)
+                        .context("projection retention count overflow")?;
+                    projection_leaf_references = projection_leaf_references
+                        .checked_add(counts.leaf_objects as u64)
+                        .context("projection retention count overflow")?;
+                    projection_encoded_bytes = projection_encoded_bytes
+                        .checked_add(counts.leaf_encoded_bytes)
+                        .and_then(|bytes| bytes.checked_add(counts.manifest_encoded_bytes as u64))
+                        .context("projection retention byte overflow")?;
+                }
+
                 retained.insert(PathBuf::from("current-metadata").join(format!(
                         "{}.json",
                         reference
@@ -96,7 +137,8 @@ impl CurrentRead {
         for key in super::resources::KEYS {
             if let Some(reference) = self.resource_reference(key)? {
                 retained.insert(
-                    PathBuf::from("current-resources").join(format!("{}.json", reference.digest)),
+                    PathBuf::from("current-resources")
+                        .join(format!("{}.json", reference.object_digest()?)),
                 );
                 if key == "embedding-cache" {
                     let manifest = crate::vector_cache::VectorCacheManifest::from_bytes(
@@ -114,6 +156,9 @@ impl CurrentRead {
             token: self.token()?,
             collection: store.directory().canonicalize()?,
             retained,
+            projection_manifest_references,
+            projection_leaf_references,
+            projection_encoded_bytes,
         })
     }
 }
