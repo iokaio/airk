@@ -1,5 +1,7 @@
 # 1.8.0 optimization candidate
 
+F12a gives first semantic requests a bounded wait when a project worker starts before its helper connection is published. Publication waiting and the connection handshake share one ten-second pre-inference allowance; revocation and worker shutdown wake waiters, and requests are never replayed. Existing helper launch/recovery and query admission policies remain. Local Windows native qualification passed; the [execution ledger](../optimizations.md#f12a-finite-helper-admission) records actual results. This startup race is separate from the reproduced status deadline mismatch.
+
 This is an unpublished source candidate on `feat/optimizations`. The latest published stable release remains [1.7.6](release-1.7.6.md). No publication or cross-platform qualification is implied.
 
 Native workspace/local lockfile versions, the extension manifest and both npm lockfile root versions and the generated offline template catalog are synchronized at **1.8.0**. The extension admits forward runtime upgrades across the supported 1.4 through 1.8 lines, including its own 1.8 line. Automatic downgrades, unknown lines and malformed versions remain refused. Storage-format identities are unchanged by this version preparation; see [versioning](../versioning.md).

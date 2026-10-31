@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native process election/control uses its own private fixture, never an installed service.
-#[path = "common/read_retry.rs"]
-mod read_retry;
+#[path = "common/mod.rs"]
+mod common;
 use anyhow::{Context, Result, ensure};
+use common::read_retry;
 use read_retry::ReadRetry;
 use serde_json::Value;
 use std::{
@@ -2044,6 +2045,7 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
                     response_bytes: 4 * airk_core::service::MAX_FRAME_BYTES,
                 },
                 pool: None,
+                pool_pending: false,
             },
         )?;
         ensure!(
@@ -3214,3 +3216,7 @@ fn trusted_console_pipe_and_stdin_rpc_preserve_closed_projects_and_frame_bounds(
     );
     Ok(())
 }
+
+#[cfg(feature = "embedding-worker")]
+#[path = "common/f12_held_helper.rs"]
+mod f12_held_helper;

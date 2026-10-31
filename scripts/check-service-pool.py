@@ -98,6 +98,24 @@ class Bridge:
         self.process.stdout.close()
 
 
+def semantic_recovery_mode(job, observations):
+    """Require an authoritative terminal receipt or an exact deferred helper wait."""
+    if job.get("kind") != "vectors" or not isinstance(job.get("id"), str):
+        raise RuntimeError("Semantic recovery returned a foreign job kind or identity")
+    if job.get("state") == "failed":
+        if not isinstance(job.get("outcome"), dict) or job["outcome"].get("state") != "failed":
+            raise RuntimeError("Failed semantic receipt lacks its original failure outcome")
+        if job["outcome"].get("code") != "helper_unavailable":
+            raise RuntimeError("Terminal semantic failure was not caused by helper unavailability")
+        return "failed"
+    if job.get("state") == "pending" and job.get("outcome") is None and job.get("attempts", 0) > 0:
+        if any(row.get("job") == job["id"] and row.get("reason") == "helper_unavailable"
+               and row.get("state") == "waiting" and row.get("attempts") == job["attempts"]
+               and row.get("limit", 0) >= job["attempts"] for row in observations):
+            return "waiting"
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, required=True)
@@ -334,27 +352,38 @@ def main():
                     raise RuntimeError(f"Post-failure source job did not finish: {receipt}")
                 time.sleep(0.2)
             bridges[0].search("lexical", "quartz lighthouse")
-            # Readiness describes persisted coverage, while the independent job
-            # receipt proves failure even if its diagnostic publication was busy.
+            # A helper wait retains its original receipt. Terminal exhaustion
+            # instead requires an explicit Retry; neither state is inferred from
+            # the lack of an event or from aggregate readiness.
+            source_job_id = accepted["job"]["id"]
+            semantic_id = None
             deadline = time.monotonic() + 180
             while True:
                 events, event_cursor = event_tail(event_cursor, deadline)
-                failed = next((event for event in events if event["kind"] == "job_failed"
-                               and event.get("job_kind") == "vectors"), None)
-                if failed is not None:
-                    failed_semantic = rpc({"job": {"id": failed["job"]}}, deadline=deadline)["job"]
-                    if failed_semantic["state"] != "failed":
-                        raise RuntimeError("Failed semantic event disagreed with its receipt")
-                    break
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("Post-stop semantic continuation did not report failure: " + json.dumps({
-                        "events": events, "progress": rpc({"progress": {"project": projects[0]["binding"]}}),
-                        "resources": rpc("resources"), "embedding": rpc("embedding_status")}))
+                for event in events:
+                    if event.get("job_kind") == "vectors" and event.get("job"):
+                        if semantic_id is not None and event["job"] != semantic_id:
+                            raise RuntimeError("Post-stop continuation changed its semantic job identity")
+                        semantic_id = event["job"]
+                if semantic_id is not None:
+                    semantic = rpc({"job": {"id": semantic_id}}, deadline=deadline)["job"]
+                    if semantic["id"] != semantic_id:
+                        raise RuntimeError("Semantic job lookup returned a different receipt")
+                    page = rpc({"console": {"after": None, "revision": None, "limit": 32}}, deadline=deadline)["page"]
+                    rows = [row for row in page["projects"] if row["project"]["registration"]["binding"] == projects[0]["binding"]]
+                    if page["after"] is not None or len(rows) != 1:
+                        raise RuntimeError("Semantic recovery requires one complete exact project observation")
+                    recovery_mode = semantic_recovery_mode(semantic, rows[0].get("recovery", []))
+                    if recovery_mode is not None:
+                        break
+                    if semantic["state"] in ("canceled", "succeeded"):
+                        raise RuntimeError("Post-stop semantic continuation did not retain unavailable work")
+                clients.remaining(deadline, 180)
                 time.sleep(0.2)
             if bridges[0].readiness()["state"] == "ready":
-                raise RuntimeError("Failed semantic job claimed complete coverage")
+                raise RuntimeError("Unavailable semantic work claimed complete coverage")
             if rpc({"job": {"id": accepted["job"]["id"]}})["job"]["state"] != "succeeded":
-                raise RuntimeError("Later semantic failure changed the successful source receipt")
+                raise RuntimeError("Semantic helper wait changed the successful source receipt")
             if any(document.read_bytes() != original for document, original in originals):
                 raise RuntimeError("Native service changed an original source document")
             print("Embedding-process failure preserved lexical retrieval, service health and original source bytes.", flush=True)
@@ -376,15 +405,23 @@ def main():
             for project, identity in zip(projects, worker_identities):
                 if rpc({"worker": {"project": project["binding"]}})["identity"] != identity:
                     raise RuntimeError("Helper recovery replaced an independent project worker")
-            # Failed semantic jobs require an explicit new request; recovery never
-            # silently replays an uncertain operation or cancels a source receipt.
-            accepted = rpc({"retry": {"id": failed_semantic["id"], "caller": uuid.uuid4().hex,
-                "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex}}})
-            if accepted.get("status") != "job":
-                raise RuntimeError(f"Semantic recovery was not accepted: {accepted}")
+            if recovery_mode == "failed":
+                # A terminal receipt is immutable. Only an explicit new request
+                # may retry it; no uncertain inference operation is replayed.
+                retried = rpc({"retry": {"id": semantic["id"], "caller": uuid.uuid4().hex,
+                    "key": {"namespace": epoch["namespace"], "epoch": epoch["epoch"], "nonce": uuid.uuid4().hex}}})
+                if retried.get("status") != "job" or retried["job"]["id"] == semantic["id"]:
+                    raise RuntimeError("Semantic retry did not create a distinct accepted receipt")
+                recovery_job_id = retried["job"]["id"]
+            else:
+                # Start releases the already-owned helper wait. No Retry or new
+                # semantic request is authorized for this pending receipt.
+                recovery_job_id = semantic["id"]
             deadline = time.monotonic() + 180
             while True:
-                receipt = rpc({"job": {"id": accepted["job"]["id"]}}, deadline=deadline)["job"]
+                receipt = rpc({"job": {"id": recovery_job_id}}, deadline=deadline)["job"]
+                if receipt["id"] != recovery_job_id:
+                    raise RuntimeError("Semantic recovery returned a different receipt")
                 if receipt["state"] == "succeeded":
                     break
                 if receipt["state"] in ("failed", "canceled") or time.monotonic() >= deadline:
@@ -393,8 +430,14 @@ def main():
             bridges[0].wait_semantics()
             for bridge in bridges:
                 bridge.search("vector")
-            if rpc({"job": {"id": failed_semantic["id"]}})["job"]["state"] != "failed":
-                raise RuntimeError("Explicit semantic retry rewrote the original failure receipt")
+            original_semantic = rpc({"job": {"id": semantic["id"]}})["job"]
+            if recovery_mode == "failed":
+                if original_semantic != semantic:
+                    raise RuntimeError("Explicit semantic retry rewrote the original failure receipt")
+            elif original_semantic["id"] != semantic["id"] or original_semantic["state"] != "succeeded" or original_semantic["attempts"] <= semantic["attempts"]:
+                raise RuntimeError("Helper start did not resume and complete the same semantic job")
+            if rpc({"job": {"id": source_job_id}})["job"]["state"] != "succeeded":
+                raise RuntimeError("Helper recovery changed the successful source receipt")
             recovered = rpc("embedding_status")
             if recovered.get("loads") != 1:
                 raise RuntimeError(f"Replacement helper did not share one compatible model: {recovered}")

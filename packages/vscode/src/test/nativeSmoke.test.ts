@@ -128,6 +128,7 @@ for(const binding of ['pinned','source'] as const){
             }));
             for(const result of opened)if(result.status==='rejected')throw result.reason;
             const expected=await Promise.all(sessions.map(async session=>{
+                // native read: one static configured-scope declaration before this session's first native status.
                 const result=await session.request('tools/call',{name:'projects',arguments:{}},10000);
                 return JSON.parse(result.content[0].text).default_project;
             }));

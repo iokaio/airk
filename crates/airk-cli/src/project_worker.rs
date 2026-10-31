@@ -448,6 +448,7 @@ pub async fn run() -> Result<()> {
         identity: accepted,
         allowance,
         pool,
+        pool_pending,
     }) = service_ipc::read_frame(&mut std::io::stdin().lock())?
     else {
         anyhow::bail!("project owner was not activated")
@@ -458,7 +459,12 @@ pub async fn run() -> Result<()> {
             && allowance.response_bytes == allowance.concurrent_queries * MAX_FRAME_BYTES,
         "project activation identity or allowance mismatch"
     );
-    crate::embedding_pool_client::install(&init.runtime, identity, pool.map(|access| *access))?;
+    crate::embedding_pool_client::install(
+        &init.runtime,
+        identity,
+        pool.map(|access| *access),
+        pool_pending,
+    )?;
     let storage = airk_store::service::data_scope::bind(
         Path::new(&registration.data_root),
         &init.runtime,
@@ -557,6 +563,7 @@ pub async fn run() -> Result<()> {
                     break;
                 }
             }
+            crate::embedding_pool_client::close();
             control_closing.store(true, Ordering::Release);
             control_activity.notify_one();
         })?;
@@ -1075,8 +1082,10 @@ pub async fn run() -> Result<()> {
                         let renewed=expected==identity&&airk_kernel::service_execution::renew(identity).is_ok()&&state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.renew(identity,Instant::now(),Duration::from_secs(300)).is_ok();
                         service_ipc::write_frame(&mut std::io::stdout().lock(),&if renewed{Reply::Renewed}else{Reply::Failed})?;
                     },
-                    Some(Command::ConfigurePool{identity:expected,pool})=>{
-                        let accepted=expected==identity && crate::embedding_pool_client::update(pool.map(|access| *access)).is_ok();
+                    Some(Command::ConfigurePool{identity:expected,pool,pool_pending})=>{
+                        let accepted=expected==identity && (if pool_pending{
+                            crate::embedding_pool_client::update_pending(pool.map(|access| *access),true)
+                        }else{crate::embedding_pool_client::update(pool.map(|access| *access))}).is_ok();
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::PoolConfigured}else{Reply::Failed})?;
                     },
                     Some(Command::RunJob{identity:expected, allowance})=>{
@@ -1128,6 +1137,7 @@ pub async fn run() -> Result<()> {
             }
         }
     }
+    crate::embedding_pool_client::close();
     closing.store(true, Ordering::Release);
     drop(work_sender);
     // Idle client reads must not hold an intentionally stopped owner open.
