@@ -1,10 +1,10 @@
 # Native VS Code extension
 
-**1.7.5 stable release candidate:** [first-use review, native execution control, uninstall cleanup and data purge](releases/release-1.7.5.md). Published 1.7.3: [Marketplace image links and release promotion](releases/release-1.7.3.md).
+**1.7.6 stable release candidate:** [first-use review, native execution control, uninstall cleanup and data purge](releases/release-1.7.6.md). Published 1.7.3: [Marketplace image links and release promotion](releases/release-1.7.3.md).
 
 Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order and pending extension replacement may still require Reload Window.
 
-The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed, and the current source candidate is **1.7.5**.
+The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed, and the current source candidate is **1.7.6**.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 
@@ -20,7 +20,7 @@ In a trusted workspace, automatic setup:
 - updates the user PATH or adds marked shell-profile blocks;
 - registers folders for background indexing.
 
-Before the first installation, 1.7.5 shows a [first-use review](#first-use-review-174) of these effects and lets you defer or decline them. The service can keep indexing after the editor closes; login startup is a separate opt-in. Use an isolated OS environment when evaluating untrusted binaries.
+Before the first installation, 1.7.6 shows a [first-use review](#first-use-review-174) of these effects and lets you defer or decline them. The service can keep indexing after the editor closes; login startup is a separate opt-in. Use an isolated OS environment when evaluating untrusted binaries.
 
 ### Native execution control
 
@@ -31,7 +31,7 @@ Before the first installation, 1.7.5 shows a [first-use review](#first-use-revie
 Hidden files can be indexed unless ignore rules exclude them. AIRK is not a secret scanner: credentials in ordinary source, JSON or configuration files can end up in retained index objects and retrieved excerpts.
 
 - **Hard exclusions.** `.git`, `.ssh`, `.aws`, `.env` and `.env.*`, `*.pem`, `*.key`, `node_modules`, `target`, `.venv` and `__pycache__` are always skipped.
-- **Credential defaults (1.7.5).** These are skipped unless an ignore-file negation such as `!.npmrc` re-includes them: `.npmrc`, `.netrc`/`_netrc`, `.pypirc`, `.git-credentials`, the private keys `id_rsa`, `id_dsa`, `id_ecdsa` and `id_ed25519` (public `.pub` keys are indexed), `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `kubeconfig`, `.kube/config`, `*.tfstate` and `*.tfstate.backup`, and `.docker/config.json`.
+- **Credential defaults (1.7.6).** These are skipped unless an ignore-file negation such as `!.npmrc` re-includes them: `.npmrc`, `.netrc`/`_netrc`, `.pypirc`, `.git-credentials`, the private keys `id_rsa`, `id_dsa`, `id_ecdsa` and `id_ed25519` (public `.pub` keys are indexed), `*.p12`, `*.pfx`, `*.jks`, `*.keystore`, `kubeconfig`, `.kube/config`, `*.tfstate` and `*.tfstate.backup`, and `.docker/config.json`.
 
 Review source selection and `.airkignore` before indexing.
 
@@ -47,7 +47,7 @@ Deletion is logical. It does not erase filesystem backups, relocated or copied r
 
 ### Storage privacy
 
-Indexes hold source-derived text. On Unix, AIRK creates new storage directories with mode 0700. An existing storage root is accepted only when it, or one of its ancestors, is owned by your account and grants no group or other access. Otherwise registration, storage preparation and project startup fail with `storage_not_private`. AIRK never changes the permissions of a directory it did not create: choose a private directory, or restrict it yourself (for example with `chmod 700`). POSIX ACLs are not evaluated. Windows storage relies on the inherited profile ACL and is not checked.
+Indexes hold source-derived text. On Unix, AIRK creates new storage directories with mode 0700 and never changes the permissions of a directory it did not create. If an existing storage root, and every ancestor of it, could let other accounts read it, `airk runtime inventory` reports a `storage_not_private` warning for that project, and **AIRK: Review and Remove AIRK Data** lists it. Storage is never refused for this reason. Use a private directory, or restrict it yourself (for example with `chmod 700`). POSIX ACLs are not evaluated. Windows storage relies on the inherited profile ACL and is not checked.
 
 ### Data inventory and purge
 
@@ -124,7 +124,7 @@ Each trusted window publishes a private attachment endpoint (a named pipe on Win
 
 **Open AIRK Tools** on each dashboard collection, or **AIRK: Open AIRK Tools** in the Command Palette, opens an interactive console in the Terminal panel. It launches the verified bundled helper directly with that collection's root and storage. Enter `list`, `help airk_search`, `call airk_status`, or `exit`. [Direct MCP tool access](mcp.md#call-tools-without-a-coding-agent) documents JSON/file arguments and standalone equivalents. Trust is required; the console does not trigger indexing. Existing consoles close when their collection bindings change or the extension shuts down.
 
-An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in release version is 1.7.5; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
+An independent thin native-helper extension is implemented under [packages/vscode](../packages/vscode). It wraps the Rust kernel and bundles the native helper in platform-specific VSIX packages. The checked-in release version is 1.7.6; earlier 1.2/1.3 candidate records below retain their original scope. New collections default to Agent Lean; existing saved or published detail remains in effect. See [1.3.0 candidate changes](releases/release-1.3.0.md), [1.2.4 diagnosis and recovery](releases/release-1.2.4.md) and [1.2.3 defaults](releases/release-1.2.3.md). Local and ordinary CI candidates contain unsigned helpers; the separate GitHub release workflow signs Windows/macOS downloads. [Windows local build/review instructions](windows-local-build.md) provide the single PowerShell command and an isolated editor test.
 
 [Deployment and packaging](extension-deployment.md) adapts VCP's delivery practices; [CI](ci-and-builds.md) builds matching native and extension candidates on all three operating systems. Actual observed checks remain in [validation](validation.md).
 
@@ -132,7 +132,7 @@ An independent thin native-helper extension is implemented under [packages/vscod
 
 New vector-model setup asks the native helper for its CPU capabilities and pinned model catalog before installing its embedded assets offline. Version 1.6 selects unsigned INT8 on x64 without VNNI and signed INT8 on VNNI x64 and ARM64; prior semantic state is rebuilt. `airk model-catalog` inspects the choice offline without opening collection/model state. [CPU selection and offline provisioning](onnx-models.md) describe the implemented optimization.
 
-### First-use review (1.7.5)
+### First-use review (1.7.6)
 
 Before the first runtime installation on a machine, a trusted window asks **Set up AIRK on this computer?** and shows what setup will change:
 
@@ -335,7 +335,7 @@ The upper-right **Themed** toggle defaults to the AIRK palette. Turn it off to i
 
 Planner lists the configured plan folder (default `.airk/plans`), Studio lists `.airk/strategies`, and Saved Searches lists `.airk/recipes`. Choose a workspace root, navigate subfolders with breadcrumbs or Up, then choose **Load** or double-click a file. Folder pages are bounded to 100 examined entries and 24 KiB of entry metadata, with explicit continuation; paging stops at 10,000 entries and recommends smaller folders. Browsing creates no directories. Linked/redirected local paths, traversal, foreign roots, invalid formats and oversized imports are refused. Remote enumeration belongs to the filesystem provider; displayed pages and loaded bytes remain bounded, with provider-reported link/type checks. Remote behavior is not qualified by local Windows results.
 
-The source-file strip remembers the last source file per project, even when Explorer takes editor focus. **Choose file…** offers open editor files and another-file browsing. Files in another open AIRK project name the project switch explicitly; files outside registered open projects cannot be examined as that project's evidence. Open a file in the editor and return to Explorer to use its file-based tools. Outline and Evidence › Inspector use the selected file's published indexed evidence, not unsaved text. Inspector loads it automatically when no citation is selected; **Inspect selected file** refreshes it or switches back from a specific citation opened with **Inspect** on a search result, fact or checked citation. A file absent from the published index reports an error. Source links, saved plans and untitled plan drafts open beside Explorer rather than replacing it. Workbench, which lives in the secondary sidebar, opens cited sources in the active editor group instead of splitting the editor (1.7.5). General project search retains its own scope.
+The source-file strip remembers the last source file per project, even when Explorer takes editor focus. **Choose file…** offers open editor files and another-file browsing. Files in another open AIRK project name the project switch explicitly; files outside registered open projects cannot be examined as that project's evidence. Open a file in the editor and return to Explorer to use its file-based tools. Outline and Evidence › Inspector use the selected file's published indexed evidence, not unsaved text. Inspector loads it automatically when no citation is selected; **Inspect selected file** refreshes it or switches back from a specific citation opened with **Inspect** on a search result, fact or checked citation. A file absent from the published index reports an error. Source links, saved plans and untitled plan drafts open beside Explorer rather than replacing it. Workbench, which lives in the secondary sidebar, opens cited sources in the active editor group instead of splitting the editor (1.7.6). General project search retains its own scope.
 
 
 Review follow-up: changed source paths are prioritized ahead of documentation, declaration samples are spread across files, and test directories are searched before applying reference-hit limits. Changed test files appear even without indexed declarations and are labeled as Git observations. Native reference replies retain their nested publication identity; mismatched publications still fail closed. Reports disclose inspected-path/declaration limits, incomplete inventory and Git availability. Review considers uncommitted changes and textual candidates, not resolved callers or executed test coverage.

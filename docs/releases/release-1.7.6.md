@@ -1,10 +1,10 @@
-# 1.7.5 stable release candidate
+# 1.7.6 stable release candidate
 
-Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and npm lock entries are synchronized at 1.7.5. Publication requires green PR and exact-main CI plus the manual release workflows. The intended channel on both destinations is **stable**. This record describes unpublished source until those workflows succeed and their public outputs are verified.
+Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and npm lock entries are synchronized at 1.7.6. Publication requires green PR and exact-main CI plus the manual release workflows. The intended channel on both destinations is **stable**. This record describes unpublished source until those workflows succeed and their public outputs are verified.
 
-1.7.5 addresses the outstanding items from [repository review 02](../reviews/review02/README.md); the [review response](../reviews/review02-response.md) maps each draft to its outcome.
+1.7.6 addresses the outstanding items from [repository review 02](../reviews/review02/README.md); the [review response](../reviews/review02-response.md) maps each draft to its outcome.
 
-Version note: this work was first numbered 1.7.4, and that number was used only for unpublished local test packages. VS Code cannot replace a running same-version extension on Windows because it locks the installed folder. The branch was therefore moved to 1.7.5 so the test build installs beside the running copy. No 1.7.4 release exists on either destination.
+Version note: this work was first numbered 1.7.4 and then 1.7.5. Both numbers were used only for unpublished local test packages. VS Code cannot replace a running same-version extension on Windows because it locks the installed folder, so each locally tested rebuild took the next patch number to install beside the running copy. 1.7.6 followed the change from refusing shared storage to warning about it. No 1.7.4 or 1.7.5 release exists on either destination.
 
 ## Behavior and contract changes
 
@@ -13,7 +13,7 @@ Version note: this work was first numbered 1.7.4, and that number was used only 
 - **Uninstall cleanup.** Uninstall removes AIRK-owned user PATH entries, exact profile blocks and the terminal wrapper, preserving and reporting modified files. **AIRK: Remove Terminal Command** does the same while the extension stays installed. The cleanup worker records `started` first, writes a `README.txt`, and mirrors its result to the native state directory. **AIRK: Show Last Uninstall Result** and a one-time warning at activation report interrupted or incomplete cleanups.
 - **Data inventory and purge.** `airk runtime inventory` (read-only) and `airk runtime purge` (plan digest, then confirm) are new, together with **AIRK: Review and Remove AIRK Data**. Project indexes still go through unregister.
 - **Sensitive data.** Common credential files are excluded by default; an ignore-file negation re-includes them. Turning off Workbench persistence now clears every project's saved sessions or excerpts.
-- **Storage privacy (behavior change).** On Unix, an existing storage root that other accounts can reach is refused at registration, storage preparation and project startup with `storage_not_private`. Permissions are never changed automatically. Existing installations on such a root must move to private storage or restrict the directory themselves.
+- **Storage privacy.** On Unix, AIRK creates new storage directories with mode 0700 and never changes the permissions of an existing directory. A storage root that other accounts may be able to read is reported as a `storage_not_private` warning in `airk runtime inventory`; it is not refused. The maintainer chose warn-only after Linux testing showed that ordinary 0755 directories would otherwise block new and existing projects.
 - **Extraction budgets and rebuilds (contract change).** Skip reports carry a `code`, and coverage reports `extraction_budget_exceeded`. A replacement rebuild may now publish when its only incomplete measurement is per-file extraction failures, which remain reported. The job outcome itself does not carry the count; read it from coverage. The eligibility policy version is bumped, so cached coverage inventories refresh once.
 - **Explorer Assistance on Windows.** The extension replaces inherited ACL entries on its descriptor directory with the current user, SYSTEM and Administrators. The native forwarder refuses a launch descriptor that other accounts can read.
 
@@ -55,4 +55,4 @@ Open checks, not performed for this record (procedures in [validation](../valida
 - verification of the other three published 1.7.3 platform packages;
 - macOS and Linux qualification of every new behavior beyond what CI runs.
 
-The Unix storage refusal tests are `cfg(unix)` and run only in CI or on a POSIX host.
+The Unix storage-privacy tests are `cfg(unix)` and run in CI. They also passed in a local WSL Ubuntu run after the warn-only change.

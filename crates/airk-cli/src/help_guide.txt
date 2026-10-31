@@ -30,7 +30,7 @@ HEADLESS QUICK START (no installation)
   airk <scope> mcp                                    # stdio MCP server for an agent
   airk service shutdown --runtime-dir <control>
   where <scope> is the explicit-service flag set above. On macOS/Linux the
-  data directory must be private to your account (mode 0700).
+  data directory should be private to your account (mode 0700).
 
 LEARNING THE TOOLS
   airk tools list [--json]         every MCP tool (also available as commands)

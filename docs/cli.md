@@ -35,7 +35,7 @@ airk projects
 
 Then queue indexing with `airk <scope> index`. Run `airk <scope> watch on` to keep the index current, and check progress with `airk <scope> tools call airk_status --args '{}'`.
 
-On macOS and Linux an existing data directory must be private to your account (for example `mkdir -m 700`). A directory that other accounts can reach is refused with `storage_not_private`, and AIRK never changes its permissions. The source folder and the data directory must not contain each other. To remove a project's index and settings, leaving the sources untouched, run `airk <scope> configure --stdin` with `{"operation":"unregister"}`.
+On macOS and Linux, keep the data directory private to your account (for example `mkdir -m 700`). AIRK creates new storage directories with mode 0700 and never changes the permissions of an existing one. If other accounts may be able to read a project's storage, `airk runtime inventory` reports a `storage_not_private` warning for it; registration is not refused. The source folder and the data directory must not contain each other. To remove a project's index and settings, leaving the sources untouched, run `airk <scope> configure --stdin` with `{"operation":"unregister"}`.
 
 ## Command families
 

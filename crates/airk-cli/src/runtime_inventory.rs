@@ -80,8 +80,15 @@ fn projects(root: &Path) -> Result<(Vec<serde_json::Value>, bool)> {
             };
             for project in &page.projects {
                 let registration = &project.registration;
+                // Reported, never enforced: AIRK does not change existing permissions.
+                let storage_warning = airk_store::service::data_scope::privacy_warning(Path::new(
+                    &registration.data_root,
+                ))
+                .ok()
+                .flatten();
                 rows.push(serde_json::json!({"binding":registration.binding,"root":registration.root,
                     "data_root":registration.data_root,"collection":registration.collection,
+                    "storage_warning":storage_warning,
                     "state":if inactive {"inactive"} else {"registered"},
                     "removal":"Unregister the project in AIRK Management, or submit {\"operation\":\"unregister\"} through `airk configure --stdin`; source files are untouched"}));
             }

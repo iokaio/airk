@@ -29,30 +29,16 @@ impl std::fmt::Display for UnboundDataRoot {
     }
 }
 impl std::error::Error for UnboundDataRoot {}
-/// An existing storage root that other local accounts can reach. AIRK never
-/// changes permissions of a directory it did not create.
-#[derive(Debug, Clone)]
-pub struct StorageNotPrivate(pub String);
-impl std::fmt::Display for StorageNotPrivate {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "storage_not_private: {}; choose a private directory owned by this account or restrict it yourself (for example `chmod 700`); permissions are not changed automatically",
-            self.0
-        )
-    }
-}
-impl std::error::Error for StorageNotPrivate {}
-
-/// Indexes hold source-derived text, so on Unix an existing root must be
-/// shielded from other accounts: the root or one of its ancestors is owned by
-/// this user and grants no group/other access. POSIX ACLs and Windows ACLs are
-/// not evaluated here. Missing roots are accepted; creation uses mode 0700.
+/// Indexes hold source-derived text. On Unix this reports, without refusing,
+/// an existing root that other accounts may reach: neither the root nor any
+/// ancestor is owned by this user with no group/other access. AIRK never
+/// changes permissions of a directory it did not create; it creates new
+/// storage directories with mode 0700. POSIX ACLs are not evaluated.
 #[cfg(unix)]
-pub fn require_private(data: &Path) -> Result<()> {
+pub fn privacy_warning(data: &Path) -> Result<Option<String>> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     if !exists(data)? {
-        return Ok(());
+        return Ok(None);
     }
     let canonical = data.canonicalize()?;
     // SAFETY: geteuid takes no pointers and has no failure mode.
@@ -60,22 +46,21 @@ pub fn require_private(data: &Path) -> Result<()> {
     for ancestor in canonical.ancestors() {
         let metadata = fs::metadata(ancestor)?;
         if metadata.uid() == uid && metadata.permissions().mode() & 0o077 == 0 {
-            return Ok(());
+            return Ok(None);
         }
     }
     let metadata = fs::metadata(&canonical)?;
-    Err(StorageNotPrivate(format!(
-        "{} (owner uid {}, mode {:o}) and its ancestors allow other accounts to read stored evidence",
+    Ok(Some(format!(
+        "storage_not_private: {} (owner uid {}, mode {:o}) and its ancestors may let other local accounts read stored evidence; use a private directory or restrict it (for example `chmod 700`)",
         canonical.display(),
         metadata.uid(),
         metadata.permissions().mode() & 0o7777
-    ))
-    .into())
+    )))
 }
 /// Windows storage relies on the inherited profile ACL and is not evaluated here.
 #[cfg(not(unix))]
-pub fn require_private(_data: &Path) -> Result<()> {
-    Ok(())
+pub fn privacy_warning(_data: &Path) -> Result<Option<String>> {
+    Ok(None)
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -237,12 +222,10 @@ pub fn bind(data: &Path, control: &Path, namespace: Incarnation) -> Result<Bound
     let scope = expected(data, control, namespace)?;
     check(&scope.data, &scope.control, namespace)?;
     if exists(&scope.data.join(OWNER))? {
-        // Existing projects on shared roots fail visibly before any collection opens.
-        require_private(&scope.data)?;
         return Ok(BoundDataRoot(scope));
     }
     fresh_namespace(&scope.data)?;
-    require_private(&scope.data)?;
+    // A missing root is created owner-only; an existing root keeps its permissions.
     {
         let mut builder = fs::DirBuilder::new();
         builder.recursive(true);
@@ -253,7 +236,6 @@ pub fn bind(data: &Path, control: &Path, namespace: Incarnation) -> Result<Bound
         }
         builder.create(&scope.data)?;
     }
-    require_private(&scope.data)?;
     ensure!(
         scope.data.canonicalize()? == scope.data,
         "service data root redirected during claim"

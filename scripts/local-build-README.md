@@ -33,7 +33,7 @@ Use a throwaway folder outside any repository. The commands below use PowerShell
 
 Notes:
 
-- On macOS and Linux the data directory must be private to your account (for example `mkdir -m 700`). An existing directory that other accounts can reach is refused with `storage_not_private`; AIRK never changes its permissions.
+- On macOS and Linux, keep the data directory private to your account (for example `mkdir -m 700`). AIRK never changes the permissions of an existing directory; `airk runtime inventory` reports storage other accounts may read as `storage_not_private`.
 - `service prepare-registration` is read-only and prints the canonical registration, including the project `binding`. `service register` stores it in the service registry. Run `index` to build the first index; `watch on` keeps it current from source changes.
 - `airk --help` and `airk <command> --help` describe every command. `airk tools list --json` and `airk tools help <tool>` describe the MCP tools, and `airk tools call airk_help` returns the engine's own guide.
 - `index` returns a job receipt. Job state and coverage are visible through `airk_status` and `airk_diagnostics` (`tools call`).

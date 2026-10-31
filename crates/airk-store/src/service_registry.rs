@@ -660,7 +660,6 @@ impl ServiceRegistry {
             &self.root,
             self.incarnation()?,
         )?;
-        super::data_scope::require_private(Path::new(&registration.data_root))?;
         let payload = serde_json::to_vec(registration)?;
         let transaction = self
             .connection

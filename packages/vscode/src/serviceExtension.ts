@@ -582,7 +582,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         }
         for(const raw of Array.isArray(report.projects)?report.projects:[]){
             const project=record(raw);
-            items.push({label:`Project index: ${String(project.collection)}`,description:String(project.root),detail:`Index at ${String(project.data_root)} · removal opens Management for its own confirmation`,project:true,picked:false});
+            items.push({label:`Project index: ${String(project.collection)}`,description:String(project.root),detail:`Index at ${String(project.data_root)} · removal opens Management for its own confirmation${typeof project.storage_warning==='string'?' · ⚠ other accounts may read this storage':''}`,project:true,picked:false});
         }
         for(const line of [`AIRK data inventory${report.incomplete===true?' (incomplete)':''}:`,...items.map(item=>`  ${item.label}: ${item.description} — ${item.detail}`),
             ...(Array.isArray(report.not_covered)?report.not_covered.map(value=>`  Not covered: ${String(value)}`):[])])this.output.appendLine(line);
