@@ -7,14 +7,14 @@ import {NativeServiceFixture} from './nativeServiceFixture';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {McpStdioSession} from '../mcpStdioSession';
-import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry} from './nativeReadRetry';
+import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry,QuickStatusObservation,QuickStatusObserver} from './nativeReadRetry';
 
-async function quickStatus(session:McpStdioSession):Promise<any>{
+async function quickStatus(session:McpStdioSession,observer?:QuickStatusObserver):Promise<any>{
     return observeQuickStatus(async deadline=>{
         // native read: observeQuickStatus applies the typed retry contract to this reply.
         const result=await session.request('tools/call',{name:'status',arguments:{}},Math.max(1,deadline-performance.now()));
         return result.isError===true?result:JSON.parse(result.content[0].text);
-    });
+    },undefined,observer);
 }
 
 test('one root-scoped MCP session survives late registration and rejects ambiguous indexes',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
@@ -59,15 +59,24 @@ test('registered native MCP verifies before the first publication without starti
     }finally{await fixture.dispose();}
 });
 
-test('pinned MCP quick status completes cold verification without diagnostics or inference',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
+test('pinned MCP quick status completes cold verification without diagnostics or inference',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async t=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:McpStdioSession|undefined;
+    const attempts:QuickStatusObservation[]=[];let confirmed:QuickStatusObservation|undefined;let dropped=0;
+    const observe:QuickStatusObserver=value=>{
+        if(value.kind==='confirmed')confirmed=value;
+        else if(attempts.length<64)attempts.push(value);
+        else dropped++;
+    };
     try{
         const spec=await fixture.register('pinned-status');const {launchArgs}=await import('../model');
         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec,'mcp',true),cwd:fixture.owner,clientName:'pinned-status-test',clientVersion:'1.6.4'},60000)).session;
-        const status=await quickStatus(session);assert.equal(status.project,spec.service!.project);
+        const status=await quickStatus(session,observe);assert.equal(status.project,spec.service!.project);
         assert.equal(status.index_state,'unavailable');assert.equal(status.files,null);assert.equal(status.publication,null);
         const embedding=await fixture.embedding();assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
-    }finally{session?.close();await fixture.dispose();}
+    }finally{
+        t.diagnostic(JSON.stringify({quickStatus:{attempts,confirmed:confirmed??null,dropped,nativeStageCounts:'unmeasured',hashCounts:'unmeasured'}}));
+        session?.close();await fixture.dispose();
+    }
 });
 
 test('basic status includes version and health, caches snapshots and diagnostics forces a new observation',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{

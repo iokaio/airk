@@ -1,9 +1,64 @@
 // SPDX-License-Identifier: Apache-2.0
 import {strict as assert} from 'node:assert';
 import {test} from 'node:test';
-import {assertQuickStatusTimeout,boundedReply,observeQuickStatus,readRetryDelay,requestWithReadRetry} from './nativeReadRetry';
+import {assertQuickStatusTimeout,boundedReply,observeQuickStatus,readRetryDelay,requestWithReadRetry,QuickStatusObservation} from './nativeReadRetry';
 import {McpStdioSession} from '../mcpStdioSession';
 import {publishedStatusPending} from './nativeServiceFixture';
+
+test('quick-status measurements separate first response from confirmed recovery without source content',async()=>{
+    const timeout={project:'a'.repeat(64),health:'unknown',index_state:'unknown',publication:null,files:null,chunks:null,index_error:{code:'status_timeout',retryable:true,message:'private sentinel'}};
+    const busy={isError:true,content:[{type:'text',text:JSON.stringify({status:'retry',code:'selection_busy',retryable:true,action:'repeat_same_request',retry_after_ms:1})}]};
+    for(const state of ['available','unavailable']){
+        const confirmed={project:timeout.project,index_state:state,private:'private sentinel'};
+        for(const replies of [[confirmed],[timeout,busy,confirmed]]){
+            const events:QuickStatusObservation[]=[];const deadlines:number[]=[];let calls=0;
+            const result=await observeQuickStatus(async deadline=>{deadlines.push(deadline);return replies[calls++];},undefined,value=>events.push(value));
+            assert.equal(result,confirmed);assert.equal(calls,replies.length);assert.equal(new Set(deadlines).size,1);
+            const attempts=events.filter(value=>value.kind==='attempt');
+            assert.deepEqual(attempts.map(value=>value.outcome),replies.length===1?[state]:['status_timeout','retry',state]);
+            for(const value of attempts){assert.ok(Number.isFinite(value.durationMs)&&value.durationMs>=0);assert.ok(value.elapsedMs>=value.durationMs);}
+            assert.deepEqual(events.at(-1),{kind:'confirmed',attempts:calls,elapsedMs:events.at(-1)!.elapsedMs,recovered:calls>1});
+            assert.ok(!JSON.stringify(events).includes('private sentinel'));assert.ok(!JSON.stringify(events).includes(timeout.project));
+        }
+    }
+});
+
+test('quick-status measurements preserve failure identity and original permissive return behavior',async()=>{
+    for(const index_state of [undefined,null,{},'unexpected']){
+        const value={index_state};const events:QuickStatusObservation[]=[];let calls=0;
+        assert.equal(await observeQuickStatus(async()=>{calls++;return value;},undefined,event=>events.push(event)),value);
+        assert.equal(calls,1);assert.equal(events.length,1);assert.equal(events[0].kind,'attempt');
+        assert.equal((events[0] as Extract<QuickStatusObservation,{kind:'attempt'}>).outcome,'other');
+    }
+    const failure=new Error('private transport sentinel');const events:QuickStatusObservation[]=[];
+    await assert.rejects(observeQuickStatus(async()=>{throw failure;},undefined,event=>events.push(event)),error=>error===failure);
+    assert.equal(events.length,1);assert.equal((events[0] as Extract<QuickStatusObservation,{kind:'attempt'}>).outcome,'read_error');
+    assert.ok(!JSON.stringify(events).includes(failure.message));
+    const value={index_state:'unavailable'};let calls=0;
+    assert.equal(await observeQuickStatus(async()=>{calls++;return value;},undefined,()=>{throw failure;}),value);assert.equal(calls,1);
+});
+
+test('quick-status measurements never confirm scope, timeout or exhausted-budget failures',async t=>{
+    const timeout={project:'a'.repeat(64),health:'unknown',index_state:'unknown',publication:null,files:null,chunks:null,index_error:{code:'status_timeout',retryable:true}};
+    for(const [replies,expected] of [
+        [[timeout,{project:'b'.repeat(64),index_state:'available'}],'scope_mismatch'],
+        [[{...timeout,files:0}],'invalid_timeout'],
+    ] as const){
+        const events:QuickStatusObservation[]=[];let calls=0;
+        await assert.rejects(observeQuickStatus(async()=>replies[calls++],undefined,event=>events.push(event)));
+        assert.equal(events.at(-1)!.kind,'attempt');assert.equal((events.at(-1) as Extract<QuickStatusObservation,{kind:'attempt'}>).outcome,expected);
+        assert.ok(events.every(event=>event.kind!=='confirmed'));
+    }
+    const events:QuickStatusObservation[]=[];let calls=0;
+    await assert.rejects(observeQuickStatus(async()=>{calls++;return timeout;},performance.now()-1,event=>events.push(event)),/observation budget/);
+    assert.equal(calls,0);assert.deepEqual(events,[]);
+    const lateEvents:QuickStatusObservation[]=[];
+    let clock=0;const now=t.mock.method(performance,'now',()=>clock);
+    try{
+        await assert.rejects(observeQuickStatus(async deadline=>{clock=deadline;return {index_state:'available'};},100,event=>lateEvents.push(event)),/observation budget/);
+    }finally{now.mock.restore();}
+    assert.equal((lateEvents.at(-1) as Extract<QuickStatusObservation,{kind:'attempt'}>).outcome,'late');assert.ok(lateEvents.every(event=>event.kind!=='confirmed'));
+});
 
 test('quick-status timeouts disclose unknown readiness without fabricated evidence',()=>{
     const timeout={project:'a'.repeat(64),health:'unknown',index_state:'unknown',publication:null,files:null,chunks:null,index_error:{code:'status_timeout',retryable:true}};

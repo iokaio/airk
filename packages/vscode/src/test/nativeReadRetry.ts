@@ -40,11 +40,37 @@ export function assertQuickStatusTimeout(status:RecordValue):void{
     for(const field of ['publication','files','chunks'])assert.equal(status[field],null,'An unconfirmed observation must not invent evidence');
 }
 
-/** Observe the same scoped read after an explicit timeout/refusal; never accept either as readiness. */
-export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordValue>,deadline=performance.now()+60000):Promise<RecordValue>{
+export type QuickStatusOutcome='available'|'unavailable'|'status_timeout'|'retry'|'error'|'other'|'read_error'|'scope_mismatch'|'invalid_timeout'|'late';
+export type QuickStatusObservation=
+    {kind:'attempt';attempt:number;durationMs:number;elapsedMs:number;outcome:QuickStatusOutcome}|
+    {kind:'confirmed';attempts:number;elapsedMs:number;recovered:boolean};
+export type QuickStatusObserver=(observation:QuickStatusObservation)=>void;
+
+/** Observe the same scoped read after an explicit timeout/refusal; never accept either as readiness.
+ * Optional measurements contain fixed categories and numbers only; observer failures cannot affect reads.
+ */
+export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordValue>,deadline=performance.now()+60000,observer?:QuickStatusObserver):Promise<RecordValue>{
     let project:unknown;
+    const started=observer?performance.now():0;let attempts=0;
+    const emit=(value:QuickStatusObservation)=>{try{observer?.(value);}catch{/* Measurements never control native reads. */}};
     while(performance.now()<deadline){
-        const status=await read(deadline);
+        const attemptStarted=observer?performance.now():0;if(observer)attempts++;
+        let status:RecordValue;
+        try{status=await read(deadline);}catch(error){
+            if(observer){const ended=performance.now();emit({kind:'attempt',attempt:attempts,durationMs:ended-attemptStarted,elapsedMs:ended-started,outcome:'read_error'});}throw error;
+        }
+        if(observer){
+            const ended=performance.now();
+            let outcome:QuickStatusOutcome=status.isError===true?(readRetryDelay(status)!==undefined?'retry':'error'):
+                status.index_state==='available'?'available':status.index_state==='unavailable'?'unavailable':
+                status.index_state==='unknown'?'status_timeout':'other';
+            if(ended>=deadline)outcome='late';
+            else if(status.isError!==true&&project!==undefined&&status.project!==project)outcome='scope_mismatch';
+            else if(status.isError!==true&&status.index_state==='unknown'){
+                try{assertQuickStatusTimeout(status);}catch{outcome='invalid_timeout';}
+            }
+            emit({kind:'attempt',attempt:attempts,durationMs:ended-attemptStarted,elapsedMs:ended-started,outcome});
+        }
         assert.ok(performance.now()<deadline,'Quick status observation budget exhausted');
         if(status.isError===true){
             // A timed-out call can still hold native materialization admission.
@@ -55,7 +81,10 @@ export async function observeQuickStatus(read:(deadline:number)=>Promise<RecordV
             await new Promise(resolve=>setTimeout(resolve,delay));continue;
         }
         if(project!==undefined)assert.equal(status.project,project,'Status retries must retain the configured source scope');
-        if(status.index_state!=='unknown')return status;
+        if(status.index_state!=='unknown'){
+            if(observer&&(status.index_state==='available'||status.index_state==='unavailable'))emit({kind:'confirmed',attempts,elapsedMs:performance.now()-started,recovered:attempts>1});
+            return status;
+        }
         assertQuickStatusTimeout(status);project=status.project;
         assert.ok(performance.now()+50<deadline,'Quick status observation budget exhausted');
         await new Promise(resolve=>setTimeout(resolve,50));

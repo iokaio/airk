@@ -134,6 +134,8 @@ On October 18, 2026, the final 1.1.3 candidate passed all five scenarios across 
 
 ## Troubleshooting
 
+The pinned quick-status native smoke emits content-free attempt timing/outcome observations separately from confirmed recovery, without a diagnostic warm-up. It retains the first 64 attempts, a separate final confirmation and a dropped count; errors and unrecognized states never become confirmed availability. Native stage/hash counts remain unmeasured. These test observations do not establish a production latency improvement or cold filesystem-cache conditions.
+
 - The script fails at the first unsuccessful tool/check; retain its build.log.
 - Missing C/C++ compiler: install the Visual Studio C++ build tools/Windows SDK.
 - Locked dependency restoration fails: check network/registry access; do not regenerate locks or enable dependency scripts just to suppress a failure.
