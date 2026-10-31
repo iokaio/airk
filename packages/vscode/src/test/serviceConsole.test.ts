@@ -9,6 +9,41 @@ import { managementView } from '../explorerManagement';
 const shown = (state: ServiceConsoleState): string => JSON.stringify(managementView(state));
 import { RecordValue, ServiceClient, ServiceError } from '../serviceClient';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+test('routine console observations obtain namespace from Events and reserve request epochs for actions',async()=>{
+    const f=fixture();
+    try{
+        await f.controller.refresh();await f.controller.refresh();
+        assert.equal(f.sent.filter(method=>method==='request_epoch').length,0);
+        const methods=f.sent.map(method=>typeof method==='string'?method:Object.keys(method as object)[0]);
+        assert.ok(methods.indexOf('events')<methods.indexOf('console'));
+        await f.action('index',{project});
+        assert.ok(f.sent.includes('request_epoch'),'explicit actions still acquire durable request keys');
+    }finally{f.controller.dispose();}
+});
+
+test('registry namespace replacement discards old event cursors before publishing new project rows',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),replacement='ab'.repeat(16);
+    let changed=false,refused=false,newPage=false;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        if(changed&&typeof method==='object'&&method!==null&&'events' in method){
+            const args=(method as {events:{cursor:unknown}}).events;
+            if(args.cursor!==null){refused=true;throw new ServiceError('event_scope_changed');}
+            return {status:'events',page:{namespace:replacement,events:[{sequence:1,kind:'new_registry'}],retained_prefix_lost:false,next:null,tail:{namespace:replacement,project:null,after:1,through:null}}};
+        }
+        if(changed&&typeof method==='object'&&method!==null&&'console' in method){newPage=true;}
+        return base.transport.request(method);
+    }});
+    try{
+        await f.controller.refresh();f.controller.state.events=[{sequence:9,kind:'old_registry'}];
+        changed=true;await f.controller.refresh();
+        assert.equal(refused,true);assert.equal(newPage,false);
+        assert.equal(f.controller.state.page,undefined);assert.deepEqual(f.controller.state.events,[]);
+        await f.controller.refresh();
+        assert.equal(newPage,true);assert.deepEqual(f.controller.state.events,[{sequence:1,kind:'new_registry'}]);
+        assert.equal(f.sent.includes('request_epoch'),false);
+    }finally{f.controller.dispose();}
+});
+
 test('raw log actions use the trusted local host and never enter summary reports',async()=>{
     const f=fixture(),calls:boolean[]=[];
     f.host.rawLogs=async save=>{calls.push(save);};
@@ -616,7 +651,7 @@ test('removed-project browsing refreshes active Explorer choices without changin
 
 // Run the actual controller and ServiceClient path; defer only transport replies.
 test('verified health is published before every optional console probe finishes',async()=>{
-    for(const blockedMethod of ['resources','embedding_status','source_status','logs','request_epoch','console','workers','events']){
+    for(const blockedMethod of ['resources','embedding_status','source_status','logs','console','workers','events']){
         const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
         let release!:()=>void,entered!:()=>void;
         const gate=new Promise<void>(resolve=>{release=resolve;});

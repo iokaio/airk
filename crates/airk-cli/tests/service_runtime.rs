@@ -28,6 +28,85 @@ fn bind_fixture_data(runtime: &Path, data: &Path) -> Result<()> {
 }
 
 #[test]
+fn service_owner_retires_pressured_receipts_without_console_polling() -> Result<()> {
+    use airk_core::{
+        identity::Incarnation,
+        service::{ControlMethod, JobKind, RequestKey},
+    };
+    use airk_store::service::registry::ServiceRegistry;
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    fs::write(source.join("untouched.txt"), b"original source")?;
+    airk_cli::local_ipc::prepare_root(&root)?;
+    let caller = Incarnation::from_bytes([17; 16]);
+    let mut registry = ServiceRegistry::open(&root, caller)?;
+    let project = airk_kernel::service_projects::registration(&source, &data, "receipts")?;
+    registry.register(&project)?;
+    registry.pause(project.binding, true)?;
+    let (namespace, epoch) = registry.request_epoch()?;
+    let key = RequestKey {
+        namespace,
+        epoch,
+        nonce: caller,
+    };
+    let job = registry.enqueue(project.binding, caller, &key, JobKind::Index)?;
+    // All keys join one paused job. No admission occurs after pressure is full;
+    // only the service owner's periodic turn can retire the canceled receipt.
+    for number in 1..4096u64 {
+        let mut nonce = [0u8; 16];
+        nonce[..8].copy_from_slice(&number.to_le_bytes());
+        let alias = RequestKey {
+            nonce: Incarnation::from_bytes(nonce),
+            ..key.clone()
+        };
+        ensure!(
+            registry
+                .enqueue(project.binding, caller, &alias, JobKind::Index)?
+                .id
+                == job.id,
+            "alias did not join the paused job"
+        );
+    }
+    registry.cancel_pending(job.id)?;
+    let mut children = Children(vec![start(&root)?]);
+    wait_ready(&root)?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while registry.saved_request_epoch()?.1 == epoch {
+        ensure!(
+            Instant::now() < deadline,
+            "native owner did not maintain idle receipt pressure"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let (receipt, expired) = registry.request_receipt(caller, &key)?;
+    ensure!(
+        receipt.is_none() && expired,
+        "retired request could be replayed"
+    );
+    ensure!(
+        registry.get(project.binding)?.paused,
+        "receipt maintenance resumed source work"
+    );
+    ensure!(
+        fs::read(source.join("untouched.txt"))? == b"original source",
+        "source changed"
+    );
+    tokio::runtime::Runtime::new()?.block_on(airk_cli::service_runtime::request(
+        &root,
+        ControlMethod::Shutdown,
+    ))?;
+    ensure!(
+        wait_exit(&mut children.0[0])?,
+        "service did not drain after receipt maintenance"
+    );
+    Ok(())
+}
+
+#[test]
 fn process_logs_survive_shutdown_and_unknown_log_state_does_not_disable_health() -> Result<()> {
     use airk_core::{
         service::{ControlMethod as Method, ControlResponse as Response},

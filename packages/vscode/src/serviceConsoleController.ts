@@ -194,7 +194,8 @@ export class ServiceConsoleController {
             if(this.observedInstance!==instance){
                 this.observedInstance=instance;this.observationToken=randomUUID();
                 // Health authenticates the service, not the registry/page from a
-                // previous incarnation. Hide those rows until request_epoch/page.
+                // previous incarnation. Hide those rows until Events authenticates
+                // the registry namespace and the project page is observed again.
                 this.clearRegistryObservation(true);
             }
             this.state.health={state:'live',value,checkedAt:Date.now()};this.state.connected=true;
@@ -216,16 +217,18 @@ export class ServiceConsoleController {
             if(page.schema!==1||!Array.isArray(page.records)||page.records.length>32)throw new ServiceError('invalid_process_log_page');
             this.state.serviceEvents={state:'cached',value:page,checkedAt:Date.now()};
         }catch(error){this.state.serviceEvents={...this.state.serviceEvents,state:'failed',code:code(error),checkedAt:Date.now()};}
-        const epoch=await this.rpc('request_epoch','request_epoch');
-        this.restoreJournal(identifier(epoch.namespace,16));
-        this.pending();
-        try{await this.page(false);}catch(error){this.state.message=code(error);}
         try{await this.events();}catch(error){
             this.state.message=code(error);
-            if(error instanceof ServiceError&&['event_cursor_expired','event_scope_changed'].includes(error.code)){
+            if(error instanceof ServiceError&&error.code==='event_scope_changed')this.clearRegistryObservation();
+            if(error instanceof ServiceError&&['event_cursor_expired','event_scope_changed','invalid_event_cursor'].includes(error.code)){
                 this.eventCursor=null;this.state.historyOmitted=true;
             }
+            // Do not publish project/receipt observations under an unconfirmed
+            // registry namespace. The next poll resumes with the reset cursor.
+            throw error;
         }
+        this.pending();
+        try{await this.page(false);}catch(error){this.state.message=code(error);}
         if(this.state.plan)await this.plan(false);
     }
     private clearRegistryObservation(retainedMetadata=false):void{
@@ -316,6 +319,7 @@ export class ServiceConsoleController {
     private async events():Promise<void>{
         const page=record((await this.rpc({events:{project:null,cursor:this.eventCursor,limit:32}},'events')).page);
         if(!Array.isArray(page.events)||page.events.length>32)throw new ServiceError('invalid_event_page');
+        this.restoreJournal(identifier(page.namespace,16));
         const events=page.events.map(event=>record(event));
         const merged=new Map(this.state.events.map(event=>[event.sequence,event]));
         events.forEach(event=>{count(event.sequence);merged.set(event.sequence,event);});

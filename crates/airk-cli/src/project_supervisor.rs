@@ -719,6 +719,7 @@ impl Supervisor {
                 let mut pending_after = None;
                 let mut source_after = None;
                 let mut background_after = None;
+                let mut next_receipt_maintenance = Instant::now();
                 let mut endpoints_ready = false;
                 let mut next_recovery_check=Instant::now();
                 loop {
@@ -1310,6 +1311,10 @@ impl Supervisor {
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
                     if let Some(registry) = registry.as_mut() {
+                        if Instant::now() >= next_receipt_maintenance {
+                            let _ = registry.maintain_job_receipts();
+                            next_receipt_maintenance = Instant::now() + Duration::from_secs(2);
+                        }
                         if let Ok(due) = registry.due_background_jobs(background_after, 8) {
                             background_after = if due.len() == 8 {
                                 due.last().map(|item| item.0)

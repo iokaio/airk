@@ -75,6 +75,17 @@ fn metadata_pressure(connection: &Connection) -> Result<bool> {
     Ok(pages - free + margin >= limit)
 }
 
+fn receipt_pressure(connection: &Connection, needs_job: bool) -> Result<(bool, bool)> {
+    let jobs: i64 =
+        connection.query_row("SELECT count(*) FROM service_jobs", [], |row| row.get(0))?;
+    let requests: i64 =
+        connection.query_row("SELECT count(*) FROM service_requests", [], |row| {
+            row.get(0)
+        })?;
+    let count_full = (needs_job && jobs >= MAX_JOBS) || requests >= MAX_REQUESTS;
+    Ok((count_full, count_full || metadata_pressure(connection)?))
+}
+
 pub(super) fn record(connection: &Connection, id: Sha256Digest) -> Result<JobRecord> {
     let fields = connection
         .query_row(
@@ -255,14 +266,8 @@ impl ServiceRegistry {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let jobs: i64 =
-            transaction.query_row("SELECT count(*) FROM service_jobs", [], |row| row.get(0))?;
-        let requests: i64 =
-            transaction.query_row("SELECT count(*) FROM service_requests", [], |row| {
-                row.get(0)
-            })?;
-        let count_full = (needs_job && jobs >= MAX_JOBS) || requests >= MAX_REQUESTS;
-        if count_full || metadata_pressure(&transaction)? {
+        let (count_full, pressure) = receipt_pressure(&transaction, needs_job)?;
+        if pressure {
             let deleted = transaction.execute("DELETE FROM service_jobs WHERE seq IN(
                 SELECT seq FROM service_jobs WHERE state IN('succeeded','failed','canceled') AND (?1 IS NULL OR id<>?1) ORDER BY seq LIMIT 64)", [protected.map(|id|id.to_string())])?;
             ensure!(deleted > 0 || !count_full, JobError::Capacity);
@@ -281,6 +286,20 @@ impl ServiceRegistry {
             }
         }
         transaction.commit()?;
+        Ok(())
+    }
+
+    /// Periodic management-owner maintenance, independent of an open editor.
+    /// The usual no-pressure case takes no writer lock and changes no metadata.
+    /// Admission still performs its own authoritative check and protects retry keys.
+    pub fn maintain_job_receipts(&mut self) -> Result<()> {
+        let observation = self.connection.unchecked_transaction()?;
+        let (_, pressure) = receipt_pressure(&observation, false)?;
+        observation.commit()?;
+        if pressure {
+            // Recheck after obtaining exclusion: the observation grants no authority.
+            self.prune_job_receipts(false, None)?;
+        }
         Ok(())
     }
 
@@ -1841,6 +1860,84 @@ mod tests {
         );
         Ok(())
     }
+    #[test]
+    fn receipt_maintenance_without_pressure_does_not_require_a_writer() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([7; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), caller)?;
+        let mut other = ServiceRegistry::open(root.path(), caller)?;
+        let epoch = registry.saved_request_epoch()?;
+        let changes = registry.connection.total_changes();
+        let writer = other
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        registry.maintain_job_receipts()?;
+        assert_eq!(registry.connection.total_changes(), changes);
+        assert_eq!(registry.saved_request_epoch()?, epoch);
+        writer.rollback()?;
+        Ok(())
+    }
+
+    #[test]
+    fn receipt_maintenance_retires_one_bounded_page_and_expires_only_retired_keys() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([7; 16]);
+        let mut registry = ServiceRegistry::open(root.path(), caller)?;
+        let project =
+            ProjectRegistration::new("/source".into(), "/state".into(), "fixture".into())?;
+        registry.register(&project)?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        let key = RequestKey {
+            namespace,
+            epoch,
+            nonce: caller,
+        };
+        let running = registry.enqueue(project.binding, caller, &key, JobKind::Index)?;
+        let transaction = registry.connection.transaction()?;
+        // Fill request pressure with terminal jobs and aliases. The live job's
+        // original receipt must remain resolvable across global epoch rotation.
+        for number in 0..130i64 {
+            let id = framed_digest(b"maintenance-fixture", &[&number.to_le_bytes()]);
+            transaction.execute("INSERT INTO service_jobs(id,project,kind,state,epoch,attempts) VALUES(?1,?2,'inspect','succeeded',0,0)", params![id.to_string(), project.binding.to_string()])?;
+            for alias in 0..32i64 {
+                let mut nonce = [0u8; 16];
+                nonce[..8].copy_from_slice(&(number * 32 + alias + 100).to_le_bytes());
+                transaction.execute("INSERT INTO service_requests(namespace,epoch,nonce,caller,job) VALUES(?1,?2,?3,?4,?5)", params![namespace.to_string(), i64::try_from(epoch)?, Incarnation::from_bytes(nonce).to_string(), caller.to_string(), id.to_string()])?;
+            }
+        }
+        transaction.commit()?;
+        registry.maintain_job_receipts()?;
+        let remaining: i64 =
+            registry
+                .connection
+                .query_row("SELECT count(*) FROM service_jobs", [], |row| row.get(0))?;
+        assert_eq!(remaining, 67);
+        assert_eq!(registry.saved_request_epoch()?.1, epoch + 1);
+        assert_eq!(
+            registry
+                .enqueue(project.binding, caller, &key, JobKind::Index)?
+                .id,
+            running.id
+        );
+        let mut retired_nonce = [0u8; 16];
+        retired_nonce[..8].copy_from_slice(&100i64.to_le_bytes());
+        let retired = RequestKey {
+            nonce: Incarnation::from_bytes(retired_nonce),
+            ..key
+        };
+        assert_eq!(
+            registry
+                .enqueue(project.binding, caller, &retired, JobKind::Inspect)
+                .unwrap_err()
+                .downcast_ref::<JobError>(),
+            Some(&JobError::KeyExpired)
+        );
+        let changes = registry.connection.total_changes();
+        registry.maintain_job_receipts()?;
+        assert_eq!(registry.connection.total_changes(), changes);
+        Ok(())
+    }
+
     #[test]
     fn full_queue_preserves_receipts_and_aliases_then_expires_retired_keys() -> Result<()> {
         let root = tempfile::tempdir()?;
