@@ -12,7 +12,7 @@ import { continueFacts, FactHandles, runFacts, scoped } from './explorerFacts';
 import { changesSince, checkCitations, inspect } from './explorerInspect';
 import { managementView, panelDetails } from './explorerManagement';
 import { passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
-import { headline, statusSummary } from './explorerStatus';
+import { headline, statusSummary, scalarWithRetainedDetails } from './explorerStatus';
 import { displayPath } from './explorerSource';
 import { exportStrategy, importPlan, importRecipe, importStrategy, listWorkspaceFiles, loadWorkspaceFile, liveAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
 import { renderPlan, SearchRecipe, validatePlan, validateRecipe, validateStrategy } from './explorerStrategies';
@@ -88,6 +88,8 @@ export class ExplorerController implements vscode.Disposable {
     private statusIdentity?: string;
     private observedIdentity?: string;
     private statusLoading?: Promise<void>;
+    private statusLoadingKind?: 'scalar' | 'details';
+    private retainedDetails?: { project: string; binding: string; identity?: string; summary: StatusSummary; settings?: string };
     private notice?: ExplorerError;
     private revision = 0;
     private route = '#overview';
@@ -284,26 +286,65 @@ export class ExplorerController implements vscode.Disposable {
         return this.evidence;
     }
 
-    private loadStatus(): Promise<void> {
-        if (this.statusLoading || this.disposed) { return this.statusLoading ?? Promise.resolve(); }
+    private detailSettingsKey(project: string): string | undefined {
+        const object = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+        const state = this.control.state;
+        const page = state.inactiveProjects ? state.activePage : state.page;
+        const row = page?.projects.find(entry => object(object(entry.project).registration).binding === project);
+        const snapshot = object(object(row?.inspection).snapshot);
+        return typeof snapshot.incarnation === 'string' && typeof snapshot.settings_digest === 'string'
+            ? JSON.stringify([snapshot.incarnation, snapshot.settings_digest, snapshot.vectors_enabled]) : undefined;
+    }
+
+    private loadStatus(kind: 'scalar' | 'details' = 'scalar'): Promise<void> {
+        if (this.disposed) { return Promise.resolve(); }
+        if (this.statusLoading) {
+            if (kind !== 'details' || this.statusLoadingKind !== 'scalar') { return this.statusLoading; }
+            const project = this.selected, epoch = this.selectionEpoch, identity = this.control.observationIdentity;
+            const generation = this.panel.generation;
+            const spec = JSON.stringify(this.host.specs().find(entry => entry.service?.project === project));
+            return this.statusLoading.then(() => {
+                if (!this.disposed && this.host.trusted() && this.panel.open && generation === this.panel.generation
+                    && project === this.selected && epoch === this.selectionEpoch && identity === this.control.observationIdentity
+                    && spec === JSON.stringify(this.host.specs().find(entry => entry.service?.project === project))) {
+                    return this.loadStatus('details');
+                }
+            });
+        }
         const project = this.selected;
         const epoch = this.selectionEpoch;
         const spec = this.host.specs().find(entry => entry.service?.project === project);
         if (!project || !this.host.trusted() || !spec) { return Promise.resolve(); }
         const binding = JSON.stringify(spec), generation = this.panel.generation;
         const identity = this.control.observationIdentity;
+        const settings = this.detailSettingsKey(project);
         const bound = () => !this.disposed && this.host.trusted() && project === this.selected
             && identity === this.control.observationIdentity && epoch === this.selectionEpoch
+            && (kind !== 'details' || settings === this.detailSettingsKey(project))
             && JSON.stringify(this.host.specs().find(entry => entry.service?.project === project)) === binding;
         const current = () => bound() && this.panel.open && generation === this.panel.generation;
+        this.statusLoadingKind = kind;
         this.statusLoading = (async () => {
             try {
-                const result = await this.session().call('airk_diagnostics', { response_mode: 'full' }, { timeout: 90000, supersede: 'status' });
-                if (current()) { this.status = statusSummary(result.payload); this.statusFor = project; this.statusIdentity = identity; this.notice = undefined; }
+                const result = await this.session().call(kind === 'details' ? 'airk_diagnostics' : 'airk_status',
+                    { response_mode: 'full' }, { timeout: kind === 'details' ? 90000 : 15000, supersede: 'status' });
+                if (current()) {
+                    const raw = result.payload.observed_unix_ms;
+                    const received = Date.now();
+                    const observed = kind === 'scalar' && typeof raw === 'number'
+                        && Number.isSafeInteger(raw) && raw >= 0 ? Math.min(raw, received) : received;
+                    const summary = statusSummary(result.payload, observed);
+                    if (kind === 'details') { this.retainedDetails = { project, binding, identity, summary: { ...summary, detailsObservedAt: observed }, settings }; }
+                    const prior = this.retainedDetails;
+                    const detail = prior?.project === project && prior.binding === binding && prior.identity === identity
+                        ? prior.summary : undefined;
+                    this.status = kind === 'details' ? { ...summary, detailsObservedAt: observed } : scalarWithRetainedDetails(summary, detail, prior?.settings === this.detailSettingsKey(project));
+                    this.statusFor = project; this.statusIdentity = identity; this.notice = undefined;
+                }
             } catch (error) {
                 if (current() && failure(error).code !== 'NO_PROJECT') { this.notice = failure(error); }
             } finally {
-                this.statusLoading = undefined;
+                this.statusLoading = undefined; this.statusLoadingKind = undefined;
                 if (current()) { this.publish(); }
                 // A new visible recipient/binding gets its OWN observation. Do
                 // not publish the old response into a recreated panel or trust scope.
@@ -412,7 +453,7 @@ export class ExplorerController implements vscode.Disposable {
                 if (!this.host.specs().some(spec => spec.service?.project === typed.project)) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
                 this.select(typed.project); this.publish(); await this.loadStatus(); return;
             }
-            case 'status.refresh': await Promise.all([this.loadStatus(), this.control.refresh()]); return;
+            case 'status.refresh': await Promise.all([this.loadStatus('details'), this.control.refresh()]); return;
             case 'manage.refresh': await this.control.refresh(); return;
             case 'manage.observe': {
                 this.managementOpen = (message as WebviewMessageOf<'manage.observe'>).open;

@@ -116,3 +116,26 @@ export function headline(connection: ConnectionState, status: StatusSummary | un
     if (status.freshness === 'running' || status.freshness === 'pending') { return { word: 'indexing', severity: 'info' }; }
     return { word: 'ready', severity: 'ok' };
 }
+
+
+/** Preserve separately sampled details without presenting them as freshly sampled.
+ * Native counts/readiness always come from the scalar observation. A merged
+ * scalar and detailed timestamps stay independent across subsequent cache hits.
+ */
+export function scalarWithRetainedDetails(scalar: StatusSummary, details?: StatusSummary, publicationDetailsValid = true): StatusSummary {
+    if (!details) { return scalar; }
+    const runtime = {
+        ...(details.versionsMatch !== undefined ? { versionsMatch: details.versionsMatch } : {}),
+        ...(details.runtimeVersions !== undefined ? { runtimeVersions: details.runtimeVersions } : {}),
+    };
+    const samePublication = publicationDetailsValid && scalar.publication !== undefined && scalar.publication === details.publication;
+    const publicationDetails = samePublication ? {
+        ...(details.vectorsEnabled !== undefined ? { vectorsEnabled: details.vectorsEnabled } : {}),
+        ...(details.localModelReady !== undefined ? { localModelReady: details.localModelReady } : {}),
+        ...(details.workPhase !== undefined ? { workPhase: details.workPhase } : {}),
+        ...(details.workPaused !== undefined ? { workPaused: details.workPaused } : {}),
+    } : {};
+    const retained = Object.keys(runtime).length + Object.keys(publicationDetails).length > 0;
+    return { ...runtime, ...publicationDetails, ...scalar,
+        ...(retained ? { detailsObservedAt: details.detailsObservedAt ?? details.observedAt } : {}) };
+}

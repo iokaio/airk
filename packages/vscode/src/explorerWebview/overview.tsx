@@ -88,6 +88,7 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
                     ['Published semantic state', status?.semantic ?? 'Not checked'],
                     ['Completed / selected artifacts', status ? `${observed(status.semanticCompleted)} / ${observed(status.semanticSelected)}` : 'Not checked'],
                     ['Published status observed', ago(status?.observedAt)],
+                    ['Detailed observations', ago(status?.detailsObservedAt)],
                 ]} />
                 <p class="muted">Saved setup policy can be newer than this publication. Source indexing and semantic work run separately.</p>
                 <div class="actions"><button type="button" onClick={() => props.go({ workspace: 'manage', tab: 'overview' })}>Review semantic setup</button>

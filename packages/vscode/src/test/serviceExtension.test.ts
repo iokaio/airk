@@ -11,6 +11,9 @@ import { ServiceError } from '../serviceClient';
 
 test('service activation advertises reviewed bindings without indexing and preserves explicit Stop during resolution',async context=>{
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-service-activation-')),source=path.join(root,'source');await fs.mkdir(source);
+    await fs.mkdir(path.join(root,'out'));
+    for(const name of ['explorerController.js','explorerWebview.js','explorerWebview.css'])await fs.writeFile(path.join(root,'out',name),'');
+    const editorListeners=new Set<(editor:any)=>void>();
     const values=new Map<string,unknown>(),commands=new Map<string,()=>Promise<unknown>>(),terminals:any[]=[];
     const storage={keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key:string,value:unknown)=>{values.set(key,value);}};
     const binding={installDir:root,controlDir:path.join(root,'control'),executable:path.join(root,'selected'),launcher:path.join(root,'airk-launcher'),
@@ -27,10 +30,11 @@ test('service activation advertises reviewed bindings without indexing and prese
     const disposable={dispose(){}},event=()=>disposable;
     const stub:any={workspace:{isTrusted:true,workspaceFolders:[{name:'Fixture',uri:{scheme:'file',fsPath:source}}],
         getConfiguration:()=>({get:(key:string,fallback?:unknown)=>key==='explorer.assistance.enabled'?false:fallback,inspect:(key:string)=>({globalValue:key==='mcp.responseMode'?'full':key==='cli.autoInstall'?false:undefined})}),
+        getWorkspaceFolder:()=>stub.workspace.workspaceFolders[0],
         onDidChangeWorkspaceFolders:event,onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event,
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watching is forbidden');}},
     window:{createOutputChannel:(name:string)=>({appendLine(){},show(preserve:boolean){outputShows.push([name,preserve]);},dispose(){}}),createStatusBarItem:()=>({show(){},dispose(){}}),
-        registerWebviewViewProvider:()=>disposable,createTreeView:()=>disposable,onDidChangeActiveTextEditor:event,
+        registerWebviewViewProvider:()=>disposable,createTreeView:()=>disposable,onDidChangeActiveTextEditor:(listener:(editor:any)=>void)=>{editorListeners.add(listener);return {dispose:()=>editorListeners.delete(listener)};},
         showErrorMessage:async()=>undefined,showWarningMessage:async()=>undefined,
         createTerminal:(options:any)=>{terminals.push(options);return {show(){},dispose(){}};}},
     commands:{registerCommand:(name:string,action:()=>Promise<unknown>)=>{commands.set(name,action);return disposable;},executeCommand:async()=>{}},
@@ -39,10 +43,44 @@ test('service activation advertises reviewed bindings without indexing and prese
     McpStdioServerDefinition:class {cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
-    let extension:any;const extensionContext:any={extensionPath:root,extension:{packageJSON:{version:'1.4.0'}},globalState:storage,subscriptions:[]};
+    let extension:any;const extensionContext:any={extensionPath:root,extensionUri:stub.Uri.file(root),extension:{packageJSON:{version:'1.4.0'}},globalState:storage,subscriptions:[]};
     try{
         delete require.cache[require.resolve('../serviceExtension')];extension=require('../serviceExtension');
         const api=await extension.activate(extensionContext);await api.whenReady();assert.equal(ensures,0);assert.ok(discoveries>0);
+        // Actual activation wiring and actual hidden Explorer; no panel/native transport is opened.
+        const controller=extensionContext.subscriptions[0],explorer=await controller.explorerController();
+        const consoleController=controller.console.controller;
+        let refreshes=0;
+        const refreshMock=context.mock.method(consoleController,'refresh',async()=>{refreshes++;});
+        try{
+            const editor={document:{uri:{scheme:'file',fsPath:path.join(source,'entry.rs')}}};
+            stub.window.activeTextEditor=editor;
+            for(const listener of [...editorListeners])listener(editor);
+            await Promise.resolve();
+            assert.equal(refreshes,0,'hidden editor changes must not request service observations');
+            assert.equal(explorer.snapshot().sourceFile,'entry.rs','Explorer keeps tracking the source editor');
+            // Visibility-owned polling remains active, and release stops its next timer.
+            context.mock.timers.enable({apis:['setTimeout']});
+            try{
+                const retained=controller.console.retain();
+                try{
+                    assert.equal(refreshes,1);
+                    context.mock.timers.tick(2000);await Promise.resolve();await Promise.resolve();
+                    assert.equal(refreshes,2,'visible consumer retains periodic refresh');
+                }finally{retained.dispose();}
+                context.mock.timers.tick(30000);await Promise.resolve();
+                assert.equal(refreshes,2,'hidden console has no remaining poll');
+            }finally{context.mock.timers.reset();}
+            const explicitActions:unknown[]=[];
+            const actionMock=context.mock.method(consoleController,'action',async(message:unknown)=>{
+                assert.deepEqual(message,{type:'service',revision:consoleController.state.revision,action:'refresh'});
+                explicitActions.push(message);
+            });
+            try{
+                await controller.console.run('refresh');
+                assert.equal(explicitActions.length,1,'explicit Refresh remains available while hidden');
+            }finally{actionMock.mock.restore();}
+        }finally{refreshMock.mock.restore();}
         const definitions=await api.getServerDefinitions();assert.equal(definitions.length,1);assert.equal(ensures,0);
         assert.equal(definitions[0].command,binding.launcher);assert.equal(definitions[0].env.AIRK_MCP_RESPONSE_MODE,'full');
         assert.ok(definitions[0].args.includes(registration.root));assert.equal(definitions[0].cwd.fsPath,path.dirname(binding.launcher));

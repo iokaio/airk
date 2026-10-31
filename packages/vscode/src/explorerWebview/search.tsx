@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { OpenSourceResult, PassageView, SearchMode, SearchForm } from '../explorerContracts';
 import { RECIPE_SCHEMA, SearchRecipe } from '../explorerStrategies';
 import { HostFailure, request } from './api';
-import { countLine, shortToken } from './format';
+import { ago, countLine, shortToken } from './format';
 import type { ScreenProps } from './workspaces';
 import { FileBrowser, type LibraryFile } from './fileBrowser';
 import { currentSelection } from './strategyStore';
@@ -91,6 +91,7 @@ export function SearchScreen(props: ScreenProps) {
             </form>
             {form.mode === 'vector' && <p class="muted">Describe a concept or behavior in natural language. Semantic search ranks indexed passages by embedding similarity; the exact query words need not appear.</p>}
             {vectorReason && <p class="muted">{vectorReason}</p>}
+            {status?.detailsObservedAt !== undefined && (status.vectorsEnabled !== undefined || status.localModelReady !== undefined) && <p class="muted">Saved policy details observed {ago(status.detailsObservedAt)}.</p>}
             <SaveRecipe form={form} />
             {!canSearch && <p class="callout">Search needs a connected AIRK service and a published index ({props.state.connection}).</p>}
             {error && <p class="callout" role="alert">{error}</p>}

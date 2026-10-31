@@ -1007,7 +1007,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     const assistanceChanged=()=>{void controller.startAssistance();controller.assistanceDefinitions.fire();controller.definitions.fire();};
     context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(()=>{assistanceChanged();return controller.automaticInstall().then(()=>controller.refresh());}),
         vscode.workspace.onDidGrantWorkspaceTrust(()=>{assistanceChanged();void controller.automaticInstall().then(()=>controller.refresh());}),
-        vscode.window.onDidChangeActiveTextEditor(()=>void controller.console.controller.refresh()),vscode.workspace.onDidChangeConfiguration(event=>{
+        vscode.workspace.onDidChangeConfiguration(event=>{
             if(event.affectsConfiguration('airk.explorer.assistance'))assistanceChanged();
             if(event.affectsConfiguration('airk.runtime.nativeExecution'))controller.nativeExecutionChanged();
             else if(event.affectsConfiguration('airk.service'))controller.reset();

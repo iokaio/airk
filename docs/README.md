@@ -2,7 +2,7 @@
 
 [Release records](releases/README.md) contains versioned notes, dated release evidence and the historical checklist. The [release workflow](release-workflow.md) remains current procedural guidance.
 
-**1.8.0 source candidate (unpublished):** [implementation and validation limits](releases/release-1.8.0.md). Explorer publishes verified service health before optional management observations finish and delivers each successful Search result once. Native retrieval optimization remains in progress; no measured latency improvement is claimed.
+**1.8.0 source candidate (unpublished):** [implementation and validation limits](releases/release-1.8.0.md). Explorer publishes verified service health before optional management observations finish and delivers each successful Search result once. Native retrieval optimization remains in progress; no measured latency improvement is claimed. Automatic Explorer observations use lightweight status; explicit Refresh obtains separately aged details.
 
 **1.7.6 stable release (published 2026-10-31):** [review 02 follow-up: setup review, native execution control, uninstall cleanup, data purge and advisory gate](releases/release-1.7.6.md). Published 1.7.3 fixed [Marketplace image links and release promotion](releases/release-1.7.3.md); published 1.7.2 introduced the [Workbench and Explorer interface](releases/release-1.7.2.md).
 

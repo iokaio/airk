@@ -88,7 +88,7 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
                     return { publication: 'airk-r1:t', payload: { truncated: false, publication: { token: 'airk-r1:t' },
                         hits: [{ citation: { path: 'a.ts', start_line: 2, end_line: 4, content_hash: 'cd'.repeat(32) }, text: 'x', truncated: false }] } };
                 }
-                assert.equal(tool, 'airk_diagnostics');
+                assert.ok(tool === 'airk_status' || tool === 'airk_diagnostics', 'only scalar readiness or explicit details are expected');
                 return { payload: { index_state: 'available', publication: { token: 'airk-r1:t' }, semantic_readiness: { state: 'ready' }, freshness: { state: 'idle' } } };
             }, dispose() {} };
         }
@@ -355,7 +355,7 @@ test('status selection generations load the new project after a pending old requ
     const calls: string[] = [];
     Object.assign(instance, { selected: 'A', selectionEpoch: 1,
         host: { trusted: () => true, specs: () => ['A','B'].map(binding => ({command:'/launcher',root:`/src/${binding}`,service:{project:binding}})) },
-        control: {observationIdentity:'same-owner'},panel:{open:true,generation:1},retained:disposable,publish() {},
+        control: {observationIdentity:'same-owner',state:{inactiveProjects:false}},panel:{open:true,generation:1},retained:disposable,publish() {},
         session() { const selected = this.selected; return { call: () => {
             calls.push(selected);
             return selected === 'A' ? new Promise(resolve => { release = resolve; }) : Promise.resolve({ payload: { index_state: 'available', publication: { token: 'B' } } });
@@ -556,7 +556,7 @@ function promptFeedbackHost(context:any,blockedMethod='resources',savedCounts=fa
     let liveInstance=instance,liveNamespace=namespace,epochGate:ReturnType<typeof f08Deferred<void>>|undefined;
     const changed=new Set<(state:any)=>void>(),specChanges=new Set<()=>void>(),values=new Map<string,unknown>();
     const clientSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],gates:Array<{entered:ReturnType<typeof f08Deferred<void>>;release:ReturnType<typeof f08Deferred<void>>}>=[];
-    const evidenceSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],evidence:Array<{project:string;spec:any;result:ReturnType<typeof f08Deferred<any>>}>=[];
+    const evidenceSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],evidence:Array<{tool:string;project:string;spec:any;result:ReturnType<typeof f08Deferred<any>>}>=[];
     const polls:Promise<void>[]=[],consoleSnapshots:any[]=[];
     let specs=[project,other].map((binding,index)=>({command:'/launcher',root:`/src/prompt-${index}`,dataDir:`/data/${index}`,collection:`prompt-${index}`,name:`prompt-${index}`,service:{installDir:'/install',project:binding}}));
     const page={revision:1,cached:true,observed_unix_ms:1,after:null,projects:specs.map(spec=>({project:{registration:{binding:spec.service.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection},paused:false,fencing_generation:1},progress:null,inspection:savedCounts?{snapshot:{index_state:'available',publication:'saved-old-registry-publication',indexed_files:99}}:null}))};
@@ -601,9 +601,9 @@ function promptFeedbackHost(context:any,blockedMethod='resources',savedCounts=fa
         onDidChangeSpecs:(listener:()=>void)=>{specChanges.add(listener);return {dispose(){specChanges.delete(listener);}};},
         log(){},setStatusBar(){},workspaceState:{get:(_key:string,fallback:unknown)=>fallback,update:async()=>{}},suggestions,control:source};
     context.mock.method(EvidenceClient.prototype,'call',function(this:InstanceType<typeof EvidenceClient>,tool:string){
-        assert.equal(tool,'airk_diagnostics');
+        assert.ok(tool==='airk_status'||tool==='airk_diagnostics','only scalar readiness or explicit details are expected');
         const index=evidence.length;
-        const pending={project:this.project,spec:structuredClone(this.spec),result:f08Deferred<any>()};evidence.push(pending);
+        const pending={tool,project:this.project,spec:structuredClone(this.spec),result:f08Deferred<any>()};evidence.push(pending);
         (evidenceSignals[index]??=f08Deferred<void>()).resolve();return pending.result.promise;
     });
     const explorer=new ExplorerController(host);
@@ -623,6 +623,7 @@ function promptFeedbackHost(context:any,blockedMethod='resources',savedCounts=fa
             }
             assert.ok(explorer.snapshot().status,'current identity needs its own completed observation');
         },
+        settings(value:string){(page.projects[0] as any).inspection={observed_unix_ms:Date.now(),snapshot:{project,incarnation:'11'.repeat(16),settings_digest:value,vectors_enabled:true}};},
         restartIdentity(){liveInstance='78'.repeat(16);liveNamespace='9a'.repeat(16);epochGate=f08Deferred<void>();},
         releaseEpoch(){epochGate?.resolve();},
         poll(){return startPoll();},
@@ -825,5 +826,127 @@ test('actual Explorer fences same-spec diagnostics and saved counts across authe
         f.finish(oldRequest+1);await f.settleStatus();
         assert.equal(f.explorer.snapshot().status?.indexState,'unavailable');
         assert.ok(!panel.posted.slice(boundary).some((entry:any)=>entry.state?.status?.files===777));
+    }finally{await f.cleanup();context.mock.restoreAll();}
+});
+
+
+test('automatic Explorer observations use scalar status while explicit details retain independently aged fields',async context=>{
+    const f=promptFeedbackHost(context);
+    try{
+        f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
+        await f.blocked();await f.requested();f.release();await f.console.whenIdle();await f.settleStatus();
+        assert.ok(f.evidence.length>0);assert.ok(f.evidence.every(request=>request.tool==='airk_status'));
+        const detailIndex=f.evidence.length;
+        panel.send({v:1,type:'status.refresh',requestId:'explicit-details'});
+        assert.equal((await f.requested(detailIndex)).tool,'airk_diagnostics');
+        f.finish(detailIndex,{payload:{index_state:'available',publication:{token:'same-publication'},files:99,
+            vectors_enabled:true,local_model_ready:true,runtime:{versions_match:false},
+            semantic_readiness:{state:'partial'},freshness:{state:'running'}}});
+        await flush();
+        const detailed=f.explorer.snapshot().status!;
+        assert.equal(typeof detailed.detailsObservedAt,'number');
+        const detailTime=detailed.detailsObservedAt;
+        const scalarIndex=f.evidence.length;
+        const scalar=(f.explorer as any).loadStatus();
+        assert.equal((await f.requested(scalarIndex)).tool,'airk_status');
+        f.finish(scalarIndex,{payload:{index_state:'available',publication:{token:'same-publication'},files:101,
+            observed_unix_ms:200,semantic_readiness:{state:'partial'},freshness:{state:'idle'}}});
+        await scalar;
+        const current=f.explorer.snapshot().status!;
+        assert.equal(current.files,101);assert.equal(current.freshness,'idle');
+        assert.equal(current.observedAt,200);assert.equal(current.detailsObservedAt,detailTime);
+        assert.equal(current.vectorsEnabled,true);assert.equal(current.localModelReady,true);
+        assert.equal(current.versionsMatch,false);
+        let copied='';context.mock.method(vscodeStub.env.clipboard,'writeText',async(value:string)=>{copied=value;});
+        await (f.explorer as any).dispatch({v:1,type:'details.copy',requestId:'copy',project,section:'semantic'});
+        assert.ok(copied.includes('Published status observed'));
+        assert.ok(copied.includes('Detailed observations'));
+        assert.ok(copied.includes(new Date(detailTime!).toISOString()));
+        assert.ok(panel.posted.some((entry:any)=>entry.type==='result'&&entry.requestId==='explicit-details'&&entry.ok));
+    }finally{await f.cleanup();context.mock.restoreAll();}
+});
+
+test('two explicit detail waiters behind one scalar share one independent diagnostics request',async context=>{
+    const f=promptFeedbackHost(context);
+    try{
+        f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
+        await f.blocked();await f.requested();f.release();await f.console.whenIdle();await f.settleStatus();
+        const index=f.evidence.length;
+        const scalar=(f.explorer as any).loadStatus();
+        assert.equal((await f.requested(index)).tool,'airk_status');
+        panel.send({v:1,type:'status.refresh',requestId:'detail-one'});
+        panel.send({v:1,type:'status.refresh',requestId:'detail-two'});await flush();
+        assert.equal(f.evidence.length,index+1,'details cannot race the existing scalar owner');
+        f.finish(index);await scalar;
+        assert.equal((await f.requested(index+1)).tool,'airk_diagnostics');
+        await flush();assert.equal(f.evidence.length,index+2,'explicit waiters share the details owner');
+        f.finish(index+1);await flush();
+        for(const requestId of ['detail-one','detail-two']){
+            assert.ok(panel.posted.some((entry:any)=>entry.type==='result'&&entry.requestId===requestId&&entry.ok));
+        }
+    }finally{await f.cleanup();context.mock.restoreAll();}
+});
+
+test('same-publication saved settings changes reject old detailed policy while retaining independently sampled runtime',async context=>{
+    const f=promptFeedbackHost(context);
+    try{
+        f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
+        await f.blocked();await f.requested();f.release();await f.console.whenIdle();await f.settleStatus();
+        f.settings('aa'.repeat(32));await f.poll();
+        let index=f.evidence.length;
+        const oldDetails=(f.explorer as any).loadStatus('details');
+        assert.equal((await f.requested(index)).tool,'airk_diagnostics');
+        f.settings('bb'.repeat(32));await f.poll();
+        f.finish(index,{payload:{index_state:'available',publication:{token:'same'},vectors_enabled:false,
+            local_model_ready:false,runtime:{versions_match:false}}});await oldDetails;
+        assert.equal((await f.requested(index+1)).tool,'airk_status');
+        f.finish(index+1,{payload:{index_state:'available',publication:{token:'same'},files:5,
+            semantic_readiness:{state:'pending'},freshness:{state:'running'},observed_unix_ms:400}});
+        await flush();
+        assert.equal(f.explorer.snapshot().status?.vectorsEnabled,undefined,'old saved settings cannot be relabeled current');
+        index=f.evidence.length;
+        const details=(f.explorer as any).loadStatus('details');await f.requested(index);
+        f.finish(index,{payload:{index_state:'available',publication:{token:'same'},vectors_enabled:true,
+            local_model_ready:true,runtime:{versions_match:false}}});await details;
+        const observed=f.explorer.snapshot().status!.detailsObservedAt;
+        f.settings('cc'.repeat(32));await f.poll();
+        index=f.evidence.length;
+        const scalar=(f.explorer as any).loadStatus();await f.requested(index);
+        f.finish(index,{payload:{index_state:'available',publication:{token:'same'},files:6,
+            semantic_readiness:{state:'partial'},freshness:{state:'idle'},observed_unix_ms:500}});await scalar;
+        const status=f.explorer.snapshot().status!;
+        assert.equal(status.files,6);assert.equal(status.vectorsEnabled,undefined);
+        assert.equal(status.localModelReady,undefined);assert.equal(status.versionsMatch,false);
+        assert.equal(status.observedAt,500);assert.equal(status.detailsObservedAt,observed);
+    }finally{await f.cleanup();context.mock.restoreAll();}
+});
+test('publication and control identity changes cannot relabel retained details or migrate queued demand',async context=>{
+    const f=promptFeedbackHost(context);
+    try{
+        f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
+        await f.blocked();await f.requested();f.release();await f.console.whenIdle();await f.settleStatus();
+        let index=f.evidence.length;
+        const details=(f.explorer as any).loadStatus('details');await f.requested(index);
+        f.finish(index,{payload:{index_state:'available',publication:{token:'old-publication'},
+            vectors_enabled:false,local_model_ready:false,runtime:{versions_match:false}}});await details;
+        index=f.evidence.length;
+        const scalar=(f.explorer as any).loadStatus();await f.requested(index);
+        f.finish(index,{payload:{index_state:'available',publication:{token:'new-publication'},files:7,
+            semantic_readiness:{state:'pending'},freshness:{state:'running'},observed_unix_ms:300}});await scalar;
+        const published=f.explorer.snapshot().status!;
+        assert.equal(published.publication,'new-publication');assert.equal(published.files,7);
+        assert.equal(published.vectorsEnabled,undefined);assert.equal(published.localModelReady,undefined);
+        assert.equal(published.versionsMatch,false,'same-owner runtime sample retains its own old age');
+        index=f.evidence.length;
+        const oldScalar=(f.explorer as any).loadStatus();await f.requested(index);
+        panel.send({v:1,type:'status.refresh',requestId:'obsolete-detail-demand'});await flush();
+        f.restartIdentity();const poll=f.poll();await flush();
+        f.finish(index,{payload:{index_state:'available',publication:{token:'obsolete'},files:777}});
+        await oldScalar;
+        const replacement=await f.requested(index+1);
+        assert.equal(replacement.tool,'airk_status','old details demand cannot migrate to new ownership');
+        f.releaseEpoch();await poll;f.finish(index+1);await f.settleStatus();
+        assert.equal(f.explorer.snapshot().status?.versionsMatch,undefined);
+        assert.equal(f.explorer.snapshot().status?.detailsObservedAt,undefined);
     }finally{await f.cleanup();context.mock.restoreAll();}
 });
