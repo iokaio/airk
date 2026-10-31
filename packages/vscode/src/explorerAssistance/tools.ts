@@ -178,10 +178,17 @@ export class AssistanceTools {
         if (typeof input === 'string') { return { ok: false, code: 'INVALID_SCHEMA', detail: input }; }
         const offset = Number(input.offset ?? 0), limit = Number(input.limit ?? 10), budget = Number(input.max_bytes ?? 8192);
         const value = { ...this.identity(), templates: [] as object[], total: CORE_PACK.length, next_offset: null as number | null };
+        // Keep the original conservative prospective next_offset framing, but
+        // encode the empty envelope once and each candidate once. No growing
+        // array clone or repeated serialization of already admitted items.
+        let prospectiveBytes: number | undefined;
         for (const entry of CORE_PACK.slice(offset, offset + limit)) {
             const item = { template_id: entry.strategy.id, version: entry.strategy.version, title: entry.strategy.title, summary: entry.strategy.summary,
                 category: entry.strategy.category, runnable: entry.runnable, ...(entry.reason ? { reason: entry.reason } : {}) };
-            if (bytes({ ...value, templates: [...value.templates, item], next_offset: CORE_PACK.length }) > budget) { break; }
+            prospectiveBytes ??= bytes({ ...value, next_offset: CORE_PACK.length });
+            const candidateBytes = prospectiveBytes + bytes(item) + (value.templates.length ? 1 : 0);
+            if (candidateBytes > budget) { break; }
+            prospectiveBytes = candidateBytes;
             value.templates.push(item);
         }
         if (offset + value.templates.length < CORE_PACK.length) { value.next_offset = offset + value.templates.length; }

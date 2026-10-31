@@ -3,11 +3,12 @@ import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ExplorerHost } from './explorerController';
+import type { LaunchSpec } from './model';
 import { EvidenceClient } from './explorerEvidence';
 import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
 import { strategyFromPlan } from './workbenchStrategies';
 import { newSession, SessionStore } from './workbenchSessions';
-import { continuations, evidenceCards, renderExport } from './workbenchRender';
+import { CurrentTurnProjections, continuations, evidenceCards, renderExport } from './workbenchRender';
 import { object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
 
 // Cold native setup (10 s) plus scalar observation (2 s), with transport slack.
@@ -23,6 +24,7 @@ export function workbenchHtml(webview:vscode.Webview, extension:vscode.Uri, nonc
 /** Host owns sessions, evidence and native transport; webview actions carry opaque handles. */
 export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposable {
     private view?:vscode.WebviewView;
+    private readonly display=new CurrentTurnProjections();
     private readonly visibilityChanged=new vscode.EventEmitter<void>();
     readonly onDidChangeVisibility=this.visibilityChanged.event;
     get visible():boolean{return this.view?.visible===true;}
@@ -31,6 +33,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         else await this.focus();
     }
     private client?:EvidenceClient;
+    private clientIdentity?:string;
     private generation=0;
     private session?:WorkbenchSession;
     private sessions?:SessionStore;
@@ -46,13 +49,26 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private disposed=false;
     private pendingInput?:string;
     constructor(private readonly context:vscode.ExtensionContext, private readonly host:ExplorerHost){
-        this.subscriptions.push(host.onDidChangeSpecs(()=>{if(this.view){void this.refresh().catch(error=>this.fail(error));}}),vscode.workspace.onDidChangeConfiguration(event=>{
+        this.subscriptions.push(host.onDidChangeSpecs(()=>{this.invalidateChangedClient();if(this.view){void this.refresh().catch(error=>this.fail(error));}}),vscode.workspace.onDidChangeConfiguration(event=>{
+            if(event.affectsConfiguration('airk.runtime.nativeExecution')){this.invalidateChangedClient();if(this.view){void this.refresh().catch(error=>this.fail(error));}}
             if(event.affectsConfiguration('airk.workbench')){void this.privacyChanged().catch(error=>this.fail(error));}
         }));
     }
     private persistence():boolean{return vscode.workspace.getConfiguration('airk').get('workbench.persistSessions',true);}
     private persistResults():boolean{return vscode.workspace.getConfiguration('airk').get('workbench.persistResults',true);}
+    private nativeAllowed():boolean{return vscode.workspace.getConfiguration('airk').inspect<boolean>('runtime.nativeExecution')?.globalValue!==false;}
+    private localAllowed():boolean{return this.host.trusted()&&!this.disposed;}
+    private permitted():boolean{return this.localAllowed()&&this.nativeAllowed();}
     private authorized():void{if(!this.host.trusted()||this.disposed){throw new Error('A trusted workspace is required.');}}
+    private releaseClient():void{this.client?.dispose();this.client=undefined;this.clientIdentity=undefined;}
+    private selectedSpec():LaunchSpec|undefined{return this.host.specs().find(spec=>spec.service?.project===this.session?.project);}
+    /** Invalidate synchronously before refresh/list awaits, including hidden views. */
+    private invalidateChangedClient():void{
+        const spec=this.selectedSpec();
+        if(!this.permitted()||(this.session&&!spec)||(this.client&&this.clientIdentity!==JSON.stringify(spec))){
+            this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;
+        }
+    }
     resolveWebviewView(view:vscode.WebviewView):void{
         this.view=view;
         const visibility=view.onDidChangeVisibility(()=>this.visibilityChanged.fire());
@@ -60,43 +76,65 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         view.webview.options={enableScripts:true,enableCommandUris:false,localResourceRoots:[vscode.Uri.joinPath(this.context.extensionUri,'out')]};
         view.webview.html=workbenchHtml(view.webview,this.context.extensionUri,randomBytes(24).toString('base64url'));
         const received=view.webview.onDidReceiveMessage(raw=>{const message=parseWorkbenchMessage(raw);if(message){void this.message(message).catch(error=>this.fail(error));}else{this.fail(new Error('Workbench request is invalid or exceeds its size limit.'));}});
-        const release=view.onDidDispose(()=>{received.dispose();visibility.dispose();release.dispose();if(this.view===view){this.view=undefined;this.visibilityChanged.fire();this.stop();this.client?.dispose();this.client=undefined;}});
+        const release=view.onDidDispose(()=>{received.dispose();visibility.dispose();release.dispose();if(this.view===view){this.view=undefined;this.display.clear();this.visibilityChanged.fire();this.stop();this.releaseClient();}});
         void this.refresh().catch(error=>this.fail(error));
     }
     private state():WorkbenchState{
         return {projects:this.host.specs().flatMap(s=>s.service?[{id:s.service.project,name:s.name}]:[]),project:this.session?.project,session:this.session,recent:this.recent,
-            cards:Object.fromEntries((this.session?.turns??[]).map(t=>[t.id,evidenceCards(t.envelope??{})])),continuations:Object.fromEntries((this.session?.turns??[]).map(t=>[t.id,continuations(t.envelope??{})])),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,persistence:this.persistence(),operations:this.operations};
+            ...this.display.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,persistence:this.persistence(),operations:this.operations};
     }
     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
+    private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status});}}
+    private sendSaved(session:WorkbenchSession):void{if(!this.disposed&&this.session===session){void this.view?.webview.postMessage({type:'saved',sessionId:session.id,project:session.project,revision:session.revision,recent:this.recent,save:this.saving});}}
+
     private fail(error:unknown):void{this.notice=error instanceof Error?error.message:String(error);this.send();}
     async refresh():Promise<void>{
-        if(!this.host.trusted()){this.stop();this.client?.dispose();this.client=undefined;this.send();return;}
+        this.invalidateChangedClient();
+        if(!this.permitted()){this.send();return;}
         const specs=this.host.specs();
         if(!this.session){const id=this.host.activeProject()??(specs.length===1?specs[0].service?.project:undefined);if(id){await this.select(id);return;}}
-        if(this.session&&!specs.some(s=>s.service?.project===this.session!.project)){this.stop();this.client?.dispose();this.client=undefined;this.session=undefined;this.status=undefined;}
+        if(this.session&&!specs.some(s=>s.service?.project===this.session!.project)){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
         this.send();
     }
     private async select(id:string):Promise<void>{
-        this.authorized();if(!this.host.specs().some(s=>s.service?.project===id)){throw new Error('Project is not registered in this workspace.');}
-        this.stop();this.client?.dispose();this.client=undefined;this.status=undefined;
-        this.session=newSession(id);this.notice=undefined;
-        this.recent=this.persistence()?(await this.store.list(id)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length})):[];this.send();
-        const generation=this.generation;
-        void this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(generation===this.generation&&this.host.trusted()){this.status=result.payload;this.send();}},error=>{if(generation===this.generation){this.fail(error);}});
+        this.authorized();const spec=this.host.specs().find(value=>value.service?.project===id);if(!spec){throw new Error('Project is not registered in this workspace.');}
+        const identity=JSON.stringify(spec);
+        this.stop();
+        if(this.client&&this.clientIdentity!==identity){this.releaseClient();}
+        this.status=undefined;this.session=newSession(id);this.notice=undefined;
+        const generation=this.generation,session=this.session;
+        const current=()=>generation===this.generation&&session===this.session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
+        let recent:WorkbenchState['recent'];
+        try{recent=this.persistence()?(await this.store.list(id)).map(value=>({id:value.id,title:value.title,updatedAt:value.updatedAt,turns:value.turns.length})):[];}
+        catch(error){if(!current()){return;}throw error;}
+        if(!current()){return;}
+        this.recent=recent;this.send();
+        if(!this.permitted()){return;}
+        const client=this.evidence();
+        // New transcripts still request status; only the exact transport is reused.
+        void client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(current()&&client===this.client&&this.permitted()){this.status=result.payload;this.sendStatus();}},error=>{if(current()&&client===this.client&&this.permitted()){this.fail(error);}});
     }
     private evidence():EvidenceClient{
-        this.authorized();const spec=this.host.specs().find(s=>s.service?.project===this.session?.project);
+        this.authorized();if(!this.nativeAllowed()){throw new Error('Native execution is disabled.');}const spec=this.selectedSpec();
         if(!spec){throw new Error('Choose a registered project.');}
-        if(this.client&&JSON.stringify(this.client.spec)!==JSON.stringify(spec)){this.client.dispose();this.client=undefined;}
-        return this.client??=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});
+        const identity=JSON.stringify(spec);
+        if(this.client&&this.clientIdentity!==identity){this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;}
+        if(!this.client){this.client=new EvidenceClient(spec,this.host.version,{workbench:true,clientName:'airk-workbench',timeout:35000});this.clientIdentity=identity;}
+        return this.client;
     }
     stop():void{this.generation++;if(this.busy){const turn=this.session?.turns.at(-1);if(turn&&!turn.envelope){turn.error='Request stopped. Already admitted native reads may still finish; late replies are discarded.';}}this.busy=false;this.client?.cancel('workbench');this.send();}
     async newSession():Promise<void>{if(this.session){await this.select(this.session.project);}else{await this.refresh();}}
     async clear():Promise<void>{
         this.authorized();if(!this.session){return;}
-        const selected=this.session.project;
+        const session=this.session,selected=session.project,generation=this.generation,identity=JSON.stringify(this.selectedSpec());
         const choice=await vscode.window.showWarningMessage('Delete saved Workbench sessions for this project?',{modal:true},'Delete sessions');
-        if(choice==='Delete sessions'&&this.session?.project===selected){this.stop();await this.saveQueue;await this.store.remove(selected);await this.select(selected);}
+        if(choice==='Delete sessions'&&this.session===session&&generation===this.generation&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){
+            this.stop();const accepted=this.generation;
+            // The already authorized deletion keeps its exact project even if a
+            // later selection supersedes it; it never restores that old selection.
+            await this.saveQueue;await this.store.remove(selected);
+            if(accepted===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){if(this.selectedSpec()){await this.select(selected);}else{this.session=undefined;this.recent=[];this.status=undefined;this.send();}}
+        }
     }
     private save(session:WorkbenchSession):void{
         if(!this.persistence()){this.saving='Session persistence off';this.send();return;}
@@ -104,9 +142,32 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.saveQueue=this.saveQueue.then(async()=>{
             // Preserve revisions after earlier saves queued by the same window.
             captured.revision=session.revision;
-            await this.store.save(captured,results);session.revision=captured.revision;
-            if(this.session===session){this.recent=(await this.store.list(session.project)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length}));this.saving=results?'Auto-saved':'Inputs saved; results excluded';this.send();}
+            const recent=await this.store.save(captured,results);session.revision=captured.revision;
+            if(this.session!==session){return;}
+            const summaries=recent??(await this.store.list(session.project)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length}));
+            // Empty saves retain the list fallback; a new transcript can arrive during it.
+            if(this.session!==session){return;}
+            this.recent=summaries;this.saving=results?'Auto-saved':'Inputs saved; results excluded';this.sendSaved(session);
         }).catch(error=>{this.saving='Save failed — export or retry';this.fail(error);});
+    }
+    private async loadRecent(id:string):Promise<void>{
+        const session=this.session;if(!session){return;}
+        this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+        const current=()=>generation===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
+        await this.saveQueue;if(!current()){return;}
+        let loaded:WorkbenchSession|undefined;
+        try{loaded=await this.store.load(session.project,id);}
+        catch(error){if(!current()){return;}throw error;}
+        if(!current()){return;}
+        this.session=loaded;this.send();
+    }
+    private async deleteRecent(id:string):Promise<void>{
+        const session=this.session;if(!session){return;}
+        this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+        // Deletion was explicitly accepted for this project/id. Finish that
+        // operation, but never redirect it or reset a superseding transcript.
+        await this.saveQueue;await this.store.remove(session.project,id);
+        if(generation===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){await this.newSession();}
     }
     private async privacyChanged():Promise<void>{
         await this.saveQueue;
@@ -121,20 +182,22 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private async run(input:string,prepare=false,recipe?:string,plan?:Value,pathPrefix?:string):Promise<void>{
         this.authorized();if(!this.session){throw new Error('Choose a project first.');}
-        this.stop();const generation=this.generation,session=this.session,client=this.evidence();this.busy=true;this.notice=undefined;
+        this.stop();const session=this.session,client=this.evidence(),generation=this.generation;this.busy=true;this.notice=undefined;
         const turn={id:randomUUID(),at:Date.now(),input:(input||`${recipe??'Plan'} evidence`).slice(0,4096),format:'structured' as const,request:undefined as Value|undefined,envelope:undefined as Value|undefined,error:undefined as string|undefined};
         session.turns.push(turn);if(session.turns.length===1){session.title=turn.input.replaceAll('\n',' ').slice(0,80);}this.send();
         try{
+            let remembered=false;
             if(!plan&&!recipe&&this.persistence()){
                 const shortcut=await this.store.findShortcut(session.project,input,pathPrefix??'');
-                if(shortcut){plan=shortcut;this.notice='Using an explicitly remembered plan; all steps are validated against current evidence.';}
+                if(shortcut){plan=shortcut;remembered=true;}
             }
-            if(generation!==this.generation||session!==this.session||!this.host.trusted()){return;}
+            if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
+            if(remembered){this.notice='Using an explicitly remembered plan; all steps are validated against current evidence.';}
             const request:Value={schema:'airk.parse.request/1',mode:prepare?'prepare':'execute',...(pathPrefix?{path_prefix:pathPrefix}:{})};
             if(plan){request.plan=plan;}else if(recipe){request.recipe={id:recipe,parameters:input.trim()?{name:input.trim()}:{}};}else{request.text=input;}
             turn.request=structuredClone(request);
             const result=await client.call('airk_parse',request,{supersede:'workbench',timeout:35000});
-            if(generation!==this.generation||session!==this.session||!this.host.trusted()){return;}
+            if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
             turn.envelope=result.payload;
             if(result.payload.status==='prepared'){this.notice='Plan prepared. Review or edit it, then choose Run plan.';}
         }catch(error){if(generation===this.generation){turn.error=error instanceof Error?error.message:String(error);}}
@@ -146,16 +209,16 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.authorized();
         switch(message.type){
             case 'project':await this.select(message.id);break;
-            case 'refresh':{await this.refresh();if(this.session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation){this.status=result.payload;this.send();}}break;}
+            case 'refresh':{await this.refresh();if(this.session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&this.permitted()){this.status=result.payload;this.sendStatus();}}break;}
             case 'new':await this.newSession();break;
             case 'stop':this.stop();if(this.session){this.save(this.session);}break;
             case 'clear':await this.clear();break;
             case 'manage':await vscode.commands.executeCommand('airk.explorer.open','manage/overview');break;
-            case 'forms':{const generation=this.generation;const reply=await this.evidence().call('airk_capabilities',{});if(generation===this.generation){this.operations=object(object(reply.payload.workbench).operations);this.send();}break;}
+            case 'forms':{const generation=this.generation;const reply=await this.evidence().call('airk_capabilities',{});if(generation===this.generation&&this.permitted()){this.operations=object(object(reply.payload.workbench).operations);this.send();}break;}
             case 'retrySave':if(this.session){this.save(this.session);}break;
             case 'fork':if(this.session){this.stop();const fork={...structuredClone(this.session),id:randomUUID(),revision:0,title:`${this.session.title.slice(0,70)} (copy)`};this.session=fork;this.save(fork);this.send();}break;
-            case 'recent':if(this.session){this.stop();await this.saveQueue;this.session=await this.store.load(this.session.project,message.id);this.send();}break;
-            case 'delete':if(this.session){await this.saveQueue;await this.store.remove(this.session.project,message.id);await this.newSession();}break;
+            case 'recent':await this.loadRecent(message.id);break;
+            case 'delete':await this.deleteRecent(message.id);break;
             case 'rename':if(this.session){this.session.title=message.title;this.save(this.session);this.send();}break;
             case 'run':await this.run(message.input,message.prepare,message.recipe,message.plan,message.pathPrefix);break;
             case 'rerun':{const turn=this.session?.turns.find(t=>t.id===message.turn);if(turn){const request=object(turn.request),plan=request.plan?structuredClone(object(request.plan)):undefined;if(plan){delete plan.digest;delete plan.publication;delete plan.catalog;delete plan.collection;for(const raw of Array.isArray(plan.steps)?plan.steps:[]){const args=object(object(raw).args);for(const key of ['known_hash','revision','cursor']){delete args[key];}}}await this.run(turn.input,false,typeof object(request.recipe).id==='string'?String(object(request.recipe).id):undefined,plan,typeof request.path_prefix==='string'?request.path_prefix:undefined);}break;}
@@ -201,9 +264,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             }
         }
     }
-    dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.client?.dispose();for(const sub of this.subscriptions){sub.dispose();}}
+    dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.display.clear();this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
     async removeProject(project:string):Promise<void>{
-        if(this.session?.project===project){this.stop();this.client?.dispose();this.client=undefined;this.session=undefined;this.status=undefined;}
+        if(this.session?.project===project){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
         await this.saveQueue;await this.store.remove(project);this.send();
     }
     async focus(input?:string):Promise<void>{

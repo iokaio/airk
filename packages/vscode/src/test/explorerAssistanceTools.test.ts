@@ -9,7 +9,7 @@ import { AssistanceTools, toolDefinitions } from '../explorerAssistance/tools';
 import { HelpIndex } from '../explorerAssistance/help';
 import { windowChannel } from '../explorerAssistance/attach';
 import { AssistanceIpcHost } from '../explorerAssistanceHost';
-import { ASSISTANCE_TOOLS } from '../explorerContracts';
+import { ASSISTANCE_SERVER_NAME, ASSISTANCE_TOOLS } from '../explorerContracts';
 import { HandoffStore, HANDOFF_TTL_MS } from '../explorerHandoffs';
 import { CORE_PACK, jsonBytes } from '../explorerStrategies';
 import { SuggestionStore } from '../explorerSuggestions';
@@ -128,4 +128,48 @@ test('the real bundled MCP server reaches its project window for validation, nav
     } finally {
         session?.close(); host?.dispose(); await fs.promises.rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
     }
+});
+
+
+test('template paging preserves the original serialized prospective budget at every boundary offline', async () => {
+    for (const version of ['1.8.0', '1.8.0-雪"\\\n']) {
+        const catalog = new HelpIndex({ catalogVersion: 1, extensionVersion: version, topics: [] });
+        const tools = new AssistanceTools(catalog, async () => { assert.fail('static template paging must stay offline'); });
+        const identity = { server: ASSISTANCE_SERVER_NAME, extension_version: version, catalog_version: 1 };
+        const items = CORE_PACK.map(entry => ({ template_id: entry.strategy.id, version: entry.strategy.version,
+            title: entry.strategy.title, summary: entry.strategy.summary, category: entry.strategy.category,
+            runnable: entry.runnable, ...(entry.reason ? { reason: entry.reason } : {}) }));
+        for (let offset = 0; offset <= items.length; offset++) {
+            const boundaries = new Set([1024, 32768]);
+            for (let count = 1; count <= Math.min(25, items.length - offset); count++) {
+                const size = jsonBytes({ ...identity, templates: items.slice(offset, offset + count), total: items.length, next_offset: items.length });
+                for (const budget of [size - 1, size, size + 1]) { if (budget >= 1024 && budget <= 32768) { boundaries.add(budget); } }
+            }
+            for (const budget of boundaries) {
+                // Serialized oracle retains the old conservative prospective
+                // next_offset, independently of the incremental byte calculation.
+                let admitted = 0;
+                while (admitted < Math.min(25, items.length - offset) && jsonBytes({ ...identity,
+                    templates: items.slice(offset, offset + admitted + 1), total: items.length, next_offset: items.length }) <= budget) { admitted++; }
+                const expected = { ...identity, templates: items.slice(offset, offset + admitted), total: items.length,
+                    next_offset: offset + admitted < items.length ? offset + admitted : null };
+                const reply = await tools.call('airk_explorer_templates_list', { offset, limit: 25, max_bytes: budget });
+                assert.ok(reply.ok);
+                assert.equal(JSON.stringify(reply.value), JSON.stringify(expected));
+            }
+        }
+    }
+});
+
+test('template paging never serializes a growing admitted array', async t => {
+    const tools = new AssistanceTools(index(), async () => { assert.fail('no live attachment'); });
+    const encode = JSON.stringify;
+    const envelopeLengths: number[] = [];
+    t.mock.method(JSON, 'stringify', (value: unknown, replacer?: unknown, space?: unknown) => {
+        if (value && typeof value === 'object' && 'templates' in value && Array.isArray(value.templates)) { envelopeLengths.push(value.templates.length); }
+        return Reflect.apply(encode, JSON, [value, replacer, space]) as string;
+    });
+    const reply = await tools.call('airk_explorer_templates_list', { limit: 25, max_bytes: 32768 });
+    assert.ok(reply.ok);
+    assert.deepEqual(envelopeLengths, [0]);
 });

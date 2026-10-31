@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
-import { object, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { applyWorkbenchUpdate, object, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
 import { canonical, markdown } from '../workbenchRender';
 import './style.css';
 declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):void };
@@ -20,8 +20,9 @@ function ToolForm({state,scope}:{state:WorkbenchState;scope:string}){
 function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
     const [format,setFormat]=useState<'structured'|'json'|'markdown'>(turn.format),[show,setShow]=useState(20),[filter,setFilter]=useState(''),[selected,setSelected]=useState<string[]>([]),[edit,setEdit]=useState(false),[draft,setDraft]=useState(''),[issue,setIssue]=useState(''),[group,setGroup]=useState(false);
     const envelope=turn.envelope??{},plan=object(envelope.plan),cards=state.cards[turn.id]??[];
-    const rows=cards.filter(c=>`${c.path} ${c.text}`.toLowerCase().includes(filter.toLowerCase()));
-    if(group){rows.sort((a,b)=>a.path.localeCompare(b.path)||a.start-b.start);}
+    const rows=useMemo(()=>{const matching=cards.filter(c=>`${c.path} ${c.text}`.toLowerCase().includes(filter.toLowerCase()));if(group)matching.sort((a,b)=>a.path.localeCompare(b.path)||a.start-b.start);return matching;},[cards,filter,group]);
+    const planText=useMemo(()=>canonical(plan),[turn.envelope]);
+    const formatted=useMemo(()=>format==='json'?canonical(envelope):format==='markdown'?markdown(turn):'', [format,turn]);
     const publication=object(state.status?.publication).token,old=typeof publication==='string'&&typeof envelope.publication==='string'&&publication!==envelope.publication;
     const runPlan=(prepare:boolean)=>{try{const parsed=JSON.parse(draft);if(prepare){parsed.digest='';}send({type:'run',input:turn.input,prepare,plan:parsed});setIssue('');}catch{setIssue('Enter a valid JSON plan.');}};
     return <article class="turn">
@@ -31,10 +32,10 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
         {turn.trimmed&&<p class="warning">Saved result trimmed. Re-run to collect current evidence.</p>}
 
         {!!turn.envelope&&<>
-            <details><summary>Plan and evidence details</summary><button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button><pre>{canonical(plan)}</pre><button onClick={()=>{setEdit(!edit);setDraft(canonical(plan));}}>Edit plan</button><button onClick={()=>send({type:'remember',turn:turn.id})}>Remember accepted inputs</button><button onClick={()=>send({type:'saveStrategy',turn:turn.id})}>Save compatible inputs to Strategies…</button></details>
-            {Array.isArray(plan.steps)&&plan.steps.length>0&&['prepared','needs_input'].includes(String(envelope.status))&&<button disabled={state.busy} onClick={()=>{setEdit(true);setDraft(canonical(plan));}}>Review proposed plan</button>}
+            <details><summary>Plan and evidence details</summary><button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button><pre>{planText}</pre><button onClick={()=>{setEdit(!edit);setDraft(planText);}}>Edit plan</button><button onClick={()=>send({type:'remember',turn:turn.id})}>Remember accepted inputs</button><button onClick={()=>send({type:'saveStrategy',turn:turn.id})}>Save compatible inputs to Strategies…</button></details>
+            {Array.isArray(plan.steps)&&plan.steps.length>0&&['prepared','needs_input'].includes(String(envelope.status))&&<button disabled={state.busy} onClick={()=>{setEdit(true);setDraft(planText);}}>Review proposed plan</button>}
             {edit&&<div class="editor"><label>Plan JSON<textarea value={draft} onInput={e=>setDraft(e.currentTarget.value)} spellcheck={false}/></label><button onClick={()=>runPlan(true)}>Prepare edited plan</button><button disabled={state.busy} onClick={()=>runPlan(false)}>Run plan</button>{issue&&<p role="alert">{issue}</p>}</div>}
-            {Array.isArray(envelope.requires_input)&&envelope.requires_input.length>0&&<div class="warning"><p>{envelope.requires_input.map(r=>String(object(r).reason??r)).join(' · ')}</p>{envelope.requires_input.flatMap(raw=>{const requirement=object(raw);return Array.isArray(requirement.choices)&&['name','path'].includes(String(requirement.field))?requirement.choices.map(choice=><button disabled={state.busy} onClick={()=>{const revised=JSON.parse(canonical(plan));revised.digest='';const target=revised.steps.find((s:any)=>s.id===requirement.step);if(target){if(requirement.field==='path'){const source=revised.steps.find((s:any)=>s.id===target.bind?.[0]?.from);if(source){source.args.path=choice;}}else{target.args.name=choice;}send({type:'run',input:turn.input,prepare:false,plan:revised});}}}>Use {String(choice)}</button>):[];})}<button disabled={state.busy} onClick={()=>send({type:'run',input:`/search ${JSON.stringify(turn.input)}`,prepare:true})}>Prepare text search</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/status',prepare:false})}>Index status</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/diagnostics',prepare:false})}>Diagnostics</button></div>}
+            {Array.isArray(envelope.requires_input)&&envelope.requires_input.length>0&&<div class="warning"><p>{envelope.requires_input.map(r=>String(object(r).reason??r)).join(' · ')}</p>{envelope.requires_input.flatMap(raw=>{const requirement=object(raw);return Array.isArray(requirement.choices)&&['name','path'].includes(String(requirement.field))?requirement.choices.map(choice=><button disabled={state.busy} onClick={()=>{const revised=JSON.parse(planText);revised.digest='';const target=revised.steps.find((s:any)=>s.id===requirement.step);if(target){if(requirement.field==='path'){const source=revised.steps.find((s:any)=>s.id===target.bind?.[0]?.from);if(source){source.args.path=choice;}}else{target.args.name=choice;}send({type:'run',input:turn.input,prepare:false,plan:revised});}}}>Use {String(choice)}</button>):[];})}<button disabled={state.busy} onClick={()=>send({type:'run',input:`/search ${JSON.stringify(turn.input)}`,prepare:true})}>Prepare text search</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/status',prepare:false})}>Index status</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/diagnostics',prepare:false})}>Diagnostics</button></div>}
             <section class="result"><header><span>{String(envelope.status)} · {cards.length} retained records</span><div role="group" aria-label="Output format">{(['structured','json','markdown'] as const).map(f=><button aria-pressed={format===f} onClick={()=>setFormat(f)}>{f}</button>)}</div></header>
                 {Array.isArray(envelope.warnings)&&envelope.warnings.map(w=><p class="note">{String(w)}</p>)}
                 {Array.isArray(envelope.completeness)&&envelope.completeness.length>0&&<p class="warning">Incomplete: {envelope.completeness.map(String).join('; ')}</p>}
@@ -48,7 +49,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
                     {rows.length>show&&<button onClick={()=>setShow(show+20)}>Show 20 more retained records</button>}
                     {(state.continuations?.[turn.id]??[]).map(page=><button disabled={state.busy} onClick={()=>send({type:'continue',turn:turn.id,step:page.id})}>Fetch next {page.tool} page · {page.callsRemaining} calls remain</button>)}
                     {!cards.length&&<pre>{canonical(envelope.steps??envelope)}</pre>}
-                </>:<pre>{format==='json'?canonical(envelope):markdown(turn)}</pre>}
+                </>:<pre>{formatted}</pre>}
                 <footer><button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown'})}>Copy {format==='json'?'JSON':'Markdown'}</button>
                     {selected.length>0&&<button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown',cards:selected})}>Copy selected ({selected.length})</button>}
                     <button onClick={()=>send({type:'export',turn:turn.id,format:format==='json'?'json':'markdown'})}>Save export…</button>
@@ -68,7 +69,7 @@ function App(){
     const composer=useRef<HTMLTextAreaElement>(null),menuTrigger=useRef<string>(),openMenu=useRef<Menu>();
     openMenu.current=menu;
     const toggle=(next:Menu,event:Event)=>{menuTrigger.current=(event.currentTarget as HTMLElement).getAttribute('aria-controls')??undefined;setMenu(menu===next?undefined:next);setTitle(state.session?.title??'');};
-    useEffect(()=>{const listener=(event:MessageEvent)=>{if(event.data?.type==='state'){setState(event.data.state);}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
+    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved'].includes(event.data?.type)){setState(previous=>applyWorkbenchUpdate(previous,event.data));}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
     useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&openMenu.current){setMenu(undefined);requestAnimationFrame(()=>{document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus();});}},outside=(event:PointerEvent)=>{if(!(event.target as Element).closest('.menu-anchor'))setMenu(undefined);};document.addEventListener('keydown',escape);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',escape);document.removeEventListener('pointerdown',outside);};},[]);
     const run=(prepare=false)=>{if(!state.busy&&(input.trim()||recipe)){send({type:'run',input,prepare,pathPrefix:scope,...(recipe?{recipe}:{})});setInput('');setHistory(-1);setMenu(undefined);}};
     const action=(message:WorkbenchMessage)=>{send(message);setMenu(undefined);};

@@ -79,3 +79,35 @@ test('Workbench has separate identity and allowlist; execute requests are never 
     const explorer=new EvidenceClient(spec,'test',{open});await assert.rejects(explorer.call('airk_parse',{}));assert.equal(calls,0);
     const workbench=new EvidenceClient(spec,'test',{open,workbench:true,clientName:'airk-workbench'});await assert.rejects(workbench.call('airk_parse',{}));assert.equal(calls,1);assert.equal(label,'airk-workbench');workbench.dispose();explorer.dispose();
 });
+
+// Count actual filesystem reads across the owned save and retention scan.
+test('save returns bounded recent summaries from its existing prune scan',async()=>{
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-workbench-save-'));
+    class CountingStore extends SessionStore {
+        loads=0;
+        override async load(project:string,id:string){this.loads++;return super.load(project,id);}
+    }
+    try{
+        const store=new CountingStore(root),directory=path.join(root,project);
+        await fs.mkdir(directory,{recursive:true});
+        const sessions=Array.from({length:10},(_,index)=>{
+            const session=newSession(project);session.updatedAt=index;
+            session.turns=Array.from({length:200},(_,turn)=>({id:String(turn),at:turn,input:'fixture query',format:'structured' as const,envelope:{text:'fictional'.repeat(2170)}}));
+            return session;
+        });
+        let bytes=0;
+        for(const session of sessions){const text=JSON.stringify(session);bytes+=Buffer.byteLength(text);assert.ok(Buffer.byteLength(text)<4*1024*1024);await fs.writeFile(path.join(directory,`${session.id}.json`),text);}
+        assert.ok(bytes>36*1024*1024,'fixture keeps ten near-limit envelopes');
+        const saved=sessions[9];saved.title='Updated fixture';saved.updatedAt=100;
+        const recent=await store.save(saved);
+        assert.equal(store.loads,11,'one optimistic revision read and one complete ten-file scan');
+        assert.equal(saved.revision,1);
+        assert.equal(recent?.length,10);
+        assert.deepEqual(recent?.[0],{id:saved.id,title:'Updated fixture',updatedAt:100,turns:200});
+        assert.ok(Buffer.byteLength(JSON.stringify(recent))<4096,'summary contains no retained excerpts');
+        store.loads=0;
+        assert.equal(await store.save(newSession(project)),undefined);
+        assert.equal(store.loads,0,'an empty session remains a no-op');
+        assert.deepEqual(recent,(await store.list(project)).map(value=>({id:value.id,title:value.title,updatedAt:value.updatedAt,turns:value.turns.length})));
+    }finally{await fs.rm(root,{recursive:true,force:true});}
+});

@@ -1,5 +1,13 @@
 # Workbench development branch
 
+## 1.8.0 optimization implementation (unpublished)
+
+New and Clear retain the native connection when the selected launch specification remains identical. Project/spec changes, trust loss, native-execution opt-out and disposal close it; transcript generations discard delayed query, status and history replies. Accepted history deletion finishes against its original project without replacing a newer transcript. Local history/export/clear operations remain available when native execution is disabled.
+
+Session saving obtains recent summaries from the retention scan already required for the write. Status/save completion sends scalar webview updates, and display preparation reuses bounded projections for the latest 200 turns. Authoritative result bodies, export values, citations, continuations, persistence limits and revision-conflict checks retain their existing contracts. Compilation and focused provider/store/consumer tests passed; installed-editor and final integrated qualification remain pending in the [optimization ledger](../optimizations.md#f16af17-ui-preparation-and-workbench-reuse).
+
+## Historical implementation
+
 Historical prepublication implementation record on `feat/workbench`, 2026-10-30. Current packaging/release changes are recorded in [1.7.6](../releases/release-1.7.6.md). At this checkpoint, native and extension versions are synchronized at 1.7.2, as requested for this feature branch. This record preserves the dated 1.6.4 release record and does not establish publication or platform qualification.
 
 The Workbench contributes an AIRK tab in VS Code's secondary sidebar. Use **AIRK: Open Workbench**, choose a registered project and enter a slash command or choose an evidence recipe. Scope is a literal collection-relative prefix. Prepare shows the inert normalized plan; Run collects bounded indexed evidence. Plan details expose arguments, publication, budgets and digest, with JSON editing and explicit execution. Re-running appends a new turn and resolves against current evidence.

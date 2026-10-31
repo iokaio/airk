@@ -2,7 +2,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { object, Value, WorkbenchSession } from './workbenchContracts';
+import { object, Value, WorkbenchSession, WorkbenchSessionSummary } from './workbenchContracts';
 
 const LIMIT = 4 * 1024 * 1024;
 const validId = (id: string) => /^[a-f0-9-]{36}$/.test(id);
@@ -55,10 +55,10 @@ export class SessionStore {
         try {handle=await fs.open(file,'wx',0o600);} catch {throw new Error('Another Workbench window is saving this project; retry or fork the session.');}
         try {return await action(root);} finally {await handle.close();await fs.unlink(file);}
     }
-    async save(session:WorkbenchSession,persistResults=true):Promise<void> {
+    async save(session:WorkbenchSession,persistResults=true):Promise<WorkbenchSessionSummary[]|undefined> {
         if (!session.turns.length) {return;}
         trimSession(session);
-        await this.lock(session.project,async root=>{
+        return this.lock(session.project,async root=>{
             let current:WorkbenchSession|undefined;
             try {current=await this.load(session.project,session.id);} catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT'){throw error;}}
             if(current && current.revision!==session.revision){throw new Error('Session changed in another window. Open it again or start a new session.');}
@@ -69,6 +69,7 @@ export class SessionStore {
             finally {await fs.unlink(temporary).catch(()=>undefined);}
             const recent=await this.scan(session.project);
             for(const expired of recent.slice(10)){await fs.unlink(path.join(root,`${expired.id}.json`));}
+            return recent.slice(0,10).map(value=>({id:value.id,title:value.title,updatedAt:value.updatedAt,turns:value.turns.length}));
         });
     }
     async remove(project:string,id?:string):Promise<void>{

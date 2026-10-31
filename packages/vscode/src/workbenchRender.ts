@@ -18,6 +18,28 @@ export function evidenceCards(envelope: Value): EvidenceCard[] {
             step: String(row.step ?? ''), publication: typeof row.publication === 'string' ? row.publication : undefined }];
     });
 }
+/** A display-only cache owned by one view, bounded to its current transcript.
+ * Completed native envelopes are replaced, never mutated by WorkbenchView.
+ * No export, continuation admission, citation validation or history read uses it. */
+export const DISPLAY_PROJECTION_TURNS=200;
+export class CurrentTurnProjections {
+    private readonly retained=new Map<WorkbenchTurn,{envelope:Value|undefined;cards:EvidenceCard[];continuations:Continuation[]}>();
+    project(turns:WorkbenchTurn[]):{cards:Record<string,EvidenceCard[]>;continuations:Record<string,Continuation[]>} {
+        const current=new Set(turns.slice(-DISPLAY_PROJECTION_TURNS));
+        for(const turn of this.retained.keys())if(!current.has(turn))this.retained.delete(turn);
+        const cards:Array<[string,EvidenceCard[]]>=[],pages:Array<[string,Continuation[]]>=[];
+        for(const turn of turns){
+            let value=this.retained.get(turn);
+            if(!value||value.envelope!==turn.envelope){
+                value={envelope:turn.envelope,cards:evidenceCards(turn.envelope??{}),continuations:continuations(turn.envelope??{})};
+                if(current.has(turn))this.retained.set(turn,value);
+            }
+            cards.push([turn.id,value.cards]);pages.push([turn.id,value.continuations]);
+        }
+        return {cards:Object.fromEntries(cards),continuations:Object.fromEntries(pages)};
+    }
+    clear():void{this.retained.clear();}
+}
 export function canonical(value: unknown): string {
     const sorted = (v: unknown): unknown => Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object'
         ? Object.fromEntries(Object.entries(v).sort(([a],[b]) => a<b?-1:a>b?1:0).map(([k,item]) => [k,sorted(item)])) : v;
