@@ -1,5 +1,7 @@
 # 1.8.0 optimization candidate
 
+Workbench starts selected-project status independently of saved-session history. A slow history scan no longer holds the first readiness observation; transcript and connection fences still discard superseded replies. Compilation and 27 focused Workbench tests passed after recovery of the interrupted editor session. Integrated qualification remains pending.
+
 F12a gives first semantic requests a bounded wait when a project worker starts before its helper connection is published. Publication waiting and the connection handshake share one ten-second pre-inference allowance; revocation and worker shutdown wake waiters, and requests are never replayed. Existing helper launch/recovery and query admission policies remain. Local Windows native qualification passed; the [execution ledger](../optimizations.md#f12a-finite-helper-admission) records actual results. This startup race is separate from the reproduced status deadline mismatch.
 
 This is an unpublished source candidate on `feat/optimizations`. The latest published stable release remains [1.7.6](release-1.7.6.md). No publication or cross-platform qualification is implied.

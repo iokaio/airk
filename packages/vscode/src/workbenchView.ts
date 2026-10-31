@@ -101,18 +101,21 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         const identity=JSON.stringify(spec);
         this.stop();
         if(this.client&&this.clientIdentity!==identity){this.releaseClient();}
-        this.status=undefined;this.session=newSession(id);this.notice=undefined;
+        this.status=undefined;this.session=newSession(id);this.recent=[];this.notice=undefined;
         const generation=this.generation,session=this.session;
         const current=()=>generation===this.generation&&session===this.session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
+        this.send();
+        if(this.permitted()){
+            const client=this.evidence();
+            // Readiness and local history have independent owners. A slow saved
+            // session scan must not delay this transcript's first native status.
+            void client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(current()&&client===this.client&&this.permitted()){this.status=result.payload;this.sendStatus();}},error=>{if(current()&&client===this.client&&this.permitted()){this.fail(error);}});
+        }
         let recent:WorkbenchState['recent'];
         try{recent=this.persistence()?(await this.store.list(id)).map(value=>({id:value.id,title:value.title,updatedAt:value.updatedAt,turns:value.turns.length})):[];}
         catch(error){if(!current()){return;}throw error;}
         if(!current()){return;}
         this.recent=recent;this.send();
-        if(!this.permitted()){return;}
-        const client=this.evidence();
-        // New transcripts still request status; only the exact transport is reused.
-        void client.call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(current()&&client===this.client&&this.permitted()){this.status=result.payload;this.sendStatus();}},error=>{if(current()&&client===this.client&&this.permitted()){this.fail(error);}});
     }
     private evidence():EvidenceClient{
         this.authorized();if(!this.nativeAllowed()){throw new Error('Native execution is disabled.');}const spec=this.selectedSpec();
@@ -209,7 +212,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.authorized();
         switch(message.type){
             case 'project':await this.select(message.id);break;
-            case 'refresh':{await this.refresh();if(this.session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&this.permitted()){this.status=result.payload;this.sendStatus();}}break;}
+            case 'refresh':{const session=this.session;await this.refresh();if(this.session&&this.session===session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation&&this.permitted()){this.status=result.payload;this.sendStatus();}}break;}
             case 'new':await this.newSession();break;
             case 'stop':this.stop();if(this.session){this.save(this.session);}break;
             case 'clear':await this.clear();break;

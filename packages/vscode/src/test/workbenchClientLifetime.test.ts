@@ -114,24 +114,26 @@ test('Clear on the same project keeps its exact client and still probes status f
     assert.equal(f.created[0].disposed,1);
 });
 
-test('a late session list cannot select or start status for a superseded project',async()=>{
+test('a late session list cannot restore a superseded project or repeat its early status',async()=>{
     const f=fixture(),listing=deferred<WorkbenchSession[]>();
     f.store.list=project=>project===A?listing.promise:Promise.resolve([]);
     try{
         const selecting=f.state.select(A);await f.state.select(B);
         listing.resolve([]);await selecting;await tick();
-        assert.equal(f.state.session!.project,B);assert.equal(f.created.length,1);
-        assert.equal(f.created[0].spec.service!.project,B);assert.deepEqual(f.created[0].calls,['airk_status']);
+        assert.equal(f.state.session!.project,B);assert.equal(f.created.length,2);
+        assert.equal(f.created[0].disposed,1);assert.deepEqual(f.created[0].calls,['airk_status']);
+        assert.equal(f.created[1].spec.service!.project,B);assert.deepEqual(f.created[1].calls,['airk_status']);
     }finally{f.provider.dispose();}
 });
 
-test('a rejected old list is ignored after supersession without starting its status',async()=>{
+test('a rejected old list is ignored after supersession without repeating its early status',async()=>{
     const f=fixture(),listing=deferred<WorkbenchSession[]>();f.store.list=project=>project===A?listing.promise:Promise.resolve([]);
     try{
         const selecting=f.state.select(A);await f.state.select(B);
         listing.reject(new Error('old list failure'));await selecting;
-        assert.equal(f.state.session!.project,B);assert.equal(f.created.length,1);
-        assert.equal(f.created[0].spec.service!.project,B);
+        assert.equal(f.state.session!.project,B);assert.equal(f.created.length,2);
+        assert.equal(f.created[0].disposed,1);assert.deepEqual(f.created[0].calls,['airk_status']);
+        assert.equal(f.created[1].spec.service!.project,B);assert.deepEqual(f.created[1].calls,['airk_status']);
     }finally{f.provider.dispose();}
 });
 
@@ -199,14 +201,33 @@ test('hidden provider retains unrelated specs but synchronously closes changed s
     }
 });
 
-test('selected spec replacement during a held list prevents an old status admission',async()=>{
-    const f=fixture(),listing=deferred<WorkbenchSession[]>();f.store.list=()=>listing.promise;
+test('selected spec replacement during a held list disposes and fences its already-started status',async()=>{
+    const f=fixture(),listing=deferred<WorkbenchSession[]>(),status=deferred<{payload:Value}>();f.store.list=()=>listing.promise;f.respond(()=>status.promise);
     try{
         const selecting=f.state.select(A);
         f.replace([{...f.specs()[0],command:'/fixture/replaced'},f.specs()[1]]);
         listing.resolve([]);await selecting;
-        assert.equal(f.created.length,0);
-    }finally{listing.resolve([]);f.provider.dispose();}
+        status.resolve({payload:{tag:'superseded'}});await tick();
+        assert.equal(f.created.length,1);assert.equal(f.created[0].disposed,1);
+        assert.deepEqual(f.created[0].calls,['airk_status']);assert.equal(f.state.status,undefined);
+    }finally{listing.resolve([]);status.resolve({payload:{}});f.provider.dispose();}
+});
+
+test('selected readiness resolves while history remains held and starts exactly one status request', {timeout:30000}, async()=>{
+    const f=fixture(true),listing=deferred<WorkbenchSession[]>(),entered=deferred<void>(),status=deferred<{payload:Value}>();
+    f.store.list=()=>{entered.resolve();return listing.promise;};f.respond(()=>status.promise);
+    try{
+        let finished=false;const selecting=f.state.select(A).then(()=>{finished=true;});await entered.promise;
+        assert.equal(f.state.session?.project,A);assert.deepEqual(f.state.recent,[]);
+        assert.equal(f.created.length,1);assert.deepEqual(f.created[0].calls,['airk_status']);
+        assert.ok(f.messages.some(raw=>{const value=raw as WorkbenchUpdate;return value.type==='state'&&value.state.session?.project===A;}));
+        status.resolve({payload:{tag:'ready-before-history'}});await tick();
+        assert.equal(finished,false);assert.equal(f.state.status?.tag,'ready-before-history');
+        assert.ok(f.messages.some(raw=>{const value=raw as WorkbenchUpdate;return value.type==='status'&&value.status?.tag==='ready-before-history';}));
+        const previous=newSession(A);listing.resolve([previous]);await selecting;
+        assert.equal(f.state.recent.length,1);assert.equal(f.state.status?.tag,'ready-before-history');
+        assert.deepEqual(f.created[0].calls,['airk_status']);
+    }finally{listing.resolve([]);status.resolve({payload:{}});f.provider.dispose();}
 });
 
 test('view and provider disposal close once and discard a held status; new results retain full export values',async()=>{
