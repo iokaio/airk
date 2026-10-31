@@ -42,7 +42,7 @@ For CLI review, save `{"operation":"prepare_derived_cleanup"}` to a small JSON f
 
 This operation owns only the selected 1.4 collection. [Explicit legacy 1.3 retirement](service-legacy-transition.md#explicit-old-derived-state-deletion) uses a separate offline CLI preview and captured removal intent. Neither operation adopts unknown directories or uses retired direct-store commands as a fallback.
 
-## Reviewing all retained AIRK data (1.7.4)
+## Reviewing all retained AIRK data (1.7.5)
 
 `airk runtime inventory --install-dir <dir>` is read-only. It lists AIRK-owned per-user locations with bounded, no-follow size measurements, every recorded active and inactive project index root, and what it cannot see (custom roots outside recorded projects, manual agent configurations, exports, backups, copies sent to providers, and temporary uninstall diagnostics). Partial results are marked `incomplete`.
 

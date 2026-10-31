@@ -23,7 +23,7 @@ These cover the findings in [review 02, draft 04](reviews/review02/04-dependency
 
 | Dependency | Finding | Disposition |
 |---|---|---|
-| `quick-xml` 0.39.4 | RUSTSEC-2026-0194, RUSTSEC-2026-0195 | Updated to 0.41.0 in 1.7.3. A per-element limit of 1,024 attributes is kept, and 1.7.4 reports budget rejections separately. No first-party `NsReader` use was found. |
+| `quick-xml` 0.39.4 | RUSTSEC-2026-0194, RUSTSEC-2026-0195 | Updated to 0.41.0 in 1.7.3. A per-element limit of 1,024 attributes is kept, and 1.7.5 reports budget rejections separately. No first-party `NsReader` use was found. |
 | `zip` 4.6.1 | RUSTSEC-2026-0367, 0368, 0369 | Updated to 9.1.3 in 1.7.3. Office members are read into memory; no filesystem extraction API is used. |
 | `tokio` 1.53.2 | RUSTSEC-2026-0386 (`AsyncFd` unsoundness warning) | Updated to 1.53.3 in 1.7.3. |
 | `paste` 1.0.15 | RUSTSEC-2024-0436 (unmaintained) | Exception until 2027-01-31. A compile-time proc-macro of `tokenizers` 0.23.2; no runtime code ships from it, and no compatible `tokenizers` release removes it. |

@@ -1,8 +1,10 @@
-# 1.7.4 stable release candidate
+# 1.7.5 stable release candidate
 
-Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and npm lock entries are synchronized at 1.7.4. Publication requires green PR and exact-main CI plus the manual release workflows. The intended channel on both destinations is **stable**. This record describes unpublished source until those workflows succeed and their public outputs are verified.
+Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and npm lock entries are synchronized at 1.7.5. Publication requires green PR and exact-main CI plus the manual release workflows. The intended channel on both destinations is **stable**. This record describes unpublished source until those workflows succeed and their public outputs are verified.
 
-1.7.4 addresses the outstanding items from [repository review 02](../reviews/review02/README.md); the [review response](../reviews/review02-response.md) maps each draft to its outcome.
+1.7.5 addresses the outstanding items from [repository review 02](../reviews/review02/README.md); the [review response](../reviews/review02-response.md) maps each draft to its outcome.
+
+Version note: this work was first numbered 1.7.4, and that number was used only for unpublished local test packages. VS Code cannot replace a running same-version extension on Windows because it locks the installed folder. The branch was therefore moved to 1.7.5 so the test build installs beside the running copy. No 1.7.4 release exists on either destination.
 
 ## Behavior and contract changes
 
@@ -33,7 +35,17 @@ Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and 
 
 ## Local validation and remaining qualification
 
-To be completed from the final local run before the PR is opened. Checks that were not run stay listed as not run.
+Local Windows x64 results, 2026-10-30, on this branch:
+
+- `cargo fmt --check` and workspace `cargo clippy --all-targets --all-features -D warnings` passed.
+- The full workspace `cargo test --all-features --no-fail-fast` passed: 67 test binaries, 1,476 tests, none failed. A later run of `airk-cli` and `airk-mcp` after the CLI additions passed 325 tests.
+- Extension tests passed: 453 tests, 438 passed, 15 skipped by platform, none failed. Script tests passed: 229 tests, 5 skipped.
+- The repository checks, `git diff --check`, `license-notices.py --release`, `dependency-audit.py` (exit 0 with the two dated exceptions) and `release-version.py check` passed.
+- `check-service-clients.py --files 16 --model` passed against a debug runtime pair.
+- `build.ps1` produced an installation-free build. Following its README, the service started, a folder was registered and indexed, a lexical search found it, `projects` listed it, and the service shut down.
+- A stable Windows x64 VSIX was packaged and verified by `package-extension.py`. It was not signed and was not exercised through an installed-editor qualification run.
+
+macOS and Linux were not run locally; their results come from CI only.
 
 Open checks, not performed for this record (procedures in [validation](../validation.md)):
 

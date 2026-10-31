@@ -4,7 +4,7 @@ Versioned release notes and dated release evidence live here. Each record retain
 
 ## Versions
 
-- [1.7.4](./release-1.7.4.md) — stable release candidate: review 02 follow-up (setup review, native execution control, uninstall cleanup, data purge, advisory gate)
+- [1.7.5](./release-1.7.5.md) — stable release candidate: review 02 follow-up (setup review, native execution control, uninstall cleanup, data purge, advisory gate)
 - [1.7.3](./release-1.7.3.md) — published stable release: Marketplace images, release promotion and repository review fixes
 
 - [1.7.2](./release-1.7.2.md) — Explorer toolbar and panel project selection candidate
