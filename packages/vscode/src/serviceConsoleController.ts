@@ -169,10 +169,10 @@ export class ServiceConsoleController {
             if(this.state[name].value)this.state[name]={...this.state[name],state:'cached'};
         }
     }
-    async refresh():Promise<void>{
+    async refresh(automatic=false):Promise<void>{
         if(this.disposed||this.state.busy)return;
         this.pollDeadline=Date.now()+15000;this.state.busy=true;this.publish();
-        try{this.authorized();if(!this.client)await this.discover();await this.observe();this.lastPollFailure=undefined;}
+        try{this.authorized();if(!this.client)await this.discover();await this.observe(automatic);this.lastPollFailure=undefined;}
         catch(error){
             if(this.lastPollFailure!==code(error)){
                 this.lastPollFailure=code(error);void this.host.diagnosticFailure?.('status_poll',error,this.bootstrap).catch(()=>{});
@@ -186,12 +186,15 @@ export class ServiceConsoleController {
         }
         finally{this.pollDeadline=undefined;this.state.busy=false;this.publish();this.releaseIdle();}
     }
-    private async observe():Promise<void>{
+    private async observe(automatic=false):Promise<void>{
         if(!this.client){await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);return;}
+        const wasConnected=this.state.connected;
+        let replaced=false;
         try{
             const value=await this.rpc('health','health');
             const instance=identifier(record(value.observation).instance,16);
             if(this.observedInstance!==instance){
+                replaced=true;
                 this.observedInstance=instance;this.observationToken=randomUUID();
                 // Health authenticates the service, not the registry/page from a
                 // previous incarnation. Hide those rows until Events authenticates
@@ -208,11 +211,18 @@ export class ServiceConsoleController {
             try{await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);}catch{/* Retain the original health failure. */}
             throw error;
         }
+        const reusable=(sample:ConsoleObservation|undefined):boolean=>{
+            if(!automatic||!wasConnected||replaced||!sample?.value||sample.state==='failed')return false;
+            const age=Date.now()-sample.checkedAt;
+            return age>=0&&age<5000;
+        };
         for(const [name,method,expected] of [['resources','resources','resources'],['model','embedding_status','embedding_status'],['sources','source_status','source_status']] as const){
+            if(reusable(this.state[name])){this.state[name]={...this.state[name],state:'cached'};continue;}
             try{this.state[name]={state:'live',value:await this.rpc(method,expected),checkedAt:Date.now()};}
             catch(error){this.state[name]={...this.state[name],state:'failed',code:code(error),checkedAt:Date.now()};}
         }
-        try{
+        if(reusable(this.state.serviceEvents))this.state.serviceEvents={...this.state.serviceEvents!,state:'cached'};
+        else try{
             const page=record((await this.rpc({logs:{limit:32}},'logs')).page);
             if(page.schema!==1||!Array.isArray(page.records)||page.records.length>32)throw new ServiceError('invalid_process_log_page');
             this.state.serviceEvents={state:'cached',value:page,checkedAt:Date.now()};

@@ -9,6 +9,41 @@ import { managementView } from '../explorerManagement';
 const shown = (state: ServiceConsoleState): string => JSON.stringify(managementView(state));
 import { RecordValue, ServiceClient, ServiceError } from '../serviceClient';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+test('automatic polls reuse only recent successful optional observations with their original dates',async context=>{
+    context.mock.timers.enable({apis:['Date']});
+    const f=fixture(),base=f.host.runtime.client({} as any),calls:string[]=[];
+    let currentInstance=instance,resourceFailure=false;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];calls.push(name);
+        if(name==='health')return {status:'health',observation:{instance:currentInstance}};
+        if(name==='logs')return {status:'logs',page:{schema:1,records:[]}};
+        if(name==='resources'&&resourceFailure)throw new ServiceError('resource_fixture_busy');
+        return base.transport.request(method);
+    }});
+    const optional=['resources','embedding_status','source_status','logs'];
+    const counts=()=>optional.map(name=>calls.filter(value=>value===name).length);
+    try{
+        await f.controller.refresh();const checkedAt=f.controller.state.resources.checkedAt;
+        assert.deepEqual(counts(),[1,1,1,1]);
+        context.mock.timers.tick(2000);await f.controller.refresh(true);
+        assert.deepEqual(counts(),[1,1,1,1]);assert.equal(f.controller.state.resources.state,'cached');
+        assert.equal(f.controller.state.resources.checkedAt,checkedAt);
+        assert.equal(calls.filter(name=>name==='health').length,2);
+        assert.equal(calls.filter(name=>name==='events').length,2);
+        assert.equal(calls.filter(name=>name==='console').length,2);
+        context.mock.timers.tick(3000);await f.controller.refresh(true);
+        assert.deepEqual(counts(),[2,2,2,2]);
+        await f.controller.refresh();assert.deepEqual(counts(),[3,3,3,3],'explicit refresh samples immediately');
+        resourceFailure=true;await f.controller.refresh();assert.equal(f.controller.state.resources.state,'failed');
+        resourceFailure=false;await f.controller.refresh(true);
+        assert.deepEqual(counts(),[5,4,4,4],'a failed observation retries independently');
+        currentInstance='bc'.repeat(16);await f.controller.refresh(true);
+        assert.deepEqual(counts(),[6,5,5,5],'a service replacement cannot reuse old observations');
+        f.controller.state.resources.checkedAt=Date.now()+1000;await f.controller.refresh(true);
+        assert.deepEqual(counts(),[7,5,5,5],'a backward clock observation requires a fresh sample');
+    }finally{f.controller.dispose();}
+});
+
 test('routine console observations obtain namespace from Events and reserve request epochs for actions',async()=>{
     const f=fixture();
     try{

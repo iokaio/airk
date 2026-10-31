@@ -61,7 +61,8 @@ test('service activation advertises reviewed bindings without indexing and prese
         const controller=extensionContext.subscriptions[0],explorer=await controller.explorerController();
         const consoleController=controller.console.controller;
         let refreshes=0;
-        const refreshMock=context.mock.method(consoleController,'refresh',async()=>{refreshes++;});
+        const modes:boolean[]=[];
+        const refreshMock=context.mock.method(consoleController,'refresh',async(automatic=false)=>{refreshes++;modes.push(automatic);});
         try{
             const editor={document:{uri:{scheme:'file',fsPath:path.join(source,'entry.rs')}}};
             stub.window.activeTextEditor=editor;
@@ -77,6 +78,7 @@ test('service activation advertises reviewed bindings without indexing and prese
                     assert.equal(refreshes,1);
                     context.mock.timers.tick(2000);await Promise.resolve();await Promise.resolve();
                     assert.equal(refreshes,2,'visible consumer retains periodic refresh');
+                    assert.deepEqual(modes,[false,true],'initial observation is explicit; the timer permits bounded optional sampling');
                 }finally{retained.dispose();}
                 context.mock.timers.tick(30000);await Promise.resolve();
                 assert.equal(refreshes,2,'hidden console has no remaining poll');
