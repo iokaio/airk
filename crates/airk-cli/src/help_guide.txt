@@ -1,0 +1,53 @@
+HOW AIRK WORKS
+  AIRK indexes local source code and documents and answers bounded, cited,
+  read-only queries. One native service per control directory owns a registry
+  of projects, a durable job queue and resource admission. The service starts
+  project workers (indexing and queries), a source watcher and the embedding
+  helper (airk-embed) itself; you start only the service, CLI commands and MCP
+  frontends. Every command prints JSON on stdout. Errors exit non-zero with a
+  message on stderr; set AIRK_ERROR_FORMAT=json for a structured error.
+
+SELECTING A SERVICE AND PROJECT
+  A project is (--root, --data-dir, --collection). Its canonical form has a
+  64-hex "binding". Commands reach the service in one of two ways:
+    Installed runtime (what the VS Code extension sets up):
+      airk --root <src> [--data-dir <index dir>] [--collection <name>] <command>
+      (--service-install-dir <dir> selects a non-default installation)
+    Explicit service started by you (headless, no installation):
+      airk --service-runtime-dir <control> --service-project <binding> \
+           --root <src> --data-dir <index dir> --collection <name> <command>
+
+HEADLESS QUICK START (no installation)
+  airk serve --runtime-dir <control>                 # terminal 1: the service
+  airk service health --runtime-dir <control>         # wait until this succeeds
+  airk --root <src> --data-dir <data> --collection demo service prepare-registration
+                                                      # read-only; prints "binding"
+  airk --root <src> --data-dir <data> --collection demo service register --runtime-dir <control>
+  airk <scope> index                                  # queue indexing; prints a job receipt
+  airk <scope> tools call airk_status --args '{}'     # job, coverage and readiness
+  airk <scope> search "words to find" --mode lexical # cited search; vectors need setup-model
+  airk <scope> watch on                               # keep the index current
+  airk <scope> mcp                                    # stdio MCP server for an agent
+  airk service shutdown --runtime-dir <control>
+  where <scope> is the explicit-service flag set above. On macOS/Linux the
+  data directory should be private to your account (mode 0700).
+
+LEARNING THE TOOLS
+  airk tools list [--json]         every MCP tool (also available as commands)
+  airk tools help <tool>           description, input schema and an argument template
+  airk tools call airk_help        the engine's own topic guide
+  airk <command> --help            arguments of any command below
+
+PROJECTS AND EXPLORER ASSISTANCE
+  airk projects [--runtime-dir <control>]           registered projects and their bindings
+  airk explorer <tool> --args '<json>' --output <new file>
+                                                   draft/template/validation tools; results go
+                                                   to the file, never to an Explorer Inbox
+
+MANAGEMENT WITHOUT VS CODE
+  pause / resume / watch on|off / inspect / setup-model   project work
+  settings <view> / configure --stdin                      read or change project settings
+                                                           ({"operation":"unregister"} removes a project's index)
+  usage report|policy|configure                            local usage reporting
+  service console|logs|rpc|requests                        service metadata, logs and raw requests
+  runtime location|inventory|purge|uninstall|...           installed-runtime lifecycle and data review

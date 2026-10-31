@@ -71,6 +71,7 @@ fn create_reserved_storage(project: &ProjectRegistration) -> Result<()> {
             "reserved storage redirected"
         );
     }
+    // An existing custom root keeps its permissions; inventory reports a shared one.
     airk_kernel::service_projects::validate(project)
 }
 
@@ -99,6 +100,57 @@ mod tests {
             );
         }
         assert!(fs::read_dir(&root)?.next().is_none());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn existing_shared_storage_is_admitted_unchanged_and_reported() -> Result<()> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let directory = tempfile::tempdir()?;
+        // macOS per-user temporary roots are already owner-only, which correctly
+        // shields any child; the warning can only be observed under a shared parent.
+        // SAFETY: geteuid takes no pointers and has no failure mode.
+        let uid = unsafe { libc::geteuid() };
+        let shielded = directory
+            .path()
+            .canonicalize()?
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| {
+                fs::metadata(ancestor).is_ok_and(|metadata| {
+                    metadata.uid() == uid && metadata.permissions().mode() & 0o077 == 0
+                })
+            });
+        if shielded {
+            return Ok(());
+        }
+        let root = directory.path().join("source");
+        fs::create_dir(&root)?;
+        let shared = directory.path().join("shared");
+        fs::create_dir(&shared)?;
+        let private = directory.path().join("private");
+        fs::create_dir(&private)?;
+        fs::set_permissions(&private, fs::Permissions::from_mode(0o700))?;
+        // The fixture parent is owner-only; open it so the shared root is reachable.
+        fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o755))?;
+        let admitted = create_reserved_storage(&prepare(&root, &shared, "fixture")?);
+        let warning = airk_store::service::data_scope::privacy_warning(&shared);
+        let restored = fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700));
+        admitted?;
+        restored?;
+        assert!(
+            warning?.is_some_and(|text| text.starts_with("storage_not_private")),
+            "a shared root is reported"
+        );
+        // Permissions of an existing directory are never changed.
+        assert_eq!(fs::metadata(&shared)?.permissions().mode() & 0o777, 0o755);
+        create_reserved_storage(&prepare(&root, &private, "fixture")?)?;
+        assert_eq!(
+            airk_store::service::data_scope::privacy_warning(&private)?,
+            None
+        );
         Ok(())
     }
 

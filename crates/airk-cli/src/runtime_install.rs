@@ -22,6 +22,8 @@ use std::{
 mod activation;
 #[path = "runtime_data_migration.rs"]
 mod data_migration;
+#[path = "runtime_inventory.rs"]
+mod inventory;
 #[path = "runtime_launcher_repair.rs"]
 mod launcher_repair;
 #[path = "runtime_layout.rs"]
@@ -197,6 +199,21 @@ pub enum RuntimeCommand {
     Inspect {
         #[arg(long)]
         install_dir: PathBuf,
+    },
+    /// Read-only inventory of AIRK-owned per-user data and recorded project index roots.
+    Inventory {
+        #[arg(long)]
+        install_dir: PathBuf,
+    },
+    /// Preview, then with `--confirm <plan_digest>` delete, the contents of selected owned
+    /// log/cache locations. Project indexes are removed only by unregistering projects.
+    Purge {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long = "select", required = true)]
+        select: Vec<String>,
+        #[arg(long)]
+        confirm: Option<String>,
     },
     /// Read saved bootstrap/project metadata without executing or trusting selected payload files.
     Snapshot {
@@ -380,11 +397,17 @@ pub(crate) fn saved_control_root(root: &Path) -> Result<PathBuf> {
 
 #[derive(Subcommand)]
 pub enum LoginCommand {
+    /// Show what login startup registration would create; changes nothing.
     Plan,
+    /// Report whether login startup is registered, loaded and running.
     Status,
+    /// Register the service to start at login for this user.
     Install,
+    /// Start the registered login service now.
     Start,
+    /// Stop the registered login service.
     Stop,
+    /// Remove the login startup registration.
     Uninstall,
 }
 

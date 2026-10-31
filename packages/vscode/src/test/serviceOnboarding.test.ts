@@ -291,3 +291,118 @@ test('a deleted open folder does not block automatic setup of other trusted fold
         assert.equal(f.writes.filter(value=>value.reserve_project?.setup_watch===true).length,1);
     }finally{await f.close();}
 });
+
+test('first installation waits for review: dismiss and defer change nothing persistent until explicit setup',async context=>{
+    const f=await serviceTestHost(context,{fresh:true,registered:false});
+    try{
+        f.settings.set('cli.autoInstall',true);
+        await f.refreshFolders();
+        const reviews=()=>f.notices.filter(notice=>notice.message==='Set up AIRK on this computer?').length;
+        assert.equal(reviews(),1);
+        assert.equal(f.state.ensured,0);assert.equal(f.registrations.size,0);
+        assert.equal([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.1.')),false);
+        f.state.noticeAction='Not now';await f.refreshFolders();
+        assert.equal(reviews(),2);assert.equal(f.state.ensured,0);
+        await f.refreshFolders();
+        assert.equal(reviews(),2,'a saved deferral is honored without asking again');
+        assert.equal(f.state.ensured,0);assert.equal(f.registrations.size,0);
+        await f.commands.get('airk.setUp')!();
+        assert.ok(f.state.ensured>0);assert.equal(f.registrations.size,1);
+    }finally{await f.close();}
+});
+
+test('first installation review can disable automatic setup or accept it once',async context=>{
+    const f=await serviceTestHost(context,{fresh:true,registered:false});
+    try{
+        f.settings.set('cli.autoInstall',true);f.state.noticeAction="Don't set up automatically";
+        await f.refreshFolders();
+        assert.equal(f.settings.get('cli.autoInstall'),false);assert.equal(f.state.ensured,0);
+        f.settings.set('cli.autoInstall',true);f.state.noticeAction='Set up';
+        await f.refreshFolders();
+        assert.ok(f.state.ensured>0);assert.equal(f.registrations.size,1);
+        const reviews=f.notices.length;await f.refreshFolders();
+        assert.equal(f.notices.length,reviews,'accepted setup is not reviewed again');
+    }finally{await f.close();}
+});
+
+test('customized first installation registers only selected folders and can skip shell integration',async context=>{
+    const f=await serviceTestHost(context,{fresh:true,registered:false,roots:2});
+    try{
+        f.settings.set('cli.autoInstall',true);f.state.noticeAction='Customize…';
+        let offered:any[]=[];
+        f.state.pick=items=>{offered=items;return items.filter(item=>item.folder===f.folders[1].uri.fsPath);};
+        await f.refreshFolders();
+        assert.equal(offered.length,3);assert.ok(offered.slice(0,2).every(item=>item.picked===true));
+        assert.equal(f.settings.get('cli.shellIntegration'),'off');
+        assert.equal(f.registrations.size,1);
+        assert.equal([...f.registrations.values()][0].root,f.folders[1].uri.fsPath);
+        assert.ok(f.calls.some(line=>line.includes('left out during setup review')));
+    }finally{await f.close();}
+});
+
+test('a home folder is never registered automatically without an explicit choice',async context=>{
+    const os=require('node:os') as typeof import('node:os');
+    const f=await serviceTestHost(context,{fresh:true,registered:false,roots:2});
+    try{
+        context.mock.method(os,'homedir',()=>f.folders[0].uri.fsPath);
+        f.settings.set('cli.autoInstall',true);f.state.noticeAction='Set up';
+        await f.refreshFolders();
+        assert.ok(f.notices.some(notice=>notice.message==='Set up AIRK on this computer?'&&JSON.stringify(notice.actions).includes('Home folders and drive roots')));
+        assert.equal(f.registrations.size,1);
+        assert.equal([...f.registrations.values()][0].root,f.folders[1].uri.fsPath);
+        assert.ok(f.calls.some(line=>line.includes('is a home folder or drive root')));
+    }finally{await f.close();}
+});
+
+test('an uninstall that never wrote a final result is reported as interrupted, never as success',async context=>{
+    const fs=await import('node:fs/promises');
+    const f=await serviceTestHost(context);
+    try{
+        const directory=path.join(f.root,'native-state','extension-uninstall');await fs.mkdir(directory,{recursive:true});
+        await fs.writeFile(path.join(directory,'last-result.json'),JSON.stringify({schema:1,state:'started',startedAt:'2026-10-30T00:00:00Z',pid:2147483646,job:'/tmp/airk-uninstall-fixture'}));
+        await f.commands.get('airk.showLastUninstallResult')!();
+        assert.ok(f.calls.some(line=>line.includes('interrupted or unknown')),f.calls.join('\n'));
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.ok(f.warnings.some(message=>message.includes('did not finish cleanly')));
+    }finally{await f.close();}
+});
+
+test('data review is read-only until a plan digest is confirmed and never deletes project indexes directly',async context=>{
+    const bootstrap=require('../serviceBootstrap') as typeof import('../serviceBootstrap');
+    const f=await serviceTestHost(context);
+    const calls:string[][]=[];
+    context.mock.method(bootstrap,'nativeRunner',async(_main:string,args:string[])=>{
+        calls.push(args);
+        if(args[1]==='inventory')return {protocol:1,incomplete:false,not_covered:['exports'],projects:[{collection:'fixture',root:'/src',data_root:'/data',storage_warning:'storage_not_private: fixture'}],
+            locations:[{id:'stable:logs',kind:'logs',path:'/logs',exists:true,bytes:1048576,complete:true,purge:'purgeable',consequence:'Deletes logs.'},
+                {id:'stable:data',kind:'data',path:'/data',exists:true,bytes:1,complete:true,purge:'requires_project_removal',consequence:'Indexes.'}]};
+        if(args.includes('--confirm'))return {protocol:1,purged:[{id:'stable:logs',path:'/logs',files_deleted:3}],retained:[],complete:true};
+        return {protocol:1,plan:[{id:'stable:logs',path:'/logs',bytes:1048576,consequence:'Deletes logs.'}],plan_digest:'ab'.repeat(32)};
+    });
+    try{
+        let offered:any[]=[];
+        f.state.pick=items=>{offered=items;return items.filter((item:any)=>item.label==='stable:logs'||item.label==='stable:data');};
+        f.state.confirm=false;
+        await f.commands.get('airk.reviewData')!();
+        assert.deepEqual(calls.map(args=>args.includes('--confirm')),[false,false],'declining the confirmation deletes nothing');
+        assert.ok(f.calls.some(line=>line.includes('Not removable here')));
+        assert.ok(offered.some((item:any)=>item.project&&String(item.detail).includes('other accounts may read')),'a storage privacy warning is shown');
+        f.state.confirm=true;calls.length=0;
+        await f.commands.get('airk.reviewData')!();
+        assert.deepEqual(calls.at(-1)!.slice(-2),['--confirm','ab'.repeat(32)]);
+        assert.ok(f.calls.some(line=>line.includes('Deleted 3 files')));
+    }finally{await f.close();}
+});
+
+test('a rebuilt VSIX with the same version is detected and offers the reload action',async context=>{
+    const fs=await import('node:fs/promises');
+    const f=await serviceTestHost(context,{codeFile:true});
+    try{
+        f.focus();f.extensionsChanged();
+        assert.equal(f.notices.some(notice=>notice.actions.includes('Reload to finish update')),false,'an unchanged installation stays quiet');
+        await fs.writeFile(path.join(f.root,'out','serviceExtension.js'),'// fixture build 2 with different bytes\n');
+        f.focus();f.extensionsChanged();
+        assert.ok(f.notices.some(notice=>notice.message.includes('(rebuilt) is installed')&&notice.actions.includes('Reload to finish update')));
+        assert.match(f.statusBar.text,/Reload to finish update/);
+    }finally{await f.close();}
+});

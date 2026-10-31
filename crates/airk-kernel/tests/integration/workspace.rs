@@ -149,6 +149,75 @@ fn ignore_secrets_binary_and_external_index_directory() -> anyhow::Result<()> {
 }
 
 #[test]
+fn credential_defaults_are_skipped_unless_explicitly_reincluded() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let defaults = [
+        ".npmrc",
+        ".netrc",
+        "_netrc",
+        ".pypirc",
+        ".git-credentials",
+        "keys/id_rsa",
+        "keys/id_ed25519",
+        "certs/client.p12",
+        "certs/client.pfx",
+        "certs/store.jks",
+        "certs/app.keystore",
+        "kubeconfig",
+        "home/.kube/config",
+        "infra/main.tfstate",
+        "infra/main.tfstate.backup",
+        "home/.docker/config.json",
+    ];
+    for path in defaults {
+        let file = root.path().join(path);
+        fs::create_dir_all(file.parent().unwrap())?;
+        fs::write(file, "fictional token: quillfeather")?;
+    }
+    fs::write(
+        root.path().join("keys/id_rsa.pub"),
+        "fictional public quillfeather",
+    )?;
+    fs::write(
+        root.path().join("config.json"),
+        r#"{"apiToken": "fictional-quillfeather-value"}"#,
+    )?;
+    let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    kernel.index()?;
+    let paths = kernel.list_files("", 100, 16384)?.paths;
+    for path in defaults {
+        assert!(!paths.contains(&path.to_string()), "{path} was indexed");
+    }
+    // Ordinary files are indexed whatever they contain: this is not secret detection.
+    assert!(paths.contains(&"config.json".to_string()));
+    assert!(paths.contains(&"keys/id_rsa.pub".to_string()));
+    assert!(
+        kernel
+            .search(&query("quillfeather"))?
+            .hits
+            .iter()
+            .any(|hit| hit.citation.path == "config.json")
+    );
+    // An explicit negation re-includes one default; an ignore rule removes the
+    // ordinary credential-like file after the next scan.
+    fs::write(root.path().join(".airkignore"), "!.npmrc\nconfig.json\n")?;
+    kernel.index()?;
+    let paths = kernel.list_files("", 100, 16384)?.paths;
+    assert!(paths.contains(&".npmrc".to_string()));
+    assert!(!paths.contains(&".netrc".to_string()));
+    assert!(!paths.contains(&"config.json".to_string()));
+    assert!(
+        !kernel
+            .search(&query("quillfeather"))?
+            .hits
+            .iter()
+            .any(|hit| hit.citation.path == "config.json")
+    );
+    Ok(())
+}
+
+#[test]
 fn budgets_unicode_line_ranges_and_inventory_only_reads() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     fs::write(

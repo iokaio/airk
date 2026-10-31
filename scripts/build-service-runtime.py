@@ -117,8 +117,9 @@ def seal_install_payload(staging, version, operating_system, architecture):
     """Inventory the complete offline payload; its digest needs independent approval."""
     for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
         shutil.copyfile(ROOT / name, staging / name)
+    # Every sealed payload is distributable: unresolved license dispositions block it.
     subprocess.run([os.sys.executable, str(ROOT / "scripts" / "license-notices.py"),
-                    "--output", str(staging / "notices")], cwd=ROOT, check=True)
+                    "--output", str(staging / "notices"), "--release"], cwd=ROOT, check=True)
     files = {item.relative_to(staging).as_posix(): digest(item)
              for item in sorted(staging.rglob("*")) if item.is_file()}
     if len(files) > 2048:

@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import { test } from 'node:test';
 import { parseWindowDescriptor, WINDOW_SCHEMA } from '../explorerContracts';
 import { AssistanceIpcHost, sweepExpired, windowsDirectory } from '../explorerAssistanceHost';
+import { restrictWindowsDirectory } from '../privateDirectory';
 import { assistanceDirectory, LAUNCH_SCHEMA, launchDescriptorPath, serverInvocation, writeLaunchDescriptor } from '../explorerAssistanceLaunch';
 import { SuggestionStore } from '../explorerSuggestions';
 import { serviceTestHost } from './serviceTestHost';
@@ -220,4 +221,18 @@ test('native Windows namespace roots match editor paths without admitting siblin
     assert.equal(contains('\\\\?\\D:\\work\\book','D:\\work\\Book','win32'),true);
     assert.equal(contains('D:\\work\\book','D:\\work\\book-other','win32'),false);
     assert.equal(contains('/work/book','/work/book-other','linux'),false);
+});
+
+test('Windows descriptor directories replace inherited profile entries with user, SYSTEM and Administrators', { skip: process.platform !== 'win32' }, () => {
+    const calls: { file: string; args: readonly string[] }[] = [];
+    const run = ((file: string, args: readonly string[]) => {
+        calls.push({ file, args });
+        return file.endsWith('whoami.exe') ? '"host\fixture","S-1-5-21-1-2-3-1001"\r\n' : '';
+    }) as unknown as typeof import('node:child_process').execFileSync;
+    const directory = path.join(os.tmpdir(), `airk-acl-fixture-${process.pid}`);
+    restrictWindowsDirectory(directory, run);
+    restrictWindowsDirectory(directory, run);
+    assert.equal(calls.length, 2, 'each directory is restricted once per process');
+    assert.match(calls[1].file, /icacls\.exe$/);
+    assert.deepEqual(calls[1].args, [directory, '/inheritance:r', '/grant:r', '*S-1-5-21-1-2-3-1001:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F']);
 });

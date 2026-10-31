@@ -2,6 +2,20 @@
 
 Local observations on 13–14 October 2026. Historical receipts below validate their own implementation and must not be treated as packages of later changes. A passing fixture or hosted build is not a signed release, production deployment or complete host/client qualification.
 
+## Open multi-account and installed-editor checks for 1.7.6 (recorded 30 October 2026)
+
+These procedures come from [review 02](reviews/review02-response.md). Automated tests cover their logic, but none of them had been run as of this record. Until someone runs a check and records the result here, treat it as open. Use disposable OS accounts and fictional sources only.
+
+- **Unix custom storage (review 02, draft 02).** As account A, create an existing data directory with mode 0755 under a parent other accounts can traverse, record the umask and any POSIX ACLs, and register a project there. Expected: registration succeeds, the directory's mode is unchanged, and `airk runtime inventory` reports `storage_not_private` for that project. Repeat with a fresh default root (expected: created with mode 0700 and no warning). As account B, try to read the database files and sidecars in both roots. POSIX ACLs are not evaluated by AIRK. This check was not run.
+- **Windows Assistance descriptor (review 02, draft 13).** As account A on Windows, activate a trusted window and record `icacls` output for `explorer-assistance`, `launch-1.json` and `windows\*.json` under the extension's global storage. Expected: only account A, SYSTEM and Administrators are listed, with no inherited entries. As account B, try to list the pipe, read the descriptor, and connect with an absent, invalid and expired credential. Expected: no descriptor read and no authenticated reply. Record whether unauthenticated connections close within the 5-second request timeout. This check was not run with a second account. On the development machine, the profile directory was found to grant read access to an extra `CodexSandboxUsers` group, which 1.7.6 now removes from the descriptor directory.
+- **Installed-editor lifecycle (review 02, drafts 05, 08 and 10).** On Windows and on at least one POSIX host:
+  - install the 1.7.6 VSIX into a disposable profile and record the first-use review choices;
+  - check `Get-Command airk -All` or `command -v airk` in a new terminal;
+  - uninstall through VS Code;
+  - inspect `result.json`, `README.txt`, the mirrored `last-result.json`, the shell profiles or user PATH, and the remaining processes.
+
+  Repeat with a held file and with the worker killed before it finishes. This check was not run.
+
 ## Downloads website, 14 October 2026
 
 - The static builder fetched AIRK's real GitHub releases array (empty at validation time) and generated the pending-download page. No unavailable package was represented as downloadable.

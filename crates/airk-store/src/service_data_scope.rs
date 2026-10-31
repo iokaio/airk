@@ -29,6 +29,39 @@ impl std::fmt::Display for UnboundDataRoot {
     }
 }
 impl std::error::Error for UnboundDataRoot {}
+/// Indexes hold source-derived text. On Unix this reports, without refusing,
+/// an existing root that other accounts may reach: neither the root nor any
+/// ancestor is owned by this user with no group/other access. AIRK never
+/// changes permissions of a directory it did not create; it creates new
+/// storage directories with mode 0700. POSIX ACLs are not evaluated.
+#[cfg(unix)]
+pub fn privacy_warning(data: &Path) -> Result<Option<String>> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    if !exists(data)? {
+        return Ok(None);
+    }
+    let canonical = data.canonicalize()?;
+    // SAFETY: geteuid takes no pointers and has no failure mode.
+    let uid = unsafe { libc::geteuid() };
+    for ancestor in canonical.ancestors() {
+        let metadata = fs::metadata(ancestor)?;
+        if metadata.uid() == uid && metadata.permissions().mode() & 0o077 == 0 {
+            return Ok(None);
+        }
+    }
+    let metadata = fs::metadata(&canonical)?;
+    Ok(Some(format!(
+        "storage_not_private: {} (owner uid {}, mode {:o}) and its ancestors may let other local accounts read stored evidence; use a private directory or restrict it (for example `chmod 700`)",
+        canonical.display(),
+        metadata.uid(),
+        metadata.permissions().mode() & 0o7777
+    )))
+}
+/// Windows storage relies on the inherited profile ACL and is not evaluated here.
+#[cfg(not(unix))]
+pub fn privacy_warning(_data: &Path) -> Result<Option<String>> {
+    Ok(None)
+}
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -192,7 +225,17 @@ pub fn bind(data: &Path, control: &Path, namespace: Incarnation) -> Result<Bound
         return Ok(BoundDataRoot(scope));
     }
     fresh_namespace(&scope.data)?;
-    fs::create_dir_all(&scope.data)?;
+    // A missing root is created owner-only; an existing root keeps its permissions.
+    {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&scope.data)?;
+    }
     ensure!(
         scope.data.canonicalize()? == scope.data,
         "service data root redirected during claim"

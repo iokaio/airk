@@ -13,7 +13,7 @@ import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
 import * as cliInstall from '../cliInstall';
 
-export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean}={}){
+export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean;nativeExecution?:boolean;fresh?:boolean;codeFile?:boolean}={}){
     const bundledVersion=options.bundledVersion??(options.upgrade?'1.4.1':'1.4.0');
     // The fixture must honor the production receipt guard's canonical directory
     // identity, including macOS's /var -> /private/var temporary-path alias.
@@ -32,6 +32,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     }
     settings.set('service.installDir',install);settings.set('storage.path',data);
     settings.set('cli.autoInstall',options.automatic??false);
+    if(options.nativeExecution!==undefined)settings.set('runtime.nativeExecution',options.nativeExecution);
     const digest=(value:string)=>createHash('sha256').update(value).digest('hex');
     const review=async(_binding:unknown,source:string,data_root:string,collection:string)=>({...binding,binding:digest(JSON.stringify([source,data_root,collection])),root:await fs.realpath(source),data_root,collection});
     const register=async(_binding:unknown,value:any,setupWatch?:boolean,onlyIfMissing=false)=>{
@@ -49,7 +50,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     let extensionsChanged:()=>void,windowFocused:(state:{focused:boolean})=>void;
     const views=new Map<string,any>();
     const statusBar={text:'',tooltip:'',command:'',show(){},dispose(){}};
-    const stub:any={extensions:{getExtension:()=>({packageJSON:{version:state.installedVersion}}),onDidChange:(callback:()=>void)=>{extensionsChanged=callback;return disposable;}},workspace:{isTrusted:options.trusted??true,workspaceFolders:folders,textDocuments:[],
+    const stub:any={extensions:{getExtension:()=>({extensionPath:root,packageJSON:{version:state.installedVersion}}),onDidChange:(callback:()=>void)=>{extensionsChanged=callback;return disposable;}},workspace:{isTrusted:options.trusted??true,workspaceFolders:folders,textDocuments:[],
         getWorkspaceFolder:(uri:any)=>folders.find(folder=>uri.fsPath===folder.uri.fsPath||uri.fsPath.startsWith(folder.uri.fsPath+path.sep)),
         getConfiguration:()=>({get:(key:string,fallback?:unknown)=>settings.has(key)?settings.get(key):fallback,inspect:(key:string)=>({globalValue:settings.get(key),workspaceValue:key==='storage.path'?path.join(root,'untrusted-storage'):'/workspace/untrusted'}),
             update:async(key:string,value:unknown)=>{settings.set(key,value);}}),
@@ -110,8 +111,10 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     test.mock.method(RuntimeHost.prototype,'discover',async function(this:RuntimeHost){
         state.discovered++;assert.equal(this.options.installDir,install);
         await options.discoveryGate;
+        // A fresh machine has no installed runtime until the first ensure.
+        const fresh=options.fresh&&state.ensured===0;
         return {bundle:{main:path.join(root,'bundle-main'),helper:path.join(root,'bundle-helper'),source:root,digest:binding.runtimeSha256,version:bundledVersion,platform:'fixture'},
-            installDir:install,installed:true,location:{user_paths:{data,launcher:path.join(root,'launcher')}},inspection:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:'trusted_distribution'},
+            installDir:install,installed:!fresh,location:{user_paths:{data,launcher:path.join(root,'launcher'),state:path.join(root,'native-state')}},inspection:fresh?undefined:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:'trusted_distribution'},
             executable:binding.executable,launcher:binding.launcher,control_dir:control,registry_namespace:'34'.repeat(16),lifecycle:{explicitly_stopped:state.stopped}}};
     });
     test.mock.method(RuntimeHost.prototype,'ensure',async(explicit?:boolean)=>{state.ensured++;assert.notEqual(explicit,true);if(state.stopped)throw new ServiceError('service_explicitly_stopped');if(state.down)throw new ServiceError('service_unavailable');if(binding.version!==bundledVersion)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');return binding;});
@@ -132,6 +135,8 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     let extension:any;
+    // Real installations carry compiled code; same-version rebuild detection stats it.
+    if(options.codeFile){await fs.mkdir(path.join(root,'out'),{recursive:true});await fs.writeFile(path.join(root,'out','serviceExtension.js'),'// fixture build 1\n');}
     try{extension=require('../extension');const context:any={extensionPath:root,extensionUri:{scheme:'file',fsPath:path.resolve(__dirname,'../..')},extension:{id:'iokaio.airk',packageJSON:{version:bundledVersion}},globalState:storage,workspaceState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);

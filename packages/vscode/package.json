@@ -2,7 +2,7 @@
   "name": "airk",
   "displayName": "AIRK: Local Search for Coding Agents",
   "description": "Local code and document search for coding agents, plus AIRK Workbench for cited evidence in VS Code. No cloud service or API key.",
-  "version": "1.7.3",
+  "version": "1.7.6",
   "icon": "images/icon.png",
   "publisher": "iokaio",
   "license": "Apache-2.0",
@@ -259,6 +259,31 @@
         "category": "AIRK"
       },
       {
+        "command": "airk.enableNativeExecution",
+        "title": "Enable Native Execution",
+        "category": "AIRK"
+      },
+      {
+        "command": "airk.setUp",
+        "title": "Set Up",
+        "category": "AIRK"
+      },
+      {
+        "command": "airk.removeTerminalCommand",
+        "title": "Remove Terminal Command",
+        "category": "AIRK"
+      },
+      {
+        "command": "airk.showLastUninstallResult",
+        "title": "Show Last Uninstall Result",
+        "category": "AIRK"
+      },
+      {
+        "command": "airk.reviewData",
+        "title": "Review and Remove AIRK Data",
+        "category": "AIRK"
+      },
+      {
         "command": "airk.openTools",
         "title": "Open AIRK Tools",
         "category": "AIRK",
@@ -488,7 +513,29 @@
             "type": "boolean",
             "default": true,
             "scope": "machine",
-            "markdownDescription": "Install the native runtime and airk terminal command on trusted activation; register new workspace folders and start automatic indexing. Preserve existing 1.4 storage and watching selections during compatible runtime updates. Adds AIRK to new VS Code terminals and the user PATH (Windows) or Bash, Zsh and fish startup files (macOS/Linux). Restart external terminal applications after installation. Disable in User settings to skip future automatic installation and workspace registration; existing CLI files and PATH entries remain. Use **AIRK: Install or Repair CLI** to retry setup."
+            "markdownDescription": "Install the native runtime and airk terminal command on trusted activation; register new workspace folders and start automatic indexing. Preserve existing 1.4 storage and watching selections during compatible runtime updates. Adds AIRK to new VS Code terminals and the user PATH (Windows) or Bash, Zsh and fish startup files (macOS/Linux). Restart external terminal applications after installation. Disable in User settings to skip future automatic installation and workspace registration; existing CLI files and PATH entries remain. Use **AIRK: Install or Repair CLI** to retry setup.\n\nDisabling this does **not** stop AIRK from running its bundled executable: trusted windows still run `runtime self-test` and `runtime location` to discover an existing installation. To start no AIRK process at all, turn off `#airk.runtime.nativeExecution#`. The Explorer Assistance endpoint is editor-hosted and controlled separately by `#airk.explorer.assistance.enabled#`."
+          },
+          "airk.cli.shellIntegration": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "all",
+              "off"
+            ],
+            "enumDescriptions": [
+              "Edit ~/.profile plus the startup files of shells that are current or already configured (Windows: user PATH).",
+              "Edit Bash, Zsh and fish startup files even when those shells are not used (1.7.3 behavior).",
+              "Change no shell startup file or user PATH; the command is available only in VS Code terminals."
+            ],
+            "default": "auto",
+            "scope": "machine",
+            "markdownDescription": "Where setup makes the `airk` terminal command available outside VS Code. Only User settings are read. Changing this does not remove existing entries; use **AIRK: Remove Terminal Command** for that."
+          },
+          "airk.runtime.nativeExecution": {
+            "type": "boolean",
+            "default": true,
+            "scope": "machine",
+            "markdownDescription": "Allow this extension to start native AIRK processes (discovery, self-test, the service, MCP sessions, tools and usage reports). Turn off in User settings to inspect AIRK's settings and help without running any AIRK executable; workspace values are ignored. Views then report that native execution is off instead of inferring native status. This controls process execution only: it is not a sandbox and does not isolate the operating-system account. The editor-hosted Explorer Assistance endpoint follows `#airk.explorer.assistance.enabled#`. Run **AIRK: Enable Native Execution** to resume the normal verified-runtime path."
           },
           "airk.service.channel": {
             "type": "string",

@@ -51,3 +51,19 @@ test('a detached cleanup worker outlives both its hook process and the five-seco
         assert.ok(Date.now()-started>=5500,'cleanup continues after the hook is gone');
     }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('cleanup records started before work and never leaves a failed attempt looking complete',async()=>{
+    const {testing,mirrorUninstallResult}=await import('../uninstallHook');
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-hook-result-'));
+    try{
+        const job=path.join(root,'job');await fs.mkdir(job);
+        // No approved engine: verification fails after the started record is written.
+        await testing.cleanup(job,async()=>{throw new Error('native runner must not run');});
+        const result=JSON.parse(await fs.readFile(path.join(job,'result.json'),'utf8'));
+        assert.equal(result.state,'needs_attention');assert.equal(typeof result.startedAt,'string');assert.equal(result.pid,process.pid);
+        assert.match(await fs.readFile(path.join(job,'README.txt'),'utf8'),/A started result is never a success/);
+        const state=path.join(root,'state');
+        await mirrorUninstallResult([state],{schema:1,state:'started',pid:process.pid});
+        assert.equal(JSON.parse(await fs.readFile(path.join(state,'extension-uninstall','last-result.json'),'utf8')).state,'started');
+    }finally{process.exitCode=0;await fs.rm(root,{recursive:true,force:true});}
+});

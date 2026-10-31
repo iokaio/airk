@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { rememberUninstallTarget, uninstallTargets } from '../extensionUninstall';
+import { rememberShellIntegration, rememberUninstallTarget, shellProfiles, uninstallTargets } from '../extensionUninstall';
 import { LaunchSpec, unifiedEntry } from '../model';
 import { launchDescriptorPath } from '../explorerAssistanceLaunch';
 import { NativeRunner } from '../serviceBootstrap';
@@ -23,7 +23,10 @@ async function fixture(){
         assert.deepEqual(args,['runtime','uninstall','--install-dir',installDir]);
         return {uninstalled:!fail,project_data_preserved:true};
     };
-    return {root,installDir,launcher,source,storage,spec,calls,messages,run,setFailure:(value:boolean)=>{fail=value;},
+    // Never edit the real home directory or registry: record the requested removal instead.
+    const shellCalls:{storage:string;recorded:unknown[]}[]=[];let preserved:string[]=[];
+    const shell=async(storage:string,recorded:unknown[])=>{shellCalls.push({storage,recorded});return {removed:['fixture removal'],preserved};};
+    return {root,installDir,launcher,source,storage,spec,calls,messages,run,shell,shellCalls,preserve:(value:string[])=>{preserved=value;},setFailure:(value:boolean)=>{fail=value;},
         cleanup:()=>fs.rm(root,{recursive:true,force:true})};
 }
 test('uninstall removes owned Claude/Codex/Copilot connections in a closed project and delegates runtime shutdown',async()=>{
@@ -37,7 +40,7 @@ test('uninstall removes owned Claude/Codex/Copilot connections in a closed proje
         await fs.writeFile(path.join(f.source,'.codex','config.toml'),toml);
         await fs.writeFile(path.join(f.source,'.mcp.json'),JSON.stringify({mcpServers:{airk:entry,other:{command:'keep-me'}}}));
         await fs.writeFile(path.join(f.source,'.vscode','mcp.json'),JSON.stringify({servers:{airk:entry,other:{command:'keep-me'}}}));
-        await uninstallTargets('verified-bundle',f.run,message=>f.messages.push(message));
+        await uninstallTargets('verified-bundle',f.run,message=>f.messages.push(message),f.shell);
         const codex=await fs.readFile(path.join(f.source,'.codex','config.toml'),'utf8');
         assert.doesNotMatch(codex,/mcp_servers\.airk/);assert.match(codex,/model = "chosen-model"/);assert.match(codex,/mcp_servers\.other/);
         assert.match(codex,/Preserve project policy/);
@@ -49,7 +52,7 @@ test('uninstall removes owned Claude/Codex/Copilot connections in a closed proje
         assert.deepEqual(await fs.readdir(path.join(f.launcher,'extension-uninstall')),[]);
         assert.ok(f.messages.some(message=>message.startsWith('AIRK runtime and recorded')));
         // Re-running the hook cannot add an AIRK connection or start a service.
-        await uninstallTargets('verified-bundle',f.run,()=>{});
+        await uninstallTargets('verified-bundle',f.run,()=>{},f.shell);
         assert.equal(f.calls.some(args=>['ensure','start','stage','activate'].includes(args[1])),false);
     }finally{await f.cleanup();}
 });
@@ -59,7 +62,7 @@ test('uninstall preserves foreign connections and retains receipts when native c
         await rememberUninstallTarget(f.launcher,f.installDir,f.storage,f.spec);
         const file=path.join(f.source,'.mcp.json'),before=JSON.stringify({mcpServers:{airk:{command:'another-server',args:[]}}});
         await fs.writeFile(file,before);f.setFailure(true);
-        await assert.rejects(uninstallTargets('verified-bundle',f.run,message=>f.messages.push(message)),/Runtime uninstall incomplete/);
+        await assert.rejects(uninstallTargets('verified-bundle',f.run,message=>f.messages.push(message),f.shell),/Runtime uninstall incomplete/);
         assert.equal(await fs.readFile(file,'utf8'),before);
         assert.equal((await fs.readdir(path.join(f.launcher,'extension-uninstall'))).length,1);
         assert.ok(f.messages.some(message=>message.startsWith('Could not remove')));
@@ -72,7 +75,26 @@ test('a tampered uninstall receipt cannot nominate a different installation',asy
         await rememberUninstallTarget(f.launcher,f.installDir,f.storage);
         const directory=path.join(f.launcher,'extension-uninstall'),file=path.join(directory,(await fs.readdir(directory))[0]);
         const receipt=JSON.parse(await fs.readFile(file,'utf8'));receipt.installDir=path.join(f.root,'foreign-runtime');await fs.writeFile(file,JSON.stringify(receipt));
-        await assert.rejects(uninstallTargets('verified-bundle',f.run,()=>{}),/receipt identity changed/);
+        await assert.rejects(uninstallTargets('verified-bundle',f.run,()=>{},f.shell),/receipt identity changed/);
         assert.equal(f.calls.some(args=>args[1]==='uninstall'),false);
+    }finally{await f.cleanup();}
+});
+test('shell integration receipts merge, reach removal after runtime shutdown and stay until cleanup is clean',async()=>{
+    const f=await fixture();
+    try{
+        await rememberUninstallTarget(f.launcher,f.installDir,f.storage,f.spec);
+        const profile=path.join(f.root,'home','.profile');
+        await rememberShellIntegration(f.launcher,f.storage,[{file:profile,created:true}]);
+        // A later repair sees the file already present; the created flag is retained.
+        await rememberShellIntegration(f.launcher,f.storage,[{file:profile,created:false}]);
+        assert.deepEqual(await shellProfiles(f.launcher,f.storage),[{file:profile,created:true}]);
+        f.preserve(['Preserved a modified block']);
+        await assert.rejects(uninstallTargets('verified-bundle',f.run,message=>f.messages.push(message),f.shell),/shell integration require manual review/);
+        assert.equal(f.shellCalls.length,1);assert.equal(f.shellCalls[0].storage,f.storage);
+        assert.deepEqual(f.shellCalls[0].recorded,[{file:profile,created:true}]);
+        assert.ok((await fs.readdir(path.join(f.launcher,'extension-uninstall'))).some(name=>name.startsWith('shell-')),'preserved entries keep their receipt');
+        f.preserve([]);
+        await uninstallTargets('verified-bundle',f.run,()=>{},f.shell);
+        assert.deepEqual(await fs.readdir(path.join(f.launcher,'extension-uninstall')),[]);
     }finally{await f.cleanup();}
 });

@@ -2,6 +2,7 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
+import { requireNativeExecution } from './nativeGate';
 
 export type RecordValue = Record<string, unknown>;
 export function record(value: unknown): RecordValue {
@@ -39,6 +40,7 @@ export class NativeControlTransport implements ControlTransport {
     constructor(command: string, args: string[], private readonly timeout = 20000,
         launch: (command: string, args: string[]) => ChildProcessWithoutNullStreams = (file, argv) =>
             spawn(file, argv, { cwd: path.isAbsolute(file) ? path.dirname(file) : undefined, windowsHide: true, stdio: 'pipe', env: { ...process.env, AIRK_CLIENT: 'vscode', AIRK_ERROR_FORMAT: 'json' } })) {
+        requireNativeExecution();
         this.child = launch(command, args);
         this.child.stdout.on('data', (bytes: Buffer) => { try { this.read(bytes); } catch { this.fail('invalid_console_response'); } });
         // Diagnostics arrive as bounded structured results. Do not forward raw stderr/environment/argv.

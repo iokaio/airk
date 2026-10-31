@@ -53,6 +53,7 @@ pub enum LegacyCommand {
         #[arg(long)]
         runtime_dir: PathBuf,
     },
+    /// Forget one approved old-derived cleanup scope after review.
     ForgetDerived {
         #[arg(long)]
         runtime_dir: PathBuf,
@@ -96,6 +97,7 @@ pub enum LegacyCommand {
         #[arg(long)]
         runtime_dir: PathBuf,
     },
+    /// Show one saved removal identity and its phase.
     Show {
         #[arg(long)]
         runtime_dir: PathBuf,

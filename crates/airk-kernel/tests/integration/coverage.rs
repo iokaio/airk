@@ -77,6 +77,65 @@ fn eligibility_respects_shared_ignores_limits_documents_and_binary_fallback() ->
 }
 
 #[test]
+fn over_budget_documents_are_reported_without_blocking_other_sources() -> anyhow::Result<()> {
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let attributes = (0..1025)
+        .map(|index| format!(" a{index}=\"v\""))
+        .collect::<String>();
+    fs::write(
+        root.path().join("wide.svg"),
+        format!("<svg{attributes}><title>wide</title></svg>"),
+    )?;
+    fs::write(root.path().join("broken.xml"), "<root><open></root>")?;
+    fs::write(
+        root.path().join("notes.md"),
+        "# Zircon harbor\nZircon harbor notes.\n",
+    )?;
+    fs::write(
+        root.path().join("drawing.svg"),
+        "<svg><title>zircon drawing</title></svg>",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(state.path().into()))?;
+    for attempt in 0..2 {
+        let started = std::time::Instant::now();
+        let report = kernel.index()?;
+        let codes = report
+            .skipped
+            .iter()
+            .map(|file| (file.path.as_str(), file.code.as_deref()))
+            .collect::<Vec<_>>();
+        assert!(
+            codes.contains(&("wide.svg", Some("extraction_budget_exceeded"))),
+            "attempt {attempt}: {codes:?}"
+        );
+        assert!(
+            codes.contains(&("broken.xml", Some("extraction_failed"))),
+            "attempt {attempt}: {codes:?}"
+        );
+        // Rejection is prompt and repeatable; it never relies on the service watchdog.
+        assert!(started.elapsed() < Duration::from_secs(60));
+        let hits = kernel.search(&airk_core::SearchQuery {
+            text: "zircon".into(),
+            path_prefix: None,
+            limit: 10,
+            max_bytes: 8192,
+        })?;
+        let paths = hits
+            .hits
+            .iter()
+            .map(|hit| hit.citation.path.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(paths.contains("notes.md") && paths.contains("drawing.svg"));
+    }
+    let coverage = kernel.coverage(true)?;
+    assert_eq!(coverage.extraction_failed, 2);
+    assert_eq!(coverage.extraction_budget_exceeded, 1);
+    assert_eq!(coverage.current, 2);
+    Ok(())
+}
+
+#[test]
 fn empty_incomplete_and_capacity_limited_inventories_never_claim_full_coverage()
 -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;

@@ -250,6 +250,12 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             let input = serde_json::from_slice(&bytes)?;
             serde_json::json!({"status":"lifecycle","record":lifecycle::run(install_dir,input).await?})
         }
+        RuntimeCommand::Inventory { install_dir } => inventory::inventory(install_dir)?,
+        RuntimeCommand::Purge {
+            install_dir,
+            select,
+            confirm,
+        } => inventory::purge(install_dir, select, confirm.as_deref())?,
         RuntimeCommand::Snapshot {
             install_dir,
             after,

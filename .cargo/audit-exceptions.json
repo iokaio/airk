@@ -1,0 +1,38 @@
+{
+  "schema": 1,
+  "exceptions": [
+    {
+      "ecosystem": "cargo",
+      "package": "paste",
+      "version": "1.0.15",
+      "id": "RUSTSEC-2024-0436",
+      "scope": "Compile-time proc-macro used only by tokenizers 0.23.2; no runtime code is shipped from it.",
+      "evidence": "cargo tree -i paste: tokenizers 0.23.2 -> airk-kernel, airk-retrieval. Unmaintained notice, no vulnerability. No compatible tokenizers release removes it.",
+      "reviewer": "maintainer",
+      "reviewed": "2026-10-30",
+      "review_by": "2027-01-31"
+    },
+    {
+      "ecosystem": "cargo",
+      "package": "ttf-parser",
+      "version": "0.25.1",
+      "id": "RUSTSEC-2026-0192",
+      "scope": "Font parsing inside lopdf 0.42.0 for pdf-extract 0.12.1; runs only in the bounded PDF worker subprocess.",
+      "evidence": "cargo tree -i ttf-parser: lopdf 0.42.0 -> pdf-extract =0.12.1 -> airk-ingest. Unmaintained notice, no vulnerability. pdf-extract is pinned; replacing it is tracked separately.",
+      "reviewer": "maintainer",
+      "reviewed": "2026-10-30",
+      "review_by": "2027-01-31"
+    },
+    {
+      "ecosystem": "npm",
+      "package": "minimatch",
+      "version": "10.2.6",
+      "id": "GHSA-g3hv-75wg-m249",
+      "scope": "Glob matching inside @vscode/vsce 4.0.1-3, the VSIX packaging and publishing tool; not part of the installed extension runtime.",
+      "evidence": "npm ls minimatch: @vscode/vsce -> minimatch 10.2.6. vsce latest 4.1.0 and next 4.1.1-0 still require ^10.2.6, so no compatible fix exists. vsce matches only AIRK's own fixed .vscodeignore/files patterns in CI packaging and the OIDC publish job; no untrusted pattern reaches it. Moderate denial of service, CWE-405.",
+      "reviewer": "maintainer",
+      "reviewed": "2026-10-30",
+      "review_by": "2026-12-31"
+    }
+  ]
+}

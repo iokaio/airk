@@ -109,9 +109,15 @@ async function build() {
     const { HelpIndex } = require(path.join(root, 'out', 'explorerAssistance', 'help.js'));
     const nativeCatalog = path.resolve(root, '..', '..', 'crates', 'airk-mcp', 'src', 'unified_explorer.json');
     const schemas = JSON.stringify(toolDefinitions(new HelpIndex(catalog)), null, 2) + '\n';
-    if (process.argv.includes('--write-mcp-catalog')) { fs.writeFileSync(nativeCatalog, schemas); }
-    else if (!fs.existsSync(nativeCatalog) || fs.readFileSync(nativeCatalog, 'utf8') !== schemas) {
-        throw new Error('Native UI schemas differ: run node scripts/build-explorer.cjs --write-mcp-catalog and review the catalog diff.');
+    // The native CLI serves list_templates/get_template offline from the same strategy pack.
+    const { CORE_PACK, OPERATORS } = require(path.join(root, 'out', 'explorerStrategies.js'));
+    const nativeTemplates = path.resolve(root, '..', '..', 'crates', 'airk-mcp', 'src', 'explorer_templates.json');
+    const templates = JSON.stringify({ catalog_version: catalog.catalogVersion, extension_version: catalog.extensionVersion, templates: CORE_PACK, operators: OPERATORS }, null, 2) + '\n';
+    for (const [file, text] of [[nativeCatalog, schemas], [nativeTemplates, templates]]) {
+        if (process.argv.includes('--write-mcp-catalog')) { fs.writeFileSync(file, text); }
+        else if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== text) {
+            throw new Error(`Native Explorer catalog ${path.basename(file)} differs: run node scripts/build-explorer.cjs --write-mcp-catalog and review the diff.`);
+        }
     }
     const common = { absWorkingDir: root, bundle: true, metafile: true, sourcemap: false, legalComments: 'none', logLevel: 'warning', charset: 'utf8',
         plugins: [helpPlugin(catalog)] };
@@ -149,9 +155,9 @@ async function build() {
         banner: { js: `/*! AIRK standalone uninstall worker. Includes jsonc-parser (MIT).\n${read('node_modules/jsonc-parser/LICENSE.md').trim()}\n*/` },
     });
     checkInputs('Uninstall', uninstall.metafile, ['src/uninstallHook.ts', 'src/extensionUninstall.ts', 'src/serviceBootstrap.ts',
-        'src/native.ts', 'src/serviceClient.ts', 'src/mcpStdioSession.ts', 'src/model.ts', 'src/explorerContracts.ts', 'src/explorerRoutes.ts',
+        'src/native.ts', 'src/nativeGate.ts', 'src/cliInstall.ts', 'src/cliRemove.ts', 'src/serviceClient.ts', 'src/mcpStdioSession.ts', 'src/model.ts', 'src/explorerContracts.ts', 'src/explorerRoutes.ts',
         'src/agentMigration.ts', 'src/unifiedAgentConfig.ts', 'src/explorerAssistanceLaunch.ts', 'src/agentConfig.ts',
-        'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts',
+        'src/explorerStrategies.ts', 'src/explorerFeatures.ts', 'src/explorerDrafts.ts', 'src/explorerAssistanceHost.ts', 'src/privateDirectory.ts',
         /^node_modules\/jsonc-parser\//]);
 }
 

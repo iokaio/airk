@@ -48,6 +48,22 @@ fn fixture(runtime: &Path, server_source: &str) -> Result<Fixture> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(&storage, fs::Permissions::from_mode(0o700))?;
     }
+    // Mirror the extension's writer on Windows: replace inherited profile entries.
+    #[cfg(windows)]
+    {
+        let user = airk_cli::local_ipc::current_user()?;
+        let status = std::process::Command::new("icacls")
+            .arg(&storage)
+            .args([
+                "/inheritance:r",
+                "/grant:r",
+                &format!("*{user}:(OI)(CI)F"),
+                "*S-1-5-18:(OI)(CI)F",
+                "*S-1-5-32-544:(OI)(CI)F",
+            ])
+            .output()?;
+        anyhow::ensure!(status.status.success(), "{status:?}");
+    }
     let descriptor = storage.join("launch-1.json");
     fs::write(
         &descriptor,

@@ -39,6 +39,9 @@ pub struct CoverageReport {
     pub stale: usize,
     pub missing: usize,
     pub extraction_failed: usize,
+    /// Subset of `extraction_failed` rejected by a document work budget.
+    #[serde(default)]
+    pub extraction_budget_exceeded: usize,
     pub capacity_blocked: usize,
     pub unreadable: usize,
     pub excluded: usize,
@@ -129,6 +132,7 @@ impl Kernel {
             stale: 0,
             missing: 0,
             extraction_failed: 0,
+            extraction_budget_exceeded: 0,
             capacity_blocked: 0,
             unreadable: 0,
             excluded: 0,
@@ -182,6 +186,7 @@ impl Kernel {
             report.eligible += 1;
             if entry.eligibility == Eligibility::ExtractionFailed {
                 report.extraction_failed += 1;
+                report.extraction_budget_exceeded += usize::from(entry.budget_exceeded);
                 continue;
             }
             successful_bytes += entry.bytes;

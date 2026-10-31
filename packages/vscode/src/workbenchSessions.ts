@@ -74,8 +74,15 @@ export class SessionStore {
     async remove(project:string,id?:string):Promise<void>{
         await this.lock(project,async root=>{for(const name of await fs.readdir(root)){if((name.endsWith('.json')&&validId(name.slice(0,-5))&&(!id||name===`${id}.json`))||(!id&&name==='shortcuts.json')){await fs.unlink(path.join(root,name));}}});
     }
+    /** Project directories with saved state; bounded like each project's inventory. */
+    async projects():Promise<string[]>{
+        let entries;
+        try{entries=await fs.readdir(this.directory,{withFileTypes:true});}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT'){return [];}throw error;}
+        if(entries.length>1024){throw new Error('Workbench storage exceeds its bounded inventory.');}
+        return entries.filter(entry=>entry.isDirectory()&&!entry.isSymbolicLink()&&/^[0-9a-f]{64}$/.test(entry.name)).map(entry=>entry.name);
+    }
     async clearResults(project:string):Promise<void>{
-        for(const session of await this.list(project)){for(const turn of session.turns){delete turn.envelope;turn.trimmed=true;}await this.save(session,false);}
+        for(const session of await this.scan(project)){for(const turn of session.turns){delete turn.envelope;turn.trimmed=true;}await this.save(session,false);}
     }
     private async shortcuts(project:string):Promise<{input:string;scope:string;plan:Value}[]>{
         const file=path.join(await this.root(project),'shortcuts.json');

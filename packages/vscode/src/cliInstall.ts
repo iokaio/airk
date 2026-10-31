@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { ExtensionContext } from 'vscode';
-import { runText } from './native';
+import { runSystemText } from './native';
 
 const marker = '# AIRK CLI PATH';
 const quote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
@@ -67,8 +67,21 @@ async function profileDirectory(directory: string): Promise<void> {
     }
 }
 
-/** Append through the verified handle; never reopen an inspected pathname for writing. */
-async function appendProfile(file: string, block: string): Promise<void> {
+/** The exact marked block setup writes for `directory`; removal matches it byte for byte. */
+export function posixBlock(directory: string): string {
+    const literal = quote(directory);
+    return `${marker}\nif [ -d ${literal} ]; then\n    case ":$PATH:" in\n        *:${literal}:*) ;;\n        *) export PATH=${literal}:"$PATH" ;;\n    esac\nfi\n# End AIRK CLI PATH`;
+}
+export function fishBlock(directory: string): string {
+    // fish single quotes escape backslashes and apostrophes, unlike POSIX shell quotes.
+    const literal = `'${directory.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+    return `${marker}\nif test -d ${literal}\n    if not contains -- ${literal} $PATH\n        set -gx PATH ${literal} $PATH\n    end\nend\n# End AIRK CLI PATH`;
+}
+export interface ShellTouch { file: string; created: boolean }
+
+/** Append through the verified handle; never reopen an inspected pathname for writing.
+ * Returns true when this call created the file. */
+async function appendProfile(file: string, block: string): Promise<boolean> {
     await profileDirectory(path.dirname(file));
     let before: Stats | undefined;
     try {
@@ -99,19 +112,36 @@ async function appendProfile(file: string, block: string): Promise<void> {
         if (!sameProfile(opened, held) || !sameProfile(held, current)) {
             throw new Error(`Shell profile changed; retry setup: ${file}`);
         }
-        if (existing.includes(block)) { return; }
+        if (existing.includes(block)) { return !before; }
         const addition = Buffer.from(`\n${block}\n`);
         if (length + addition.length > profileLimit) { throw new Error(`Shell profile exceeds the 1 MiB editing limit: ${file}`); }
         await handle.writeFile(addition);
         await handle.sync();
+        return !before;
     } finally { await handle.close(); }
 }
 
-export async function configureShellPath(directory: string, home: string, env: NodeJS.ProcessEnv): Promise<string[]> {
+/** `auto` edits only shells that are present; `all` keeps the 1.7.3 behavior; `off` edits nothing. */
+export type ShellIntegration = 'auto' | 'all' | 'off';
+export function shellIntegration(value: unknown): ShellIntegration {
+    return value === 'all' || value === 'off' ? value : 'auto';
+}
+
+async function present(file: string): Promise<boolean> {
+    try { await fs.lstat(file); return true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') { return false; } throw error; }
+}
+
+/** `touched` receives every startup file that now holds an AIRK block, for later removal. */
+export async function configureShellPath(directory: string, home: string, env: NodeJS.ProcessEnv, scope: ShellIntegration = 'all', touched: ShellTouch[] = []): Promise<string[]> {
+    if (scope === 'off') { return []; }
     validatePath(directory, 'linux');
-    const literal = quote(directory);
-    const block = `${marker}\nif [ -d ${literal} ]; then\n    case ":$PATH:" in\n        *:${literal}:*) ;;\n        *) export PATH=${literal}:"$PATH" ;;\n    esac\nfi\n# End AIRK CLI PATH`;
-    const profiles = new Set([path.join(home, '.profile'), path.join(home, '.bashrc')]);
+    const block = posixBlock(directory);
+    const shell = path.basename(env.SHELL ?? '');
+    // `auto` never creates startup files for shells that are not in use.
+    const wanted = async (file: string, family: string) => scope === 'all' || shell === family || await present(file);
+    const profiles = new Set([path.join(home, '.profile')]);
+    if (await wanted(path.join(home, '.bashrc'), 'bash')) { profiles.add(path.join(home, '.bashrc')); }
     // Bash reads only the first existing login profile. Do not create one that masks user setup.
     for (const name of ['.bash_profile', '.bash_login']) {
         const file = path.join(home, name);
@@ -121,16 +151,18 @@ export async function configureShellPath(directory: string, home: string, env: N
     const zsh = env.ZDOTDIR || home;
     const config = env.XDG_CONFIG_HOME || path.join(home, '.config');
     if (!path.isAbsolute(zsh) || !path.isAbsolute(config)) { throw new Error('ZDOTDIR and XDG_CONFIG_HOME must be absolute to install AIRK CLI shell integration.'); }
-    profiles.add(path.join(zsh, '.zprofile')); profiles.add(path.join(zsh, '.zshrc'));
+    for (const name of ['.zprofile', '.zshrc']) {
+        if (await wanted(path.join(zsh, name), 'zsh')) { profiles.add(path.join(zsh, name)); }
+    }
     const errors: string[] = [];
     for (const file of profiles) {
-        try { await appendProfile(file, block); } catch (error) { errors.push(String(error)); }
+        try { touched.push({ file, created: await appendProfile(file, block) }); } catch (error) { errors.push(String(error)); }
     }
-    // fish single quotes escape backslashes and apostrophes, unlike POSIX shell quotes.
-    const fishLiteral = `'${directory.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
-    const fish = `${marker}\nif test -d ${fishLiteral}\n    if not contains -- ${fishLiteral} $PATH\n        set -gx PATH ${fishLiteral} $PATH\n    end\nend\n# End AIRK CLI PATH`;
-    try { await appendProfile(path.join(config, 'fish', 'conf.d', 'airk-path.fish'), fish); }
-    catch (error) { errors.push(String(error)); }
+    if (await wanted(path.join(config, 'fish'), 'fish')) {
+        const file = path.join(config, 'fish', 'conf.d', 'airk-path.fish');
+        try { touched.push({ file, created: await appendProfile(file, fishBlock(directory)) }); }
+        catch (error) { errors.push(String(error)); }
+    }
     return errors;
 }
 
@@ -170,9 +202,9 @@ export async function installCli(helper: string, context: Pick<ExtensionContext,
 }
 
 /** The verified native installation owns this launcher; never copy an extension helper over it. */
-export async function installLauncherCli(launcher:string,context:Pick<ExtensionContext,'environmentVariableCollection'|'globalStorageUri'>):Promise<string[]>{
+export async function installLauncherCli(launcher:string,context:Pick<ExtensionContext,'environmentVariableCollection'|'globalStorageUri'>,scope:ShellIntegration='all',touched:ShellTouch[]=[]):Promise<string[]>{
     const directory=await publishLauncherCommand(launcher,context.globalStorageUri.fsPath);
-    const errors=await installPath(directory,context);
+    const errors=await installPath(directory,context,scope,touched);
     errors.push(...await retireCliExecutables(context.globalStorageUri.fsPath));
     return errors;
 }
@@ -226,17 +258,19 @@ export async function publishLauncherCommand(launcher:string,storage:string,plat
     return directory;
 }
 
-async function installPath(directory:string,context:Pick<ExtensionContext,'environmentVariableCollection'>):Promise<string[]>{
+async function installPath(directory:string,context:Pick<ExtensionContext,'environmentVariableCollection'>,scope:ShellIntegration='all',touched:ShellTouch[]=[]):Promise<string[]>{
     const variables = context.environmentVariableCollection;
     variables.persistent = true;
     variables.description = 'Makes the installed AIRK CLI available in new terminals.';
     variables.prepend('PATH', directory + path.delimiter);
+    // VS Code terminals always find the command; external shells follow the chosen scope.
+    if (scope === 'off') { return []; }
     if (process.platform === 'win32') {
         const powershell = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-        await runText(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
+        await runSystemText(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
             Buffer.from(windowsPathScript(directory), 'utf16le').toString('base64')], undefined, 15000);
         return [];
     }
     if (process.platform !== 'darwin' && process.platform !== 'linux') { throw new Error(`AIRK CLI PATH setup is unsupported on ${process.platform}.`); }
-    return configureShellPath(directory, os.homedir(), process.env);
+    return configureShellPath(directory, os.homedir(), process.env, scope, touched);
 }

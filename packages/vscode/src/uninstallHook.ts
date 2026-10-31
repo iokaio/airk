@@ -9,6 +9,41 @@ import { createHash } from 'node:crypto';
 import { nativeRunner } from './serviceBootstrap';
 import { record } from './serviceClient';
 import { uninstallTargets } from './extensionUninstall';
+import type { NativeRunner } from './serviceBootstrap';
+
+const README = `AIRK uninstall cleanup
+======================
+result.json states:
+  started          cleanup began; if no worker is running any more, it was interrupted
+  complete         the runtime, owned terminal integration and recorded agent entries were removed
+  needs_attention  something was refused or preserved; cleanup.log names it
+A started result is never a success. Project sources and index data are preserved by
+design; remove index data from AIRK Management before uninstalling if it is unwanted.
+Recovery: reinstall AIRK and run "AIRK: Show Last Uninstall Result", or run
+"airk runtime uninstall" from a remaining AIRK installation. Do not delete
+unverified directories or stop unrelated processes.
+`;
+
+/** Native state directories survive runtime removal; the newest result is mirrored there. */
+export async function uninstallStateDirectories(main:string,run:NativeRunner):Promise<string[]>{
+    const directories=new Set<string>();
+    for(const channel of ['stable','preview']){
+        try{const state=record((await run(main,['runtime','location','--channel',channel])).user_paths).state;
+            if(typeof state==='string'&&path.isAbsolute(state))directories.add(state);}catch{/* Reported by the cleanup itself. */}
+    }
+    return [...directories];
+}
+export async function mirrorUninstallResult(directories:readonly string[],value:Record<string,unknown>):Promise<void>{
+    for(const directory of directories){
+        try{
+            const target=path.join(directory,'extension-uninstall');
+            await fs.mkdir(target,{recursive:true,mode:0o700});
+            const temporary=path.join(target,`last-result.${process.pid}.tmp`);
+            await fs.writeFile(temporary,JSON.stringify(value),{mode:0o600});
+            await fs.rename(temporary,path.join(target,'last-result.json'));
+        }catch(error){process.stderr.write(`Could not record uninstall result in ${directory}: ${String(error)}\n`);}
+    }
+}
 
 async function regular(file:string,max:number):Promise<void>{
     const info=await fs.lstat(file);
@@ -63,18 +98,26 @@ export async function startUninstallWorker(job:string):Promise<void>{
         child.unref();
     }finally{await log.close();}
 }
-async function cleanup(job:string):Promise<void>{
-    let failure:string|undefined;
+async function cleanup(job:string,run:NativeRunner=nativeRunner):Promise<void>{
+    let failure:string|undefined,states:string[]=[];
+    const started={schema:1,state:'started',startedAt:new Date().toISOString(),pid:process.pid,job};
+    // Written first: a missing final result is never mistaken for success.
+    await fs.writeFile(path.join(job,'result.json'),JSON.stringify(started),{mode:0o600});
+    await fs.writeFile(path.join(job,'README.txt'),README,{mode:0o600}).catch(()=>undefined);
     try{
         const main=await verifyUninstallWorker(job);
-        await uninstallTargets(main,nativeRunner,message=>process.stdout.write(message+'\n'));
+        states=await uninstallStateDirectories(main,run);
+        await mirrorUninstallResult(states,started);
+        await uninstallTargets(main,run,message=>process.stdout.write(message+'\n'));
     }catch(error){failure=String(error);process.stderr.write(failure+'\n');}
-    await fs.writeFile(path.join(job,'result.json'),JSON.stringify({schema:1,finishedAt:new Date().toISOString(),
-        state:failure?'needs_attention':'complete',...(failure?{failure}:{})}),{mode:0o600});
+    const finished={...started,finishedAt:new Date().toISOString(),state:failure?'needs_attention':'complete',...(failure?{failure:failure.slice(0,8192)}:{})};
+    await fs.writeFile(path.join(job,'result.json'),JSON.stringify(finished),{mode:0o600});
+    await mirrorUninstallResult(states,finished);
     // Keep the finite diagnostic result/log; retire this job's copied executable and script.
     for(const name of [engineName(),'approval.json','worker.js'])await fs.unlink(path.join(job,name)).catch(error=>process.stderr.write(`Uninstall worker cleanup: ${String(error)}\n`));
     if(failure)process.exitCode=1;
 }
+export const testing={cleanup};
 async function main():Promise<void>{
     if(process.argv.includes('--airk-uninstall-worker'))return cleanup(__dirname);
     const job=await prepareUninstallWorker(path.resolve(__dirname,'..'),__filename);

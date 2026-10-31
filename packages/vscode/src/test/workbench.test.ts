@@ -45,6 +45,20 @@ test('session retention, optimistic revisions and result privacy preserve unrela
         await store.remove(project);assert.equal((await store.list(project)).length,0);
     }finally{await fs.rm(root,{recursive:true,force:true});}
 });
+test('result privacy controls reach saved excerpts in every project, not only the selected one',async()=>{
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-workbench-'));
+    try{
+        const store=new SessionStore(root),other='cd'.repeat(32);
+        for(const id of [project,other]){const session=newSession(id);session.turns=[{id:'t',at:0,input:'query',format:'structured',envelope:{source:'fictional excerpt'}}];await store.save(session);}
+        await fs.mkdir(path.join(root,'not-a-project'));
+        assert.deepEqual((await store.projects()).sort(),[project,other].sort());
+        for(const id of await store.projects()){await store.clearResults(id);}
+        for(const id of [project,other]){assert.ok((await store.list(id)).every(s=>s.turns.every(t=>!t.envelope&&t.trimmed)));}
+        for(const id of await store.projects()){await store.remove(id);}
+        for(const id of [project,other]){assert.equal((await store.list(id)).length,0);}
+        assert.deepEqual(await new SessionStore(path.join(root,'missing')).projects(),[]);
+    }finally{await fs.rm(root,{recursive:true,force:true});}
+});
 test('session limits count UTF-8 and trim envelopes before old inputs',()=>{
     const session=newSession(project);session.turns=Array.from({length:202},(_,i)=>({id:String(i),at:i,input:`request ${i}`,format:'structured',envelope:{text:'界'.repeat(50000)}}));
     trimSession(session);assert.equal(session.turns.length,200);assert.equal(session.omitted,2);assert.ok(Buffer.byteLength(JSON.stringify(session))<=4*1024*1024);assert.ok(session.turns.some(t=>t.trimmed));

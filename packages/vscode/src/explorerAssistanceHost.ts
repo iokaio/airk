@@ -10,6 +10,7 @@ import * as path from 'node:path';
 import { ASSISTANCE_IPC_LIMIT, type AssistanceIpcReply, type AssistanceWindowStatus, type ExplorerHandoff, parseWindowDescriptor, WINDOW_DESCRIPTOR_LIMIT, WINDOW_SCHEMA, type WindowDescriptor } from './explorerContracts';
 import { DRAFT_KINDS, type DraftKind } from './explorerDrafts';
 import type { DraftClient, Submission, SuggestionStore } from './explorerSuggestions';
+import { restrictWindowsDirectory } from './privateDirectory';
 
 export const DESCRIPTOR_TTL_MS = 30 * 60_000;
 export const ROTATE_MS = 10 * 60_000;
@@ -38,6 +39,7 @@ export const windowsDirectory = (directory: string) => path.join(directory, 'win
 export function writePrivate(file: string, content: string): void {
     fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
     if (process.platform !== 'win32') { fs.chmodSync(path.dirname(file), 0o700); }
+    else { restrictWindowsDirectory(path.dirname(file)); }
     const temporary = `${file}.${randomBytes(8).toString('hex')}.tmp`;
     try {
         fs.writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 });

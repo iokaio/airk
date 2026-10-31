@@ -2,16 +2,19 @@
 //! Service-backed extension activation. Native ownership outlives editor windows.
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
+import { statSync } from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
 import { collectionId, launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry } from './model';
 import { probeMcp, runText } from './native';
-import { automaticUpgrade, BootstrapObservation, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
+import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError } from './serviceClient';
 import { IntentJournal } from './serviceIntents';
 import { readWorkspaceRegistrations, renamedDefaultDataRoot, ServiceWorkspace } from './serviceWorkspace';
-import { installLauncherCli } from './cliInstall';
+import { installLauncherCli, shellIntegration, ShellTouch } from './cliInstall';
+import { defaultProfiles, removeShellIntegration } from './cliRemove';
 import { openUsagePanel } from './usagePanel';
 import { renderUsage } from './usageReport';
 import { COMMAND_ROUTES } from './explorerCommands';
@@ -24,15 +27,28 @@ import { AssistanceIpcHost } from './explorerAssistanceHost';
 import { HandoffStore } from './explorerHandoffs';
 import { SuggestionStore } from './explorerSuggestions';
 import { assistanceDirectory, launchDescriptorPath, writeLaunchDescriptor } from './explorerAssistanceLaunch';
-import { rememberUninstallTarget } from './extensionUninstall';
+import { rememberShellIntegration, rememberUninstallTarget, shellProfiles } from './extensionUninstall';
 import { recordDiagnosticFailure } from './diagnosticLogs';
+import { nativeExecutionAllowed, NativeExecutionDisabled, setNativeExecutionGate } from './nativeGate';
 
+/** User-scope only: a workspace cannot turn native execution back on. */
+function nativeExecutionSetting():boolean{
+    return vscode.workspace.getConfiguration('airk').inspect<boolean>('runtime.nativeExecution')?.globalValue!==false;
+}
+
+/** Identity of the loaded extension code. VS Code keeps a same-version reinstall
+ * in place, so the version alone cannot reveal that a rebuilt VSIX replaced it. */
+function codeStamp(root:string|undefined):string|undefined{
+    if(!root)return undefined;
+    try{const info=statSync(path.join(root,'out','serviceExtension.js'));return `${path.resolve(root)}:${info.size}:${info.mtimeMs}`;}catch{return undefined;}
+}
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
 }
 class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDataProvider<LaunchSpec> {
     // Capture the loaded code's version; extension metadata can change after a VSIX install.
     private readonly runningVersion:string;
+    private readonly codeIdentity:string|undefined;
     private extensionUpdate?:{runningVersion:string;installedVersion:string};
     readonly output=vscode.window.createOutputChannel('AIRK');
     readonly definitions=new vscode.EventEmitter<void>();
@@ -86,8 +102,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
 
     checkForExtensionUpdate():boolean{
         if(this.disposed)return false;
-        const installed=vscode.extensions?.getExtension(this.context.extension.id??'iokaio.airk')?.packageJSON.version;
-        if(!this.extensionUpdate&&typeof installed==='string'&&/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(installed)&&installed!==this.runningVersion){
+        const extension=vscode.extensions?.getExtension(this.context.extension.id??'iokaio.airk');
+        let installed=extension?.packageJSON.version;
+        // A rebuilt VSIX with the same version replaces the code on disk without a version change.
+        if(installed===this.runningVersion&&this.codeIdentity!==undefined&&codeStamp(extension?.extensionPath??this.context.extensionPath)!==this.codeIdentity)installed=`${installed} (rebuilt)`;
+        if(!this.extensionUpdate&&typeof installed==='string'&&/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?(?: \(rebuilt\))?$/.test(installed)&&installed!==this.runningVersion){
             this.extensionUpdate={runningVersion:this.runningVersion,installedVersion:installed};
             this.output.appendLine(`AIRK ${installed} is installed; this window is still running ${this.runningVersion}. Reload to finish the update. Saved indexing work remains with the native service.`);
             this.renderUpdateStatus();this.treeChanges.fire();this.definitions.fire();
@@ -111,6 +130,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
 
     constructor(private readonly context:vscode.ExtensionContext){
         this.runningVersion=context.extension.packageJSON.version;
+        this.codeIdentity=codeStamp(context.extensionPath);
         const runtime:ConsoleRuntime={discover:()=>this.runtime().discover(),ensure:explicit=>this.runtime().ensure(explicit),
             binding:(inspection,install)=>this.runtime().binding(inspection,install),client:binding=>this.runtime().client(binding),
             snapshot:(binding,after,revision)=>this.runtime().snapshot(binding,after,revision),repair:(binding,preview)=>this.runtime().repair(binding,preview),
@@ -135,12 +155,18 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private runtime():RuntimeHost{
         if(!this.host){const generation=this.generation;
             this.host=new RuntimeHost(this.context.extensionPath,this.runningVersion,serviceRuntimeOptions(),undefined,
-                ()=>vscode.workspace.isTrusted&&!this.disposed&&!this.extensionUpdate&&generation===this.generation);}
+                ()=>vscode.workspace.isTrusted&&!this.disposed&&!this.extensionUpdate&&generation===this.generation&&nativeExecutionAllowed());}
         return this.host;
     }
     trusted():void {
         if(this.checkForExtensionUpdate())throw new ServiceError('extension_reload_required');
         if(!vscode.workspace.isTrusted||this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');
+        if(!nativeExecutionAllowed())throw new NativeExecutionDisabled();
+    }
+    /** Reported instead of probing: native status is never inferred while execution is off. */
+    private renderNativeDisabled():void{
+        this.status.text='$(circle-slash) AIRK: native execution off';this.status.command='airk.enableNativeExecution';
+        this.status.tooltip='AIRK native execution is disabled (airk.runtime.nativeExecution). No AIRK process is started. Click to enable.';
     }
     private folders():readonly vscode.WorkspaceFolder[]{
         return (vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme));
@@ -164,6 +190,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     private async refreshOnce(observation?:BootstrapObservation):Promise<void>{
         if(this.checkForExtensionUpdate()){this.renderUpdateStatus();return;}
+        if(!nativeExecutionAllowed()){
+            const had=this.specs.length>0;this.specs=[];this.roots=[];this.binding=undefined;this.renderNativeDisabled();
+            if(!this.disposed){this.treeChanges.fire();if(had)this.definitions.fire();}return;
+        }
         const previous=JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)]));
         const folderIdentity=JSON.stringify(this.folders().map(folder=>folder.uri.fsPath));
         const generation=this.generation;
@@ -314,6 +344,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     async start():Promise<void>{
         const startedAt=Date.now();
+        if(!nativeExecutionAllowed()){
+            this.startup={startedAt,message:'AIRK native execution is turned off. No AIRK process was started. Run AIRK: Enable Native Execution to continue.'};
+            this.renderNativeDisabled();this.treeChanges.fire();return;
+        }
         this.startup={message:'Connecting to the installed AIRK runtime…',startedAt};this.treeChanges.fire();
         try{await this.automaticInstall();if(!this.binding)await this.refresh();
             if(!this.disposed)this.startup=this.startup?.failed?this.startup:this.installationFailed?{...this.startup,message:'AIRK startup needs attention. Open Logs for the recorded failure.',failed:true}:undefined;
@@ -369,7 +403,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();const binding=await this.runtime().ensure();this.trusted();
         if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
         this.reportInstall('Installing the terminal command…');
-        const errors=await installLauncherCli(binding.universalLauncher??binding.launcher,this.context);this.trusted();
+        const touched:ShellTouch[]=[];
+        const errors=await installLauncherCli(binding.universalLauncher??binding.launcher,this.context,this.shellScope(),touched);this.trusted();
+        // Uninstall cleanup reverses exactly these startup-file edits.
+        if(this.uninstallDirectory)await rememberShellIntegration(this.uninstallDirectory,this.context.globalStorageUri.fsPath,touched)
+            .catch(error=>errors.push(`Could not record terminal integration for uninstall cleanup: ${String(error)}`));
         for(const error of errors){this.installationWarnings=true;this.output.appendLine(error);}
         this.reportInstall('Cleaning up previous runtime…');
         await this.runtime().retirePrevious(binding);this.trusted();
@@ -445,10 +483,137 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
         }
     }
+    private shellScope(){return shellIntegration(vscode.workspace.getConfiguration('airk').inspect<string>('cli.shellIntegration')?.globalValue);}
+    /** Home folders and filesystem/volume roots need an explicit choice before registration. */
+    private async broadRoot(canonical:string):Promise<boolean>{
+        const home=await fs.realpath(os.homedir()).catch(()=>os.homedir());
+        return same(canonical,home)||same(path.dirname(canonical),canonical);
+    }
+    private folderChoices():{declined:string[];approved:string[]}{
+        return {declined:this.context.globalState.get<string[]>('airk.setupDeclinedFolders.1',[]),approved:this.context.globalState.get<string[]>('airk.setupApprovedRoots.1',[])};
+    }
+    /** Before the first installation only: show persistent effects and let the user
+     * accept, customize, defer or disable. Existing and managed installations skip it. */
+    private async firstUseReview(installed:BootstrapObservation,explicit:boolean):Promise<boolean>{
+        const key='airk.setupReview.1',saved=this.context.globalState.get<{decision?:string}>(key);
+        if(explicit){await this.context.globalState.update(key,{decision:'accepted',at:Date.now()});return true;}
+        if(saved?.decision==='accepted')return true;
+        if(saved?.decision==='deferred'){
+            if(this.startup)this.startup={...this.startup,message:'AIRK setup is deferred. Run AIRK: Set Up to review and install.'};
+            this.status.text='AIRK: setup deferred';this.status.command='airk.setUp';return false;
+        }
+        const configured=vscode.workspace.getConfiguration('airk').inspect<string>('storage.path')?.globalValue;
+        const paths=record(installed.location.user_paths),storage=configured??(typeof paths.data==='string'?paths.data:'the AIRK per-user data directory');
+        const scope=this.shellScope();
+        const shell=scope==='off'?'No shell startup file or user PATH is changed (airk.cli.shellIntegration is off).'
+            :process.platform==='win32'?'Adds the airk command directory to the front of your user PATH.'
+            :scope==='all'?'Adds a marked PATH block to Bash, Zsh and fish startup files.':'Adds a marked PATH block to ~/.profile and the startup files of shells you use.';
+        const folders:{opened:string;canonical:string;broad:boolean}[]=[];
+        for(const folder of this.folders()){
+            try{const canonical=await fs.realpath(folder.uri.fsPath);folders.push({opened:folder.uri.fsPath,canonical,broad:await this.broadRoot(canonical)});}catch{/* Missing folders are reported during preparation. */}
+        }
+        const detail=[`Installs the AIRK ${this.runningVersion} runtime for this user account and stores indexes in ${storage}.`,
+            `Registers these folders for background indexing: ${folders.filter(folder=>!folder.broad).map(folder=>folder.opened).join(', ')||'none'}.`,
+            ...(folders.some(folder=>folder.broad)?['Home folders and drive roots are not registered unless you choose them in Customize.']:[]),
+            'Indexing continues after editor windows close; login startup is a separate opt-in.',shell,
+            'Existing recognized AIRK agent entries in these projects may be updated.',
+            'Hidden files can be indexed: review .airkignore first. AIRK is not a secret scanner.'].join('\n');
+        const choice=await vscode.window.showInformationMessage('Set up AIRK on this computer?',{modal:true,detail},'Set up','Customize…','Not now',"Don't set up automatically");
+        if(choice==="Don't set up automatically"){await vscode.workspace.getConfiguration('airk').update('cli.autoInstall',false,vscode.ConfigurationTarget.Global);return false;}
+        if(choice==='Not now'){await this.context.globalState.update(key,{decision:'deferred',at:Date.now()});return this.firstUseReview(installed,false);}
+        if(choice==='Customize…'){
+            const {declined,approved}=this.folderChoices();
+            const items:(vscode.QuickPickItem&{folder?:string})[]=[...folders.map(folder=>({label:path.basename(folder.opened)||folder.opened,description:folder.opened,
+                detail:folder.broad?'Home folder or drive root: registered only if you select it':undefined,picked:!folder.broad&&!declined.some(value=>same(value,folder.canonical)),folder:folder.canonical})),
+                {label:'Terminal command in external shells',description:process.platform==='win32'?'User PATH':'Shell startup files',picked:scope!=='off'}];
+            const picked=await vscode.window.showQuickPick(items,{canPickMany:true,title:'Choose what AIRK sets up'});
+            if(!picked)return false;
+            const selected=new Set(picked.flatMap(item=>item.folder?[item.folder]:[]));
+            await this.context.globalState.update('airk.setupDeclinedFolders.1',[...declined.filter(value=>!folders.some(folder=>same(folder.canonical,value))),...folders.filter(folder=>!selected.has(folder.canonical)).map(folder=>folder.canonical)]);
+            await this.context.globalState.update('airk.setupApprovedRoots.1',[...approved,...folders.filter(folder=>folder.broad&&selected.has(folder.canonical)).map(folder=>folder.canonical)]);
+            if(!picked.some(item=>!item.folder)&&scope!=='off')await vscode.workspace.getConfiguration('airk').update('cli.shellIntegration','off',vscode.ConfigurationTarget.Global);
+        }else if(choice!=='Set up')return false;
+        await this.context.globalState.update(key,{decision:'accepted',at:Date.now()});return true;
+    }
     automaticInstall(notify=true,explicit=false):Promise<void>{
         if(this.checkForExtensionUpdate())return Promise.resolve();
+        if(!nativeExecutionAllowed())return explicit?Promise.reject(new NativeExecutionDisabled()):Promise.resolve();
         if(!vscode.workspace.isTrusted||!explicit&&vscode.workspace.getConfiguration('airk').inspect<boolean>('cli.autoInstall')?.globalValue===false)return Promise.resolve();
         this.settingUp??=this.automaticSetup(notify,explicit).finally(()=>{this.settingUp=undefined;});return this.settingUp;
+    }
+    /** The detached uninstall worker mirrors its newest result into the native state directory. */
+    private async lastUninstall(observation:BootstrapObservation):Promise<{text:string;attention:boolean;identity:string}|undefined>{
+        const state=record(observation.location.user_paths).state;
+        if(typeof state!=='string'||!path.isAbsolute(state))return undefined;
+        const source=await fs.readFile(path.join(state,'extension-uninstall','last-result.json'),'utf8').catch(()=>undefined);
+        if(!source||source.length>65536)return undefined;
+        const value=record(JSON.parse(source));
+        const alive=(pid:unknown)=>{try{return typeof pid==='number'&&Number.isSafeInteger(pid)&&pid>0&&(process.kill(pid,0),true);}catch{return false;}};
+        const outcome=value.state==='complete'?'complete':value.state==='needs_attention'?'needs attention'
+            :value.state==='started'?alive(value.pid)?'still running':'interrupted or unknown (no final result was written)':'unknown';
+        const text=[`Last AIRK uninstall cleanup: ${outcome}.`,typeof value.startedAt==='string'?`Started: ${value.startedAt}`:'',
+            typeof value.finishedAt==='string'?`Finished: ${value.finishedAt}`:'',typeof value.job==='string'?`Log and result: ${value.job}`:'',
+            typeof value.failure==='string'?`Details: ${value.failure}`:''].filter(Boolean).join('\n');
+        return {text,attention:outcome!=='complete'&&outcome!=='still running',identity:`${value.startedAt}:${value.state}`};
+    }
+    private async reportLastUninstall(observation:BootstrapObservation):Promise<void>{
+        const result=await this.lastUninstall(observation).catch(()=>undefined);
+        if(!result?.attention||this.context.globalState.get<string>('airk.uninstallNotice.1')===result.identity)return;
+        await this.context.globalState.update('airk.uninstallNotice.1',result.identity);
+        this.output.appendLine(result.text);
+        void vscode.window.showWarningMessage('A previous AIRK uninstall did not finish cleanly.','Show Details').then(action=>{if(action==='Show Details')this.output.show();});
+    }
+    async showLastUninstallResult():Promise<void>{
+        this.trusted();const result=await this.lastUninstall(await this.runtime().discover());
+        this.output.appendLine(result?.text??'No AIRK uninstall result is recorded for this user.');this.output.show(true);
+    }
+    /** Read-only inventory first; logs/caches are purged only after a reviewed plan digest,
+     * and project indexes go through Management's own unregister confirmation. */
+    async reviewData(run=nativeRunner):Promise<void>{
+        this.trusted();const binding=await this.runtime().ensure();this.trusted();
+        const main=(await this.runtime().discover()).bundle.main;this.trusted();
+        const report=await run(main,['runtime','inventory','--install-dir',binding.installDir],120000);this.trusted();
+        const size=(bytes:unknown)=>typeof bytes==='number'?`${(bytes/1048576).toFixed(1)} MiB`:'size unknown';
+        const items:(vscode.QuickPickItem&{location?:string;project?:boolean})[]=[];
+        for(const raw of Array.isArray(report.locations)?report.locations:[]){
+            const location=record(raw);if(location.exists!==true)continue;
+            items.push({label:String(location.id),description:String(location.path),detail:`${size(location.bytes)}${location.complete===false?' (partial count)':''} · ${String(location.consequence)}`,
+                ...(location.purge==='purgeable'?{location:String(location.id)}:{}),picked:false});
+        }
+        for(const raw of Array.isArray(report.projects)?report.projects:[]){
+            const project=record(raw);
+            items.push({label:`Project index: ${String(project.collection)}`,description:String(project.root),detail:`Index at ${String(project.data_root)} · removal opens Management for its own confirmation${typeof project.storage_warning==='string'?' · ⚠ other accounts may read this storage':''}`,project:true,picked:false});
+        }
+        for(const line of [`AIRK data inventory${report.incomplete===true?' (incomplete)':''}:`,...items.map(item=>`  ${item.label}: ${item.description} — ${item.detail}`),
+            ...(Array.isArray(report.not_covered)?report.not_covered.map(value=>`  Not covered: ${String(value)}`):[])])this.output.appendLine(line);
+        const picked=await vscode.window.showQuickPick(items,{canPickMany:true,title:'Review AIRK data (nothing is removed until you confirm)'});this.trusted();
+        if(!picked?.length)return;
+        if(picked.some(item=>item.project))await this.showManagement('#manage/projects');
+        const select=picked.flatMap(item=>item.location?[item.location]:[]);
+        const refused=picked.filter(item=>!item.location&&!item.project).map(item=>item.label);
+        if(refused.length)this.output.appendLine(`Not removable here (see consequences above): ${refused.join(', ')}`);
+        if(!select.length)return;
+        const plan=await run(main,['runtime','purge','--install-dir',binding.installDir,...select.flatMap(id=>['--select',id])],120000);this.trusted();
+        const detail=(Array.isArray(plan.plan)?plan.plan:[]).map(raw=>{const item=record(raw);return `${String(item.id)}: ${String(item.path)} (${size(item.bytes)})\n${String(item.consequence)}`;}).join('\n\n');
+        if(await vscode.window.showWarningMessage('Delete the contents of these AIRK locations?',{modal:true,detail:`${detail}\n\nThe AIRK service must be stopped. This is logical deletion, not secure erasure.`},'Delete')!=='Delete')return;
+        this.trusted();
+        const result=await run(main,['runtime','purge','--install-dir',binding.installDir,...select.flatMap(id=>['--select',id]),'--confirm',String(plan.plan_digest)],300000);
+        for(const raw of Array.isArray(result.purged)?result.purged:[]){const item=record(raw);this.output.appendLine(`Deleted ${String(item.files_deleted)} files from ${String(item.path)}`);}
+        for(const line of Array.isArray(result.retained)?result.retained:[])this.output.appendLine(`Retained: ${String(line)}`);
+        this.output.show(true);
+    }
+    /** Remove external-shell PATH integration now; VS Code terminals keep the command. */
+    async removeTerminalCommand():Promise<void>{
+        const choice=await vscode.window.showWarningMessage('Remove the airk command from external terminals?',{modal:true,
+            detail:'Removes AIRK-owned PATH blocks from shell startup files (or the user PATH on Windows) and stops future setup from adding them. Modified entries are preserved and reported. Indexes and the runtime are unchanged.'},'Remove');
+        if(choice!=='Remove')return;
+        await vscode.workspace.getConfiguration('airk').update('cli.shellIntegration','off',vscode.ConfigurationTarget.Global);
+        const storage=this.context.globalStorageUri.fsPath;
+        const recorded=this.uninstallDirectory?await shellProfiles(this.uninstallDirectory,storage).catch(()=>[]):[];
+        const result=await removeShellIntegration(storage,[...defaultProfiles(),...recorded],process.platform,{wrappers:false});
+        for(const line of [...result.removed,...result.preserved])this.output.appendLine(line);
+        if(result.preserved.length)void vscode.window.showWarningMessage('Some AIRK terminal entries were preserved for manual review.','Show Details').then(action=>{if(action==='Show Details')this.output.show();});
+        else void vscode.window.showInformationMessage(result.removed.length?'AIRK terminal command removed from external shells. Open a new terminal to see the change.':'No AIRK terminal entries were found outside VS Code.');
     }
     async repairInstallation():Promise<void>{
         await this.settingUp;
@@ -472,6 +637,9 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             this.reportInstall('Connecting to AIRK; checking the installed runtime…');
             let installed=await this.runtime().discover();this.trusted();
             setupObservation=installed;this.diagnosticObservation=installed;
+            void this.reportLastUninstall(installed);
+            // Nothing persistent (receipts, runtime, PATH or registrations) happens before this review.
+            if(!installed.inspection&&!serviceRuntimeOptions().managed&&!await this.firstUseReview(installed,explicit))return;
             if(!serviceRuntimeOptions().managed){
                 const launcherDirectory=record(installed.location.user_paths).launcher;
                 if(typeof launcherDirectory!=='string'||!path.isAbsolute(launcherDirectory))throw new ServiceError('invalid_launcher_location');
@@ -600,6 +768,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
             const state=await this.workspace.reconcileStartup(binding,folder.uri.fsPath,observed);this.trusted();
             if(state==='registered')continue;
+            const {declined,approved}=this.folderChoices(),real=await fs.realpath(folder.uri.fsPath);
+            if(declined.some(value=>same(value,real))){this.output.appendLine(`Not registering ${folder.uri.fsPath}: it was left out during setup review. Use Add Project to register it.`);continue;}
+            if(await this.broadRoot(real)&&!approved.some(value=>same(value,real))){
+                this.output.appendLine(`Not registering ${folder.uri.fsPath} automatically: it is a home folder or drive root. Use Add Project to register it deliberately.`);continue;
+            }
             if(state==='removed'){this.output.appendLine(`Project remains removed: ${folder.uri.fsPath}. Add it in Management to register it again.`);continue;}
             this.trusted();const canonical=await fs.realpath(folder.uri.fsPath);this.trusted();
             const saved=specs.find(spec=>same(spec.root,canonical));
@@ -635,7 +808,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     async provideDefinitions():Promise<vscode.McpStdioServerDefinition[]>{
         if(this.checkForExtensionUpdate())return [];
-        if(!vscode.workspace.isTrusted||!this.registrationEnabled())return [];
+        if(!vscode.workspace.isTrusted||!this.registrationEnabled()||!nativeExecutionAllowed())return [];
         if(!this.currentBinding())await this.refresh();if(!vscode.workspace.isTrusted||!this.registrationEnabled())return [];
         if(await this.hasManualVscodeConnection())return [];
         const entry=this.workspaceConnection();if(!entry)return [];
@@ -746,6 +919,14 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     resolveAssistanceDefinition(_definition:vscode.McpServerDefinition):vscode.McpServerDefinition{
         throw new ServiceError('legacy_mcp_definition_retired_restart_airk');
     }
+    /** Enabling is an explicit User-scope choice; it resumes the normal verified-runtime path. */
+    async enableNativeExecution():Promise<void>{
+        await vscode.workspace.getConfiguration('airk').update('runtime.nativeExecution',true,vscode.ConfigurationTarget.Global);
+    }
+    nativeExecutionChanged():void{
+        if(nativeExecutionAllowed()){this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.tooltip=undefined;}
+        this.reset();this.definitions.fire();void this.start();
+    }
     reset():void{this.generation++;this.host=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
     dispose():void{if(this.disposed)return;this.disposed=true;this.generation++;this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
 }
@@ -754,6 +935,7 @@ let active:ServiceExtension|undefined;
 export function deactivate():void{active?.dispose();active=undefined;}
 /** Activated by the final 1.4 adapter cutover, after native/package contract checks. */
 export async function activate(context:vscode.ExtensionContext):Promise<{getServerDefinitions():Promise<vscode.McpStdioServerDefinition[]>;whenReady():Promise<void>}>{
+    setNativeExecutionGate(nativeExecutionSetting);
     const controller=new ServiceExtension(context);active=controller;context.subscriptions.push(controller);
     const explorerOpen=(route?:unknown)=>controller.explorerController().then(explorer=>explorer.open(typeof route==='string'?route:undefined));
     const workbench=new WorkbenchView(context,controller.explorerHost());
@@ -792,6 +974,11 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
         if(selected?.length){controller.trusted();await vscode.workspace.getConfiguration('airk').update('storage.path',selected[0].fsPath,vscode.ConfigurationTarget.Global);
             await controller.registerWorkspace();}};
     commands.installCli=()=>controller.repairInstallation();
+    commands.enableNativeExecution=()=>controller.enableNativeExecution();
+    commands.setUp=()=>controller.repairInstallation();
+    commands.removeTerminalCommand=()=>controller.removeTerminalCommand();
+    commands.showLastUninstallResult=()=>controller.showLastUninstallResult();
+    commands.reviewData=()=>controller.reviewData();
     commands.retryUpdate=()=>controller.retryUpdate();
     commands.reloadUpdatedExtension=()=>controller.reloadUpdatedExtension();
     commands.openTools=()=>controller.openTools();
@@ -822,7 +1009,8 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
         vscode.workspace.onDidGrantWorkspaceTrust(()=>{assistanceChanged();void controller.automaticInstall().then(()=>controller.refresh());}),
         vscode.window.onDidChangeActiveTextEditor(()=>void controller.console.controller.refresh()),vscode.workspace.onDidChangeConfiguration(event=>{
             if(event.affectsConfiguration('airk.explorer.assistance'))assistanceChanged();
-            if(event.affectsConfiguration('airk.service'))controller.reset();
+            if(event.affectsConfiguration('airk.runtime.nativeExecution'))controller.nativeExecutionChanged();
+            else if(event.affectsConfiguration('airk.service'))controller.reset();
             else if(event.affectsConfiguration('airk.mcp'))controller.registrationChanged();
         }));
     if(vscode.extensions?.onDidChange)context.subscriptions.push(vscode.extensions.onDidChange(()=>controller.checkForExtensionUpdate()));

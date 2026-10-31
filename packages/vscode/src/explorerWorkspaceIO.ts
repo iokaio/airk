@@ -25,8 +25,11 @@ const MESSAGES: Record<LiveCheck, string> = {
  * Open a cited source location. Text sources reveal the indexed line; extracted
  * documents (PDF, Office) open the original file, because their line numbers refer
  * to extracted text. A changed file is still opened, with an explicit warning.
+ * The Explorer is itself an editor tab, so it opens sources beside itself; the
+ * sidebar Workbench passes ViewColumn.Active to use the main editor without a split.
  */
-export async function openSource(location: { root: string; relative: string; contentHash: string; lineBasis?: string; startLine: number }): Promise<OpenSourceResult> {
+export async function openSource(location: { root: string; relative: string; contentHash: string; lineBasis?: string; startLine: number },
+    column: vscode.ViewColumn = vscode.ViewColumn.Beside): Promise<OpenSourceResult> {
     const file = await sourceFile(location.root, location.relative);
     const uri = vscode.Uri.file(file);
     const dirty = vscode.workspace.textDocuments.some(document => document.uri.scheme === 'file' && caseFold(document.uri.fsPath) === caseFold(file) && document.isDirty);
@@ -35,11 +38,11 @@ export async function openSource(location: { root: string; relative: string; con
     const inWorkspace = (vscode.workspace.workspaceFolders ?? []).some(folder => folder.uri.scheme === 'file' && inside(folder.uri.fsPath, file));
     const note = inWorkspace ? '' : ` ${MESSAGES.outside_workspace}`;
     if (location.lineBasis && location.lineBasis !== 'source') {
-        await vscode.commands.executeCommand('vscode.open', uri, { viewColumn: vscode.ViewColumn.Beside });
+        await vscode.commands.executeCommand('vscode.open', uri, { viewColumn: column });
         return { live, opened: true, message: `${MESSAGES[live]} Line numbers refer to extracted text; cite the original document location.${note}` };
     }
     const line = Math.max(0, location.startLine - 1);
-    await vscode.window.showTextDocument(uri, { viewColumn: vscode.ViewColumn.Beside, preview: true, selection: new vscode.Range(line, 0, line, 0) });
+    await vscode.window.showTextDocument(uri, { viewColumn: column, preview: true, selection: new vscode.Range(line, 0, line, 0) });
     return { live, opened: true, message: MESSAGES[live] + note };
 }
 
