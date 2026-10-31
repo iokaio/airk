@@ -22,6 +22,17 @@
       "reviewer": "maintainer",
       "reviewed": "2026-10-30",
       "review_by": "2027-01-31"
+    },
+    {
+      "ecosystem": "npm",
+      "package": "minimatch",
+      "version": "10.2.6",
+      "id": "GHSA-g3hv-75wg-m249",
+      "scope": "Glob matching inside @vscode/vsce 4.0.1-3, the VSIX packaging and publishing tool; not part of the installed extension runtime.",
+      "evidence": "npm ls minimatch: @vscode/vsce -> minimatch 10.2.6. vsce latest 4.1.0 and next 4.1.1-0 still require ^10.2.6, so no compatible fix exists. vsce matches only AIRK's own fixed .vscodeignore/files patterns in CI packaging and the OIDC publish job; no untrusted pattern reaches it. Moderate denial of service, CWE-405.",
+      "reviewer": "maintainer",
+      "reviewed": "2026-10-30",
+      "review_by": "2026-12-31"
     }
   ]
 }

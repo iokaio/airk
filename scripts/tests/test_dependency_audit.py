@@ -58,6 +58,19 @@ class AuditPolicyTests(unittest.TestCase):
             with mock.patch.object(MODULE, "run_json", side_effect=[{"database": {}, "vulnerabilities": {"list": []}, "warnings": {}}, NPM]):
                 self.assertEqual(MODULE.main(["--exceptions", str(path)]), 0)
 
+    def test_npm_findings_use_the_installed_version_and_advisory_id(self):
+        report = {"metadata": {}, "vulnerabilities": {"minimatch": {"nodes": ["node_modules/minimatch"], "range": "<11.0.1",
+                  "via": [{"url": "https://github.com/advisories/GHSA-g3hv-75wg-m249", "severity": "moderate"}]}}}
+        lock = {"packages": {"node_modules/minimatch": {"version": "10.2.6"}}}
+        (finding,) = MODULE.npm_findings(report, lock)
+        self.assertEqual((finding["id"], finding["package"], finding["version"]), ("GHSA-g3hv-75wg-m249", "minimatch", "10.2.6"))
+        exception = {"ecosystem": "npm", "package": "minimatch", "version": "10.2.6", "id": "GHSA-g3hv-75wg-m249", "review_by": "2027-01-01"}
+        failures, applied = MODULE.evaluate([finding], [exception], date(2026, 10, 30))
+        self.assertEqual((failures, len(applied)), ([], 1))
+        lock["packages"]["node_modules/minimatch"]["version"] = "10.2.7"
+        failures, _ = MODULE.evaluate(MODULE.npm_findings(report, lock), [exception], date(2026, 10, 30))
+        self.assertTrue(any("no disposition" in failure for failure in failures), "a new version needs review again")
+
     def test_checked_in_exceptions_are_complete_and_dated(self):
         exceptions = MODULE.load_exceptions(MODULE.EXCEPTIONS)
         self.assertTrue(exceptions)

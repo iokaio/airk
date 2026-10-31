@@ -13,6 +13,8 @@ use std::{
 };
 
 fn airk() -> Command {
+    // Only Windows adjusts the process (no console window).
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut command = Command::new(env!("CARGO_BIN_EXE_airk"));
     #[cfg(windows)]
     {

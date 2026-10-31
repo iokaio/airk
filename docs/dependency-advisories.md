@@ -31,6 +31,14 @@ These cover the findings in [review 02, draft 04](reviews/review02/04-dependency
 | `@azure/identity` 4.14.0, `@azure/msal-node` 6.0.1 | GHSA-xcx6-jx8p-x3h5 | Updated to 4.14.1 and 7.1.2 (patched at 7.1.0) in 1.7.3. See the publishing assessment below. |
 | `qs` 6.16.0 | GHSA-6pq8-jhm2-2vcw | Updated to 6.17.1 (patched at 6.16.1) in 1.7.3. It is a development-tool dependency, and the affected behavior was not traced into AIRK execution. |
 
+### Later findings
+
+| Dependency | Finding | Disposition (recorded 2026-10-30) |
+|---|---|---|
+| `minimatch` 10.2.6 | [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249): moderate denial of service through glob-pattern amplification, fixed in 11.0.1 | Exception until 2026-12-31, chosen by the maintainer over forcing a semver-major override. The only path is `@vscode/vsce` 4.0.1-3; vsce 4.1.0 (`latest`) and 4.1.1-0 (`next`) still require `^10.2.6`. vsce matches only AIRK's own fixed `.vscodeignore` and `files` patterns, in CI packaging and the OIDC publish job, and is not in the installed extension's runtime. Revisit when a vsce release accepts `minimatch` 11. |
+
+The dependency audit gate first reported this advisory on the 1.7.5 pull request, after the local audit above had passed.
+
 By default the script fetches the advisory database, and cargo-audit then also checks for yanked packages. A `--no-fetch` run uses the cached database and skips the yanked check.
 
 ### Publishing credential assessment

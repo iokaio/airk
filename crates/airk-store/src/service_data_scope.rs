@@ -48,36 +48,34 @@ impl std::error::Error for StorageNotPrivate {}
 /// shielded from other accounts: the root or one of its ancestors is owned by
 /// this user and grants no group/other access. POSIX ACLs and Windows ACLs are
 /// not evaluated here. Missing roots are accepted; creation uses mode 0700.
+#[cfg(unix)]
 pub fn require_private(data: &Path) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt, PermissionsExt};
-        if !exists(data)? {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    if !exists(data)? {
+        return Ok(());
+    }
+    let canonical = data.canonicalize()?;
+    // SAFETY: geteuid takes no pointers and has no failure mode.
+    let uid = unsafe { libc::geteuid() };
+    for ancestor in canonical.ancestors() {
+        let metadata = fs::metadata(ancestor)?;
+        if metadata.uid() == uid && metadata.permissions().mode() & 0o077 == 0 {
             return Ok(());
         }
-        let canonical = data.canonicalize()?;
-        // SAFETY: geteuid takes no pointers and has no failure mode.
-        let uid = unsafe { libc::geteuid() };
-        for ancestor in canonical.ancestors() {
-            let metadata = fs::metadata(ancestor)?;
-            if metadata.uid() == uid && metadata.permissions().mode() & 0o077 == 0 {
-                return Ok(());
-            }
-        }
-        let metadata = fs::metadata(&canonical)?;
-        return Err(StorageNotPrivate(format!(
-            "{} (owner uid {}, mode {:o}) and its ancestors allow other accounts to read stored evidence",
-            canonical.display(),
-            metadata.uid(),
-            metadata.permissions().mode() & 0o7777
-        ))
-        .into());
     }
-    #[cfg(not(unix))]
-    {
-        let _ = data;
-        Ok(())
-    }
+    let metadata = fs::metadata(&canonical)?;
+    Err(StorageNotPrivate(format!(
+        "{} (owner uid {}, mode {:o}) and its ancestors allow other accounts to read stored evidence",
+        canonical.display(),
+        metadata.uid(),
+        metadata.permissions().mode() & 0o7777
+    ))
+    .into())
+}
+/// Windows storage relies on the inherited profile ACL and is not evaluated here.
+#[cfg(not(unix))]
+pub fn require_private(_data: &Path) -> Result<()> {
+    Ok(())
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]

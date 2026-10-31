@@ -57,15 +57,21 @@ def cargo_findings(report):
     return findings, report["database"]
 
 
-def npm_findings(report):
+def npm_findings(report, lock=None):
+    """Exceptions match the installed version from the lockfile, never the advisory's affected range."""
     if "vulnerabilities" not in report or "metadata" not in report:
         raise ScannerError("npm audit report is missing its vulnerability or metadata sections")
+    packages = (lock or {}).get("packages", {})
     findings = []
     for name, entry in report["vulnerabilities"].items():
+        versions = sorted({packages.get(node, {}).get("version", "") for node in entry.get("nodes", [])} - {""}) or [entry.get("range", "*")]
         for via in entry.get("via", []):
             if isinstance(via, dict):
-                findings.append({"ecosystem": "npm", "kind": "vulnerability", "id": via.get("url") or via.get("title") or name,
-                                 "package": name, "version": entry.get("range", "*"), "severity": via.get("severity")})
+                url = via.get("url") or ""
+                identifier = url.rsplit("/", 1)[-1] if "/advisories/" in url else (url or via.get("title") or name)
+                for version in versions:
+                    findings.append({"ecosystem": "npm", "kind": "vulnerability", "id": identifier,
+                                     "package": name, "version": version, "severity": via.get("severity")})
     return findings
 
 
@@ -116,7 +122,8 @@ def main(argv=None):
         exceptions = load_exceptions(args.exceptions)
         cargo = ["cargo", "audit", "--json"] + (["--no-fetch"] if args.no_fetch else [])
         findings, database = cargo_findings(run_json(cargo, ROOT))
-        findings += npm_findings(run_json(["npm", "audit", "--package-lock-only", "--json"], ROOT / "packages" / "vscode"))
+        lock = json.loads((ROOT / "packages" / "vscode" / "package-lock.json").read_text(encoding="utf-8"))
+        findings += npm_findings(run_json(["npm", "audit", "--package-lock-only", "--json"], ROOT / "packages" / "vscode"), lock)
     except (ScannerError, ValueError, KeyError) as error:
         print(f"dependency audit could not complete: {error}", file=sys.stderr)
         return SCANNER_FAILURE
