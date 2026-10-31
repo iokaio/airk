@@ -391,3 +391,16 @@ test('data review is read-only until a plan digest is confirmed and never delete
         assert.ok(f.calls.some(line=>line.includes('Deleted 3 files')));
     }finally{await f.close();}
 });
+
+test('a rebuilt VSIX with the same version is detected and offers the reload action',async context=>{
+    const fs=await import('node:fs/promises');
+    const f=await serviceTestHost(context,{codeFile:true});
+    try{
+        f.focus();f.extensionsChanged();
+        assert.equal(f.notices.some(notice=>notice.actions.includes('Reload to finish update')),false,'an unchanged installation stays quiet');
+        await fs.writeFile(path.join(f.root,'out','serviceExtension.js'),'// fixture build 2 with different bytes\n');
+        f.focus();f.extensionsChanged();
+        assert.ok(f.notices.some(notice=>notice.message.includes('(rebuilt) is installed')&&notice.actions.includes('Reload to finish update')));
+        assert.match(f.statusBar.text,/Reload to finish update/);
+    }finally{await f.close();}
+});

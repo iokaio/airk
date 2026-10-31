@@ -23,6 +23,8 @@ Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and 
 - The [CLI guide](../cli.md) and the generated [CLI reference](../cli-reference.md) document every command; a test fails when the reference drifts from the parser. `crates/airk-cli/tests/cli_commands.rs` gives every public command a test, either directly or by naming the native test or script that covers it.
 - [Running AIRK headless](../headless-cli.md) maps every extension feature to the CLI. Guarded maintenance plans (rebuild, repair and verify previews) are still only available through raw `service rpc` JSON.
 
+- Workbench citation links open in the main editor instead of a split. A same-version rebuilt VSIX is detected and offers **Reload to finish update**, and `scripts/install-local-vsix.ps1`/`.sh` force-replace a same-version local install, then verify it.
+
 ## Release and dependency controls
 
 - `scripts/dependency-audit.py` and the separate dependency audit workflow check both lockfiles against advisory databases. Dated dispositions are recorded in [dependency advisories](../dependency-advisories.md): the unmaintained `paste` and `ttf-parser` crates are covered by exceptions until 2027-01-31, and the MSAL advisory was assessed against the Marketplace publish job. Routine CI is unchanged.

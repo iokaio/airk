@@ -13,7 +13,7 @@ import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
 import * as cliInstall from '../cliInstall';
 
-export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean;nativeExecution?:boolean;fresh?:boolean}={}){
+export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean;nativeExecution?:boolean;fresh?:boolean;codeFile?:boolean}={}){
     const bundledVersion=options.bundledVersion??(options.upgrade?'1.4.1':'1.4.0');
     // The fixture must honor the production receipt guard's canonical directory
     // identity, including macOS's /var -> /private/var temporary-path alias.
@@ -50,7 +50,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     let extensionsChanged:()=>void,windowFocused:(state:{focused:boolean})=>void;
     const views=new Map<string,any>();
     const statusBar={text:'',tooltip:'',command:'',show(){},dispose(){}};
-    const stub:any={extensions:{getExtension:()=>({packageJSON:{version:state.installedVersion}}),onDidChange:(callback:()=>void)=>{extensionsChanged=callback;return disposable;}},workspace:{isTrusted:options.trusted??true,workspaceFolders:folders,textDocuments:[],
+    const stub:any={extensions:{getExtension:()=>({extensionPath:root,packageJSON:{version:state.installedVersion}}),onDidChange:(callback:()=>void)=>{extensionsChanged=callback;return disposable;}},workspace:{isTrusted:options.trusted??true,workspaceFolders:folders,textDocuments:[],
         getWorkspaceFolder:(uri:any)=>folders.find(folder=>uri.fsPath===folder.uri.fsPath||uri.fsPath.startsWith(folder.uri.fsPath+path.sep)),
         getConfiguration:()=>({get:(key:string,fallback?:unknown)=>settings.has(key)?settings.get(key):fallback,inspect:(key:string)=>({globalValue:settings.get(key),workspaceValue:key==='storage.path'?path.join(root,'untrusted-storage'):'/workspace/untrusted'}),
             update:async(key:string,value:unknown)=>{settings.set(key,value);}}),
@@ -135,6 +135,8 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     let extension:any;
+    // Real installations carry compiled code; same-version rebuild detection stats it.
+    if(options.codeFile){await fs.mkdir(path.join(root,'out'),{recursive:true});await fs.writeFile(path.join(root,'out','serviceExtension.js'),'// fixture build 1\n');}
     try{extension=require('../extension');const context:any={extensionPath:root,extensionUri:{scheme:'file',fsPath:path.resolve(__dirname,'../..')},extension:{id:'iokaio.airk',packageJSON:{version:bundledVersion}},globalState:storage,workspaceState:storage,
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);

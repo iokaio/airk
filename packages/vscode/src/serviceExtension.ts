@@ -2,6 +2,7 @@
 //! Service-backed extension activation. Native ownership outlives editor windows.
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
@@ -35,12 +36,19 @@ function nativeExecutionSetting():boolean{
     return vscode.workspace.getConfiguration('airk').inspect<boolean>('runtime.nativeExecution')?.globalValue!==false;
 }
 
+/** Identity of the loaded extension code. VS Code keeps a same-version reinstall
+ * in place, so the version alone cannot reveal that a rebuilt VSIX replaced it. */
+function codeStamp(root:string|undefined):string|undefined{
+    if(!root)return undefined;
+    try{const info=statSync(path.join(root,'out','serviceExtension.js'));return `${path.resolve(root)}:${info.size}:${info.mtimeMs}`;}catch{return undefined;}
+}
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';
 }
 class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDataProvider<LaunchSpec> {
     // Capture the loaded code's version; extension metadata can change after a VSIX install.
     private readonly runningVersion:string;
+    private readonly codeIdentity:string|undefined;
     private extensionUpdate?:{runningVersion:string;installedVersion:string};
     readonly output=vscode.window.createOutputChannel('AIRK');
     readonly definitions=new vscode.EventEmitter<void>();
@@ -94,8 +102,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
 
     checkForExtensionUpdate():boolean{
         if(this.disposed)return false;
-        const installed=vscode.extensions?.getExtension(this.context.extension.id??'iokaio.airk')?.packageJSON.version;
-        if(!this.extensionUpdate&&typeof installed==='string'&&/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(installed)&&installed!==this.runningVersion){
+        const extension=vscode.extensions?.getExtension(this.context.extension.id??'iokaio.airk');
+        let installed=extension?.packageJSON.version;
+        // A rebuilt VSIX with the same version replaces the code on disk without a version change.
+        if(installed===this.runningVersion&&this.codeIdentity!==undefined&&codeStamp(extension?.extensionPath??this.context.extensionPath)!==this.codeIdentity)installed=`${installed} (rebuilt)`;
+        if(!this.extensionUpdate&&typeof installed==='string'&&/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?(?: \(rebuilt\))?$/.test(installed)&&installed!==this.runningVersion){
             this.extensionUpdate={runningVersion:this.runningVersion,installedVersion:installed};
             this.output.appendLine(`AIRK ${installed} is installed; this window is still running ${this.runningVersion}. Reload to finish the update. Saved indexing work remains with the native service.`);
             this.renderUpdateStatus();this.treeChanges.fire();this.definitions.fire();
@@ -119,6 +130,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
 
     constructor(private readonly context:vscode.ExtensionContext){
         this.runningVersion=context.extension.packageJSON.version;
+        this.codeIdentity=codeStamp(context.extensionPath);
         const runtime:ConsoleRuntime={discover:()=>this.runtime().discover(),ensure:explicit=>this.runtime().ensure(explicit),
             binding:(inspection,install)=>this.runtime().binding(inspection,install),client:binding=>this.runtime().client(binding),
             snapshot:(binding,after,revision)=>this.runtime().snapshot(binding,after,revision),repair:(binding,preview)=>this.runtime().repair(binding,preview),

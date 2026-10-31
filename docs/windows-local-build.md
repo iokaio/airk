@@ -90,7 +90,7 @@ pwsh -NoProfile -File scripts/build-windows.ps1 -OpenReview
 
 This installs the generated VSIX in a separate extensions directory and opens a private VS Code profile with a copy of the public project-a fixture, its own native installation and separate index data. It does not install into or alter your normal profile. Grant that fixture workspace trust, then select the AIRK status item. Try Index Now, Reindex, indexing modes, pause/resume, storage selection, collection status and Verify Native MCP.
 
-To install the reviewed package into your normal profile later, use **Extensions: Install from VSIX** and choose the printed VSIX path. Installation is not performed in the normal profile by this script.
+To install the reviewed package into your normal profile later, use **Extensions: Install from VSIX** and choose the printed VSIX path. Installation is not performed in the normal profile by this script. VS Code skips a VSIX whose version is already installed, so a rebuilt package with an unchanged version looks installed while the old code keeps running. Use `scripts/install-local-vsix.ps1` (or `scripts/install-local-vsix.sh`) instead. It runs `code --install-extension <vsix> --force` and verifies that the installed code matches the VSIX. A forced reinstall is an update, not an uninstall, so AIRK's uninstall cleanup does not run. Reload open windows afterwards; since 1.7.4, AIRK also offers **Reload to finish update** when it detects a same-version rebuild.
 
 ## Automated packaged-editor smoke
 
