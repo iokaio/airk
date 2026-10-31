@@ -40,6 +40,19 @@ The check does **not** prove that rebuilding the source reproduces the same byte
 
 5. Record the result, including which install, upgrade and uninstall tests actually ran on that platform. A source test, a CI candidate test and a test of the signed installed artifact are separate kinds of evidence.
 
+## Recorded result: 1.7.6, Windows x64 and Linux x64 (2026-10-31)
+
+| Item | Observed |
+|---|---|
+| Channel and tag | stable, `v1.7.6`, published on GitHub on 2026-10-31 |
+| Source identity | commit `5e4f7bd518659ff1649ebce92849eb695e0c71c9` (expected commit supplied with `--commit`) |
+| Producer run | `41163334759`, workflow "GitHub release" at the same commit, conclusion success |
+| Windows x64 VSIX SHA-256 | `d1f0bc616dfb2e61ffbaed7b257d725bd1f270fc531dc53a3c8566f184ab5932`; all 22 checks passed; `airk.exe` and `airk-embed.exe` Authenticode `Valid` |
+| Linux x64 VSIX SHA-256 | `a88c6ec79aef0353450e795ae185cc1d0f26ae3705db5937e5313f4030988dbe`; all 20 checks passed |
+| Not verified | bit-for-bit reproduction from source; macOS packages (signed and notarized by the workflow, not re-checked locally); installed-editor behavior of these artifacts |
+
+The first Linux check reported a mismatch for `LICENSE` and `README.md`. vsce stores them in the VSIX as `LICENSE.txt` and `readme.md`. The Linux CI manifest keeps the staged names, while signed promotions record the stored names. The bytes matched exactly. The verifier now applies the same name mapping as `package-extension.py` and `promote-vsix.py`.
+
 ## Recorded result: 1.7.3, Windows x64 (2026-10-30)
 
 | Item | Observed |

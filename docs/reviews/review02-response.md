@@ -1,6 +1,6 @@
 # Response to repository review 02
 
-Date: 2026-10-30. This response covers the 1.7.6 stable release candidate on `fix/extreview02`. The [review 02 drafts](review02/README.md) were written against commit `c62c1e6936500801dbf41dffdd6e21453e48335d` (1.7.2) and are kept unchanged as a dated historical record, apart from one corrected link. Items already fixed in 1.7.3 are described in the [review 01 response](reporeview01-response.md).
+Date: 2026-10-30. This response covers the 1.7.6 stable release, prepared on `fix/extreview02` and published on 2026-10-31. The [review 02 drafts](review02/README.md) were written against commit `c62c1e6936500801dbf41dffdd6e21453e48335d` (1.7.2) and are kept unchanged as a dated historical record, apart from one corrected link. Items already fixed in 1.7.3 are described in the [review 01 response](reporeview01-response.md).
 
 Drafts 01, 02 and 13 were marked for private security review. By the maintainer's decision they are published together with their fixes in this release: 01 is patched and its advisory is public, and the residual behavior of 02 and 13 is addressed here.
 

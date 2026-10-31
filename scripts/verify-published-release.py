@@ -76,7 +76,10 @@ def verify(directory, version, platform, commit=None, authenticode=False):
                   "VSIX manifest binds the native archive and its manifest")
     with zipfile.ZipFile(vsix) as archive:
         names = set(archive.namelist())
-        payload = vsix_manifest.get("payload", {})
+        # vsce stores LICENSE as LICENSE.txt and README.md as readme.md. CI manifests keep
+        # the staged names, signed promotions the stored ones (as package-extension.py does).
+        payload = {("readme.md" if name == "README.md" else "LICENSE.txt" if name == "LICENSE" else name): digest
+                   for name, digest in vsix_manifest.get("payload", {}).items()}
         mismatched = [name for name, digest in payload.items()
                       if f"extension/{name}" not in names or hashlib.sha256(archive.read(f"extension/{name}")).hexdigest() != digest]
         extra = sorted(name for name in names if name.startswith("extension/") and name[len("extension/"):] not in payload)
