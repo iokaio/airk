@@ -6,6 +6,8 @@ use crate::service::{ProjectLease, data_scope::BoundDataRoot, registry::ServiceR
 
 #[path = "service_collection_census.rs"]
 pub mod census;
+#[path = "service_collection_verify.rs"]
+pub mod verify;
 
 const RECEIPT: &str = "integrity-observation.json";
 const MAX_DAMAGE: usize = 32;
@@ -52,6 +54,8 @@ pub struct IntegrityObservation {
     pub physical_audit: PhysicalAudit,
     pub privacy: PrivacyEligibility,
     pub known_damage: Vec<KnownDamage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify: Option<verify::VerifyProgress>,
 }
 
 pub(super) fn owned_scratch(path: &Path, owner: Sha256Digest) -> bool {
@@ -157,7 +161,14 @@ impl IntegrityOwner<'_> {
         component: Sha256Digest,
         observed_unix_ms: u64,
     ) -> Result<IntegrityObservation> {
-        self.publish(
+        self.bound.revoke_native_integrity();
+        let control = self.registry.persist_integrity_damage(
+            self.lease,
+            read.head().scope.incarnation,
+            component,
+            observed_unix_ms,
+        );
+        let local = self.publish(
             read,
             Some(KnownDamage {
                 incarnation: read.head().scope.incarnation,
@@ -165,7 +176,19 @@ impl IntegrityOwner<'_> {
                 observed_unix_ms,
             }),
             PrivacyEligibility::PlatformEvidenceUnavailable,
-        )
+        );
+        match (local, control) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) => {
+                Err(error.context("collection damage receipt failed; control veto was persisted"))
+            }
+            (Ok(_), Err(error)) => {
+                Err(error.context("control veto failed; collection damage receipt was persisted"))
+            }
+            (Err(error), Err(control)) => Err(error.context(format!(
+                "neither damage store confirmed persistence; control failure: {control:#}"
+            ))),
+        }
     }
     fn publish(
         &self,
@@ -200,9 +223,9 @@ impl IntegrityOwner<'_> {
                 && head.scope.collection == self.collection.owner.collection,
             "foreign integrity head"
         );
-        let mut known_damage = self
-            .load(namespace)?
-            .map_or_else(Vec::new, |value| value.known_damage);
+        let previous = self.load(namespace)?;
+        let verify = previous.as_ref().and_then(|value| value.verify.clone());
+        let mut known_damage = previous.map_or_else(Vec::new, |value| value.known_damage);
         if let Some(damage) = damage
             && !known_damage.iter().any(|old| {
                 old.incarnation == damage.incarnation && old.component == damage.component
@@ -224,6 +247,7 @@ impl IntegrityOwner<'_> {
             basis: PublicationBasis::RetainedHeadMetadataAnchor,
             physical_audit: PhysicalAudit::Unknown,
             privacy,
+            verify,
         };
         // Same lease/root fence immediately before durable metadata publication.
         ensure!(

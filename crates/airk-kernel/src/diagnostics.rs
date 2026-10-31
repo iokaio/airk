@@ -231,6 +231,47 @@ impl Kernel {
     }
 }
 
+impl Kernel {
+    /// Service-owned off-query Verify only. Ordinary diagnostics/read APIs keep
+    /// their existing strict behavior and never consume the saved continuation.
+    pub fn verify_service_turn(
+        &self,
+        registry: &airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        job: airk_core::identity::Sha256Digest,
+    ) -> Result<airk_store::service::collection::integrity::verify::VerifyTurn> {
+        let collection = self
+            .service_collection
+            .as_ref()
+            .context("Verify requires service collection")?;
+        let owner = collection.integrity_owner(registry, lease, bound)?;
+        let selected = collection.selected_store()?;
+        let mut writer = selected.lock()?;
+        {
+            let scope = selected
+                .current_scope(&self.root_id(), &self.collection)?
+                .context("Verify scope missing")?;
+            let read = selected.current_read(&scope)?;
+            owner.anchor(&read)?;
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+            .try_into()?;
+        let turn = owner.verify_turn(
+            &mut writer,
+            job,
+            32,
+            64 << 20,
+            now,
+            crate::service_execution::checkpoint,
+        )?;
+        crate::service_execution::progress_verified(turn.verified_files);
+        Ok(turn)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -353,27 +353,7 @@ fn execute(
                 },
             });
         }
-        JobKind::Verify => {
-            let mut after = None;
-            let mut revision = None;
-            loop {
-                airk_kernel::service_execution::checkpoint()?;
-                let report = kernel.diagnose_current(revision, after.as_deref(), 32, 64 << 20)?;
-                ensure!(
-                    report.failed_objects == 0 && report.skipped_large == 0,
-                    "retained verification incomplete"
-                );
-                revision = Some(report.publication.token);
-                if report.complete {
-                    break;
-                }
-                after = Some(
-                    report
-                        .next_after
-                        .context("integrity continuation missing")?,
-                );
-            }
-        }
+        JobKind::Verify => unreachable!("service Verify owns its durable continuation"),
         JobKind::Recover
         | JobKind::Configure
         | JobKind::Maintain
@@ -595,9 +575,16 @@ pub async fn run() -> Result<()> {
             if let Some(job) = registry.claim_job_id(&job_lease, allowance.job)? {
                 let mut completed_maintenance = None;
                 let mut failure_detail = None;
+                let mut audit_drain = None;
+                let mut audit_completion = None;
                 use airk_store::service::registry::RecoveryCondition;
                 let mut recovery_condition = RecoveryCondition::Delay;
                 let outcome = if registry.cancellation_requested(job.id)? {
+                    if matches!(job.kind, JobKind::Verify | JobKind::Repair) {
+                        audit_drain = registry
+                            .drained_verify_before_execution(&job_lease, &job_storage, job.id)
+                            .ok();
+                    }
                     Ok(JobOutcome::Canceled)
                 } else {
                     airk_kernel::service_execution::run(allowance.clone(), || {
@@ -712,6 +699,39 @@ pub async fn run() -> Result<()> {
                                 revision: snapshot.publication,
                             });
                         }
+                        if kind == JobKind::Verify {
+                            airk_kernel::service_execution::progress_phase(
+                                airk_core::service_progress::WorkPhase::Verifying,
+                            );
+                            loop {
+                                airk_kernel::service_execution::checkpoint()?;
+                                let turn = kernel.verify_service_turn(
+                                    &registry,
+                                    &job_lease,
+                                    &job_storage,
+                                    job.id,
+                                )?;
+                                if turn.blocked_large || turn.progress.requires_repair() {
+                                    audit_drain = turn.drained;
+                                    return Ok(JobOutcome::Failed {
+                                        code: "integrity_coverage_incomplete".into(),
+                                    });
+                                }
+                                if turn.progress.complete() {
+                                    let complete = turn
+                                        .completed
+                                        .context("complete audit lacks physical proof")?;
+                                    let revision = complete.revision()?;
+                                    audit_completion = Some(complete);
+                                    return Ok(JobOutcome::Succeeded {
+                                        revision: Some(revision),
+                                    });
+                                }
+                                // Existing job admission/cancellation owns this work;
+                                // no parallel scheduler or query-time audit is added.
+                                std::thread::yield_now();
+                            }
+                        }
                         let outcome = execute(&kernel, kind, job.id)?;
                         // Successful changes refresh console metadata while this exact job
                         // still owns its fenced lease. Refreshing the UI must not require
@@ -776,6 +796,19 @@ pub async fn run() -> Result<()> {
                     })
                 }
                 .unwrap_or_else(|error| {
+                    audit_drain =
+                        airk_store::service::registry::AuditDrainProof::from_error(&error);
+                    if audit_drain.is_none()
+                        && error.is::<airk_kernel::service_execution::Canceled>()
+                        && matches!(job.kind, JobKind::Verify | JobKind::Repair)
+                    {
+                        // This synchronous accepted job stack has fully unwound;
+                        // no read/turn task is detached. Revoked/failed persistence
+                        // cannot mint this exact-job safe-drain proof.
+                        audit_drain = registry
+                            .drained_verify_before_execution(&job_lease, &job_storage, job.id)
+                            .ok();
+                    }
                     failure_detail = Some(crate::service_logs::FailureDetail::capture(&error));
                     for cause in error.chain() {
                         if let Some(pressure) =
@@ -1014,7 +1047,7 @@ pub async fn run() -> Result<()> {
                     false
                 };
                 if !deferred {
-                    registry.complete_job_with_maintenance_at(
+                    registry.complete_job_with_maintenance_and_audit_at(
                         &job_lease,
                         job.id,
                         outcome.clone(),
@@ -1023,6 +1056,15 @@ pub async fn run() -> Result<()> {
                             .as_millis()
                             .try_into()?,
                         completed_maintenance.as_ref(),
+                        if matches!(outcome, JobOutcome::Succeeded { .. }) {
+                            audit_completion
+                                .as_ref()
+                                .map(airk_store::service::registry::AuditEvidence::Complete)
+                        } else {
+                            audit_drain
+                                .as_ref()
+                                .map(airk_store::service::registry::AuditEvidence::Drained)
+                        },
                     )?;
                     if job.kind == JobKind::Configure {
                         let _ = reconcile_semantic_setup(

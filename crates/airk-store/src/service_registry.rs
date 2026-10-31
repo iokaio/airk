@@ -42,8 +42,11 @@ pub fn is_read_contention(error: &anyhow::Error) -> bool {
         })
 }
 
+#[path = "service_integrity_guard.rs"]
+mod integrity_guard;
 #[path = "service_jobs.rs"]
 mod jobs;
+pub use integrity_guard::{AuditDrainProof, AuditEvidence, IntegrityAuditState};
 #[path = "service_progress.rs"]
 mod progress;
 #[path = "service_source_isolation.rs"]

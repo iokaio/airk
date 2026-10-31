@@ -292,7 +292,7 @@ mod tests {
         registry.pause(project, false)?;
         let due = registry.due_background_jobs(None, 1)?[0];
         assert_eq!(due.2, JobKind::Index);
-        let foreign = registry.enqueue_internal(project, nonce(2), JobKind::Verify, nonce(4))?;
+        let foreign = registry.enqueue_internal(project, nonce(2), JobKind::Inspect, nonce(4))?;
         assert!(
             registry
                 .enqueue_background_job(project, due.1, due.2, nonce(2), nonce(5))

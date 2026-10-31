@@ -1212,3 +1212,877 @@ fn native_metadata_enrollment_requires_exact_writer_and_never_promotes_unknown_a
     );
     Ok(())
 }
+
+#[test]
+fn verify_continuation_survives_worker_restart_without_refreshing_audit_age() -> Result<()> {
+    use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
+    use airk_core::service::{JobKind, JobOutcome, ProjectRegistration, RequestKey};
+    fn claim(
+        registry: &mut ServiceRegistry,
+        lease: &ProjectLease,
+        nonce: u8,
+    ) -> Result<Sha256Digest> {
+        let (namespace, epoch) = registry.request_epoch()?;
+        let key = RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([nonce; 16]),
+        };
+        let job = registry.enqueue(lease.identity().0, namespace, &key, JobKind::Verify)?;
+        Ok(registry
+            .claim_job_id(lease, job.id)?
+            .context("Verify not claimed")?
+            .id)
+    }
+    let temporary = tempfile::tempdir()?;
+    let base = temporary.path().canonicalize()?;
+    let (data, source, control) = (base.join("data"), base.join("source"), base.join("control"));
+    for path in [&data, &source, &control] {
+        fs::create_dir(path)?;
+    }
+    let namespace = Incarnation::from_bytes([81; 16]);
+    let slot = Incarnation::from_bytes([82; 16]);
+    let registration = ProjectRegistration::new(
+        source.to_str().unwrap().into(),
+        data.to_str().unwrap().into(),
+        "fixture".into(),
+    )?;
+    let mut registry = ServiceRegistry::open(&control, namespace)?;
+    registry.register(&registration)?;
+    let bound = data_scope::bind(&data, &control, namespace)?;
+    let collection = Collection::initialize(&data, &registration.root, "fixture", slot)?;
+    let store = collection.selected_store()?;
+    initialize(&store, &registration.root, slot)?;
+    let scope = store
+        .current_owned_scope()?
+        .context("fixture scope missing")?;
+    let read = store.current_read(&scope)?;
+    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+    registry.admit_worker(&mut lease)?;
+    let job = claim(&mut registry, &lease, 83)?;
+    let before = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        owner.anchor(&read)?;
+        drop(read);
+        let mut writer = store.lock()?;
+        assert!(
+            owner
+                .verify_turn(
+                    &mut writer,
+                    Sha256Digest::from_bytes([99; 32]),
+                    1,
+                    1 << 20,
+                    99,
+                    || Ok(())
+                )
+                .is_err(),
+            "physical work needs an exact durable job admission"
+        );
+        let first = owner.verify_turn(&mut writer, job, 1, 1 << 20, 100, || Ok(()))?;
+        assert!(first.progress.complete());
+        assert!(!first.blocked_large);
+        serde_json::to_value(&first.progress)?
+    };
+    drop(lease);
+    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+    registry.admit_worker(&mut lease)?;
+    registry.recover_jobs(&lease)?;
+    assert_eq!(
+        registry
+            .claim_job_id(&lease, job)?
+            .context("recovered Verify not claimed")?
+            .id,
+        job
+    );
+    let resumed_complete = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        let resumed = owner.verify_turn(&mut writer, job, 1, 1 << 20, 200, || Ok(()))?;
+        assert!(resumed.progress.complete());
+        let after = serde_json::to_value(&resumed.progress)?;
+        assert_eq!(
+            before["lexical_observed_unix_ms"],
+            after["lexical_observed_unix_ms"]
+        );
+        assert_eq!(before["through_unix_ms"], after["through_unix_ms"]);
+        assert_eq!(after["lexical_observed_unix_ms"], 100);
+        let read = store.current_read(&scope)?;
+        let anchor = owner.anchor(&read)?;
+        assert_eq!(
+            anchor.physical_audit,
+            super::integrity::PhysicalAudit::Unknown
+        );
+        assert!(
+            anchor
+                .verify
+                .context("saved Verify progress missing")?
+                .complete()
+        );
+        resumed
+            .completed
+            .context("resumed physical completion proof missing")?
+    };
+    assert!(
+        registry
+            .complete_job(&lease, job, JobOutcome::Succeeded { revision: None })
+            .is_err(),
+        "generic success cannot settle audit"
+    );
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        job,
+        JobOutcome::Succeeded {
+            revision: Some(resumed_complete.revision()?),
+        },
+        201,
+        None,
+        Some(crate::service::registry::AuditEvidence::Complete(
+            &resumed_complete,
+        )),
+    )?;
+    assert!(registry.integrity_audit_veto(&lease)?.is_none());
+    let fresh_job = claim(&mut registry, &lease, 84)?;
+    let fresh_complete = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        let fresh = owner.verify_turn(&mut writer, fresh_job, 1, 1 << 20, 300, || Ok(()))?;
+        assert_eq!(
+            serde_json::to_value(&fresh.progress)?["lexical_observed_unix_ms"],
+            300,
+            "new explicit Verify job must not silently reuse prior completed audit"
+        );
+        fresh
+            .completed
+            .context("fresh physical completion proof missing")?
+    };
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        fresh_job,
+        JobOutcome::Succeeded {
+            revision: Some(fresh_complete.revision()?),
+        },
+        301,
+        None,
+        Some(crate::service::registry::AuditEvidence::Complete(
+            &fresh_complete,
+        )),
+    )?;
+    let canceled_job = claim(&mut registry, &lease, 85)?;
+    let drained = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        let checkpoints = std::cell::Cell::new(0);
+        let canceled = owner
+            .verify_turn(&mut writer, canceled_job, 1, 1 << 20, 400, || {
+                checkpoints.set(checkpoints.get() + 1);
+                anyhow::ensure!(
+                    checkpoints.get() != 3,
+                    "injected job cancellation after lexical component"
+                );
+                Ok(())
+            })
+            .err()
+            .context("audit should have canceled")?;
+        crate::service::registry::AuditDrainProof::from_error(&canceled)
+            .context("drained cancellation proof missing")?
+    };
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        canceled_job,
+        JobOutcome::Canceled,
+        401,
+        None,
+        Some(crate::service::registry::AuditEvidence::Drained(&drained)),
+    )?;
+    assert!(
+        registry.integrity_audit_veto(&lease)?.is_none(),
+        "safely drained partial audit must not poison normal restart"
+    );
+    drop(lease);
+    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+    registry.admit_worker(&mut lease)?;
+    assert_eq!(
+        registry.integrity_audit_state(&lease)?,
+        crate::service::registry::IntegrityAuditState::Clear
+    );
+    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+    let read = store.current_read(&scope)?;
+    let anchor = owner.anchor(&read)?;
+    assert_eq!(
+        anchor.physical_audit,
+        super::integrity::PhysicalAudit::Unknown
+    );
+    let partial = serde_json::to_value(anchor.verify.context("partial audit missing")?)?;
+    assert_eq!(partial["lexical_observed_unix_ms"], 400);
+    assert_eq!(
+        partial["objects_complete"], false,
+        "cancel did not certify unvisited retained objects"
+    );
+    let incomplete_job = claim(&mut registry, &lease, 86)?;
+    let clean_turn = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        owner.verify_turn(&mut writer, incomplete_job, 1, 1 << 20, 500, || Ok(()))?
+    };
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        incomplete_job,
+        JobOutcome::Failed {
+            code: "integrity_coverage_incomplete".into(),
+        },
+        501,
+        None,
+        clean_turn
+            .drained
+            .as_ref()
+            .map(crate::service::registry::AuditEvidence::Drained),
+    )?;
+    assert!(
+        registry.integrity_audit_veto(&lease)?.is_none(),
+        "cleanly settled incomplete coverage is not known damage"
+    );
+    let failed_job = claim(&mut registry, &lease, 87)?;
+    registry.complete_job(
+        &lease,
+        failed_job,
+        JobOutcome::Failed {
+            code: "unresolved_audit".into(),
+        },
+    )?;
+    let replacement_job = claim(&mut registry, &lease, 88)?;
+    let replacement_turn = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        owner.verify_turn(&mut writer, replacement_job, 1, 1 << 20, 600, || Ok(()))?
+    };
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        replacement_job,
+        JobOutcome::Failed {
+            code: "integrity_coverage_incomplete".into(),
+        },
+        601,
+        None,
+        replacement_turn
+            .drained
+            .as_ref()
+            .map(crate::service::registry::AuditEvidence::Drained),
+    )?;
+    assert_eq!(
+        registry.integrity_audit_veto(&lease)?,
+        Some(replacement_job),
+        "partial drain cannot heal an inherited unresolved audit"
+    );
+    Ok(())
+}
+
+#[test]
+fn approved_physical_repair_claim_and_success_require_actual_guard_and_component_proof()
+-> Result<()> {
+    use crate::service::registry::{AuditEvidence, IntegrityAuditState};
+    use airk_core::{
+        service::{JobKind, JobOutcome, JobState, RequestKey, WorkerIdentity},
+        service_inspection::{IndexState, InspectionSnapshot, SourceState},
+        service_maintenance::{RepairOperation, RepairRequest, RepairSelection},
+    };
+    let (_temp, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    let project = lease.identity().0;
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let engine = Sha256Digest::from_bytes([91; 32]);
+    let plan = registry.create_maintenance_plan(
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([92; 16]),
+        },
+        &RepairRequest {
+            selection: RepairSelection::Selected(vec![project]),
+            operation: RepairOperation::Verify,
+        },
+        1000,
+        engine,
+    )?;
+    registry.advance_maintenance_plans(1100)?;
+    let inspect = registry
+        .claim_job(&lease)?
+        .context("plan inspection missing")?;
+    assert_eq!(inspect.kind, JobKind::PlanInspect);
+    let token = store.current_read(&scope)?.token()?;
+    let revision = airk_core::identity::RevisionToken {
+        incarnation: token.incarnation,
+        generation: token.sequence,
+        revision: token.digest,
+    };
+    let snapshot = InspectionSnapshot {
+        quota_policy_digest: None,
+        project,
+        incarnation: scope.incarnation,
+        publication: Some(revision),
+        settings_digest: Some(engine),
+        index_state: IndexState::Ready,
+        source_state: SourceState::Available,
+        recovery_required: Some(false),
+        indexed_files: Some(0),
+        indexed_vectors: Some(0),
+        vectors_enabled: Some(false),
+        index_detail: None,
+        semantic: None,
+        discovery: None,
+        failure: None,
+        storage: None,
+    };
+    registry.record_inspection(
+        &lease,
+        WorkerIdentity {
+            service: namespace,
+            worker: Incarnation::from_bytes([93; 16]),
+            project,
+            fencing_generation: inspect.fencing_generation,
+        },
+        inspect.id,
+        1200,
+        &snapshot,
+    )?;
+    registry.complete_job_at(
+        &lease,
+        inspect.id,
+        JobOutcome::Succeeded {
+            revision: Some(revision),
+        },
+        1300,
+    )?;
+    let ready = registry.maintenance_plan(plan.id)?;
+    registry.approve_maintenance_plan(
+        plan.id,
+        ready.preview_digest.context("preview missing")?,
+        false,
+        1400,
+    )?;
+    registry.advance_maintenance_plans(1500)?;
+    let queued = registry
+        .pending_job_observation(project)?
+        .context("physical Repair missing")?;
+    assert_eq!(queued.kind, JobKind::Repair);
+    registry.refuse_physical_repair_guard_for_test(true)?;
+    assert!(registry.claim_job_id(&lease, queued.id).is_err());
+    assert_eq!(registry.job(queued.id)?.state, JobState::Pending);
+    registry.refuse_physical_repair_guard_for_test(false)?;
+    let claimed = registry
+        .claim_job_id(&lease, queued.id)?
+        .context("physical Repair not claimed")?;
+    assert_eq!(
+        registry.integrity_audit_state(&lease)?,
+        IntegrityAuditState::LiveAudit { job: claimed.id }
+    );
+    assert!(
+        registry
+            .complete_job(
+                &lease,
+                claimed.id,
+                JobOutcome::Succeeded {
+                    revision: Some(revision)
+                }
+            )
+            .is_err()
+    );
+    let complete = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let read = store.current_read(&scope)?;
+        owner.anchor(&read)?;
+        drop(read);
+        let mut writer = store.lock()?;
+        let turn = owner.verify_turn(&mut writer, claimed.id, 1, 1 << 20, 1600, || Ok(()))?;
+        assert!(turn.progress.complete());
+        turn.completed
+            .context("physical completion proof missing")?
+    };
+    let wrong = airk_core::identity::RevisionToken {
+        revision: engine,
+        ..complete.revision()?
+    };
+    assert!(
+        registry
+            .complete_job_with_maintenance_and_audit_at(
+                &lease,
+                claimed.id,
+                JobOutcome::Succeeded {
+                    revision: Some(wrong)
+                },
+                1700,
+                None,
+                Some(AuditEvidence::Complete(&complete))
+            )
+            .is_err()
+    );
+    assert_eq!(registry.job(claimed.id)?.state, JobState::Running);
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        claimed.id,
+        JobOutcome::Succeeded {
+            revision: Some(complete.revision()?),
+        },
+        1800,
+        None,
+        Some(AuditEvidence::Complete(&complete)),
+    )?;
+    assert_eq!(
+        registry.integrity_audit_state(&lease)?,
+        IntegrityAuditState::Clear
+    );
+    assert_eq!(registry.maintenance_plan(plan.id)?.counts.succeeded, 1);
+    Ok(())
+}
+
+fn audit_retained_input(
+    store: &FileStore,
+    writer: &crate::WriterLock,
+    quota: &Quota,
+    scope: &CurrentScope,
+    path: &str,
+    text: &str,
+) -> Result<crate::current::CapturedInput> {
+    use airk_core::extraction::{ExtractionPayload, ExtractionProfile, LocalChunk, LocalSpan};
+    use sha2::{Digest, Sha256};
+    let profile = ExtractionProfile {
+        contract_version: 1,
+        adapter_id: "text".into(),
+        adapter_version: "audit-fixture/1".into(),
+        language: "text".into(),
+        dialect: None,
+        grammar_identity: None,
+        mapping_version: 1,
+        chunk_version: 3,
+        options: Default::default(),
+        configuration_inputs: Default::default(),
+    };
+    let payload = ExtractionPayload {
+        semantic_projection: Default::default(),
+        continuity_coverage: Default::default(),
+        contract_version: 1,
+        extraction_method: "utf8".into(),
+        parse_status: "plain".into(),
+        provenance: vec![],
+        text: text.into(),
+        syntax_identities: vec![],
+        facts: vec![],
+        chunks: vec![LocalChunk {
+            span: LocalSpan {
+                start: 0,
+                end: text.len(),
+            },
+            start_line: 1,
+            end_line: 1,
+            location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
+            region: None,
+        }],
+        regions: vec![],
+        relationships: vec![],
+        continuity: vec![],
+        diagnostics: vec![],
+        partial: false,
+    };
+    let artifact = airk_core::binding::bind_payload(
+        &payload,
+        &profile,
+        airk_core::binding::ArtifactBinding {
+            path,
+            source_hash: Sha256Digest::from_bytes(Sha256::digest(text.as_bytes()).into()),
+            source_bytes: text.len(),
+        },
+    )?;
+    let reservation = quota.reserve(&scope.collection, 1 << 20)?;
+    let artifact = store.retain_payload_with_budget_owned(
+        writer,
+        &artifact,
+        &payload,
+        &profile,
+        Some(text.as_bytes()),
+        Some(&reservation),
+    )?;
+    Ok(crate::current::CapturedInput::new(artifact))
+}
+#[test]
+fn real_retained_pages_release_writer_admit_query_and_reclaim_same_job_with_original_dates()
+-> Result<()> {
+    use crate::service::{
+        ProjectLease, data_scope,
+        registry::{AuditEvidence, ServiceRegistry},
+    };
+    use airk_core::service::{JobKind, JobOutcome, RequestKey};
+    let (temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    {
+        let writer = store.lock()?;
+        for (path, text) in [
+            ("a.txt", "first retained body"),
+            ("b.txt", "second retained body"),
+        ] {
+            let input = audit_retained_input(&store, &writer, &quota, &scope, path, text)?;
+            let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+            let token = current.head()?.token()?;
+            current.commit_artifact(&token, path, Some(&input))?;
+        }
+    }
+    assert_eq!(
+        store
+            .current_read(&scope)?
+            .lookup_paths(crate::current::postings::Lookup::Files, "", None, 3)?
+            .paths
+            .len(),
+        2
+    );
+    let project = lease.identity().0;
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let job = registry.enqueue(
+        project,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([97; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    registry
+        .claim_job_id(&lease, job.id)?
+        .context("Verify not claimed")?;
+    let before = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let read = store.current_read(&scope)?;
+        owner.anchor(&read)?;
+        drop(read);
+        let mut writer = store.lock()?;
+        let (go, queued) = std::sync::mpsc::sync_channel(1);
+        let (done, admitted) = std::sync::mpsc::sync_channel(1);
+        let query_store = store.clone();
+        let query_scope = scope.clone();
+        let query = std::thread::spawn(move || -> Result<()> {
+            queued.recv_timeout(Duration::from_secs(10))?;
+            let read = query_store.current_read(&query_scope)?;
+            assert!(read.artifact("b.txt")?.is_some());
+            done.send(read.token()?)?;
+            Ok(())
+        });
+        let calls = std::cell::Cell::new(0);
+        let first_result = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || {
+            calls.set(calls.get() + 1);
+            if calls.get() == 2 {
+                // The audit already owns its actual CurrentRead and writer.
+                go.send(())?;
+                admitted.recv_timeout(Duration::from_secs(10))?;
+            }
+            Ok(())
+        });
+        drop(go);
+        let query_result = query
+            .join()
+            .map_err(|_| anyhow::anyhow!("actual query fixture panicked"));
+        let first = first_result?;
+        query_result??;
+        assert!(!first.progress.complete());
+        assert_eq!(first.verified_files, 1);
+        assert!(first.completed.is_none());
+        let progress = serde_json::to_value(&first.progress)?;
+        assert_eq!(progress["checked_files"], 1);
+        assert_eq!(progress["after"], "a.txt");
+        drop(writer);
+        let next_store = store.clone();
+        std::thread::spawn(move || -> Result<()> {
+            let _writer = next_store.lock()?;
+            Ok(())
+        })
+        .join()
+        .map_err(|_| anyhow::anyhow!("writer release fixture panicked"))??;
+        progress
+    };
+    drop(lease);
+    drop(registry);
+    let control = temporary.path().canonicalize()?.join("control");
+    let mut registry = ServiceRegistry::open(&control, namespace)?;
+    let mut lease = ProjectLease::acquire(&control, project)?;
+    registry.admit_worker(&mut lease)?;
+    registry.recover_jobs(&lease)?;
+    registry
+        .claim_job_id(&lease, job.id)?
+        .context("same durable job not reclaimed")?;
+    let bound = data_scope::bind(Path::new(&collection.owner.data_root), &control, namespace)?;
+    let complete = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        let last = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 200, || Ok(()))?;
+        let after = serde_json::to_value(&last.progress)?;
+        assert!(last.progress.complete());
+        assert_eq!(last.verified_files, 1);
+        assert_eq!(after["checked_files"], 2);
+        assert_eq!(after["started_unix_ms"], before["started_unix_ms"]);
+        assert_eq!(
+            after["lexical_observed_unix_ms"],
+            before["lexical_observed_unix_ms"]
+        );
+        assert!(after["checked_bytes"].as_u64() > before["checked_bytes"].as_u64());
+        last.completed.context("complete physical proof missing")?
+    };
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        job.id,
+        JobOutcome::Succeeded {
+            revision: Some(complete.revision()?),
+        },
+        201,
+        None,
+        Some(AuditEvidence::Complete(&complete)),
+    )?;
+    assert!(registry.integrity_audit_veto(&lease)?.is_none());
+    Ok(())
+}
+
+fn verify_inputs_fixture(
+    inputs: &[(&str, &str)],
+) -> Result<(IntegrityFixture, airk_core::service::JobRecord)> {
+    use airk_core::service::{JobKind, RequestKey};
+    let (temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    {
+        let writer = store.lock()?;
+        for (path, text) in inputs {
+            let input = audit_retained_input(&store, &writer, &quota, &scope, path, text)?;
+            let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+            let token = current.head()?.token()?;
+            current.commit_artifact(&token, path, Some(&input))?;
+        }
+    }
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let job = registry.enqueue(
+        lease.identity().0,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([109; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    let claimed = registry
+        .claim_job_id(&lease, job.id)?
+        .context("Verify was not claimed")?;
+    let read = store.current_read(&scope)?;
+    collection
+        .integrity_owner(&registry, &lease, &bound)?
+        .anchor(&read)?;
+    drop(read);
+    Ok((
+        (temporary, collection, registry, bound, lease, store, scope),
+        claimed,
+    ))
+}
+
+#[test]
+fn verify_physical_retained_corruption_preserves_prior_cursor_and_revokes_clean_drain() -> Result<()>
+{
+    for kind in ["sources", "artifacts"] {
+        let ((_temporary, collection, registry, bound, lease, store, scope), job) =
+            verify_inputs_fixture(&[
+                ("a.txt", "first retained input"),
+                ("b.txt", "second retained input"),
+            ])?;
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        let first = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
+        assert_eq!(first.verified_files, 1);
+        assert!(first.completed.is_none());
+        let prior = serde_json::to_value(&first.progress)?;
+        let artifact = store
+            .current_read(&scope)?
+            .artifact("b.txt")?
+            .context("second artifact missing")?;
+        let reference = artifact
+            .retained
+            .as_ref()
+            .context("retained fixture missing")?;
+        let digest = if kind == "sources" {
+            reference
+                .source_encoding
+                .as_ref()
+                .map_or(artifact.content_hash.as_str(), |value| {
+                    value.stored_digest.as_str()
+                })
+        } else {
+            reference
+                .payload_encoding
+                .as_ref()
+                .map_or(reference.object.as_str(), |value| {
+                    value.stored_digest.as_str()
+                })
+        };
+        let object = store.directory().join("objects").join(kind).join(digest);
+        let mut bytes = fs::read(&object)?;
+        ensure!(!bytes.is_empty(), "retained fixture object is empty");
+        bytes[0] ^= 0x80;
+        fs::write(&object, bytes)?;
+        let error = owner
+            .verify_turn(&mut writer, job.id, 1, 1 << 20, 200, || Ok(()))
+            .err()
+            .context("physically changed retained object was accepted")?;
+        assert!(
+            error
+                .downcast_ref::<crate::service::registry::AuditDrainProof>()
+                .is_none()
+        );
+        let saved: serde_json::Value = serde_json::from_slice(&fs::read(
+            collection.directory.join("integrity-observation.json"),
+        )?)?;
+        assert_eq!(saved["verify"]["after"], prior["after"]);
+        assert_eq!(saved["verify"]["checked_files"], prior["checked_files"]);
+        assert_eq!(saved["verify"]["checked_bytes"], prior["checked_bytes"]);
+        assert_eq!(saved["verify"]["unresolved"], true);
+        assert_eq!(saved["verify"]["objects_complete"], false);
+        assert!(bound.live_integrity().revoked());
+        assert_eq!(registry.integrity_audit_veto(&lease)?, Some(job.id));
+        assert!(
+            crate::service::registry::AuditDrainProof::new(&registry, &lease, &bound, job.id)
+                .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn verify_physical_fts_corruption_refuses_lexical_completion_and_persists_uncertainty() -> Result<()>
+{
+    let ((_temporary, collection, registry, bound, lease, store, scope), job) =
+        verify_inputs_fixture(&[("a.txt", "physical lexical retained input")])?;
+    {
+        let connection = rusqlite::Connection::open(store.directory().join("current.sqlite3"))?;
+        let (id, mut bytes): (i64, Vec<u8>) = connection.query_row(
+            "SELECT id,block FROM current_fts_data WHERE length(block)>0 ORDER BY id DESC LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        bytes[0] ^= 0x80;
+        assert_eq!(
+            connection.execute(
+                "UPDATE current_fts_data SET block=?1 WHERE id=?2",
+                rusqlite::params![bytes, id]
+            )?,
+            1
+        );
+    }
+    let direct = store
+        .current_read(&scope)?
+        .verify_lexical_integrity()
+        .err()
+        .context("FTS corruption fixture remained valid")?;
+    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+    let mut writer = store.lock()?;
+    let error = owner
+        .verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))
+        .err()
+        .context("Verify accepted physical FTS corruption")?;
+    assert_eq!(format!("{error:#}"), format!("{direct:#}"));
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(
+        collection.directory.join("integrity-observation.json"),
+    )?)?;
+    assert_eq!(saved["verify"]["checked_files"], 0);
+    assert!(saved["verify"]["after"].is_null());
+    assert!(saved["verify"]["lexical_observed_unix_ms"].is_null());
+    assert_eq!(saved["verify"]["unresolved"], true);
+    assert!(bound.live_integrity().revoked());
+    assert_eq!(registry.integrity_audit_veto(&lease)?, Some(job.id));
+    assert!(
+        crate::service::registry::AuditDrainProof::new(&registry, &lease, &bound, job.id).is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn verify_progress_quota_failure_preserves_prior_receipt_and_revokes_completion() -> Result<()> {
+    let later = format!("{}.txt", "z".repeat(200));
+    let text = "larger physical retained quota input\n".repeat(64);
+    let ((_temporary, collection, registry, bound, lease, store, _scope), job) =
+        verify_inputs_fixture(&[("a.txt", "first input"), (&later, &text)])?;
+    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+    let mut writer = store.lock()?;
+    let first = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
+    assert_eq!(first.verified_files, 1);
+    assert!(first.completed.is_none());
+    let receipt = collection.directory.join("integrity-observation.json");
+    let before = fs::read(&receipt)?;
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    let original = quota.policy()?;
+    let status = quota.status()?;
+    let mut full = original.clone();
+    full.root_bytes = status
+        .used_bytes
+        .checked_add(status.reserved_bytes)
+        .context("quota overflow")?;
+    quota.configure(full)?;
+    let result = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 200, || Ok(()));
+    quota.configure(original)?;
+    let error = result
+        .err()
+        .context("Verify progress write unexpectedly fit exhausted quota")?;
+    assert!(error.is::<crate::quota::QuotaPressure>(), "{error:#}");
+    assert_eq!(fs::read(&receipt)?, before);
+    assert!(bound.live_integrity().revoked());
+    assert_eq!(registry.integrity_audit_veto(&lease)?, Some(job.id));
+    assert!(
+        crate::service::registry::AuditDrainProof::new(&registry, &lease, &bound, job.id).is_err()
+    );
+    Ok(())
+}
+
+#[test]
+fn verify_oversized_object_does_not_advance_and_larger_allowance_completes_same_job() -> Result<()>
+{
+    use crate::service::registry::AuditEvidence;
+    use airk_core::service::JobOutcome;
+    let text = "bounded retained input ".repeat(64);
+    let ((_temporary, collection, mut registry, bound, lease, store, scope), job) =
+        verify_inputs_fixture(&[("big.txt", &text)])?;
+    let artifact = store
+        .current_read(&scope)?
+        .artifact("big.txt")?
+        .context("large artifact missing")?;
+    let bytes = artifact.bytes as u64
+        + artifact
+            .retained
+            .as_ref()
+            .context("large retained fixture missing")?
+            .object_bytes as u64;
+    ensure!(bytes > 1, "oversize fixture budget is empty");
+    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+    let mut writer = store.lock()?;
+    for now in [100, 200] {
+        let turn = owner.verify_turn(&mut writer, job.id, 1, bytes - 1, now, || Ok(()))?;
+        assert!(turn.blocked_large);
+        assert_eq!(turn.verified_files, 0);
+        assert!(!turn.progress.complete());
+        assert!(turn.completed.is_none());
+        let progress = serde_json::to_value(&turn.progress)?;
+        assert_eq!(progress["checked_files"], 0);
+        assert_eq!(progress["checked_bytes"], 0);
+        assert!(progress["after"].is_null());
+    }
+    let complete = owner.verify_turn(&mut writer, job.id, 1, bytes, 300, || Ok(()))?;
+    assert!(!complete.blocked_large);
+    assert_eq!(complete.verified_files, 1);
+    assert!(complete.progress.complete());
+    let proof = complete
+        .completed
+        .context("larger allowance did not produce physical completion")?;
+    drop(writer);
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        job.id,
+        JobOutcome::Succeeded {
+            revision: Some(proof.revision()?),
+        },
+        301,
+        None,
+        Some(AuditEvidence::Complete(&proof)),
+    )?;
+    assert!(registry.integrity_audit_veto(&lease)?.is_none());
+    assert!(!bound.live_integrity().revoked());
+    Ok(())
+}

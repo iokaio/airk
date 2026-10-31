@@ -1026,6 +1026,7 @@ impl ServiceRegistry {
         transaction.execute("UPDATE service_jobs SET state='running',epoch=?1,attempts=attempts+1 WHERE id=?2 AND state='pending'",
             params![i64::try_from(epoch)?, id])?;
         let claimed = record(&transaction, id.parse()?)?;
+        super::integrity_guard::claimed(&transaction, &claimed)?;
         if matches!(
             claimed.kind,
             JobKind::Index | JobKind::Reconcile | JobKind::Rebuild
@@ -1046,7 +1047,7 @@ impl ServiceRegistry {
         id: Sha256Digest,
         outcome: JobOutcome,
     ) -> Result<JobRecord> {
-        self.complete_job_observed(lease, id, outcome, None, None)
+        self.complete_job_observed(lease, id, outcome, None, None, None)
     }
 
     pub fn complete_job_at(
@@ -1056,7 +1057,7 @@ impl ServiceRegistry {
         outcome: JobOutcome,
         now_ms: u64,
     ) -> Result<JobRecord> {
-        self.complete_job_observed(lease, id, outcome, Some(now_ms), None)
+        self.complete_job_observed(lease, id, outcome, Some(now_ms), None, None)
     }
 
     pub fn complete_job_with_maintenance_at(
@@ -1067,7 +1068,7 @@ impl ServiceRegistry {
         now_ms: u64,
         maintenance: Option<&airk_core::service::MaintenanceObservation>,
     ) -> Result<JobRecord> {
-        self.complete_job_observed(lease, id, outcome, Some(now_ms), maintenance)
+        self.complete_job_observed(lease, id, outcome, Some(now_ms), maintenance, None)
     }
 
     /// The supervisor may settle work that never started only while an exclusive
@@ -1108,6 +1109,18 @@ impl ServiceRegistry {
         Ok(failed)
     }
 
+    pub fn complete_job_with_maintenance_and_audit_at(
+        &mut self,
+        lease: &ProjectLease,
+        id: Sha256Digest,
+        outcome: JobOutcome,
+        now_ms: u64,
+        maintenance: Option<&airk_core::service::MaintenanceObservation>,
+        evidence: Option<super::AuditEvidence<'_>>,
+    ) -> Result<JobRecord> {
+        self.complete_job_observed(lease, id, outcome, Some(now_ms), maintenance, evidence)
+    }
+
     fn complete_job_observed(
         &mut self,
         lease: &ProjectLease,
@@ -1115,6 +1128,7 @@ impl ServiceRegistry {
         outcome: JobOutcome,
         now_ms: Option<u64>,
         maintenance: Option<&airk_core::service::MaintenanceObservation>,
+        evidence: Option<super::AuditEvidence<'_>>,
     ) -> Result<JobRecord> {
         if let JobOutcome::Failed { code } = &outcome {
             ensure!(
@@ -1137,6 +1151,7 @@ impl ServiceRegistry {
                 && current.state == JobState::Running,
             JobError::StaleWorker
         );
+        super::integrity_guard::completed(&transaction, &current, &outcome, evidence)?;
         let state = match outcome {
             JobOutcome::Succeeded { .. } => "succeeded",
             JobOutcome::Failed { .. } => "failed",
