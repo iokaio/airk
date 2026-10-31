@@ -2,6 +2,8 @@
 //! Durable observations only. This module grants no relaxed read authority.
 use super::*;
 use crate::current::{CurrentHead, CurrentRead};
+#[path = "service_collection_native_owner.rs"]
+pub mod native_owner;
 use crate::service::{ProjectLease, data_scope::BoundDataRoot, registry::ServiceRegistry};
 
 #[path = "service_collection_census.rs"]
@@ -64,7 +66,7 @@ pub(super) fn owned_scratch(path: &Path, owner: Sha256Digest) -> bool {
             && value.owner == owner
             && value.known_damage.len() <= MAX_DAMAGE
             && value.head.validate().is_ok()
-    })
+    }) || verify::owned_recovery_scratch(path, owner)
 }
 
 /// Non-Clone borrow retains the actual process lease and rechecks its registry

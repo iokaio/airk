@@ -78,6 +78,11 @@ pub struct Kernel {
     service_collection: Option<airk_store::service::collection::Collection>,
     service_selection: Option<Arc<airk_store::service::collection::Selection>>,
     service_freshness: Option<Arc<service_freshness::Cache>>,
+    native_owner: Arc<
+        std::sync::Mutex<
+            Option<airk_store::service::collection::integrity::native_owner::NativeOwnerSession>,
+        >,
+    >,
 }
 
 type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
@@ -314,6 +319,7 @@ impl Kernel {
             service_collection,
             service_selection: None,
             service_freshness: None,
+            native_owner: Arc::new(std::sync::Mutex::new(None)),
         };
         if recover {
             kernel.recover_runtime_bootstrap()?;
@@ -930,5 +936,45 @@ impl Kernel {
             resolution: "textual-occurrences; includes comments, strings and definitions; no name resolution",
             evidence,
         })
+    }
+}
+
+impl Kernel {
+    /// Explicit owning admission only; no current query path invokes this API.
+    /// Future F14 cutover must separately prove exact relaxed component coverage.
+    pub fn arm_native_owner(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: Arc<airk_store::service::ProjectLease>,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        identity: airk_core::service::WorkerIdentity,
+    ) -> Result<()> {
+        let mut slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        ensure!(slot.is_none(), "native owner session already admitted");
+        let collection = self
+            .service_collection
+            .as_ref()
+            .context("native owner requires service collection")?;
+        *slot = Some(collection.arm_native_owner(registry, lease, bound, identity)?);
+        Ok(())
+    }
+    /// Owning CLI final-drain adapter only, after actual LocalTools shutdown.
+    /// Consumes once; any failure leaves durable Active and cannot be retried as clean.
+    pub fn settle_native_owner_after_owned_drain(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+    ) -> Result<()> {
+        let owner = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
+            .take();
+        if let Some(owner) = owner {
+            owner.settle_after_owned_drain(registry)?;
+        }
+        Ok(())
     }
 }

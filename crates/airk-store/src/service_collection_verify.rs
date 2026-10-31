@@ -94,10 +94,128 @@ impl AuditCompletionProof {
         })
     }
 }
+/// Fixed native consumer policy. Projected coverage cannot be minted by this
+/// baseline producer; F13 must add its actual predicates before enabling it.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum RecoveryProfile {
+    BaselineV1,
+    ProjectedV1,
+}
+pub(crate) const NATIVE_RECOVERY_PROFILE: RecoveryProfile = RecoveryProfile::BaselineV1;
+
+/// Opaque owning recovery purpose. Serialized only as saved audit context, never
+/// accepted as authority from a caller. Its live instance comes from the owner.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RecoveryContext {
+    pub(crate) namespace: Incarnation,
+    pub(crate) project: airk_core::service::ProjectBinding,
+    pub(crate) worker: Incarnation,
+    pub(crate) worker_epoch: u64,
+    pub(crate) job: Sha256Digest,
+    pub(crate) inherited: Sha256Digest,
+    pub(crate) head: CurrentToken,
+    pub(crate) root: Sha256Digest,
+    pub(crate) selected: Sha256Digest,
+    pub(crate) profile: RecoveryProfile,
+}
+/// Live purpose has no Deserialize constructor. Persisted context is only
+/// continuation data and must be checked against this newly minted live value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecoveryEpoch {
+    pub(crate) context: RecoveryContext,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RecoveryReceipt {
+    version: u32,
+    owner: Sha256Digest,
+    namespace: Incarnation,
+    epoch: RecoveryContext,
+    progress: VerifyProgress,
+}
+const RECOVERY_RECEIPT: &str = "integrity-recovery.json";
+impl RecoveryReceipt {
+    fn validate(&self, owner: Sha256Digest) -> Result<()> {
+        ensure!(
+            self.version == 1
+                && self.owner == owner
+                && self.namespace == self.epoch.namespace
+                && self.epoch.worker_epoch > 0
+                && self.epoch.head.sequence <= i64::MAX as u64
+                && self.progress.job == self.epoch.job,
+            "foreign or unsupported recovery continuation"
+        );
+        self.progress.scope.validate()?;
+        ensure!(
+            self.progress.version == 1
+                && self.progress.scope.incarnation == self.epoch.head.incarnation
+                && self
+                    .progress
+                    .after
+                    .as_ref()
+                    .is_none_or(|path| !path.is_empty()
+                        && path.len() <= 8192
+                        && !path.contains('\0')),
+            "unsupported or malformed recovery continuation"
+        );
+        Ok(())
+    }
+}
+pub(crate) fn owned_recovery_scratch(path: &Path, owner: Sha256Digest) -> bool {
+    json::<RecoveryReceipt>(path).is_ok_and(|receipt| receipt.validate(owner).is_ok())
+}
+impl IntegrityOwner<'_> {
+    fn load_recovery(&self, namespace: Incarnation) -> Result<Option<RecoveryReceipt>> {
+        let path = self.collection.directory.join(RECOVERY_RECEIPT);
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+            Ok(_) => {}
+        }
+        let receipt: RecoveryReceipt = json(&path)?;
+        receipt.validate(self.collection.binding)?;
+        ensure!(
+            receipt.namespace == namespace
+                && receipt.progress.scope.root == self.collection.owner.root
+                && receipt.progress.scope.collection == self.collection.owner.collection,
+            "foreign recovery namespace or publication scope"
+        );
+        Ok(Some(receipt))
+    }
+}
+/// Actual post-epoch coverage, not ordinary historical/global job completion.
+/// No constructor, Clone or Deserialize is exposed for physical evidence.
+pub struct EnabledComponentAuditProof {
+    drained: crate::service::registry::AuditDrainProof,
+    epoch: RecoveryContext,
+    head: CurrentHead,
+}
+impl EnabledComponentAuditProof {
+    pub(crate) fn exact_head(&self) -> &CurrentHead {
+        &self.head
+    }
+    pub(crate) fn epoch(&self) -> &RecoveryContext {
+        &self.epoch
+    }
+    pub(crate) fn matches(
+        &self,
+        connection: &rusqlite::Connection,
+        job: &airk_core::service::JobRecord,
+    ) -> Result<bool> {
+        Ok(self.drained.matches(connection, job)?
+            && self.epoch.job == job.id
+            && self.epoch.profile == NATIVE_RECOVERY_PROFILE
+            && self.epoch.head == self.head.token()?
+            && crate::service::registry::owner_session::recovery_matches(connection, &self.epoch)?)
+    }
+}
 pub struct VerifyTurn {
     pub verified_files: u64,
     pub progress: VerifyProgress,
     pub completed: Option<AuditCompletionProof>,
+    pub recovery_completed: Option<EnabledComponentAuditProof>,
     pub blocked_large: bool,
     pub drained: Option<crate::service::registry::AuditDrainProof>,
 }
@@ -115,6 +233,38 @@ impl IntegrityOwner<'_> {
         now: u64,
         checkpoint: impl Fn() -> Result<()>,
     ) -> Result<VerifyTurn> {
+        self.verify_turn_inner(writer, job, (max_files, max_bytes), now, checkpoint, None)
+    }
+    /// Exceptional owner recovery only. Ordinary Verify retains its dated cursor.
+    pub fn verify_recovery_turn(
+        &self,
+        writer: &mut crate::WriterLock,
+        epoch: &RecoveryEpoch,
+        max_files: usize,
+        max_bytes: u64,
+        now: u64,
+        checkpoint: impl Fn() -> Result<()>,
+    ) -> Result<VerifyTurn> {
+        self.verify_turn_inner(
+            writer,
+            epoch.context.job,
+            (max_files, max_bytes),
+            now,
+            checkpoint,
+            Some(epoch),
+        )
+    }
+    fn verify_turn_inner(
+        &self,
+        writer: &mut crate::WriterLock,
+        job: Sha256Digest,
+        limits: (usize, u64),
+        now: u64,
+        checkpoint: impl Fn() -> Result<()>,
+        recovery: Option<&RecoveryEpoch>,
+    ) -> Result<VerifyTurn> {
+        let (max_files, max_bytes) = limits;
+        let recovery = recovery.map(|epoch| &epoch.context);
         ensure!(
             (1..=128).contains(&max_files) && (1..=512 << 20).contains(&max_bytes),
             "invalid off-query verification bounds"
@@ -154,7 +304,19 @@ impl IntegrityOwner<'_> {
             let _lock = manifest_lock(&self.collection.directory)?;
             self.load(fence.0)?
         };
-        let old = observation.as_mut().and_then(|value| value.verify.take());
+        if let Some(epoch) = recovery {
+            self.registry.require_recovery_epoch(self.lease, epoch)?;
+            ensure!(epoch.head == head.token()?, "recovery publication changed");
+        }
+        // Recovery never enlarges or rewrites the ordinary receipt. Only an
+        // exactly matching live purpose can resume the separate bounded cursor.
+        let old = if let Some(epoch) = recovery {
+            self.load_recovery(fence.0)?
+                .filter(|saved| &saved.epoch == epoch)
+                .map(|saved| saved.progress)
+        } else {
+            observation.as_mut().and_then(|value| value.verify.take())
+        };
         if let Some(saved) = &old {
             saved.scope.validate()?;
             ensure!(
@@ -297,10 +459,23 @@ impl IntegrityOwner<'_> {
                 // actual complete recheck; never clears either sticky damage list.
                 progress.unresolved = false;
             }
-            state.verify = Some(progress.clone());
-            state.head = head;
-            state.worker_epoch = fence.1;
-            write(self.collection, RECEIPT, &state)?;
+            if let Some(epoch) = recovery {
+                self.registry.require_recovery_epoch(self.lease, epoch)?;
+                let receipt = RecoveryReceipt {
+                    version: 1,
+                    owner: self.collection.binding,
+                    namespace: fence.0,
+                    epoch: epoch.clone(),
+                    progress: progress.clone(),
+                };
+                receipt.validate(self.collection.binding)?;
+                write(self.collection, RECOVERY_RECEIPT, &receipt)?;
+            } else {
+                state.verify = Some(progress.clone());
+                state.head = head;
+                state.worker_epoch = fence.1;
+                write(self.collection, RECEIPT, &state)?;
+            }
             Ok(())
         })();
         if persistence.is_err() {
@@ -344,8 +519,27 @@ impl IntegrityOwner<'_> {
                     self.bound,
                     job,
                 )?,
-                head: state_head_for_completion,
+                head: state_head_for_completion.clone(),
             })
+        } else {
+            None
+        };
+        let recovery_completed = if progress.complete() && !blocked_large {
+            if let Some(epoch) = recovery {
+                self.registry.require_recovery_epoch(self.lease, epoch)?;
+                Some(EnabledComponentAuditProof {
+                    drained: crate::service::registry::AuditDrainProof::new(
+                        self.registry,
+                        self.lease,
+                        self.bound,
+                        job,
+                    )?,
+                    epoch: epoch.clone(),
+                    head: state_head_for_completion,
+                })
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -355,6 +549,55 @@ impl IntegrityOwner<'_> {
             blocked_large,
             drained,
             completed,
+            recovery_completed,
         })
     }
+}
+
+#[cfg(test)]
+pub(crate) fn test_write_recovery_receipt(
+    collection: &Collection,
+    value: serde_json::Value,
+) -> Result<()> {
+    let receipt: RecoveryReceipt = serde_json::from_value(value)?;
+    receipt.validate(collection.binding)?;
+    write(collection, RECOVERY_RECEIPT, &receipt)
+}
+
+#[cfg(test)]
+pub(crate) fn test_recovery_receipt_bytes(value: serde_json::Value) -> Result<Vec<u8>> {
+    let receipt: RecoveryReceipt = serde_json::from_value(value)?;
+    Ok(serde_json::to_vec(&receipt)?)
+}
+/// Inert valid-format metadata for ownership tests, never a physical proof.
+#[cfg(test)]
+pub(crate) fn test_seed_recovery_receipt(
+    collection: &Collection,
+    head: &CurrentHead,
+    namespace: Incarnation,
+    project: airk_core::service::ProjectBinding,
+) -> Result<Vec<u8>> {
+    let job = Sha256Digest::from_bytes([0; 32]);
+    let epoch = RecoveryContext {
+        namespace,
+        project,
+        worker: Incarnation::from_bytes([0; 16]),
+        worker_epoch: 1,
+        job,
+        inherited: job,
+        head: head.token()?,
+        root: job,
+        selected: job,
+        profile: NATIVE_RECOVERY_PROFILE,
+    };
+    let receipt = RecoveryReceipt {
+        version: 1,
+        owner: collection.binding,
+        namespace,
+        epoch,
+        progress: VerifyProgress::reconcile(None, job, head, 0),
+    };
+    receipt.validate(collection.binding)?;
+    write(collection, RECOVERY_RECEIPT, &receipt)?;
+    Ok(serde_json::to_vec(&receipt)?)
 }

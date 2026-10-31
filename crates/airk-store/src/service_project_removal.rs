@@ -175,8 +175,8 @@ impl ServiceRegistry {
             [project.to_string()],
         )?;
         tx.execute(
-            "DELETE FROM service_recovery_budget WHERE scope=?1 OR scope=?2 OR scope=?3 OR scope=?4",
-            params![format!("source:{project}"), format!("work:{project}"), format!("integrity:{project}"), format!("integrity_damage:{project}")],
+            "DELETE FROM service_recovery_budget WHERE scope=?1 OR scope=?2 OR scope=?3 OR scope=?4 OR scope=?5",
+            params![format!("source:{project}"), format!("work:{project}"), format!("integrity:{project}"), format!("integrity_damage:{project}"), format!("owner_session:{project}")],
         )?;
         tx.execute(
             "INSERT OR REPLACE INTO service_removed_projects VALUES(?1,?2,?3)",

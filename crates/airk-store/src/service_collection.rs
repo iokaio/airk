@@ -669,6 +669,18 @@ impl Collection {
         let gate = Gate::shared(&store)?;
         Ok(Selection { store, _gate: gate })
     }
+    pub(crate) fn select_existing_locked(&self) -> Result<ExistingSelection> {
+        let lock =
+            retry_manifest_lock(|| super::acquire_existing_file(&self.directory, "manifest.lock"))?;
+        let manifest = self.manifest()?;
+        let store = FileStore::new(self.slot(manifest.active));
+        let gate = Gate::shared_existing(&store)?;
+        Ok(ExistingSelection {
+            store,
+            _gate: gate,
+            _manifest: lock,
+        })
+    }
     pub fn selected_store(&self) -> Result<FileStore> {
         Ok(self.select()?.store)
     }
@@ -1007,4 +1019,11 @@ pub fn copy_settings(
         destination.sync_all()?;
     }
     Ok(settings_id(&settings))
+}
+
+/// Retains selection replacement exclusion through a short owning control commit.
+pub(crate) struct ExistingSelection {
+    pub(crate) store: FileStore,
+    _gate: Gate,
+    _manifest: super::OwnershipFile,
 }

@@ -1,5 +1,7 @@
 # AIRK 1.3.0 current index (unreleased)
 
+**1.8.0 candidate follow-up:** explicit native owner enrollment/recovery APIs now observe compatible existing service publications under lifecycle/writer/manifest exclusion. They do not create missing ownership files or relax ordinary reads. Owner Clean/Active metadata and the separately bounded exceptional recovery cursor have distinct meanings from physical-audit history; see [storage ownership](service-storage-ownership.md#18-integrity-foundation). Default-root and actual-process qualification remain pending.
+
 AIRK 1.2 uses one current index for each root/collection. CLI, MCP and extension operations use this store. Source files remain read-only. Source control owns source history; AIRK does not retain searchable historical generations, checkpoints or rollback targets.
 
 ## Fresh state and ownership

@@ -131,6 +131,24 @@ fn damage(connection: &Connection, project: ProjectBinding) -> Result<DamageVeto
     Ok(state)
 }
 
+/// Same bounded parser/policy as native_no_damage, inside owning Clean CAS.
+pub(super) fn require_no_owner_damage(
+    connection: &Connection,
+    project: ProjectBinding,
+    incarnation: Incarnation,
+) -> Result<()> {
+    let recorded = damage(connection, project)?;
+    ensure!(
+        recorded.entries.len() < MAX_NATIVE_DAMAGE
+            && !recorded
+                .entries
+                .iter()
+                .any(|entry| entry.incarnation == incarnation),
+        "native owner has durable known damage"
+    );
+    Ok(())
+}
+
 pub(super) fn claimed(transaction: &Connection, job: &JobRecord) -> Result<()> {
     if !physical_audit(transaction, job)? {
         return Ok(());

@@ -165,6 +165,48 @@ pub(crate) fn same_volume(left: &File, right: &File) -> bool {
     }
 }
 
+/// Native root/creation-boundary policy, distinct from strict per-object census.
+/// This handle proof never certifies unvisited descendants or historical bytes.
+pub(crate) struct NativePrivateBoundary<'a> {
+    file: &'a File,
+    evidence: Evidence,
+}
+impl NativePrivateBoundary<'_> {
+    pub(crate) fn identity(&self) -> [u64; 3] {
+        self.evidence.identity
+    }
+    pub(crate) fn recheck(&self) -> Result<bool> {
+        Ok(
+            matches!(native_platform(self.file,self.evidence.kind)?,Ok(current) if current==self.evidence),
+        )
+    }
+}
+pub(crate) fn native_boundary(
+    file: &File,
+    kind: Kind,
+) -> Result<Option<NativePrivateBoundary<'_>>> {
+    Ok(native_platform(file, kind)?
+        .ok()
+        .map(|evidence| NativePrivateBoundary { file, evidence }))
+}
+fn native_platform(file: &File, kind: Kind) -> Result<std::result::Result<Evidence, Unknown>> {
+    #[cfg(windows)]
+    {
+        windows::native_boundary(file, kind)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Root mode0700/no-positive-ACL remains real boundary. Descendants are
+        // admitted by its native producer policy, not by exact leaf mode here.
+        platform(file, kind)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = (file, kind);
+        Ok(Err(Unknown::UnsupportedPlatform))
+    }
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;

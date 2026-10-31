@@ -1,5 +1,7 @@
 # 1.8.0 optimization candidate
 
+F10b adds explicit native owner-session and fresh physical-recovery APIs while ordinary reads remain strict. Existing-only observations preserve quota/WAL admission; the independently bounded exceptional cursor preserves ordinary audit history and sticky damage. Native-owner state tests pass under explicitly controlled private fixtures. This machine's additional sandbox ACL grants correctly refuse untouched-root eligibility, so positive default-root, actual-process and Linux qualification remain pending. These APIs do not establish a fast-query cutover or measured improvement.
+
 Routine console polling now uses the authenticated Events namespace instead of separately acquiring request epochs. Native terminal-receipt pressure maintenance runs independently of an open editor, with no writer lock or metadata change when pressure is absent. Explicit actions retain their durable key and uncertain-outcome contracts. Focused Store, actual native-owner and console checks passed; final integration and combined timing remain pending.
 
 Automatic visible console polls reuse successful optional observations for up to five seconds and retain each observation's original date. Explicit refresh/actions and failed or replaced observations obtain fresh samples; health and project/job observations keep their existing cadence. Compilation and 45 focused console/activation tests passed.

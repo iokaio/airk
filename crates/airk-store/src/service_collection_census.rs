@@ -480,7 +480,7 @@ pub(crate) fn test_open_child(parent: &File, name: &std::ffi::OsStr) -> Result<F
     open_child(parent, name)
 }
 #[cfg(target_os = "linux")]
-fn open_absolute(path: &Path) -> Result<File> {
+pub(super) fn open_absolute(path: &Path) -> Result<File> {
     use std::path::Component;
     ensure!(path.is_absolute(), "census root must be absolute");
     let mut parent = File::open("/")?;

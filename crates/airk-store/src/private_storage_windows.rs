@@ -79,6 +79,19 @@ pub(super) fn local_volume(file: &File) -> Option<Vec<u16>> {
 }
 
 pub(super) fn inspect(file: &File, kind: Kind) -> Result<std::result::Result<Evidence, Unknown>> {
+    inspect_policy(file, kind, false)
+}
+pub(super) fn native_boundary(
+    file: &File,
+    kind: Kind,
+) -> Result<std::result::Result<Evidence, Unknown>> {
+    inspect_policy(file, kind, true)
+}
+fn inspect_policy(
+    file: &File,
+    kind: Kind,
+    native: bool,
+) -> Result<std::result::Result<Evidence, Unknown>> {
     use std::os::windows::io::{FromRawHandle, OwnedHandle};
     let before = information(file)?;
     let Some(volume) = local_volume(file) else {
@@ -176,33 +189,84 @@ pub(super) fn inspect(file: &File, kind: Kind) -> Result<std::result::Result<Evi
     );
     // Root must stop inheritance from a broader ancestor. Children are separately
     // inspected; inheritance alone is never evidence of their actual descriptor.
-    if kind == Kind::RootDirectory && control & 0x1000 == 0 {
+    if !native && kind == Kind::RootDirectory && control & 0x1000 == 0 {
         return Ok(Err(Unknown::NotPrivate));
     }
-    if unsafe { (*dacl).AceCount } != 1 {
-        return Ok(Err(Unknown::UnsupportedAcl));
-    }
-    let mut ace = std::ptr::null_mut();
-    ensure!(
-        unsafe { GetAce(dacl, 0, &mut ace) } != 0 && !ace.is_null(),
-        "invalid private storage ACL"
-    );
-    let header = unsafe { &*ace.cast::<ACE_HEADER>() };
-    if header.AceType != 0
-        || (header.AceSize as usize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
-        || header.AceFlags & 0x8 != 0
-    {
-        return Ok(Err(Unknown::UnsupportedAcl));
-    }
-    let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
-    let allowed_sid = std::ptr::addr_of!(allowed.SidStart).cast_mut().cast();
-    if unsafe { IsValidSid(allowed_sid) } == 0
-        || 8usize + unsafe { GetLengthSid(allowed_sid) } as usize > header.AceSize as usize
-        || unsafe { EqualSid(allowed_sid, sid) } == 0
-        || allowed.Mask & 0x1f01ff != 0x1f01ff
-        || (directory && header.AceFlags & 3 != 3)
-    {
-        return Ok(Err(Unknown::NotPrivate));
+    if native {
+        use windows_sys::Win32::Security::{
+            IsWellKnownSid, WinBuiltinAdministratorsSid, WinCreatorOwnerRightsSid,
+            WinLocalSystemSid,
+        };
+        let count = unsafe { (*dacl).AceCount };
+        if count == 0 || count > 16 {
+            return Ok(Err(Unknown::UnsupportedAcl));
+        }
+        let mut owner_grant = false;
+        for index in 0..u32::from(count) {
+            let mut ace = std::ptr::null_mut();
+            ensure!(
+                unsafe { GetAce(dacl, index, &mut ace) } != 0 && !ace.is_null(),
+                "invalid native boundary ACL"
+            );
+            let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+            // Only straightforward propagating allow entries are supported.
+            // No inheritance-protection requirement: actual inherited descriptor
+            // is checked; producer creation preserves this safe policy.
+            if header.AceType != 0
+                || (header.AceSize as usize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
+                || header.AceFlags & !0x13 != 0
+            {
+                return Ok(Err(Unknown::UnsupportedAcl));
+            }
+            let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+            let principal = std::ptr::addr_of!(allowed.SidStart).cast_mut().cast();
+            if unsafe { IsValidSid(principal) } == 0
+                || 8usize + unsafe { GetLengthSid(principal) } as usize > header.AceSize as usize
+            {
+                return Ok(Err(Unknown::UnsupportedAcl));
+            }
+            // Owner has already been authenticated against current token above.
+            let is_owner = unsafe { EqualSid(principal, sid) } != 0
+                || unsafe { IsWellKnownSid(principal, WinCreatorOwnerRightsSid) } != 0;
+            let privileged = unsafe { IsWellKnownSid(principal, WinLocalSystemSid) } != 0
+                || unsafe { IsWellKnownSid(principal, WinBuiltinAdministratorsSid) } != 0;
+            if !(is_owner || privileged)
+                || allowed.Mask & 0x1f01ff != 0x1f01ff
+                || (directory && header.AceFlags & 3 != 3)
+            {
+                return Ok(Err(Unknown::NotPrivate));
+            }
+            owner_grant |= is_owner;
+        }
+        if !owner_grant {
+            return Ok(Err(Unknown::NotPrivate));
+        }
+    } else {
+        if unsafe { (*dacl).AceCount } != 1 {
+            return Ok(Err(Unknown::UnsupportedAcl));
+        }
+        let mut ace = std::ptr::null_mut();
+        ensure!(
+            unsafe { GetAce(dacl, 0, &mut ace) } != 0 && !ace.is_null(),
+            "invalid private storage ACL"
+        );
+        let header = unsafe { &*ace.cast::<ACE_HEADER>() };
+        if header.AceType != 0
+            || (header.AceSize as usize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
+            || header.AceFlags & 0x8 != 0
+        {
+            return Ok(Err(Unknown::UnsupportedAcl));
+        }
+        let allowed = unsafe { &*ace.cast::<ACCESS_ALLOWED_ACE>() };
+        let allowed_sid = std::ptr::addr_of!(allowed.SidStart).cast_mut().cast();
+        if unsafe { IsValidSid(allowed_sid) } == 0
+            || 8usize + unsafe { GetLengthSid(allowed_sid) } as usize > header.AceSize as usize
+            || unsafe { EqualSid(allowed_sid, sid) } == 0
+            || allowed.Mask & 0x1f01ff != 0x1f01ff
+            || (directory && header.AceFlags & 3 != 3)
+        {
+            return Ok(Err(Unknown::NotPrivate));
+        }
     }
     // Hash only a bounded self-relative descriptor, never pointer-valued layout.
     let length = unsafe { GetSecurityDescriptorLength(descriptor) } as usize;
@@ -210,7 +274,11 @@ pub(super) fn inspect(file: &File, kind: Kind) -> Result<std::result::Result<Evi
         return Ok(Err(Unknown::UnsupportedAcl));
     }
     let mut security = Sha256::new();
-    security.update(b"airk.private-object.windows.v1\0");
+    security.update(if native {
+        b"airk.native-boundary.windows.v1\0".as_slice()
+    } else {
+        b"airk.private-object.windows.v1\0".as_slice()
+    });
     for unit in volume {
         security.update(unit.to_le_bytes());
     }
@@ -375,6 +443,22 @@ pub(super) mod tests {
         assert!(matches!(
             super::super::inspect(&file, Kind::File)?,
             Observation::Unknown(Unknown::UnsupportedFilesystem)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn foreign_read_grant_never_qualifies_native_creation_boundary() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().join("foreign-readable");
+        foreign_readable_root(&root)?;
+        let directory = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0x02000000 | 0x00200000)
+            .open(&root)?;
+        assert!(matches!(
+            super::native_boundary(&directory, Kind::RootDirectory)?,
+            Err(Unknown::NotPrivate)
         ));
         Ok(())
     }

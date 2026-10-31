@@ -367,6 +367,44 @@ impl FileStore {
         crate::current::gate::check_writer(self, writer)?;
         writer.invalidate_census_before_mutation()
     }
+    /// Existing persistent advisory only: no transient writer marker creation/removal.
+    pub(crate) fn existing_writer_exclusion(&self) -> Result<ExistingWriterExclusion> {
+        let managed = self.managed_path()?;
+        ensure!(
+            managed.namespace == "collections-1.4",
+            "native resume requires service layout"
+        );
+        managed_collection::validate_ancestors(&self.directory)?;
+        let lifecycle = quota::existing_service_lifecycle_lease(managed.root)?;
+        let logical = managed.logical;
+        let parent = logical
+            .parent()
+            .context("logical collection parent missing")?;
+        let locks = parent.join(".writer-locks");
+        ensure!(
+            fs::symlink_metadata(&locks)?.is_dir()
+                && !fs::symlink_metadata(&locks)?.file_type().is_symlink(),
+            "redirected writer lock directory"
+        );
+        let name = logical
+            .file_name()
+            .context("logical collection name missing")?
+            .to_str()
+            .context("non-UTF8 collection name")?;
+        let advisory = crate::service::acquire_existing_file(&locks, name)?;
+        // Healthy writers remove their transient marker. Never require it, and
+        // never repair a stale/legacy marker while observing a saved owner.
+        match fs::symlink_metadata(self.directory.join("writer.lock")) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+            Ok(_) => anyhow::bail!("writer marker requires explicit owning recovery"),
+        }
+        Ok(ExistingWriterExclusion {
+            _advisory: advisory,
+            _lifecycle: lifecycle,
+            directory: self.directory.canonicalize()?,
+        })
+    }
     /// OS-backed exclusivity releases after process death. Legacy lock markers
     /// still fail closed until an operator establishes that their writer exited.
     pub fn lock(&self) -> Result<WriterLock> {
@@ -454,6 +492,13 @@ impl FileStore {
         };
         Ok(guard)
     }
+}
+
+/// Bounded-observation exclusion, deliberately not a mutation WriterLock.
+pub(crate) struct ExistingWriterExclusion {
+    _advisory: crate::service::OwnershipFile,
+    _lifecycle: File,
+    pub(crate) directory: PathBuf,
 }
 
 impl SnapshotStore for FileStore {

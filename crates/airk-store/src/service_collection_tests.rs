@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 use crate::current::{CurrentHead, CurrentScope, lexical::LexicalManifest, map};
+use crate::service::ProjectLease;
 use airk_core::graph_storage::{GraphHead, GraphScope};
 use std::{
     process::{Child, Command, Stdio},
@@ -155,6 +156,12 @@ fn installed_data_root_rename_preserves_publication_settings_pause_and_receipts(
         .integrity_owner(&registry, &integrity_lease, &integrity_bound)?
         .record_damage(&integrity_read, token.digest, 700)?;
     let integrity_before = fs::read(collection.directory.join("integrity-observation.json"))?;
+    let recovery_before = super::integrity::verify::test_seed_recovery_receipt(
+        &collection,
+        integrity_read.head(),
+        namespace,
+        registration.binding,
+    )?;
     drop(integrity_read);
     drop(integrity_lease);
     fs::write(
@@ -196,7 +203,7 @@ fn installed_data_root_rename_preserves_publication_settings_pause_and_receipts(
         destination.to_str().unwrap().into(),
         "fixture".into(),
     )?;
-    let registry = ServiceRegistry::open_saved(&control)?;
+    let registry = ServiceRegistry::open(&control, namespace)?;
     assert!(registry.get(migrated.binding)?.paused);
     assert_eq!(registry.job(job.id)?.project, migrated.binding);
     assert_eq!(
@@ -207,6 +214,11 @@ fn installed_data_root_rename_preserves_publication_settings_pause_and_receipts(
     assert_eq!(
         fs::read(collection.directory.join("integrity-observation.json"))?,
         integrity_before
+    );
+    assert_eq!(
+        fs::read(collection.directory.join("integrity-recovery.json"))?,
+        recovery_before,
+        "relocation rewrote or lost inert owned recovery metadata"
     );
     let mut resumed_registry = ServiceRegistry::open(&control, namespace)?;
     let mut resumed_lease = crate::service::ProjectLease::acquire(&control, migrated.binding)?;
@@ -694,6 +706,12 @@ fn integrity_replacement_preserves_damage_and_refuses_retired_head() -> Result<(
     let token = read.token()?;
     let owner = collection.integrity_owner(&registry, &lease, &bound)?;
     owner.record_damage(&read, token.digest, 100)?;
+    let recovery_before = super::integrity::verify::test_seed_recovery_receipt(
+        &collection,
+        read.head(),
+        registry.incarnation()?,
+        lease.identity().0,
+    )?;
     drop(read);
     let next = Incarnation::from_bytes([53; 16]);
     let mut replacement = collection.begin_replacement(next, Sha256Digest::from_bytes([54; 32]))?;
@@ -715,6 +733,11 @@ fn integrity_replacement_preserves_damage_and_refuses_retired_head() -> Result<(
     assert_eq!(state.known_damage.len(), 1);
     assert_eq!(state.known_damage[0].incarnation, scope.incarnation);
     assert_eq!(state.known_damage[0].component, token.digest);
+    assert_eq!(
+        fs::read(collection.directory.join("integrity-recovery.json"))?,
+        recovery_before,
+        "replacement relabeled or removed historical recovery metadata"
+    );
     Ok(())
 }
 
@@ -724,6 +747,12 @@ fn integrity_abandoned_replacement_recovery_keeps_original_observation() -> Resu
     let read = store.current_read(&scope)?;
     let owner = collection.integrity_owner(&registry, &lease, &bound)?;
     let state = owner.record_damage(&read, read.token()?.digest, 200)?;
+    let recovery_before = super::integrity::verify::test_seed_recovery_receipt(
+        &collection,
+        read.head(),
+        registry.incarnation()?,
+        lease.identity().0,
+    )?;
     drop(read);
     let receipt = fs::read(collection.directory.join("integrity-observation.json"))?;
     let replacement = collection.begin_replacement(
@@ -739,6 +768,11 @@ fn integrity_abandoned_replacement_recovery_keeps_original_observation() -> Resu
     );
     let read = store.current_read(&scope)?;
     assert_eq!(owner.anchor(&read)?.known_damage, state.known_damage);
+    assert_eq!(
+        fs::read(collection.directory.join("integrity-recovery.json"))?,
+        recovery_before,
+        "abandoned-replacement recovery erased owned recovery metadata"
+    );
     Ok(())
 }
 
@@ -1133,6 +1167,12 @@ fn integrity_sidecar_does_not_strand_owned_purge_or_certify_full_reset() -> Resu
     collection
         .integrity_owner(&registry, &lease, &bound)?
         .record_damage(&read, read.token()?.digest, 800)?;
+    super::integrity::verify::test_seed_recovery_receipt(
+        &collection,
+        read.head(),
+        registry.incarnation()?,
+        lease.identity().0,
+    )?;
     drop(read);
     // Exercise the actual owned deletion adapter. Request/registration transition
     // is covered by existing unregistration tests, not synthesized here.
@@ -2084,5 +2124,853 @@ fn verify_oversized_object_does_not_advance_and_larger_allowance_completes_same_
     )?;
     assert!(registry.integrity_audit_veto(&lease)?.is_none());
     assert!(!bound.live_integrity().revoked());
+    Ok(())
+}
+
+#[test]
+fn existing_native_selection_and_advisory_do_not_create_transient_writer_marker() -> Result<()> {
+    let (_temp, collection, _registry, _bound, _lease, store, _scope) = integrity_fixture()?;
+    assert!(!store.directory().join("writer.lock").exists());
+    let selected = collection.select_existing_locked()?;
+    let directory = selected.store.directory().canonicalize()?;
+    drop(selected);
+    let existing = store.existing_writer_exclusion()?;
+    assert_eq!(existing.directory, directory);
+    assert!(store.lock().is_err(), "real mutator must be excluded");
+    assert!(!store.directory().join("writer.lock").exists());
+    drop(existing);
+    drop(store.lock()?);
+    assert!(!store.directory().join("writer.lock").exists());
+    Ok(())
+}
+#[test]
+fn missing_existing_native_manifest_lock_is_not_repaired() -> Result<()> {
+    let (_temp, collection, _registry, _bound, _lease, _store, _scope) = integrity_fixture()?;
+    let path = collection.directory.join("manifest.lock");
+    fs::remove_file(&path)?;
+    assert!(collection.select_existing_locked().is_err());
+    assert!(!path.exists());
+    Ok(())
+}
+#[cfg(windows)]
+#[test]
+fn native_session_clean_reopen_and_inherited_active_are_distinct() -> Result<()> {
+    let (_temp, collection, mut registry, bound, lease, _store, _scope) = native_state_fixture()?;
+    let lease = std::sync::Arc::new(lease);
+    let identity = airk_core::service::WorkerIdentity {
+        service: registry.incarnation()?,
+        worker: Incarnation::from_bytes([103; 16]),
+        project: lease.identity().0,
+        fencing_generation: lease.identity().1.unwrap(),
+    };
+    let session = collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?;
+    assert!(
+        collection
+            .arm_native_owner(&mut registry, lease.clone(), &bound, identity)
+            .is_err(),
+        "Active cannot be treated as clean absence"
+    );
+    session.settle_after_owned_drain(&mut registry)?;
+    let second = collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?;
+    drop(second); // simulate unclean capability owner destruction, not clean settle.
+    assert!(
+        collection
+            .arm_native_owner(&mut registry, lease, &bound, identity)
+            .is_err()
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn native_unclean_session_requires_actual_exact_verify_complete_not_partial() -> Result<()> {
+    use crate::service::registry::AuditEvidence;
+    use airk_core::service::{JobKind, JobOutcome, RequestKey};
+    let (_temp, collection, mut registry, bound, lease, store, scope) = native_state_fixture()?;
+    let lease = std::sync::Arc::new(lease);
+    let identity = airk_core::service::WorkerIdentity {
+        service: registry.incarnation()?,
+        worker: Incarnation::from_bytes([104; 16]),
+        project: lease.identity().0,
+        fencing_generation: lease.identity().1.unwrap(),
+    };
+    drop(collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?);
+    assert!(
+        collection
+            .arm_native_owner(&mut registry, lease.clone(), &bound, identity)
+            .is_err()
+    );
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let job = registry.enqueue(
+        identity.project,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([105; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    registry
+        .claim_job_id(&lease, job.id)?
+        .context("Verify not claimed")?;
+    let proof = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let read = store.current_read(&scope)?;
+        owner.anchor(&read)?;
+        drop(read);
+        let recovery_epoch =
+            collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
+        let mut writer = store.lock()?;
+        let turn =
+            owner
+                .verify_recovery_turn(&mut writer, &recovery_epoch, 32, 64 << 20, 200, || Ok(()))?;
+        (
+            turn.completed
+                .context("actual full physical completion missing")?,
+            turn.recovery_completed
+                .context("actual fresh recovery coverage missing")?,
+        )
+    };
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        job.id,
+        JobOutcome::Succeeded {
+            revision: Some(proof.0.revision()?),
+        },
+        300,
+        None,
+        Some(AuditEvidence::Complete(&proof.0)),
+    )?;
+    collection.recover_native_owner(&mut registry, &lease, &bound, identity, job.id, &proof.1)?;
+    let owner = collection.arm_native_owner(&mut registry, lease, &bound, identity)?;
+    owner.settle_after_owned_drain(&mut registry)?;
+    Ok(())
+}
+#[cfg(windows)]
+#[test]
+fn native_failed_clean_commit_leaves_active_and_public_reset_cannot_erase_it() -> Result<()> {
+    let (_temp, collection, mut registry, bound, lease, _store, _scope) = native_state_fixture()?;
+    let lease = std::sync::Arc::new(lease);
+    let identity = airk_core::service::WorkerIdentity {
+        service: registry.incarnation()?,
+        worker: Incarnation::from_bytes([106; 16]),
+        project: lease.identity().0,
+        fencing_generation: lease.identity().1.unwrap(),
+    };
+    let owner = collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?;
+    let control = bound.native_control_root();
+    let db = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
+    db.execute_batch("CREATE TRIGGER reject_owner_clean BEFORE UPDATE ON service_recovery_budget WHEN NEW.scope LIKE 'owner_session:%' BEGIN SELECT RAISE(ABORT,'owned fixture clean failure'); END")?;
+    assert!(owner.settle_after_owned_drain(&mut registry).is_err());
+    db.execute_batch("DROP TRIGGER reject_owner_clean")?;
+    assert!(
+        registry
+            .reset_recovery_budget(&format!("owner_session:{}", identity.project))
+            .is_err()
+    );
+    assert!(
+        collection
+            .arm_native_owner(&mut registry, lease, &bound, identity)
+            .is_err()
+    );
+    Ok(())
+}
+
+// Actual producer layout: no chmod, ACL rewrite or private-root test helper.
+fn native_default_boundary_fixture() -> Result<IntegrityFixture> {
+    native_layout_fixture(false)
+}
+#[cfg(windows)]
+fn native_state_fixture() -> Result<IntegrityFixture> {
+    native_layout_fixture(true)
+}
+// Controlled lifecycle fixtures are not evidence of default-install eligibility.
+fn native_layout_fixture(controlled_private: bool) -> Result<IntegrityFixture> {
+    use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
+    let temporary = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
+        Some(base) => tempfile::Builder::new()
+            .prefix("airk-native-default-")
+            .tempdir_in(base)?,
+        None => tempfile::tempdir()?,
+    };
+    let base = temporary.path().canonicalize()?;
+    let data = base.join("data");
+    let source = base.join("source");
+    let control = base.join("control");
+    fs::create_dir(&source)?;
+    fs::create_dir(&control)?;
+    let namespace = Incarnation::from_bytes([111; 16]);
+    let registration = airk_core::service::ProjectRegistration::new(
+        source.to_str().unwrap().into(),
+        data.to_str().unwrap().into(),
+        "fixture".into(),
+    )?;
+    let mut registry = ServiceRegistry::open(&control, namespace)?;
+    registry.register(&registration)?;
+    #[cfg(windows)]
+    if controlled_private {
+        crate::private_storage::test_private_root(&data)?;
+    }
+    #[cfg(not(windows))]
+    ensure!(!controlled_private, "controlled fixture is Windows-only");
+    let bound = data_scope::bind(&data, &control, namespace)?;
+    let slot = Incarnation::from_bytes([112; 16]);
+    let collection =
+        Collection::initialize(&data, &registration.root, &registration.collection, slot)?;
+    let store = collection.selected_store()?;
+    initialize(&store, &registration.root, slot)?;
+    let scope = store
+        .current_owned_scope()?
+        .context("default native scope missing")?;
+    let mut lease = ProjectLease::acquire(&control, registration.binding)?;
+    registry.admit_worker(&mut lease)?;
+    Ok((temporary, collection, registry, bound, lease, store, scope))
+}
+fn assert_native_default_producer_boundary() -> Result<()> {
+    let (_temp, collection, mut registry, bound, lease, store, scope) =
+        native_default_boundary_fixture()?;
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    {
+        let writer = store.lock()?;
+        let input = audit_retained_input(
+            &store,
+            &writer,
+            &quota,
+            &scope,
+            "default.txt",
+            "ordinary retained default layout",
+        )?;
+        let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+        let token = current.head()?.token()?;
+        current.commit_artifact(&token, "default.txt", Some(&input))?;
+    }
+    let lease = std::sync::Arc::new(lease);
+    let identity = airk_core::service::WorkerIdentity {
+        service: registry.incarnation()?,
+        worker: Incarnation::from_bytes([113; 16]),
+        project: lease.identity().0,
+        fencing_generation: lease.identity().1.unwrap(),
+    };
+    let owner = collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?;
+    owner.settle_after_owned_drain(&mut registry)?;
+    collection
+        .arm_native_owner(&mut registry, lease, &bound, identity)?
+        .settle_after_owned_drain(&mut registry)?;
+    Ok(())
+}
+#[cfg(windows)]
+#[test]
+fn untouched_windows_bind_and_retained_producer_layout_qualifies_native_boundary() -> Result<()> {
+    assert_native_default_producer_boundary()
+}
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires AIRK_PRIVATE_CENSUS_BASE under a real protected local user namespace, not shared /tmp"]
+fn untouched_linux_bind_and_retained_producer_layout_qualifies_native_boundary() -> Result<()> {
+    assert_native_default_producer_boundary()
+}
+
+#[cfg(windows)]
+#[test]
+fn native_original_data_root_handle_blocks_owned_path_replacement() -> Result<()> {
+    let (temporary, collection, mut registry, bound, lease, _store, _scope) =
+        native_default_boundary_fixture()?;
+    let lease = std::sync::Arc::new(lease);
+    let identity = airk_core::service::WorkerIdentity {
+        service: registry.incarnation()?,
+        worker: Incarnation::from_bytes([114; 16]),
+        project: lease.identity().0,
+        fencing_generation: lease.identity().1.unwrap(),
+    };
+    let owner = collection.arm_native_owner(&mut registry, lease, &bound, identity)?;
+    let root = Path::new(&collection.owner.data_root);
+    assert!(
+        fs::rename(root, temporary.path().join("retired-data")).is_err(),
+        "retained no-delete-sharing data root must prevent replacement"
+    );
+    owner.settle_after_owned_drain(&mut registry)?;
+    Ok(())
+}
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires AIRK_PRIVATE_CENSUS_BASE under protected user namespace; actual retained-fd root replacement"]
+fn native_settlement_refuses_replaced_data_root_even_with_copied_clean_metadata() -> Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    fn copy_owned(from: &Path, to: &Path) -> Result<()> {
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        builder.create(to)?;
+        for entry in fs::read_dir(from)? {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            let target = to.join(entry.file_name());
+            ensure!(
+                !kind.is_symlink(),
+                "owned replacement fixture refuses links"
+            );
+            if kind.is_dir() {
+                copy_owned(&entry.path(), &target)?;
+            } else {
+                ensure!(
+                    kind.is_file(),
+                    "owned replacement fixture refuses special files"
+                );
+                fs::write(target, fs::read(entry.path())?)?;
+            }
+        }
+        Ok(())
+    }
+    let (temporary, collection, mut registry, bound, lease, _store, _scope) =
+        native_default_boundary_fixture()?;
+    let lease = std::sync::Arc::new(lease);
+    let identity = airk_core::service::WorkerIdentity {
+        service: registry.incarnation()?,
+        worker: Incarnation::from_bytes([115; 16]),
+        project: lease.identity().0,
+        fencing_generation: lease.identity().1.unwrap(),
+    };
+    let owner = collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?;
+    let root = Path::new(&collection.owner.data_root);
+    let replacement = temporary.path().join("replacement");
+    copy_owned(root, &replacement)?;
+    fs::rename(root, temporary.path().join("retired-data"))?;
+    fs::rename(replacement, root)?;
+    let error = owner
+        .settle_after_owned_drain(&mut registry)
+        .expect_err("copied metadata cannot bless a replaced physical data root");
+    assert!(format!("{error:#}").contains("native data root replaced"));
+    assert!(
+        collection
+            .arm_native_owner(&mut registry, lease, &bound, identity)
+            .is_err(),
+        "failed clear must retain Active"
+    );
+    Ok(())
+}
+#[cfg(windows)]
+#[test]
+fn recovery_epoch_rechecks_behind_cursor_after_both_damage_stores_failed() -> Result<()> {
+    use crate::service::{data_scope, registry::ServiceRegistry};
+    use airk_core::service::{JobKind, RequestKey, WorkerIdentity};
+    let (temporary, collection, mut registry, bound, lease, store, scope) = native_state_fixture()?;
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    {
+        let writer = store.lock()?;
+        for (path, text) in [("a.txt", "first checked source"), ("b.txt", "later source")] {
+            let input = audit_retained_input(&store, &writer, &quota, &scope, path, text)?;
+            let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+            let token = current.head()?.token()?;
+            current.commit_artifact(&token, path, Some(&input))?;
+        }
+    }
+    let lease = std::sync::Arc::new(lease);
+    let identity = WorkerIdentity {
+        service: registry.incarnation()?,
+        project: lease.identity().0,
+        worker: Incarnation::from_bytes([111; 16]),
+        fencing_generation: lease.identity().1.context("worker epoch")?,
+    };
+    drop(collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?);
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let job = registry.enqueue(
+        identity.project,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([112; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    registry
+        .claim_job_id(&lease, job.id)?
+        .context("audit claim")?;
+    let historical = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let read = store.current_read(&scope)?;
+        owner.anchor(&read)?;
+        drop(read);
+        let mut writer = store.lock()?;
+        let turn = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
+        assert_eq!(turn.verified_files, 1);
+        assert!(!turn.progress.complete());
+        serde_json::to_value(&turn.progress)?
+    };
+    let receipt = collection.directory.join("integrity-observation.json");
+    let saved = fs::read(&receipt)?;
+    let component = {
+        let read = store.current_read(&scope)?;
+        let artifact = read.artifact("a.txt")?.context("first artifact")?;
+        let object = store
+            .directory()
+            .join("objects/sources")
+            .join(&artifact.content_hash);
+        let mut bytes = fs::read(&object)?;
+        assert!(!bytes.is_empty());
+        bytes[0] ^= 1;
+        fs::write(&object, bytes)?;
+        read.token()?.digest
+    };
+    // Both actual durable detection adapters fail. Active is the only reliable
+    // surviving exposure marker; neither absence of damage nor old cursor is proof.
+    registry.test_refuse_integrity_damage(true)?;
+    fs::remove_file(&receipt)?;
+    fs::create_dir(&receipt)?;
+    {
+        let read = store.current_read(&scope)?;
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let error = owner
+            .record_damage(&read, component, 101)
+            .err()
+            .context("both stores unexpectedly succeeded")?;
+        assert!(format!("{error:#}").contains("neither damage store confirmed persistence"));
+    }
+    fs::remove_dir(&receipt)?;
+    fs::write(&receipt, &saved)?;
+    registry.test_refuse_integrity_damage(false)?;
+    assert!(registry.recorded_integrity_damage(&lease)?.is_empty());
+    drop(lease);
+    drop(registry);
+    let control = temporary.path().canonicalize()?.join("control");
+    let mut registry = ServiceRegistry::open(&control, namespace)?;
+    let mut lease = ProjectLease::acquire(&control, identity.project)?;
+    registry.admit_worker(&mut lease)?;
+    registry.recover_jobs(&lease)?;
+    registry
+        .claim_job_id(&lease, job.id)?
+        .context("same audit reclaimed")?;
+    let bound = data_scope::bind(Path::new(&collection.owner.data_root), &control, namespace)?;
+    let replacement = WorkerIdentity {
+        worker: Incarnation::from_bytes([113; 16]),
+        fencing_generation: lease.identity().1.context("new worker epoch")?,
+        ..identity
+    };
+    let recovery =
+        collection.begin_native_recovery(&registry, &lease, &bound, replacement, job.id)?;
+    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+    let mut writer = store.lock()?;
+    assert!(
+        owner
+            .verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 200, || Ok(()))
+            .is_err(),
+        "fresh recovery skipped damaged a.txt behind historical cursor"
+    );
+    let state: serde_json::Value = serde_json::from_slice(&fs::read(&receipt)?)?;
+    assert_eq!(
+        state["verify"], historical,
+        "ordinary history was relabeled or erased"
+    );
+    assert_eq!(
+        fs::read(&receipt)?,
+        saved,
+        "recovery rewrote ordinary receipt"
+    );
+    let recovery: serde_json::Value = serde_json::from_slice(&fs::read(
+        collection.directory.join("integrity-recovery.json"),
+    )?)?;
+    assert_eq!(recovery["progress"]["checked_files"], 0);
+    assert!(recovery["progress"]["unresolved"].as_bool().unwrap());
+    assert!(recovery.get("known_damage").is_none());
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn recovery_second_admitted_epoch_restarts_required_pages_but_preserves_ordinary_history()
+-> Result<()> {
+    use crate::service::{
+        data_scope,
+        registry::{AuditEvidence, ServiceRegistry},
+    };
+    use airk_core::service::{JobKind, JobOutcome, RequestKey, WorkerIdentity};
+    let (temporary, collection, mut registry, bound, lease, store, scope) = native_state_fixture()?;
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    {
+        let writer = store.lock()?;
+        for (path, text) in [
+            ("a.txt", "clean first source"),
+            ("b.txt", "clean second source"),
+        ] {
+            let input = audit_retained_input(&store, &writer, &quota, &scope, path, text)?;
+            let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+            let token = current.head()?.token()?;
+            current.commit_artifact(&token, path, Some(&input))?;
+        }
+    }
+    let lease = std::sync::Arc::new(lease);
+    let identity = WorkerIdentity {
+        service: registry.incarnation()?,
+        project: lease.identity().0,
+        worker: Incarnation::from_bytes([114; 16]),
+        fencing_generation: lease.identity().1.context("epoch")?,
+    };
+    drop(collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?);
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let job = registry.enqueue(
+        identity.project,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([115; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    registry.claim_job_id(&lease, job.id)?.context("claim")?;
+    let recovery = collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
+    let history = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let read = store.current_read(&scope)?;
+        owner.anchor(&read)?;
+        drop(read);
+        let mut writer = store.lock()?;
+        let ordinary = owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
+        let partial =
+            owner.verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 200, || Ok(()))?;
+        assert_eq!(partial.verified_files, 1);
+        assert!(!partial.progress.complete());
+        assert!(partial.recovery_completed.is_none());
+        serde_json::to_value(ordinary.progress)?
+    };
+    drop(lease);
+    drop(registry);
+    let control = temporary.path().canonicalize()?.join("control");
+    let mut registry = ServiceRegistry::open(&control, namespace)?;
+    let mut lease = ProjectLease::acquire(&control, identity.project)?;
+    registry.admit_worker(&mut lease)?;
+    registry.recover_jobs(&lease)?;
+    registry
+        .claim_job_id(&lease, job.id)?
+        .context("reclaimed")?;
+    let lease = std::sync::Arc::new(lease);
+    let bound = data_scope::bind(Path::new(&collection.owner.data_root), &control, namespace)?;
+    let identity = WorkerIdentity {
+        worker: Incarnation::from_bytes([116; 16]),
+        fencing_generation: lease.identity().1.context("replacement epoch")?,
+        ..identity
+    };
+    let replacement =
+        collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
+    let proofs = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        assert!(
+            owner
+                .verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 299, || Ok(()))
+                .is_err()
+        );
+        let fresh =
+            owner.verify_recovery_turn(&mut writer, &replacement, 1, 1 << 20, 300, || Ok(()))?;
+        assert_eq!(fresh.verified_files, 1);
+        assert!(
+            !fresh.progress.complete(),
+            "old recovery page was promoted to new epoch"
+        );
+        let state = serde_json::to_value(&fresh.progress)?;
+        assert_eq!(state["checked_files"], 1);
+        assert_eq!(state["started_unix_ms"], 300);
+        assert_eq!(state["lexical_observed_unix_ms"], 300);
+        let finished =
+            owner.verify_recovery_turn(&mut writer, &replacement, 1, 1 << 20, 301, || Ok(()))?;
+        assert_eq!(finished.verified_files, 1);
+        (
+            finished.completed.context("global baseline completion")?,
+            finished
+                .recovery_completed
+                .context("fresh required completion")?,
+        )
+    };
+    collection.recover_native_owner(&mut registry, &lease, &bound, identity, job.id, &proofs.1)?;
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        job.id,
+        JobOutcome::Succeeded {
+            revision: Some(proofs.0.revision()?),
+        },
+        302,
+        None,
+        Some(AuditEvidence::Complete(&proofs.0)),
+    )?;
+    let state: integrity::IntegrityObservation =
+        json(&collection.directory.join("integrity-observation.json"))?;
+    assert_eq!(
+        serde_json::to_value(state.verify.context("history")?)?,
+        history
+    );
+    let owner = collection.arm_native_owner(&mut registry, lease, &bound, identity)?;
+    owner.settle_after_owned_drain(&mut registry)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn owned_recovery_receipt_separates_8192_cursor_from_31_sticky_records_and_preserves_admission()
+-> Result<()> {
+    use airk_core::service::{JobKind, WorkerIdentity};
+    let (_temp, collection, mut registry, bound, lease, store, scope) = native_state_fixture()?;
+    let lease = std::sync::Arc::new(lease);
+    let identity = WorkerIdentity {
+        service: registry.incarnation()?,
+        project: lease.identity().0,
+        worker: Incarnation::from_bytes([120; 16]),
+        fencing_generation: lease.identity().1.context("epoch")?,
+    };
+    drop(collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?);
+    let job = registry.enqueue_internal(
+        identity.project,
+        identity.service,
+        JobKind::Verify,
+        Incarnation::from_bytes([121; 16]),
+    )?;
+    registry.claim_job_id(&lease, job.id)?.context("claim")?;
+    {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let read = store.current_read(&scope)?;
+        owner.anchor(&read)?;
+        drop(read);
+        let mut writer = store.lock()?;
+        owner.verify_turn(&mut writer, job.id, 1, 1 << 20, 100, || Ok(()))?;
+    }
+    let ordinary_path = collection.directory.join("integrity-observation.json");
+    let mut ordinary =
+        serde_json::to_value(json::<integrity::IntegrityObservation>(&ordinary_path)?)?;
+    ordinary["verify"]["after"] = serde_json::json!("a".repeat(8192));
+    ordinary["verify"]["objects_complete"] = serde_json::json!(false);
+    for field in [
+        "started_unix_ms",
+        "through_unix_ms",
+        "checked_files",
+        "checked_bytes",
+        "lexical_observed_unix_ms",
+    ] {
+        ordinary["verify"][field] = serde_json::json!(u64::MAX);
+    }
+    ordinary["known_damage"] = serde_json::Value::Array((1u8..=31).map(|n| serde_json::json!({
+        "incarnation": Incarnation::from_bytes([n;16]), "component": Sha256Digest::from_bytes([n;32]), "observed_unix_ms": u64::MAX
+    })).collect());
+    let ordinary: super::integrity::IntegrityObservation = serde_json::from_value(ordinary)?;
+    let ordinary_bytes = serde_json::to_vec(&ordinary)?;
+    assert!(
+        ordinary_bytes.len() <= MAX_METADATA,
+        "actual old fitting-receipt fixture exceeded preexisting cap: {}",
+        ordinary_bytes.len()
+    );
+    write(&collection, "integrity-observation.json", &ordinary)?;
+    let saved = fs::read(&ordinary_path)?;
+    let recovery = collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
+    {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        let turn =
+            owner.verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 200, || Ok(()))?;
+        assert!(
+            turn.recovery_completed.is_some(),
+            "actual empty baseline recovery did not finish"
+        );
+    }
+    assert_eq!(
+        fs::read(&ordinary_path)?,
+        saved,
+        "recovery expanded/rewrote ordinary receipt"
+    );
+    let recovery_path = collection.directory.join("integrity-recovery.json");
+    let actual: serde_json::Value = serde_json::from_slice(&fs::read(&recovery_path)?)?;
+    assert!(actual.get("known_damage").is_none());
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    let policy = serde_json::to_value(quota.policy()?)?;
+    // Encoding/admission only: these synthetic long cursors are not evidence.
+    for path in ["a".repeat(8192), "\u{e9}".repeat(4096)] {
+        assert_eq!(path.len(), 8192);
+        let mut value = actual.clone();
+        value["progress"]["after"] = serde_json::json!(path);
+        value["progress"]["objects_complete"] = serde_json::json!(false);
+        for field in [
+            "started_unix_ms",
+            "through_unix_ms",
+            "checked_files",
+            "checked_bytes",
+            "lexical_observed_unix_ms",
+        ] {
+            value["progress"][field] = serde_json::json!(u64::MAX);
+        }
+        super::integrity::verify::test_write_recovery_receipt(&collection, value)?;
+        eprintln!(
+            "owned recovery byte admission: ordinary={}, recovery={}",
+            ordinary_bytes.len(),
+            fs::metadata(&recovery_path)?.len()
+        );
+        assert!(fs::metadata(&recovery_path)?.len() <= MAX_METADATA as u64);
+        assert_eq!(fs::read(&ordinary_path)?, saved);
+    }
+    assert_eq!(serde_json::to_value(quota.policy()?)?, policy);
+    let before = fs::read(&recovery_path)?;
+    let mut escaped = actual.clone();
+    escaped["progress"]["after"] = serde_json::json!("\"".repeat(8192));
+    assert!(super::integrity::verify::test_write_recovery_receipt(&collection, escaped).is_err());
+    assert_eq!(fs::read(&recovery_path)?, before);
+    // Actual malformed, foreign, alias and quota refusals preserve both files.
+    let mut wrong = actual.clone();
+    wrong["namespace"] = serde_json::json!(Incarnation::from_bytes([122; 16]));
+    wrong["epoch"]["namespace"] = wrong["namespace"].clone();
+    super::integrity::verify::test_write_recovery_receipt(&collection, wrong)?;
+    {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        assert!(
+            owner
+                .verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 201, || Ok(()))
+                .is_err()
+        );
+    }
+    fs::write(&recovery_path, b"{")?;
+    {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let mut writer = store.lock()?;
+        assert!(
+            owner
+                .verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 202, || Ok(()))
+                .is_err()
+        );
+    }
+    super::integrity::verify::test_write_recovery_receipt(&collection, actual.clone())?;
+    let link = _temp.path().join("owned-recovery-alias");
+    fs::hard_link(&recovery_path, &link)?;
+    assert!(!super::integrity::verify::owned_recovery_scratch(
+        &recovery_path,
+        collection.binding
+    ));
+    assert!(
+        Collection::purge_removed_turn(&registry.get(identity.project)?.registration, &lease)
+            .is_err(),
+        "owning purge accepted aliased recovery metadata"
+    );
+    fs::remove_file(&link)?;
+    let valid = fs::read(&recovery_path)?;
+    let scratch = collection.directory.join(".service-metadata-recovery");
+    fs::write(&scratch, &valid)?;
+    let foreign_scratch = collection.directory.join(".service-metadata-foreign");
+    let mut foreign = actual.clone();
+    foreign["owner"] = serde_json::json!(Sha256Digest::from_bytes([123; 32]));
+    let foreign = super::integrity::verify::test_recovery_receipt_bytes(foreign)?;
+    fs::write(&foreign_scratch, &foreign)?;
+    collection.sweep_metadata_scratch()?;
+    assert!(!scratch.exists());
+    assert_eq!(fs::read(&foreign_scratch)?, foreign);
+    fs::remove_file(&foreign_scratch)?;
+    let original_policy = quota.policy()?;
+    let status = quota.status()?;
+    let mut tight = original_policy.clone();
+    tight.root_bytes = status.used_bytes + status.reserved_bytes;
+    quota.configure(tight)?;
+    let refused =
+        super::integrity::verify::test_write_recovery_receipt(&collection, actual.clone());
+    quota.configure(original_policy)?;
+    assert!(refused.is_err());
+    assert_eq!(fs::read(&recovery_path)?, valid);
+    assert_eq!(fs::read(&ordinary_path)?, saved);
+    // Full32 sticky state retains its existing cap and saturation refusal; it is
+    // never copied into recovery or silently discarded to admit recovery.
+    let mut saturated = serde_json::to_value(&ordinary)?;
+    saturated["known_damage"].as_array_mut().unwrap().push(serde_json::json!({
+        "incarnation": Incarnation::from_bytes([32;16]), "component": Sha256Digest::from_bytes([32;32]), "observed_unix_ms": u64::MAX
+    }));
+    let saturated: super::integrity::IntegrityObservation = serde_json::from_value(saturated)?;
+    assert!(serde_json::to_vec(&saturated)?.len() <= MAX_METADATA);
+    write(&collection, "integrity-observation.json", &saturated)?;
+    assert!(
+        collection
+            .begin_native_recovery(&registry, &lease, &bound, identity, job.id)
+            .is_err()
+    );
+    assert_eq!(saturated.known_damage.len(), 32);
+    let registration = registry.get(identity.project)?.registration;
+    let source_marker = Path::new(&registration.root).join("source-stays.txt");
+    fs::write(&source_marker, b"owned recovery purge preserves source")?;
+    let unknown = collection.directory.join("unknown-original.txt");
+    fs::write(&unknown, b"preserve unknown")?;
+    assert!(Collection::purge_removed_turn(&registration, &lease).is_err());
+    assert_eq!(fs::read(&unknown)?, b"preserve unknown");
+    fs::remove_file(&unknown)?;
+    // After complete container ownership proof, known derived filename removal
+    // follows the existing contract even if its JSON is foreign/corrupt. Reads
+    // and anonymous scratch recognition remain strict; unknown names/links do not.
+    fs::write(&recovery_path, b"corrupt derived recovery metadata")?;
+    assert!(collection.directory.join("service-owner.json").exists());
+    let mut removed = false;
+    for _ in 0..8 {
+        if Collection::purge_removed_turn(&registration, &lease)? {
+            removed = true;
+            break;
+        }
+    }
+    assert!(removed, "owned recovery receipt stranded removal");
+    assert!(!collection.directory.exists());
+    assert_eq!(
+        fs::read(&source_marker)?,
+        b"owned recovery purge preserves source"
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+#[test]
+fn recovery_clean_transaction_refuses_actual_late_durable_damage_without_erasing_active()
+-> Result<()> {
+    use crate::service::registry::owner_session::{EnrollmentBasis, SessionState};
+    use airk_core::service::{JobKind, WorkerIdentity};
+    let (_temp, collection, mut registry, bound, lease, store, scope) = native_state_fixture()?;
+    let lease = std::sync::Arc::new(lease);
+    let identity = WorkerIdentity {
+        service: registry.incarnation()?,
+        project: lease.identity().0,
+        worker: Incarnation::from_bytes([124; 16]),
+        fencing_generation: lease.identity().1.context("epoch")?,
+    };
+    drop(collection.arm_native_owner(&mut registry, lease.clone(), &bound, identity)?);
+    let job = registry.enqueue_internal(
+        identity.project,
+        identity.service,
+        JobKind::Verify,
+        Incarnation::from_bytes([125; 16]),
+    )?;
+    registry.claim_job_id(&lease, job.id)?.context("claim")?;
+    let recovery = collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
+    let (proof, token) = {
+        let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+        let read = store.current_read(&scope)?;
+        let token = read.token()?;
+        owner.anchor(&read)?;
+        drop(read);
+        let mut writer = store.lock()?;
+        let turn =
+            owner.verify_recovery_turn(&mut writer, &recovery, 1, 1 << 20, 100, || Ok(()))?;
+        (
+            turn.recovery_completed.context("actual physical proof")?,
+            token,
+        )
+    };
+    let before = registry.load_owner_session(&lease)?.context("active")?;
+    let mut clean = before.1.clone();
+    clean.state = SessionState::Clean;
+    clean.basis = EnrollmentBasis::PhysicalVerify;
+    // Exercise the SAME final conditional adapter after its physical/preflight
+    // observation. This actual control writer deliberately does not revoke the
+    // proof's live Arc, so only the transaction's durable reread can refuse it.
+    registry.persist_integrity_damage(&lease, token.incarnation, token.digest, 101)?;
+    assert!(
+        registry
+            .compare_recovered_owner_session(&lease, &before.0, &clean, job.id, &proof)
+            .is_err()
+    );
+    assert_eq!(
+        registry
+            .load_owner_session(&lease)?
+            .context("retained active")?
+            .0,
+        before.0
+    );
+    assert_eq!(registry.integrity_audit_veto(&lease)?, Some(job.id));
+    assert_eq!(registry.recorded_integrity_damage(&lease)?.len(), 1);
     Ok(())
 }

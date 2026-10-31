@@ -2281,3 +2281,50 @@ impl super::CurrentRead {
         })
     }
 }
+
+impl FileStore {
+    /// Bounded native-owner metadata only. Caller retains actual advisory and
+    /// manifest selection exclusion; no object/source/lexical decode occurs.
+    pub(crate) fn existing_settled_head(
+        &self,
+        guard: &crate::ExistingWriterExclusion,
+    ) -> Result<CurrentHead> {
+        ensure!(
+            guard.directory == self.directory().canonicalize()?,
+            "foreign resume exclusion"
+        );
+        let scope = super::database::owned_scope(self.directory())?;
+        let capacity = super::database::check_owner(self.directory(), &scope)?;
+        let path = self.directory().join("current.sqlite3");
+        crate::managed_collection::reject_file_aliases(&path, &std::fs::symlink_metadata(&path)?)?;
+        ensure!(
+            std::fs::metadata(&path)?.len() <= capacity,
+            "current database exceeds captured capacity"
+        );
+        let mut legacy_budget = false;
+        if super::wal::enabled(self.directory()) {
+            let allowance = Quota::verify_existing_current_allowance(
+                self,
+                &crate::quota::CurrentGrantScope {
+                    collection: scope.collection.clone(),
+                    incarnation: scope.incarnation,
+                    transaction: super::wal::id(&scope),
+                },
+                super::wal::legacy_total(capacity)?,
+            )?;
+            legacy_budget = allowance < super::wal::total(capacity)?;
+            if legacy_budget {
+                super::wal::validate_legacy_files(self.directory(), capacity)?;
+            }
+        }
+        // Existing admitted WAL/SHM bookkeeping is allowed. The standard reader
+        // already enforces sidecar aliases/type/size; never use immutable mode.
+        let connection = super::database::open_reader_budget(&path, legacy_budget)?;
+        let (phase, head) = state(&connection, &scope)?;
+        ensure!(
+            phase == TransactionPhase::Ready && pending(&connection, &scope)?.is_none(),
+            "native publication requires explicit owning recovery"
+        );
+        Ok(head)
+    }
+}

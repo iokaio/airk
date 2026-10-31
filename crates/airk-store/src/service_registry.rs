@@ -46,6 +46,8 @@ pub fn is_read_contention(error: &anyhow::Error) -> bool {
 mod integrity_guard;
 #[path = "service_jobs.rs"]
 mod jobs;
+#[path = "service_owner_session.rs"]
+pub(crate) mod owner_session;
 pub use integrity_guard::{AuditDrainProof, AuditEvidence, IntegrityAuditState};
 #[path = "service_progress.rs"]
 mod progress;

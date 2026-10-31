@@ -81,6 +81,14 @@ impl LiveIntegrity {
     }
 }
 impl BoundDataRoot {
+    pub(crate) fn native_integrity_revoked(&self) -> bool {
+        self.1.revoked()
+    }
+    #[cfg(test)]
+    pub(crate) fn native_control_root(&self) -> &Path {
+        &self.0.control
+    }
+
     pub(crate) fn live_integrity(&self) -> LiveIntegrity {
         self.1.clone()
     }

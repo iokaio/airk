@@ -254,6 +254,16 @@ pub(crate) fn service_lifecycle_lease(root: &Path, exclusive: bool) -> Result<Fi
     acquire_lifecycle(root, exclusive, false, Namespace::Service.lifecycle())
 }
 
+/// Noncreating shared relocation exclusion for bounded native-owner observation.
+pub(crate) fn existing_service_lifecycle_lease(root: &Path) -> Result<File> {
+    ensure_current_root(root)?;
+    let file = crate::service::open_existing_ownership_file(root, Namespace::Service.lifecycle())?;
+    file.try_lock_shared()
+        .context("data root relocation in progress")?;
+    ensure_current_root(root)?;
+    Ok(file)
+}
+
 pub fn service_indexing_lifecycle_lease(root: &Path) -> Result<File> {
     service_lifecycle_lease(root, false)
 }

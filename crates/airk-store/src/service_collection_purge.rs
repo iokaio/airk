@@ -61,6 +61,7 @@ impl Collection {
                     name,
                     "service-owner.json"
                         | "integrity-observation.json"
+                        | "integrity-recovery.json"
                         | "active.json"
                         | "replacement.json"
                         | "initial-slot.json"

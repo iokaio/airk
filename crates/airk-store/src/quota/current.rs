@@ -99,6 +99,36 @@ impl CurrentGrant {
 }
 
 impl Quota {
+    /// Same durable allowance validation as ordinary CurrentRead, without
+    /// creating/repairing quota ownership files or sweeping policy state.
+    pub(crate) fn verify_existing_current_allowance(
+        store: &crate::FileStore,
+        scope: &CurrentGrantScope,
+        minimum: u64,
+    ) -> Result<u64> {
+        let managed = store.managed_path()?;
+        ensure!(
+            managed.namespace == "collections-1.4",
+            "existing WAL allowance requires service namespace"
+        );
+        ensure_current_root(managed.root)?;
+        let quota = Self {
+            root: managed.root.canonicalize()?,
+            namespace: Namespace::Service,
+        };
+        let _lifecycle = super::existing_service_lifecycle_lease(&quota.root)?;
+        let control = quota.control_path();
+        ensure!(control.is_dir(), "existing quota control directory missing");
+        unlinked(&control)?;
+        let _ledger = crate::service::acquire_existing_file(&control, "ledger.lock")?;
+        let record = read_record(&control.join("current-grants").join(scope.filename()))?;
+        ensure!(
+            record.scope == *scope && record.bytes >= minimum,
+            "missing or insufficient service WAL recovery allowance"
+        );
+        Ok(record.bytes)
+    }
+
     pub(crate) fn verify_current_allowance(
         &self,
         scope: &CurrentGrantScope,

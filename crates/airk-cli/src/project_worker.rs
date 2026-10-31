@@ -556,7 +556,7 @@ pub async fn run() -> Result<()> {
     let work_status = Arc::new(Mutex::new(WorkState::default()));
     let job_status = work_status.clone();
     let freshness_kernel = kernel.clone();
-    let jobs = tokio::task::spawn_blocking(move || -> Result<()> {
+    let jobs = tokio::task::spawn_blocking(move || -> Result<ServiceRegistry> {
         while !job_closing.load(Ordering::Acquire) {
             let allowance = match work_receiver.recv_timeout(Duration::from_millis(200)) {
                 Ok(allowance) => allowance,
@@ -1107,7 +1107,7 @@ pub async fn run() -> Result<()> {
             job_busy.store(false, Ordering::Release);
             job_activity.notify_one();
         }
-        Ok(())
+        Ok(registry)
     });
     let permits = Arc::new(Semaphore::new(64));
     let mut connections = JoinSet::new();
@@ -1187,10 +1187,13 @@ pub async fn run() -> Result<()> {
     // completion; process/job ownership is still held through the native drain.
     connections.abort_all();
     while connections.join_next().await.is_some() {}
-    jobs.await??;
+    let mut registry = jobs.await??;
     let mut state = Arc::try_unwrap(state)
         .map_err(|_| anyhow::anyhow!("project query handlers survived drain"))?;
     state.tools.close().await?;
+    // Only the explicit positive capability API arms a session. Strict owners
+    // take the no-op path; never clear based solely on child exit or socket EOF.
+    freshness_kernel.settle_native_owner_after_owned_drain(&mut registry)?;
     drop(lease);
     Ok(())
 }

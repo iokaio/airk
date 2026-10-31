@@ -286,6 +286,10 @@ fn plan(registry: &ServiceRegistry, source: &Path, destination: &Path) -> Result
             format!("integrity:{}", next.binding),
         );
         replacements.insert(
+            format!("owner_session:{}", existing.binding),
+            format!("owner_session:{}", next.binding),
+        );
+        replacements.insert(
             format!("integrity_damage:{}", existing.binding),
             format!("integrity_damage:{}", next.binding),
         );

@@ -503,3 +503,82 @@ fn service_publication_bootstrap_process_death_recovers_each_durable_boundary() 
     }
     Ok(())
 }
+
+#[test]
+fn existing_native_head_preserves_legacy_wal_allowance_and_main_publication() -> Result<()> {
+    use std::io::Read;
+    fn hash(path: &std::path::Path) -> Result<Vec<u8>> {
+        let mut file = fs::File::open(path)?;
+        let mut sha = Sha256::new();
+        let mut chunk = [0u8; 65536];
+        loop {
+            let size = file.read(&mut chunk)?;
+            if size == 0 {
+                break;
+            }
+            sha.update(&chunk[..size]);
+        }
+        Ok(sha.finalize().to_vec())
+    }
+    let fixture = service_fixture()?;
+    let capacity = 128 << 20;
+    {
+        let writer = fixture.store.lock()?;
+        fixture
+            .store
+            .current_write(&writer, &fixture.quota, &fixture.scope, CAPACITY)?
+            .grow_capacity(capacity)?;
+        let binding = crate::quota::CurrentGrantScope {
+            collection: fixture.scope.collection.clone(),
+            incarnation: fixture.scope.incarnation,
+            transaction: wal::id(&fixture.scope),
+        };
+        fixture
+            .quota
+            .current_grant(&writer, &binding)?
+            .context("actual WAL grant missing")?
+            .resize(&writer, wal::legacy_total(capacity)?)?;
+    }
+    let expected = fixture.store.current_read(&fixture.scope)?.token()?;
+    let path = fixture.store.directory().join("current.sqlite3");
+    let wal_path = fixture.store.directory().join("current.sqlite3-wal");
+    let owner_path = fixture.store.directory().join(database::OWNER_FILE);
+    let before = (hash(&path)?, hash(&wal_path)?, fs::read(&owner_path)?);
+    let exclusion = fixture.store.existing_writer_exclusion()?;
+    assert_eq!(
+        fixture.store.existing_settled_head(&exclusion)?.token()?,
+        expected
+    );
+    assert_eq!(
+        (hash(&path)?, hash(&wal_path)?, fs::read(&owner_path)?),
+        before
+    );
+    assert!(!fixture.store.directory().join("writer.lock").exists());
+    let shm = fixture.store.directory().join("current.sqlite3-shm");
+    assert!(
+        shm.is_file(),
+        "ordinary admitted SHM bookkeeping is permitted"
+    );
+    let alias = fixture.directory.path().join("unapproved-shm-alias");
+    fs::hard_link(&shm, &alias)?;
+    assert!(
+        fixture.store.existing_settled_head(&exclusion).is_err(),
+        "existing bounded path must retain standard sidecar alias refusal"
+    );
+    fs::remove_file(alias)?;
+    assert_eq!(
+        fixture.store.existing_settled_head(&exclusion)?.token()?,
+        expected
+    );
+    Ok(())
+}
+#[test]
+fn existing_native_allowance_does_not_recreate_missing_ledger_owner() -> Result<()> {
+    let fixture = service_fixture()?;
+    let lock = fixture.quota.root().join(".quota-1.4/ledger.lock");
+    fs::remove_file(&lock)?;
+    let exclusion = fixture.store.existing_writer_exclusion()?;
+    assert!(fixture.store.existing_settled_head(&exclusion).is_err());
+    assert!(!lock.exists());
+    Ok(())
+}

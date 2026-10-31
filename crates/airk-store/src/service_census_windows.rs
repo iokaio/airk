@@ -493,6 +493,73 @@ impl WindowsWalk {
     }
 }
 
+/// Native creation-boundary root only; never enumerates or promotes a census.
+pub(crate) struct NativeRoot {
+    root: AbsoluteRoot,
+    path: PathBuf,
+    identity: [u64; 3],
+}
+impl NativeRoot {
+    pub(crate) fn begin(path: &Path) -> Result<Self> {
+        let root = absolute(path)?;
+        let proof = private_storage::native_boundary(&root.file, Kind::RootDirectory)?
+            .context("native Windows boundary policy unavailable")?;
+        let identity = proof.identity();
+        ensure!(
+            no_alternate_streams(&root.file)?,
+            "native root has unsupported streams"
+        );
+        Ok(Self {
+            root,
+            path: path.into(),
+            identity,
+        })
+    }
+    pub(crate) fn require_creation_chain(&self, boundary: [u64; 3]) -> Result<()> {
+        let mut found = false;
+        for file in self
+            .root
+            ._ancestors
+            .iter()
+            .chain(std::iter::once(&self.root.file))
+        {
+            let md = info(file)?;
+            let id: [u64; 3] = [
+                md.dwVolumeSerialNumber.into(),
+                md.nFileIndexHigh.into(),
+                md.nFileIndexLow.into(),
+            ];
+            if id == boundary {
+                found = true;
+            }
+            if found {
+                let proof = private_storage::native_boundary(file, Kind::RootDirectory)?
+                    .context("native creation ancestor has unsupported inherited grants")?;
+                ensure!(
+                    proof.identity()[0] == boundary[0] && proof.recheck()?,
+                    "native creation boundary changed"
+                );
+            }
+        }
+        ensure!(found, "native directory is outside actual private root");
+        Ok(())
+    }
+    pub(crate) fn identity(&self) -> Result<[u64; 3]> {
+        let current = absolute(&self.path)?;
+        let proof = private_storage::native_boundary(&self.root.file, Kind::RootDirectory)?
+            .context("native Windows boundary policy changed")?;
+        let fresh = private_storage::native_boundary(&current.file, Kind::RootDirectory)?
+            .context("native Windows boundary replaced")?;
+        ensure!(
+            proof.recheck()?
+                && proof.identity() == self.identity
+                && fresh.identity() == self.identity,
+            "native Windows root identity changed"
+        );
+        Ok(self.identity)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
