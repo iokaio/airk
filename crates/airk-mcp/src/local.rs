@@ -66,6 +66,12 @@ pub enum SettingsView {
 
 /// Listing/help require neither a collection nor a source scan.
 pub fn tools() -> Vec<Tool> {
+    static TOOLS: std::sync::OnceLock<Vec<Tool>> = std::sync::OnceLock::new();
+    TOOLS.get_or_init(build_tools).clone()
+}
+
+// Exact bundled definitions only; per-session projects/admission/runtime state stays outside.
+fn build_tools() -> Vec<Tool> {
     let mut tools = AirkServer::tool_router().list_all();
     tools.sort_by(|a, b| a.name.cmp(&b.name));
     tools
@@ -343,6 +349,20 @@ fn retry_native_read<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn immutable_catalog_preserves_exact_definitions_and_isolates_caller_mutation() {
+        let expected = serde_json::to_vec(&build_tools()).unwrap();
+        assert_eq!(serde_json::to_vec(&tools()).unwrap(), expected);
+        let mut changed = tools();
+        changed[0].description = Some("caller-local description".into());
+        std::sync::Arc::make_mut(&mut changed[0].input_schema)
+            .insert("caller-local".into(), serde_json::json!(true));
+        changed.reverse();
+        changed.pop();
+        assert_ne!(serde_json::to_vec(&changed).unwrap(), expected);
+        assert_eq!(serde_json::to_vec(&tools()).unwrap(), expected);
+    }
+
     #[test]
     fn native_read_retries_only_typed_contention_with_one_deadline() {
         use std::time::{Duration, Instant};

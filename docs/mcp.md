@@ -1,5 +1,7 @@
 # MCP tools
 
+The unpublished 1.8.0 candidate reduces repeated response preparation without changing tool schemas, returned evidence or byte-budget semantics: status shares scalar metadata within one authorized read, inventory counts exact encoded path sizes, help avoids temporary content copies during complete-reply sizing, and immutable built-in catalogs are reused. Dynamic project authority remains per request. See the [implementation and validation ledger](optimizations.md).
+
 `parse` prepares or executes finite read-only evidence plans with schema `airk.parse.request/1`, one of text/recipe/plan and mode prepare/execute. It shares the Workbench native runner, exact publication checks, scope and aggregate budgets. See [examples, limits and qualification](workbench/implementation.md). It works without Explorer and never writes sources, indexes or invokes an agent.
 
 AIRK uses the official Rust SDK and [stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports). Its stdio lifecycle adapter keeps protocol negotiation per connection; the SDK retains framing, cancellation and request dispatch. Stdout contains only protocol messages during MCP operation; diagnostics use stderr.

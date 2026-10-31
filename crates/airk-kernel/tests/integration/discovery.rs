@@ -294,3 +294,66 @@ fn discovery_binds_revision_filters_representation_and_reports_oversized_records
     );
     Ok(())
 }
+
+#[test]
+fn inventory_record_budget_and_count_limit_choose_identical_continuations() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let expected = ["a.txt", "bΩ.txt", "c中😀.txt"];
+    for path in expected {
+        fs::write(root.path().join(path), "Original budget fixture.\n")?;
+    }
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let first_bytes = serde_json::to_vec(expected[0])?.len();
+    let second_bytes = serde_json::to_vec(expected[1])?.len();
+    let too_small = kernel.list_files("", 3, first_bytes - 1)?;
+    assert!(too_small.paths.is_empty() && too_small.truncated);
+    assert_eq!(too_small.page.record_bytes, Some(0));
+    assert_eq!(too_small.page.required_record_bytes, Some(first_bytes));
+    assert!(too_small.page.cursor.is_none());
+    let by_bytes = kernel.list_files("", 3, first_bytes)?;
+    let by_count = kernel.list_files("", 1, 4096)?;
+    assert_eq!(by_bytes.paths, [expected[0]]);
+    assert_eq!(by_bytes.page.cursor, by_count.page.cursor);
+    assert_eq!(by_bytes.page.record_bytes, by_count.page.record_bytes);
+    assert_eq!(by_bytes.page.record_bytes, Some(first_bytes));
+    assert!(by_bytes.truncated && by_count.truncated);
+    let pair_budget = first_bytes + second_bytes;
+    let pair = kernel.list_files("", 3, pair_budget)?;
+    assert_eq!(pair.paths, expected[..2]);
+    assert_eq!(pair.page.record_bytes, Some(pair_budget));
+    assert_eq!(
+        pair.page.cursor,
+        kernel.list_files("", 2, 4096)?.page.cursor
+    );
+    let below = kernel.list_files("", 3, pair_budget - 1)?;
+    assert_eq!(below.paths, [expected[0]]);
+    let options = DiscoveryOptions {
+        cursor: by_bytes.page.cursor,
+        ..Default::default()
+    };
+    let too_small_continuation = kernel.list_files_page("", 3, second_bytes - 1, &options)?;
+    assert!(too_small_continuation.paths.is_empty() && too_small_continuation.truncated);
+    assert_eq!(
+        too_small_continuation.page.required_record_bytes,
+        Some(second_bytes)
+    );
+    assert_eq!(too_small_continuation.page.cursor, options.cursor);
+    let second = kernel.list_files_page("", 1, second_bytes, &options)?;
+    assert_eq!(second.paths, [expected[1]]);
+    assert_eq!(second.page.record_bytes, Some(second_bytes));
+    let tail = kernel.list_files_page(
+        "",
+        3,
+        4096,
+        &DiscoveryOptions {
+            cursor: second.page.cursor,
+            ..Default::default()
+        },
+    )?;
+    assert_eq!(tail.paths, [expected[2]]);
+    assert!(!tail.truncated && tail.page.cursor.is_none());
+    Ok(())
+}

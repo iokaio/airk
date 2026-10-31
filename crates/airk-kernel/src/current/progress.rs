@@ -6,7 +6,7 @@ use airk_core::{
 };
 use airk_store::{
     FileStore,
-    current::{CurrentRead, resources::ResourceChange},
+    current::{CurrentRead, collection::CollectionState, resources::ResourceChange},
     quota::Reservation,
 };
 use anyhow::{Result, ensure};
@@ -154,7 +154,23 @@ pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<Discove
     let total = read
         .collection_state()?
         .map_or(0, |state| state.counts.files);
-    Ok(DiscoveryReadiness {
+    Ok(ready(total))
+}
+
+/// Keep work authoritative while reusing this read's already-authenticated scalar metadata.
+pub(super) fn readiness_with_state(
+    read: &CurrentRead,
+    store: &FileStore,
+    state: &CollectionState,
+) -> Result<DiscoveryReadiness> {
+    if let Some(work) = read_work(read, store)? {
+        return Ok(work.readiness());
+    }
+    Ok(ready(state.counts.files))
+}
+
+fn ready(total: u64) -> DiscoveryReadiness {
+    DiscoveryReadiness {
         version: 1,
         state: DiscoveryState::Ready,
         epoch: None,
@@ -162,7 +178,7 @@ pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<Discove
         committed_artifacts: total,
         total_artifacts: Some(total),
         failure: None,
-    })
+    }
 }
 
 pub(super) fn read_work(read: &CurrentRead, store: &FileStore) -> Result<Option<ScanWork>> {

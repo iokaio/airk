@@ -59,6 +59,12 @@ fn definition(name: &str, description: &str, schema: Value, read_only: bool) -> 
         "annotations":{"readOnlyHint":read_only,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}})).expect("static tool definition")
 }
 pub fn tools() -> Vec<Tool> {
+    static TOOLS: std::sync::OnceLock<Vec<Tool>> = std::sync::OnceLock::new();
+    TOOLS.get_or_init(build_tools).clone()
+}
+
+// Exact bundled definitions only; per-session projects/admission/runtime state stays outside.
+fn build_tools() -> Vec<Tool> {
     let mut result: Vec<Tool> = crate::local::tools()
         .into_iter()
         .map(|tool| {
@@ -546,6 +552,20 @@ mod tests {
             .await
             .unwrap()
     }
+    #[test]
+    fn immutable_catalog_preserves_exact_definitions_and_isolates_caller_mutation() {
+        let expected = serde_json::to_vec(&build_tools()).unwrap();
+        assert_eq!(serde_json::to_vec(&tools()).unwrap(), expected);
+        let mut changed = tools();
+        changed[0].description = Some("caller-local description".into());
+        std::sync::Arc::make_mut(&mut changed[0].input_schema)
+            .insert("caller-local".into(), serde_json::json!(true));
+        changed.reverse();
+        changed.pop();
+        assert_ne!(serde_json::to_vec(&changed).unwrap(), expected);
+        assert_eq!(serde_json::to_vec(&tools()).unwrap(), expected);
+    }
+
     #[test]
     fn one_catalog_has_unique_unprefixed_names_and_honest_effect_annotations() {
         let catalog = tools();

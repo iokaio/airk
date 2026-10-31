@@ -8,7 +8,8 @@ use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingCacheStats, Embeddin
 use airk_store::{
     FileStore,
     current::{
-        ArtifactChange, CapturedInput, CurrentRead, MAX_PENDING_INPUTS, resources::ResourceChange,
+        ArtifactChange, CapturedInput, CurrentRead, MAX_PENDING_INPUTS,
+        collection::CollectionState, resources::ResourceChange,
     },
     quota::Reservation,
 };
@@ -207,6 +208,16 @@ pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<Semanti
     let state = read
         .collection_state()?
         .context("current configuration missing")?;
+    readiness_with_state(read, store, &state, policy)
+}
+
+/// Reuse scalar metadata from this exact authorized read; callers retain policy-read ordering.
+pub(super) fn readiness_with_state(
+    read: &CurrentRead,
+    store: &FileStore,
+    state: &CollectionState,
+    policy: DefaultSearchPolicy,
+) -> Result<SemanticReadiness> {
     if crate::shared_models::semantic_upgrade_pending(store, state.configuration.model.as_ref()) {
         return Ok(SemanticReadiness {
             version: 1,
@@ -226,9 +237,6 @@ pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<Semanti
     if let Some(work) = read_work(read, store)? {
         return Ok(work.readiness(policy));
     }
-    let state = read
-        .collection_state()?
-        .context("current configuration missing")?;
     let c = &state.configuration;
     let enabled = c.model.is_some();
     Ok(SemanticReadiness {

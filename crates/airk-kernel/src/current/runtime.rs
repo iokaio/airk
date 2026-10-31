@@ -31,8 +31,9 @@ impl Kernel {
         let state = read
             .collection_state()?
             .context("current collection configuration missing")?;
-        let semantic = super::enrichment::readiness(&read, &self.store)?;
-        let discovery = super::progress::readiness(&read, &self.store)?;
+        let policy = super::enrichment::read_policy(&read, &self.store)?;
+        let semantic = super::enrichment::readiness_with_state(&read, &self.store, &state, policy)?;
+        let discovery = super::progress::readiness_with_state(&read, &self.store, &state)?;
         let pending = crate::shared_models::semantic_upgrade_pending(
             &self.store,
             state.configuration.model.as_ref(),

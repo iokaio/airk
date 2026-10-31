@@ -1357,3 +1357,103 @@ fn publication_cadence_amortizes_cost_with_bounded_delay() {
     }
     assert_eq!(publication_interval(Duration::MAX), Duration::from_secs(30));
 }
+
+#[test]
+fn scalar_summary_preserves_policy_semantic_and_discovery_corruption_precedence() -> Result<()> {
+    use airk_core::readiness::DefaultSearchPolicy;
+    let root = model_data_directory()?;
+    let data = model_data_directory()?;
+    write_static_test_model(&data.path().join("models/local"))?;
+    std::fs::write(root.path().join("fixture.txt"), "authenticate original\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.scheduled_index(false, false)?;
+    kernel.set_default_semantic_search_policy(DefaultSearchPolicy::LexicalWhilePending)?;
+    let read = kernel.current_reader()?;
+    let state = read.collection_state()?.expect("published state");
+    let mut resources = Vec::new();
+    for key in ["semantic-policy", "semantic-work", "scan-work"] {
+        let reference = read.resource_reference(key)?.expect("fixture resource");
+        let path = kernel
+            .store
+            .directory()
+            .join("current-resources")
+            .join(format!("{}.json", reference.digest));
+        let original = std::fs::read(&path)?;
+        resources.push((path, original));
+    }
+    assert_eq!(
+        resources
+            .iter()
+            .map(|(path, _)| path)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        3,
+        "precedence requires independently damaged resources"
+    );
+    // Give each independently authenticated resource a distinct failure. A byte
+    // mutation is rejected before read_work's typed-decode context is attached.
+    std::fs::write(&resources[0].0, b"")?;
+    let mut corrupt = resources[1].1.clone();
+    corrupt[0] ^= 1;
+    std::fs::write(&resources[1].0, corrupt)?;
+    std::fs::remove_file(&resources[2].0)?;
+    let policy_error = format!(
+        "{:#}",
+        super::super::enrichment::read_policy(&read, &kernel.store).unwrap_err()
+    );
+    let semantic_error = format!(
+        "{:#}",
+        super::super::enrichment::read_work(&read, &kernel.store).unwrap_err()
+    );
+    let discovery_error = format!(
+        "{:#}",
+        super::super::progress::readiness(&read, &kernel.store).unwrap_err()
+    );
+    assert_ne!(policy_error, semantic_error);
+    assert_ne!(policy_error, discovery_error);
+    assert_ne!(semantic_error, discovery_error);
+    // Acquiring the same published read and scalar state does not preempt the
+    // independently ordered resource errors.
+    let fresh = kernel.current_reader()?;
+    assert_eq!(fresh.token()?, read.token()?);
+    assert_eq!(
+        fresh
+            .collection_state()?
+            .expect("same scalar state")
+            .counts
+            .files,
+        state.counts.files
+    );
+    assert_eq!(
+        format!("{:#}", kernel.status_summary().unwrap_err()),
+        policy_error
+    );
+    std::fs::write(&resources[0].0, &resources[0].1)?;
+    assert_eq!(
+        format!("{:#}", kernel.status_summary().unwrap_err()),
+        semantic_error
+    );
+    // Standalone readiness retains policy -> state -> upgrade -> semantic work.
+    assert_eq!(
+        format!(
+            "{:#}",
+            super::super::enrichment::readiness(&read, &kernel.store).unwrap_err()
+        ),
+        semantic_error
+    );
+    std::fs::write(&resources[1].0, &resources[1].1)?;
+    assert_eq!(
+        format!("{:#}", kernel.status_summary().unwrap_err()),
+        discovery_error
+    );
+    assert_eq!(
+        format!(
+            "{:#}",
+            super::super::progress::readiness_with_state(&read, &kernel.store, &state).unwrap_err()
+        ),
+        discovery_error
+    );
+    std::fs::write(&resources[2].0, &resources[2].1)?;
+    assert!(kernel.status_summary().is_ok());
+    Ok(())
+}
