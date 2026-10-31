@@ -21,6 +21,13 @@ const APPLICATION: i64 = 0x41535256;
 const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_PROJECTS: usize = 1024;
 
+#[path = "service_scope.rs"]
+mod scope;
+pub use scope::{
+    SavedScopeExpired, SavedScopeObservation, SavedScopeResolution, SavedScopeStamp,
+    source_scope_retryable,
+};
+
 /// Only callers that have established a read-only operation may retry this failure.
 /// Corruption, I/O, validation and missing records remain ordinary failures.
 pub fn is_read_contention(error: &anyhow::Error) -> bool {
@@ -246,6 +253,10 @@ impl ServiceRegistry {
     /// Observe only an existing completed registry. Never initialize, migrate,
     /// prune receipts, or acquire service ownership for down-service diagnostics.
     pub fn open_saved(root: &Path) -> Result<Self> {
+        Self::open_saved_before(root, None)
+    }
+    pub fn open_saved_before(root: &Path, deadline: Option<std::time::Instant>) -> Result<Self> {
+        scope::scope_remaining(deadline)?;
         let root = root.canonicalize()?;
         let namespace = retained_namespace(&root)?;
         let path = root.join("service-1.4.sqlite3");
@@ -257,12 +268,16 @@ impl ServiceRegistry {
                 "unexpected service registry overlay"
             );
         }
+        #[cfg(test)]
+        scope::record_saved_open();
         let connection =
             Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        connection.busy_timeout(Duration::from_secs(2))?;
+        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
         connection.execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-8192;")?;
+        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
         let application: i64 =
             connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
             application == APPLICATION && (2..=10).contains(&version),
@@ -274,10 +289,14 @@ impl ServiceRegistry {
             registration_state: version >= 5,
             watch_traversal_state: version >= 7,
         };
+        registry
+            .connection
+            .busy_timeout(scope::scope_remaining(deadline)?)?;
         ensure!(
             registry.incarnation()? == namespace,
             "service registry ownership mismatch"
         );
+        scope::scope_remaining(deadline)?;
         Ok(registry)
     }
 
@@ -755,6 +774,9 @@ impl ServiceRegistry {
                 "INSERT INTO projects(binding,payload,epoch,paused,registered) VALUES(?1,?2,(SELECT request_epoch FROM service_meta WHERE id=1),0,1)",
                 params![registration.binding.to_string(), payload],
             )?;
+            bump(&transaction)?;
+        }
+        if removed && !newly_active {
             bump(&transaction)?;
         }
         if newly_active && let Some(enabled) = setup_watch {
@@ -1416,6 +1438,55 @@ mod tests {
         assert!(ledger.register(&rebound).is_err());
         assert_eq!(ledger.get(one.binding)?.registration, one);
         assert!(ledger.get(one.binding)?.paused);
+        Ok(())
+    }
+    #[test]
+    fn active_registration_clearing_tombstone_must_advance_registry_revision() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let base = temporary.path().canonicalize()?;
+        let control = base.join("control");
+        let source = base.join("source");
+        let first_data = base.join("first-data");
+        let second_data = base.join("second-data");
+        for path in [&control, &source, &first_data, &second_data] {
+            fs::create_dir(path)?;
+        }
+        let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([61; 16]))?;
+        let first = ProjectRegistration::new(
+            source.to_str().unwrap().into(),
+            first_data.to_str().unwrap().into(),
+            "first".into(),
+        )?;
+        let second = ProjectRegistration::new(
+            source.to_str().unwrap().into(),
+            second_data.to_str().unwrap().into(),
+            "second".into(),
+        )?;
+        registry.register(&first)?;
+        registry.register(&second)?;
+        let epoch = registry.get(second.binding)?.fencing_generation;
+        // A real source disappearance may be processed for one collection before
+        // its sibling; retirement consumes that source child's fenced observation.
+        fs::remove_dir(&source)?;
+        assert!(registry.retire_missing_source(second.binding, epoch, 0)?);
+        assert!(registry.purge_removed_project_turn(second.binding)?);
+        assert!(registry.source_was_removed(&first.root)?);
+        let before = registry.list(None, None, 1)?.revision;
+        fs::create_dir(&source)?;
+        registry.register(&first)?;
+        assert!(!registry.source_was_removed(&first.root)?);
+        let after = registry.list(None, None, 1)?.revision;
+        assert_eq!(
+            after,
+            before + 1,
+            "removing root tombstone changed negative scope without exactly one revision"
+        );
+        registry.register(&first)?;
+        assert_eq!(
+            registry.list(None, None, 1)?.revision,
+            after,
+            "true idempotent registration must remain a no-op"
+        );
         Ok(())
     }
 }

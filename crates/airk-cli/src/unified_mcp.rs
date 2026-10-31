@@ -300,13 +300,120 @@ impl RuntimeReadiness {
         }
     }
 }
+struct SourceLookupOwner {
+    closed: std::sync::atomic::AtomicBool,
+    permit: Arc<tokio::sync::Semaphore>,
+    worker: tokio::sync::Mutex<
+        Option<tokio::task::JoinHandle<Result<Arc<crate::service_frontend::RootObservation>>>>,
+    >,
+}
+impl SourceLookupOwner {
+    fn new() -> Self {
+        Self {
+            closed: std::sync::atomic::AtomicBool::new(false),
+            permit: Arc::new(tokio::sync::Semaphore::new(1)),
+            worker: tokio::sync::Mutex::new(None),
+        }
+    }
+    fn close(&self) {
+        self.closed
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.permit.close();
+    }
+    async fn run<F>(
+        self: &Arc<Self>,
+        deadline: Instant,
+        work: F,
+    ) -> Result<Arc<crate::service_frontend::RootObservation>>
+    where
+        F: FnOnce() -> Result<Arc<crate::service_frontend::RootObservation>> + Send + 'static,
+    {
+        let permit = tokio::time::timeout_at(
+            tokio::time::Instant::from_std(deadline),
+            self.permit.clone().acquire_owned(),
+        )
+        .await
+        .map_err(|_| airk_store::service::registry::SavedScopeExpired)?
+        .map_err(|_| airk_store::service::registry::SavedScopeExpired)?;
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) || Instant::now() >= deadline {
+            return Err(airk_store::service::registry::SavedScopeExpired.into());
+        }
+        let mut slot =
+            tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), self.worker.lock())
+                .await
+                .map_err(|_| airk_store::service::registry::SavedScopeExpired)?;
+        // A cancelled caller leaves its actual handle in this owner. The permit
+        // is released only by that worker, so any previous handle is completed.
+        if let Some(previous) = slot.as_mut() {
+            let joined = previous
+                .await
+                .context("previous source lookup worker failed");
+            *slot = None;
+            drop(joined?);
+        }
+        if self.closed.load(std::sync::atomic::Ordering::Acquire) || Instant::now() >= deadline {
+            return Err(airk_store::service::registry::SavedScopeExpired.into());
+        }
+        let keep_owner = self.clone();
+        *slot = Some(tokio::task::spawn_blocking(move || {
+            let _owner = keep_owner;
+            let _permit = permit;
+            work()
+        }));
+        let result = slot
+            .as_mut()
+            .expect("owned source lookup")
+            .await
+            .context("source lookup worker failed");
+        *slot = None;
+        result?
+    }
+    async fn shutdown(&self) -> Result<()> {
+        self.close();
+        let mut slot = self.worker.lock().await;
+        if let Some(worker) = slot.as_mut() {
+            let joined = worker.await.context("source lookup drain failed");
+            *slot = None;
+            // Metadata result belongs to its request. Cleanup still reports a
+            // worker panic; cancellation does not invent a replacement result.
+            drop(joined?);
+        }
+        Ok(())
+    }
+}
+impl Drop for SourceLookupOwner {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+#[derive(Default)]
+struct SourceBackendCache {
+    latest_sequence: Option<u64>,
+    current: Option<(
+        (ProjectBinding, airk_core::identity::Incarnation),
+        Arc<crate::project_client::Backend>,
+    )>,
+}
+impl SourceBackendCache {
+    fn admit_sequence(&mut self, sequence: u64) -> bool {
+        if self.latest_sequence.is_some_and(|latest| sequence < latest) {
+            return false;
+        }
+        self.latest_sequence = Some(sequence);
+        true
+    }
+}
 struct RootNative {
     scope: crate::service_frontend::RootScope,
     control: PathBuf,
     install: PathBuf,
     ready: Arc<RuntimeReadiness>,
     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
-    backend: tokio::sync::Mutex<Option<(ProjectBinding, Arc<dyn RemoteTools>)>>,
+    sequence: std::sync::atomic::AtomicU64,
+    observation: std::sync::Mutex<Option<Arc<crate::service_frontend::RootObservation>>>,
+    lookup: Arc<SourceLookupOwner>,
+    backend: tokio::sync::Mutex<SourceBackendCache>,
 }
 impl RemoteTools for RootNative {
     fn client(&self, client: airk_core::usage::ClientFamily) {
@@ -315,39 +422,102 @@ impl RemoteTools for RootNative {
     fn call(&self, tool: String, arguments: Map<String, Value>) -> RemoteFuture<'_> {
         Box::pin(async move {
             self.ready.ensure(&self.install, &self.control).await?;
+            let sequence = self
+                .sequence
+                .fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |value| value.checked_add(1),
+                )
+                .map_err(|_| anyhow::anyhow!("source observation sequence exhausted"))?;
             let control = self.control.clone();
             let scope = self.scope.clone();
-            let observed = control.clone();
-            let resolved = tokio::task::spawn_blocking(move || scope.resolve(&observed)).await??;
-            let registration = match resolved {
+            let observed_control = control.clone();
+            let admission = Instant::now() + Duration::from_secs(2);
+            let candidate = self
+                .observation
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .clone();
+            let previous = candidate.clone();
+            let observed = match self
+                .lookup
+                .run(admission, move || {
+                    scope.observe_cached(&observed_control, candidate, admission)
+                })
+                .await
+            {
+                Ok(observed) => observed,
+                Err(error) if airk_store::service::registry::source_scope_retryable(&error) => {
+                    return Ok(crate::project_client::source_scope_superseded());
+                }
+                Err(error) => return Err(error),
+            };
+            let source_cached = previous
+                .as_ref()
+                .is_some_and(|old| Arc::ptr_eq(old, &observed));
+            let mut cached = self.backend.lock().await;
+            // An older snapshot cannot resurrect a backend/receipt namespace
+            // after a later request already admitted its replacement.
+            if Instant::now() >= admission
+                || !observed.fresh_at(Instant::now())
+                || !cached.admit_sequence(sequence)
+            {
+                return Ok(crate::project_client::source_scope_superseded());
+            }
+            *self
+                .observation
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()) = Some(observed.clone());
+            let registration = match &observed.resolution {
                 crate::service_frontend::RootResolution::Registered(registration) => registration,
                 other => {
-                    *self.backend.lock().await = None;
-                    let (code, state, message) = root_failure(other);
+                    cached.current = None;
+                    let (code, state, message) = root_failure(match other {
+                        crate::service_frontend::RootResolution::Missing => {
+                            crate::service_frontend::RootResolution::Missing
+                        }
+                        crate::service_frontend::RootResolution::Removed => {
+                            crate::service_frontend::RootResolution::Removed
+                        }
+                        crate::service_frontend::RootResolution::Ambiguous => {
+                            crate::service_frontend::RootResolution::Ambiguous
+                        }
+                        _ => unreachable!(),
+                    });
                     return Ok(if tool == "airk_status" {
                         airk_mcp::unified::success(
-                            json!({"version":env!("CARGO_PKG_VERSION"),"health":"needs_attention","index_state":"unavailable","files":null,"chunks":null,"publication":null,"registration_state":state,"source_root":self.scope.root,"index_error":{"code":code,"message":message}}),
+                            json!({"version":env!("CARGO_PKG_VERSION"),"health":"needs_attention","index_state":"unavailable","files":null,"chunks":null,"publication":null,"registration_state":state,"source_root":self.scope.root,"observed_unix_ms":observed.observed_unix_ms,"cache_age_ms":observed.age_ms(),"cached":source_cached,"index_error":{"code":code,"message":message}}),
                         )
                     } else {
                         airk_mcp::unified::failure(code, message)
                     });
                 }
             };
-            let backend = {
-                let mut cached = self.backend.lock().await;
-                if cached
-                    .as_ref()
-                    .is_none_or(|(binding, _)| *binding != registration.binding)
-                {
-                    *cached = Some((
-                        registration.binding,
-                        crate::project_client::tools(control, registration.binding),
-                    ));
-                }
-                cached.as_ref().unwrap().1.clone()
-            };
+            let fence = observed
+                .fence
+                .context("registered source observation has no fence")?;
+            ensure!(
+                fence.project == registration.binding,
+                "crossed source observation"
+            );
+            let key = (registration.binding, fence.namespace);
+            if cached
+                .current
+                .as_ref()
+                .is_none_or(|(current, _)| *current != key)
+            {
+                cached.current = Some((
+                    key,
+                    crate::project_client::source_tools(control, registration.binding),
+                ));
+            }
+            let backend = cached.current.as_ref().unwrap().1.clone();
+            drop(cached);
             backend.client(*self.client.lock().unwrap());
-            backend.call(tool, arguments).await
+            backend
+                .call_observed_until(tool, arguments, fence, observed.expires_at())
+                .await
         })
     }
 }
@@ -577,23 +747,31 @@ pub async fn serve_roots(
         .iter()
         .map(|scope| (scope.key.clone(), scope.clone()))
         .collect();
+    let mut lookups = Vec::with_capacity(scopes.len());
     let projects = scopes
         .into_iter()
-        .map(|scope| Project {
-            binding: scope.key.clone(),
-            name: scope.root.to_string_lossy().into_owned(),
-            collection: scope
-                .collection
-                .clone()
-                .unwrap_or_else(|| "automatic".into()),
-            backend: Arc::new(RootNative {
-                scope,
-                control: control.clone(),
-                install: install.clone(),
-                ready: ready.clone(),
-                client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
-                backend: tokio::sync::Mutex::new(None),
-            }),
+        .map(|scope| {
+            let lookup = Arc::new(SourceLookupOwner::new());
+            lookups.push(lookup.clone());
+            Project {
+                binding: scope.key.clone(),
+                name: scope.root.to_string_lossy().into_owned(),
+                collection: scope
+                    .collection
+                    .clone()
+                    .unwrap_or_else(|| "automatic".into()),
+                backend: Arc::new(RootNative {
+                    scope,
+                    control: control.clone(),
+                    install: install.clone(),
+                    ready: ready.clone(),
+                    client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
+                    sequence: std::sync::atomic::AtomicU64::new(0),
+                    observation: std::sync::Mutex::new(None),
+                    lookup,
+                    backend: tokio::sync::Mutex::new(SourceBackendCache::default()),
+                }),
+            }
         })
         .collect();
     let explorer = descriptor.map(|descriptor| {
@@ -607,12 +785,28 @@ pub async fn serve_roots(
     let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
     crate::client_owner::watch()?;
     let close = ready.clone();
+    let lookup_close = lookups.clone();
     let served = airk_mcp::remote::serve_with_input_lifecycle(
         Arc::new(backend),
-        Arc::new(move || close.close_admission()),
+        Arc::new(move || {
+            close.close_admission();
+            for lookup in &lookup_close {
+                lookup.close();
+            }
+        }),
     )
     .await;
-    let cleanup = ready.shutdown().await;
+    let mut cleanup = ready.shutdown().await;
+    for lookup in &lookups {
+        if let Err(error) = lookup.shutdown().await {
+            cleanup = Err(match cleanup {
+                Ok(()) => error,
+                Err(primary) => {
+                    primary.context(format!("source lookup cleanup also failed: {error:#}"))
+                }
+            });
+        }
+    }
     match (served, cleanup) {
         (Err(error), Err(cleanup)) => Err(error.context(format!(
             "runtime readiness cleanup also failed: {cleanup:#}"
@@ -1112,6 +1306,197 @@ mod readiness_tests {
             "second shutdown joined the blocking worker"
         );
         assert!(waiting.await.is_err());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_backend_sequence_tests {
+    use super::*;
+
+    #[test]
+    fn old_namespace_observation_cannot_repopulate_replaced_backend() {
+        let project = "ab".repeat(32).parse().unwrap();
+        let old_namespace = airk_core::identity::Incarnation::from_bytes([1; 16]);
+        let new_namespace = airk_core::identity::Incarnation::from_bytes([2; 16]);
+        let mut cache = SourceBackendCache::default();
+        assert!(cache.admit_sequence(1));
+        cache.current = Some((
+            (project, old_namespace),
+            crate::project_client::source_tools(PathBuf::new(), project),
+        ));
+        assert!(cache.admit_sequence(3));
+        let replacement = crate::project_client::source_tools(PathBuf::new(), project);
+        cache.current = Some(((project, new_namespace), replacement.clone()));
+        // Snapshot 2 was taken in namespace 1, but resumes after namespace 2 won.
+        assert!(!cache.admit_sequence(2));
+        let (key, retained) = cache.current.as_ref().unwrap();
+        assert_eq!(*key, (project, new_namespace));
+        assert!(Arc::ptr_eq(retained, &replacement));
+    }
+}
+
+#[cfg(test)]
+mod source_lookup_ownership_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[tokio::test(flavor = "current_thread")]
+    async fn four_cancelled_callers_cannot_release_blocked_lookup_or_accumulate_workers()
+    -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let scope = crate::service_frontend::RootScope::new(temporary.path(), None)?;
+        let control = temporary.path().join("control");
+        std::fs::create_dir(&control)?;
+        let owner = Arc::new(SourceLookupOwner::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, held) = std::sync::mpsc::channel();
+        let request_owner = owner.clone();
+        let counted = calls.clone();
+        let root = scope.clone();
+        let path = control.clone();
+        let first = tokio::spawn(async move {
+            request_owner
+                .run(Instant::now() + Duration::from_secs(30), move || {
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    let _ = entered.send(());
+                    held.recv()?;
+                    Ok(Arc::new(root.observe(&path)?))
+                })
+                .await
+        });
+        started.await?;
+        let mut requests = vec![first];
+        for _ in 0..3 {
+            let request_owner = owner.clone();
+            let counted = calls.clone();
+            let root = scope.clone();
+            let path = control.clone();
+            requests.push(tokio::spawn(async move {
+                request_owner
+                    .run(Instant::now() + Duration::from_secs(30), move || {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                        Ok(Arc::new(root.observe(&path)?))
+                    })
+                    .await
+            }));
+        }
+        tokio::task::yield_now().await;
+        for request in &requests {
+            request.abort();
+        }
+        for request in requests {
+            assert!(matches!(request.await,Err(error) if error.is_cancelled()));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            owner.permit.available_permits(),
+            0,
+            "caller Drop cannot release actual worker admission"
+        );
+        assert!(
+            owner
+                .worker
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|worker| !worker.is_finished())
+        );
+        let root = scope.clone();
+        let path = control.clone();
+        assert!(
+            owner
+                .run(Instant::now(), move || Ok(Arc::new(root.observe(&path)?)))
+                .await
+                .is_err()
+        );
+        let mut drain = Box::pin(owner.shutdown());
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(drain.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(drain);
+        assert!(
+            owner.worker.lock().await.is_some(),
+            "cancelled drain retains actual handle"
+        );
+        release.send(())?;
+        owner.shutdown().await?;
+        assert!(owner.worker.lock().await.is_none());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(std::fs::read_dir(&control)?.next().is_none());
+        let path = control.clone();
+        assert!(
+            owner
+                .run(Instant::now() + Duration::from_secs(2), move || Ok(
+                    Arc::new(scope.observe(&path)?)
+                ))
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_selector_wait_tests {
+    use super::*;
+    #[tokio::test]
+    async fn scope_deadline_expired_while_selector_waited_is_unsubmitted_and_never_cached()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let source = owner.path().join("source");
+        let control = owner.path().join("control");
+        std::fs::create_dir(&source)?;
+        std::fs::create_dir(&control)?;
+        let ready = Arc::new(RuntimeReadiness::default());
+        *ready.state.lock().await = ReadinessState::Ready; // isolate selection after authenticated setup.
+        let native = Arc::new(RootNative {
+            scope: crate::service_frontend::RootScope::new(&source, None)?,
+            control: control.clone(),
+            install: owner.path().join("unused-install"),
+            ready,
+            client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
+            sequence: std::sync::atomic::AtomicU64::new(0),
+            observation: std::sync::Mutex::new(None),
+            lookup: Arc::new(SourceLookupOwner::new()),
+            backend: tokio::sync::Mutex::new(SourceBackendCache::default()),
+        });
+        let guard = native.backend.lock().await;
+        let request_native = native.clone();
+        let request =
+            tokio::spawn(
+                async move { request_native.call("airk_status".into(), Map::new()).await },
+            );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if native.sequence.load(std::sync::atomic::Ordering::Relaxed) == 1
+                    && native.lookup.permit.available_permits() == 1
+                    && native.lookup.worker.lock().await.is_none()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await?;
+        // Metadata completed; only the selector lock remains. Advance beyond
+        // the original two-second absolute admission, with no latency assertion.
+        tokio::time::sleep(Duration::from_millis(2050)).await;
+        drop(guard);
+        let reply = request.await??;
+        let detail: Value = serde_json::from_str(
+            reply["content"][0]["text"]
+                .as_str()
+                .context("retry body missing")?,
+        )?;
+        assert_eq!(detail["error"]["query_submitted"], false);
+        assert_eq!(detail["error"]["retryable"], true);
+        assert!(native.observation.lock().unwrap().is_none());
+        assert!(native.backend.lock().await.current.is_none());
+        native.lookup.shutdown().await?;
+        assert!(std::fs::read_dir(control)?.next().is_none());
         Ok(())
     }
 }
