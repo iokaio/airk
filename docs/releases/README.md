@@ -4,6 +4,8 @@ Versioned release notes and dated release evidence live here. Each record retain
 
 ## Versions
 
+- [1.8.0](./release-1.8.0.md) — unpublished source candidate: synchronized versions and supported forward upgrade policy; optimization phases pending
+
 - [1.7.6](./release-1.7.6.md) — published stable release (2026-10-31): review 02 follow-up (setup review, native execution control, uninstall cleanup, data purge, advisory gate)
 - [1.7.3](./release-1.7.3.md) — published stable release: Marketplace images, release promotion and repository review fixes
 

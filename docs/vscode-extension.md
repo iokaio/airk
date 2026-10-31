@@ -1,10 +1,12 @@
 # Native VS Code extension
 
+**1.8.0 source candidate (unpublished):** [candidate preparation](releases/release-1.8.0.md) synchronizes package versions and admits supported forward runtime upgrades through the 1.8 line. Optimization phases remain pending; no performance improvement is claimed.
+
 **1.7.6 stable release (published 2026-10-31):** [first-use review, native execution control, uninstall cleanup and data purge](releases/release-1.7.6.md). Published 1.7.3: [Marketplace image links and release promotion](releases/release-1.7.3.md).
 
 Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order and pending extension replacement may still require Reload Window.
 
-The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed, and the current source candidate is **1.7.6**.
+The [Workbench](workbench/implementation.md) adds a secondary-sidebar transcript, shared native `parse`, evidence recipes, copy/export and local sessions. Open it with **AIRK: Open Workbench**. Workbench was introduced in published 1.7.2; published 1.7.3 followed, and the current source candidate is **1.8.0**.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 
