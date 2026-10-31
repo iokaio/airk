@@ -374,14 +374,14 @@ async fn native_mcp_eof_joins_installer_wait_without_late_startup() -> Result<()
             ensure!(fs::read(&receipt).ok() == receipt_before && fs::read(&bootstrap).ok() == bootstrap_before,
                 "static initialization/catalog/help changed startup receipts");
             input.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{}}}\n").await?;
-            let status = tokio::time::timeout(Duration::from_secs(10), lines.next_line())
+            let status = tokio::time::timeout(Duration::from_secs(15), lines.next_line())
                 .await.context("EOF fixture first native response deadline")??.context("first native deadline response missing")?;
             fs::write(diagnostics.join("eof-first-status.json"), &status)?;
             let status: serde_json::Value = serde_json::from_str(&status)?;
             let value: serde_json::Value = serde_json::from_str(
                 status["result"]["content"][0]["text"].as_str().context("status content missing")?
             )?;
-            ensure!(value["index_error"]["code"] == "status_timeout", "native request did not reach retained setup deadline: {value}");
+            ensure!(value["index_error"]["code"] == "status_timeout" && value["index_error"]["stage"] == "setup", "native request did not reach original setup deadline: {value}");
             ensure!(value["publication"].is_null(), "deadline fabricated index publication");
             input.shutdown().await?;
             drop(input);
@@ -408,4 +408,89 @@ async fn native_mcp_eof_joins_installer_wait_without_late_startup() -> Result<()
             .with_context(|| format!("cold frontend scenario {mode}"))?;
     }
     Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires a freshly built sealed pair and explicit approved digest; run serially"]
+async fn native_mcp_pending_health_eof_drains_without_late_startup() -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let fixture = NativeFixture::new().await?;
+    let result=async{
+        let mut health=fixture.health().await?;
+        // A valid, authenticated draining observation follows the ordinary
+        // health-unavailable continuation; it is not malformed metadata.
+        health.policy.accepting=false;
+        fixture.cleanup().await?;
+        let source=fixture._owner.path().join("pending-health-source");
+        fs::create_dir(&source)?;let content=b"Original pending-health EOF fixture.\n";
+        fs::write(source.join("README.md"),content)?;
+        let registry=airk_store::service::registry::ServiceRegistry::open_saved(&fixture.control)?;
+        ensure!(!registry.service_explicitly_stopped()?,"STOP barrier masks pending EOF admission");drop(registry);
+        layout::validate_control(&fixture.control)?;
+        let mut listener=local_ipc::Listener::bind(&local_ipc::endpoint(&fixture.control,"control")?)?;
+        let (entered,began)=tokio::sync::oneshot::channel();
+        let (release,released)=tokio::sync::oneshot::channel();let mut release=Some(release);
+        let peer_body=async move{
+            let mut stream=listener.accept().await?;
+            let request:airk_core::service::ControlRequest=local_ipc::read_message(&mut stream,Duration::from_secs(15)).await?
+                .context("pending EOF health request missing")?;
+            ensure!(matches!(request.method,ControlMethod::Health),"pending EOF peer received non-health operation");
+            let _=entered.send(());released.await.context("pending EOF health release dropped")?;
+            local_ipc::write_message(&mut stream,&ControlResponse::Health{observation:Box::new(health)},Duration::from_secs(5)).await?;
+            Ok::<(),anyhow::Error>(())
+        };
+        let receipt=fixture.root.join(format!("startup-{}.json",fixture.identity));let bootstrap=fixture.root.join("bootstrap.json");
+        let before=(fs::read(&receipt).ok(),fs::read(&bootstrap).ok());
+        let diagnostics=PathBuf::from(std::env::var_os("AIRK_NATIVE_EOF_DIAGNOSTIC_DIR")
+            .context("AIRK_NATIVE_EOF_DIAGNOSTIC_DIR must name owned external diagnostics")?).join("pending-health");
+        fs::create_dir(&diagnostics)?;
+        let stderr=OpenOptions::new().write(true).create_new(true).open(diagnostics.join("child-stderr.log"))?;
+        let executable=fixture.root.join("runtimes").join(&fixture.identity).join(main_name());
+        let mut child=tokio::process::Command::new(executable).arg("--service-install-dir").arg(&fixture.root)
+            .arg("--root").arg(&source).arg("mcp").stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::from(stderr)).kill_on_drop(true).spawn()?;
+        let mut peer=tokio::spawn(peer_body);
+        let exchange=async{
+            let mut input=child.stdin.take().context("pending EOF child input missing")?;
+            let mut lines=tokio::io::BufReader::new(child.stdout.take().context("pending EOF child output missing")?).lines();
+            input.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"pending-eof-fixture\",\"version\":\"1\"}}}\n").await?;
+            let initialized=tokio::time::timeout(Duration::from_secs(10),lines.next_line()).await??.context("pending EOF initialize missing")?;
+            ensure!(serde_json::from_str::<serde_json::Value>(&initialized)?["result"].is_object(),"pending EOF initialize rejected");
+            input.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{}}}\n").await?;
+            tokio::time::timeout(Duration::from_secs(8),began).await.context("pending EOF native setup did not submit Health before setup expiry")??;
+            ensure!(child.try_wait()?.is_none(),"pending EOF child exited while Health held");
+            ensure!((fs::read(&receipt).ok(),fs::read(&bootstrap).ok())==before,"pending Health already changed startup receipts");
+            input.shutdown().await?;drop(input);
+            // Real Health reception proves accepted setup. The bounded hold now
+            // checks retained drain ownership, rather than inferring admission
+            // solely from an unanswered request or a sleep.
+            ensure!(tokio::time::timeout(Duration::from_millis(250),child.wait()).await.is_err(),"EOF detached accepted Health work");
+            release.take().context("pending EOF release already consumed")?.send(()).map_err(|_|anyhow::anyhow!("pending health owner dropped"))?;
+            let exited=tokio::time::timeout(Duration::from_secs(10),child.wait()).await.context("pending EOF owned child drain deadline")??;
+            ensure!(exited.success(),"pending EOF child failed owned drain");
+            Ok::<(),anyhow::Error>(())
+        }.await;
+        if exchange.is_err(){let _=child.kill().await;let _=child.wait().await;}
+        if let Some(release)=release.take(){let _=release.send(());}
+        let peer_result=match tokio::time::timeout(Duration::from_secs(10),&mut peer).await{
+            Ok(result)=>result.context("pending EOF peer failed").and_then(|value|value),
+            Err(error)=>{peer.abort();let _=peer.await;Err(anyhow::Error::new(error).context("pending EOF peer drain deadline"))}
+        };
+        match(exchange,peer_result){
+            (Err(error),Err(peer))=>return Err(error.context(format!("pending EOF peer cleanup also failed: {peer:#}"))),
+            (Err(error),_)|(_,Err(error))=>return Err(error),_=>{}
+        }
+        ensure!((fs::read(&receipt).ok(),fs::read(&bootstrap).ok())==before,"EOF permitted a late election/bootstrap effect");
+        wait_quiescent(&fixture.root).await?;
+        ensure!(fs::read(source.join("README.md"))?==content,"pending EOF changed source bytes");
+        Ok(())
+    }.await;
+    let cleanup = fixture.cleanup().await;
+    match (result, cleanup) {
+        (Err(error), Err(cleanup)) => {
+            Err(error.context(format!("pending EOF cleanup also failed: {cleanup:#}")))
+        }
+        (Err(error), _) | (_, Err(error)) => Err(error),
+        _ => Ok(()),
+    }
 }

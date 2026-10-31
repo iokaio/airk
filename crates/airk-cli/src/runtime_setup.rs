@@ -113,6 +113,10 @@ impl SetupCancellation {
         outcome?
     }
     #[cfg(test)]
+    pub(crate) fn admission_is_closed(&self) -> bool {
+        self.checkpoint().is_err()
+    }
+    #[cfg(test)]
     pub(crate) fn worker_is_owned(&self) -> bool {
         match self.worker.try_lock() {
             Ok(slot) => slot.is_some(),

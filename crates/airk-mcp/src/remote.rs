@@ -12,7 +12,24 @@ use std::{future::Future, pin::Pin, sync::Arc};
 
 pub type RemoteFuture<'a> =
     Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send + 'a>>;
+pub type ReadyFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
+#[derive(Debug)]
+pub struct PreparationExpired;
+impl std::fmt::Display for PreparationExpired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("owned status setup deadline expired")
+    }
+}
+impl std::error::Error for PreparationExpired {}
 pub trait RemoteTools: Send + Sync + 'static {
+    /// Static catalog/help/initialize never invokes this owned setup hook.
+    fn prepare(&self) -> ReadyFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
+    fn close(&self) {}
+    fn shutdown(&self) -> ReadyFuture<'_> {
+        Box::pin(async { Ok(()) })
+    }
     fn catalog(&self) -> Vec<Tool> {
         crate::local::tools()
     }
@@ -100,7 +117,16 @@ impl ServerHandler for Bridge {
 }
 
 pub async fn serve(backend: Arc<dyn RemoteTools>) -> anyhow::Result<()> {
-    serve_with_input_lifecycle(backend, Arc::new(|| {})).await
+    let close = backend.clone();
+    let served = serve_with_input_lifecycle(backend.clone(), Arc::new(move || close.close())).await;
+    let cleanup = backend.shutdown().await;
+    match (served, cleanup) {
+        (Err(error), Err(cleanup)) => Err(error.context(format!(
+            "owned observation cleanup also failed: {cleanup:#}"
+        ))),
+        (Err(error), _) => Err(error),
+        (_, result) => result,
+    }
 }
 
 /// The callback must be synchronous, nonblocking and infallible. It closes

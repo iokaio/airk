@@ -63,6 +63,9 @@ enum ReadinessState {
     Closed,
 }
 struct ReadinessAttempt {
+    started: Instant,
+    completed: std::sync::OnceLock<Instant>,
+    status_deadline: tokio::sync::watch::Sender<bool>,
     result: tokio::sync::watch::Receiver<Option<SharedReadiness>>,
     driver_result: tokio::sync::OnceCell<SharedReadiness>,
     failed_completion: tokio::sync::OnceCell<SharedReadiness>,
@@ -150,9 +153,24 @@ impl RuntimeReadiness {
         self.admission.close();
     }
     async fn ensure(&self, install: &std::path::Path, control: &std::path::Path) -> Result<()> {
+        self.ensure_mode(install, control, false).await
+    }
+    async fn prepare_status(
+        &self,
+        install: &std::path::Path,
+        control: &std::path::Path,
+    ) -> Result<()> {
+        self.ensure_mode(install, control, true).await
+    }
+    async fn ensure_mode(
+        &self,
+        install: &std::path::Path,
+        control: &std::path::Path,
+        status: bool,
+    ) -> Result<()> {
         let install = install.to_path_buf();
         let control = control.to_path_buf();
-        self.run_inner(
+        self.run_inner_status(
             move |setup| async move {
                 let observed = crate::runtime_install::installed_control_cooperative(
                     install,
@@ -163,6 +181,7 @@ impl RuntimeReadiness {
                 Ok(())
             },
             true,
+            status,
         )
         .await
     }
@@ -176,11 +195,25 @@ impl RuntimeReadiness {
         self.run_inner(move |_| initialize(), false).await
     }
 
+    #[cfg(test)]
     async fn run_inner<F, Fut>(&self, initialize: F, cooperative: bool) -> Result<()>
     where
         F: FnOnce(Option<Arc<crate::runtime_install::SetupCancellation>>) -> Fut,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
+        self.run_inner_status(initialize, cooperative, false).await
+    }
+    async fn run_inner_status<F, Fut>(
+        &self,
+        initialize: F,
+        cooperative: bool,
+        status: bool,
+    ) -> Result<()>
+    where
+        F: FnOnce(Option<Arc<crate::runtime_install::SetupCancellation>>) -> Fut,
+        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    {
+        let waiter_started = Instant::now();
         let attempt = {
             let mut state = self.state.lock().await;
             ensure!(
@@ -199,7 +232,13 @@ impl RuntimeReadiness {
                         ))
                     });
                     let future = initialize(setup.clone());
+                    let (status_deadline, mut status_requested) =
+                        tokio::sync::watch::channel(false);
+                    let started = Instant::now();
                     let attempt = Arc::new(ReadinessAttempt {
+                        started,
+                        completed: Default::default(),
+                        status_deadline,
                         result,
                         driver_result: tokio::sync::OnceCell::new(),
                         failed_completion: tokio::sync::OnceCell::new(),
@@ -211,8 +250,28 @@ impl RuntimeReadiness {
                     let task = tokio::spawn(async move {
                         // Retain the owner and its real handle while cooperative
                         // work drains, even if the outer session is dropped.
-                        let _keep_attempt = keep_attempt;
-                        let outcome = future.await.map_err(Arc::new);
+                        let owner = keep_attempt;
+                        let mut future = Box::pin(future);
+                        let mut armed = false;
+                        let outcome = loop {
+                            tokio::select! {
+                                result=&mut future=>break result.map_err(Arc::new),
+                                changed=status_requested.changed(),if !armed=>{
+                                    if changed.is_err(){break Err(Arc::new(anyhow::anyhow!("status setup deadline owner closed")));}
+                                    armed = *status_requested.borrow();
+                                }
+                                _=tokio::time::sleep_until(tokio::time::Instant::from_std(owner.started+Duration::from_secs(10))),if armed=>{
+                                    if let Some(setup)=&owner.setup{
+                                        setup.close(); // no new election; already admitted exact work drains once
+                                        break future.await.map_err(Arc::new);
+                                    }
+                                    break Err(Arc::new(anyhow::Error::new(airk_mcp::remote::PreparationExpired)));
+                                }
+                            }
+                        };
+                        // Publish the completion time before the shared outcome;
+                        // delayed waiters must not infer it from their own poll time.
+                        let _ = owner.completed.set(Instant::now());
                         let _ = sender.send_replace(Some(outcome));
                     });
                     let _ = attempt.abort.set(task.abort_handle());
@@ -223,13 +282,28 @@ impl RuntimeReadiness {
             }
         };
         let mut ticket = attempt.result.clone();
-        let outcome = loop {
-            if let Some(outcome) = ticket.borrow_and_update().clone() {
-                break outcome;
+        if status {
+            attempt.status_deadline.send_replace(true);
+        }
+        let observation = async {
+            loop {
+                if let Some(outcome) = ticket.borrow_and_update().clone() {
+                    break outcome;
+                }
+                if ticket.changed().await.is_err() {
+                    break attempt.failed_join().await;
+                }
             }
-            if ticket.changed().await.is_err() {
-                break attempt.failed_join().await;
-            }
+        };
+        let outcome = if status {
+            tokio::time::timeout_at(
+                tokio::time::Instant::from_std(attempt.started + Duration::from_secs(10)),
+                observation,
+            )
+            .await
+            .map_err(|_| airk_mcp::remote::PreparationExpired)?
+        } else {
+            observation.await
         };
         {
             let mut state = self.state.lock().await;
@@ -249,6 +323,19 @@ impl RuntimeReadiness {
             if matches!(*state, ReadinessState::Closed) {
                 anyhow::bail!("runtime readiness session closed");
             }
+        }
+        let deadline = attempt.started + Duration::from_secs(10);
+        if status
+            && waiter_started < deadline
+            && attempt
+                .completed
+                .get()
+                .is_some_and(|finished| *finished >= deadline)
+        {
+            // Settle the real outcome first, retaining physical failure/success.
+            // An original status waiter still receives its expired budget even
+            // if timeout_at polls a prompt cancellation completion first.
+            return Err(airk_mcp::remote::PreparationExpired.into());
         }
         outcome.map_err(|error| anyhow::Error::new(SharedReadinessError(error)))
     }
@@ -413,9 +500,24 @@ struct RootNative {
     sequence: std::sync::atomic::AtomicU64,
     observation: std::sync::Mutex<Option<Arc<crate::service_frontend::RootObservation>>>,
     lookup: Arc<SourceLookupOwner>,
+    status: Arc<crate::project_client::StatusOwner>,
     backend: tokio::sync::Mutex<SourceBackendCache>,
 }
 impl RemoteTools for RootNative {
+    fn close(&self) {
+        self.lookup.close();
+        self.status.close();
+    }
+    fn shutdown(&self) -> airk_mcp::remote::ReadyFuture<'_> {
+        Box::pin(async move { self.status.shutdown().await })
+    }
+    fn prepare(&self) -> airk_mcp::remote::ReadyFuture<'_> {
+        Box::pin(async move {
+            self.ready
+                .prepare_status(&self.install, &self.control)
+                .await
+        })
+    }
     fn client(&self, client: airk_core::usage::ClientFamily) {
         *self.client.lock().unwrap() = client;
     }
@@ -473,6 +575,7 @@ impl RemoteTools for RootNative {
                 crate::service_frontend::RootResolution::Registered(registration) => registration,
                 other => {
                     cached.current = None;
+                    self.status.clear_scope();
                     let (code, state, message) = root_failure(match other {
                         crate::service_frontend::RootResolution::Missing => {
                             crate::service_frontend::RootResolution::Missing
@@ -501,6 +604,9 @@ impl RemoteTools for RootNative {
                 fence.project == registration.binding,
                 "crossed source observation"
             );
+            // This is inside the same monotonic RootNative selector admission.
+            // Older backend callers cannot revert this owner to an old namespace.
+            self.status.source_scope(fence);
             let key = (registration.binding, fence.namespace);
             if cached
                 .current
@@ -509,7 +615,11 @@ impl RemoteTools for RootNative {
             {
                 cached.current = Some((
                     key,
-                    crate::project_client::source_tools(control, registration.binding),
+                    crate::project_client::source_tools_owned(
+                        control,
+                        registration.binding,
+                        self.status.clone(),
+                    ),
                 ));
             }
             let backend = cached.current.as_ref().unwrap().1.clone();
@@ -551,6 +661,20 @@ struct Native {
     backend: Arc<dyn RemoteTools>,
 }
 impl RemoteTools for Native {
+    fn close(&self) {
+        self.backend.close();
+    }
+    fn shutdown(&self) -> airk_mcp::remote::ReadyFuture<'_> {
+        self.backend.shutdown()
+    }
+    fn prepare(&self) -> airk_mcp::remote::ReadyFuture<'_> {
+        Box::pin(async move {
+            if let Some(install) = &self.install {
+                self.ready.prepare_status(install, &self.control).await?;
+            }
+            Ok(())
+        })
+    }
     fn client(&self, client: airk_core::usage::ClientFamily) {
         self.backend.client(client);
     }
@@ -712,15 +836,30 @@ pub async fn serve(
             control: control.clone(),
         }) as Arc<dyn ExplorerTools>
     });
-    let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
+    let backend = Arc::new(Unified::new(
+        projects,
+        (!no_default).then_some(primary),
+        explorer,
+    )?);
     crate::client_owner::watch()?;
     let close = ready.clone();
+    let observation_close = backend.clone();
     let served = airk_mcp::remote::serve_with_input_lifecycle(
-        Arc::new(backend),
-        Arc::new(move || close.close_admission()),
+        backend.clone(),
+        Arc::new(move || {
+            close.close_admission();
+            observation_close.close();
+        }),
     )
     .await;
-    let cleanup = ready.shutdown().await;
+    let observation_cleanup = backend.shutdown().await;
+    let cleanup = match (ready.shutdown().await, observation_cleanup) {
+        (Err(error), Err(cleanup)) => Err(error.context(format!(
+            "status observation cleanup also failed: {cleanup:#}"
+        ))),
+        (Err(error), _) => Err(error),
+        (_, result) => result,
+    };
     match (served, cleanup) {
         (Err(error), Err(cleanup)) => Err(error.context(format!(
             "runtime readiness cleanup also failed: {cleanup:#}"
@@ -769,6 +908,7 @@ pub async fn serve_roots(
                     sequence: std::sync::atomic::AtomicU64::new(0),
                     observation: std::sync::Mutex::new(None),
                     lookup,
+                    status: Arc::new(crate::project_client::StatusOwner::default()),
                     backend: tokio::sync::Mutex::new(SourceBackendCache::default()),
                 }),
             }
@@ -782,21 +922,34 @@ pub async fn serve_roots(
             control,
         }) as Arc<dyn ExplorerTools>
     });
-    let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
+    let backend = Arc::new(Unified::new(
+        projects,
+        (!no_default).then_some(primary),
+        explorer,
+    )?);
     crate::client_owner::watch()?;
     let close = ready.clone();
+    let observation_close = backend.clone();
     let lookup_close = lookups.clone();
     let served = airk_mcp::remote::serve_with_input_lifecycle(
-        Arc::new(backend),
+        backend.clone(),
         Arc::new(move || {
             close.close_admission();
+            observation_close.close();
             for lookup in &lookup_close {
                 lookup.close();
             }
         }),
     )
     .await;
-    let mut cleanup = ready.shutdown().await;
+    let observation_cleanup = backend.shutdown().await;
+    let mut cleanup = match (ready.shutdown().await, observation_cleanup) {
+        (Err(error), Err(cleanup)) => Err(error.context(format!(
+            "status observation cleanup also failed: {cleanup:#}"
+        ))),
+        (Err(error), _) => Err(error),
+        (_, result) => result,
+    };
     for lookup in &lookups {
         if let Err(error) = lookup.shutdown().await {
             cleanup = Err(match cleanup {
@@ -821,6 +974,219 @@ mod readiness_tests {
     use super::*;
     use std::future::Future;
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn status_setup_uses_original_start_and_drains_accepted_work_after_waiter_expiry()
+    -> Result<()> {
+        let ready = Arc::new(RuntimeReadiness::default());
+        let (release, released) = std::sync::mpsc::channel();
+        let (entered, began) = tokio::sync::oneshot::channel();
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let done = completed.clone();
+        let first_owner = ready.clone();
+        let first = tokio::spawn(async move {
+            first_owner
+                .run_inner_status(
+                    move |setup| async move {
+                        let setup = setup.context("cooperative setup required")?;
+                        setup
+                            .run_worker(move |control| {
+                                let _ = entered.send(control);
+                                released
+                                    .recv()
+                                    .context("release accepted setup operation")?;
+                                done.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                                Ok(PathBuf::from("accepted-completion"))
+                            })
+                            .await?;
+                        Ok(())
+                    },
+                    true,
+                    true,
+                )
+                .await
+        });
+        let setup = began.await?;
+        // The late waiter must inherit the first attempt's original deadline,
+        // rather than receiving another ten seconds from its own admission.
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        let late_owner = ready.clone();
+        let late = tokio::spawn(async move {
+            late_owner
+                .run_inner_status(
+                    |_| async { anyhow::bail!("replacement setup admitted") },
+                    true,
+                    true,
+                )
+                .await
+        });
+        let first_error = tokio::time::timeout(Duration::from_secs(5), first)
+            .await??
+            .unwrap_err();
+        let late_error = tokio::time::timeout(Duration::from_secs(1), late)
+            .await??
+            .unwrap_err();
+        assert!(first_error.is::<airk_mcp::remote::PreparationExpired>());
+        assert!(late_error.is::<airk_mcp::remote::PreparationExpired>());
+        assert_eq!(completed.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(
+            setup.worker_is_owned(),
+            "waiter expiry detached the accepted worker"
+        );
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !setup.admission_is_closed() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await?;
+        release
+            .send(())
+            .map_err(|_| anyhow::anyhow!("accepted worker was dropped"))?;
+        await_published_readiness(&ready).await?;
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            ready.run_inner_status(
+                |_| async { anyhow::bail!("replacement setup admitted") },
+                true,
+                true,
+            ),
+        )
+        .await??;
+        assert_eq!(completed.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(
+            setup
+                .run_worker(|_| Ok(PathBuf::from("forbidden-later-work")))
+                .await
+                .is_err(),
+            "original setup deadline did not close later admission"
+        );
+        ready.shutdown().await?;
+        Ok(())
+    }
+    async fn await_published_readiness(ready: &RuntimeReadiness) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let published = match &*ready.state.lock().await {
+                    ReadinessState::Running(attempt) => attempt.result.borrow().is_some(),
+                    _ => false,
+                };
+                if published {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await?;
+        Ok(())
+    }
+    #[tokio::test]
+    async fn prompt_deadline_cancellation_is_expiry_even_when_inner_completion_is_polled_first()
+    -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let mut waiter = Box::pin(ready.run_inner_status(
+            |setup| async move {
+                let setup = setup.context("cooperative setup required")?;
+                while !setup.admission_is_closed() {
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+                anyhow::bail!("runtime setup cancelled")
+            },
+            true,
+            true,
+        ));
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(waiter.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        // Deliberately stop polling the waiter. The actual driver closes and
+        // publishes its prompt cancellation before timeout_at polls inner first.
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        await_published_readiness(&ready).await?;
+        let error = waiter.await.unwrap_err();
+        assert!(
+            error.is::<airk_mcp::remote::PreparationExpired>(),
+            "wrong deadline cause: {error:#}"
+        );
+        assert!(matches!(*ready.state.lock().await, ReadinessState::Idle));
+        ready
+            .run_inner_status(|_| async { Ok(()) }, true, true)
+            .await?;
+        ready.shutdown().await?;
+        Ok(())
+    }
+    #[tokio::test]
+    async fn genuine_setup_error_published_before_deadline_remains_error_when_observed_late()
+    -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let mut waiter = Box::pin(ready.run_inner_status(
+            |_| async {
+                Err(anyhow::Error::from(std::io::Error::other(
+                    "early verification failure",
+                )))
+            },
+            true,
+            true,
+        ));
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(waiter.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        await_published_readiness(&ready).await?;
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        let error = waiter.await.unwrap_err();
+        assert!(!error.is::<airk_mcp::remote::PreparationExpired>());
+        assert_eq!(format!("{error:#}"), "early verification failure");
+        assert!(matches!(*ready.state.lock().await, ReadinessState::Idle));
+        ready.shutdown().await?;
+        Ok(())
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn accepted_late_setup_failure_preserves_actual_cause_for_later_caller_and_allows_retry()
+    -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let (release, released) = std::sync::mpsc::channel();
+        let mut first = Box::pin(ready.run_inner_status(
+            move |setup| async move {
+                setup
+                    .context("cooperative setup required")?
+                    .run_worker(move |_| {
+                        released.recv().context("accepted late failure release")?;
+                        Err(std::io::Error::other("actual accepted operation failure").into())
+                    })
+                    .await?;
+                Ok(())
+            },
+            true,
+            true,
+        ));
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(first.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        let error = first.await.unwrap_err();
+        assert!(error.is::<airk_mcp::remote::PreparationExpired>());
+        release
+            .send(())
+            .map_err(|_| anyhow::anyhow!("accepted operation lost"))?;
+        await_published_readiness(&ready).await?;
+        let error = ready
+            .run_inner_status(
+                |_| async { anyhow::bail!("replacement admitted before actual cause") },
+                true,
+                true,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(format!("{error:#}"), "actual accepted operation failure");
+        assert!(matches!(*ready.state.lock().await, ReadinessState::Idle));
+        ready
+            .run_inner_status(|_| async { Ok(()) }, true, true)
+            .await?;
+        ready.shutdown().await?;
+        Ok(())
+    }
     #[test]
     fn shared_error_preserves_exact_plain_and_nested_chains() {
         for nested in [false, true] {
@@ -866,6 +1232,9 @@ mod readiness_tests {
             });
             let (_sender, result) = tokio::sync::watch::channel(None);
             let attempt = Arc::new(ReadinessAttempt {
+                started: Instant::now(),
+                completed: Default::default(),
+                status_deadline: tokio::sync::watch::channel(false).0,
                 result,
                 driver_result: tokio::sync::OnceCell::new(),
                 failed_completion: tokio::sync::OnceCell::new(),
@@ -1461,6 +1830,7 @@ mod source_selector_wait_tests {
             sequence: std::sync::atomic::AtomicU64::new(0),
             observation: std::sync::Mutex::new(None),
             lookup: Arc::new(SourceLookupOwner::new()),
+            status: Arc::new(crate::project_client::StatusOwner::default()),
             backend: tokio::sync::Mutex::new(SourceBackendCache::default()),
         });
         let guard = native.backend.lock().await;

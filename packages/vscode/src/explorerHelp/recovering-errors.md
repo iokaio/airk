@@ -26,7 +26,7 @@ Errors keep their diagnostic code while the UI explains the next useful step. Qu
 
 Read requests stop waiting after three minutes; interactive dialog/action requests have a longer deadline. The UI clears its waiting state and ignores late replies. You may retry a read or narrow its scope. Check Activity when native work may still be running.
 
-Overview and Management status polls have a separate 15-second deadline and reconnect after expiration. Late replies cannot replace newer observations. MCP status has a two-second budget and reports unknown readiness on timeout; use diagnostics when detailed runtime, job or watcher observations are needed. A watcher that has not reported since startup is unconfirmed, while confirmed failures remain warnings. Published index information stays visible.
+Overview and Management status polls have a separate 15-second deadline and reconnect after expiration. Late replies cannot replace newer observations. MCP status allows up to ten seconds for shared cold setup, followed by a two-second observation budget, and reports unknown readiness with null evidence on expiry. An accepted native exchange remains owned until completion or its transport deadline; use diagnostics when detailed runtime, job or watcher observations are needed. A watcher that has not reported since startup is unconfirmed, while confirmed failures remain warnings. Published index information stays visible.
 
 ## An action's outcome is unknown
 

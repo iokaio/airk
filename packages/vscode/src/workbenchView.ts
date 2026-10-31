@@ -10,6 +10,8 @@ import { newSession, SessionStore } from './workbenchSessions';
 import { continuations, evidenceCards, renderExport } from './workbenchRender';
 import { object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
 
+// Cold native setup (10 s) plus scalar observation (2 s), with transport slack.
+export const STATUS_RESPONSE_TIMEOUT_MS=15000;
 export function workbenchHtml(webview:vscode.Webview, extension:vscode.Uri, nonce:string):string {
     const script=webview.asWebviewUri(vscode.Uri.joinPath(extension,'out','workbenchWebview.js'));
     const style=webview.asWebviewUri(vscode.Uri.joinPath(extension,'out','workbenchWebview.css'));
@@ -80,7 +82,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.session=newSession(id);this.notice=undefined;
         this.recent=this.persistence()?(await this.store.list(id)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length})):[];this.send();
         const generation=this.generation;
-        void this.evidence().call('airk_status',{}, {timeout:10000}).then(result=>{if(generation===this.generation&&this.host.trusted()){this.status=result.payload;this.send();}},error=>{if(generation===this.generation){this.fail(error);}});
+        void this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS}).then(result=>{if(generation===this.generation&&this.host.trusted()){this.status=result.payload;this.send();}},error=>{if(generation===this.generation){this.fail(error);}});
     }
     private evidence():EvidenceClient{
         this.authorized();const spec=this.host.specs().find(s=>s.service?.project===this.session?.project);
@@ -144,7 +146,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.authorized();
         switch(message.type){
             case 'project':await this.select(message.id);break;
-            case 'refresh':{await this.refresh();if(this.session){const generation=this.generation;const result=await this.evidence().call('airk_status',{});if(generation===this.generation){this.status=result.payload;this.send();}}break;}
+            case 'refresh':{await this.refresh();if(this.session){const generation=this.generation;const result=await this.evidence().call('airk_status',{}, {timeout:STATUS_RESPONSE_TIMEOUT_MS});if(generation===this.generation){this.status=result.payload;this.send();}}break;}
             case 'new':await this.newSession();break;
             case 'stop':this.stop();if(this.session){this.save(this.session);}break;
             case 'clear':await this.clear();break;

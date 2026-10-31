@@ -109,7 +109,7 @@ fn build_tools() -> Vec<Tool> {
         json!({"type":"object","additionalProperties":false,"required":["kind","draft"],"properties":{"kind":{"type":"string","enum":["navigation","review","management"]},"draft":{"type":"object","description":"Use the draft schema matching kind. The editor validates that exact kind before admitting a suggestion.","anyOf":variants}}}), false)));
     result.push(definition("projects", "List only the project bindings configured for this AIRK connection and its default. Use these identifiers to scope evidence and Explorer requests; does not register or switch projects.", json!({"type":"object","additionalProperties":false,"properties":{}}), true));
     let status = result.iter_mut().find(|t| t.name == "status").unwrap();
-    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state and semantic readiness. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.".into());
+    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state and semantic readiness. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.".into());
     let help = result.iter_mut().find(|t| t.name == "help").unwrap();
     help.description = Some("Explain AIRK usage, CLI commands, tool schemas and Explorer workflows. Omit selectors for an overview; query searches bundled guidance, topic_id reads a UI/engine guide, topic reads native guidance, command reads CLI help, and tool reads a public tool schema. Native guides retain prefixed CLI/evidence compatibility names; tools/list and tool selectors describe the unified public catalog. Returns documentation, never project evidence or live health.".into());
     let schema = Arc::make_mut(&mut help.input_schema);
@@ -267,7 +267,39 @@ impl Unified {
         serde_json::to_value(crate::help::call(Value::Object(args))).unwrap()
     }
 }
+fn status_not_observed(project: &str, stage: &str, expired: bool) -> Value {
+    success(
+        json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project,
+        "index_state":"unknown","publication":null,"files":null,"chunks":null,
+        "index_error":{"code":if expired{"status_timeout"}else{"status_unavailable"},
+        "stage":stage,"retryable":true,"message":"Status could not be confirmed within this stage. Retry or call diagnostics."}}),
+    )
+}
 impl RemoteTools for Unified {
+    fn close(&self) {
+        for project in self.projects.values() {
+            project.backend.close();
+        }
+    }
+    fn shutdown(&self) -> crate::remote::ReadyFuture<'_> {
+        Box::pin(async move {
+            let mut failure: Option<anyhow::Error> = None;
+            for project in self.projects.values() {
+                if let Err(error) = project.backend.shutdown().await {
+                    failure = Some(match failure {
+                        None => error,
+                        Some(primary) => {
+                            primary.context(format!("additional project cleanup failed: {error:#}"))
+                        }
+                    });
+                }
+            }
+            match failure {
+                Some(error) => Err(error),
+                None => Ok(()),
+            }
+        })
+    }
     fn catalog(&self) -> Vec<Tool> {
         tools()
     }
@@ -337,7 +369,7 @@ impl RemoteTools for Unified {
                     Ok(p) => p,
                     Err(error) => return Ok(error),
                 };
-                if tool == "status" || tool == "diagnostics" {
+                if matches!(native.name.as_ref(), "airk_status" | "airk_diagnostics") {
                     let _options = match serde_json::from_value::<crate::StatusArgs>(Value::Object(
                         args.clone(),
                     )) {
@@ -346,7 +378,22 @@ impl RemoteTools for Unified {
                             return Ok(failure("INVALID_SCHEMA", "Invalid status arguments."));
                         }
                     };
-                    if tool == "status" {
+                    if native.name == "airk_status" {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            project.backend.prepare(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) if error.is::<crate::remote::PreparationExpired>() => {
+                                return Ok(status_not_observed(&project.binding, "setup", true));
+                            }
+                            Ok(Err(error)) => return Err(error),
+                            Err(_) => {
+                                return Ok(status_not_observed(&project.binding, "setup", true));
+                            }
+                        }
                         let index = match tokio::time::timeout(
                             std::time::Duration::from_secs(2),
                             project.backend.call(native.name.to_string(), args),
@@ -356,12 +403,12 @@ impl RemoteTools for Unified {
                             Ok(Ok(result)) => result,
                             Ok(Err(_)) => {
                                 return Ok(success(
-                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","files":null,"chunks":null,"publication":null,"index_error":{"code":"status_unavailable","message":"Basic status could not be observed. Call diagnostics for troubleshooting."}}),
+                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","files":null,"chunks":null,"publication":null,"index_error":{"code":"status_unavailable","stage":"observation","message":"Basic status could not be observed. Call diagnostics for troubleshooting."}}),
                                 ));
                             }
                             Err(_) => {
                                 return Ok(success(
-                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","publication":null,"files":null,"chunks":null,"index_error":{"code":"status_timeout","retryable":true,"message":"The quick status deadline expired; index readiness is unconfirmed. Retry or call diagnostics for diagnosis."}}),
+                                    json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","project":project.binding,"index_state":"unknown","publication":null,"files":null,"chunks":null,"index_error":{"code":"status_timeout","stage":"observation","retryable":true,"message":"The quick status deadline expired; index readiness is unconfirmed. Retry or call diagnostics for diagnosis."}}),
                                 ));
                             }
                         };
@@ -466,6 +513,104 @@ impl RemoteTools for Unified {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    #[tokio::test]
+    async fn public_and_legacy_status_preserve_genuine_setup_errors_but_expiry_has_null_evidence()
+    -> Result<()> {
+        struct Preparation {
+            expired: bool,
+        }
+        impl RemoteTools for Preparation {
+            fn prepare(&self) -> crate::remote::ReadyFuture<'_> {
+                Box::pin(async move {
+                    if self.expired {
+                        return Err(crate::remote::PreparationExpired.into());
+                    }
+                    Err(
+                        anyhow::Error::from(std::io::Error::other("payload authentication failed"))
+                            .context("runtime verification"),
+                    )
+                })
+            }
+            fn call(&self, _: String, _: Map<String, Value>) -> RemoteFuture<'_> {
+                Box::pin(async { panic!("observation admitted after failed setup") })
+            }
+        }
+        for expired in [false, true] {
+            let binding = "aa".repeat(32);
+            let unified = Unified::new(
+                vec![Project {
+                    binding: binding.clone(),
+                    name: "fixture".into(),
+                    collection: "fixture".into(),
+                    backend: Arc::new(Preparation { expired }),
+                }],
+                Some(binding),
+                None,
+            )?;
+            for name in ["status", "airk_status"] {
+                let result = unified.call(name.into(), Map::new()).await;
+                if expired {
+                    let value = body(&result?).expect("typed setup expiry body missing");
+                    assert_eq!(value["index_error"]["code"], "status_timeout");
+                    assert_eq!(value["index_error"]["stage"], "setup");
+                    assert!(
+                        value["publication"].is_null()
+                            && value["files"].is_null()
+                            && value["chunks"].is_null()
+                    );
+                } else {
+                    let error = result.unwrap_err();
+                    assert_eq!(
+                        format!("{error:#}"),
+                        "runtime verification: payload authentication failed"
+                    );
+                    assert!(error.downcast_ref::<std::io::Error>().is_some());
+                }
+            }
+        }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn shutdown_attempts_every_project_after_an_earlier_failure() -> Result<()> {
+        struct Cleanup {
+            fail: bool,
+            joined: Arc<std::sync::atomic::AtomicUsize>,
+        }
+        impl RemoteTools for Cleanup {
+            fn call(&self, _: String, _: Map<String, Value>) -> RemoteFuture<'_> {
+                Box::pin(async { Ok(Value::Null) })
+            }
+            fn shutdown(&self) -> crate::remote::ReadyFuture<'_> {
+                Box::pin(async move {
+                    self.joined
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if self.fail {
+                        anyhow::bail!("first cleanup failed");
+                    }
+                    Ok(())
+                })
+            }
+        }
+        let joined = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let projects = [("a", true), ("b", false)]
+            .into_iter()
+            .map(|(binding, fail)| Project {
+                binding: binding.repeat(64),
+                name: binding.into(),
+                collection: binding.into(),
+                backend: Arc::new(Cleanup {
+                    fail,
+                    joined: joined.clone(),
+                }),
+            })
+            .collect();
+        let unified = Unified::new(projects, None, None)?;
+        assert!(
+            format!("{:#}", unified.shutdown().await.unwrap_err()).contains("first cleanup failed")
+        );
+        assert_eq!(joined.load(std::sync::atomic::Ordering::SeqCst), 2);
+        Ok(())
+    }
     #[derive(Default)]
     struct Native {
         calls: Mutex<Vec<(String, Map<String, Value>)>>,
@@ -649,6 +794,45 @@ mod tests {
             );
         }
         assert_eq!(ui.calls.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn legacy_and_public_status_share_schema_response_and_refusal() {
+        let (u, native, _, ui) = fixture(false, true);
+        let public = call(&u, "status", json!({})).await;
+        let legacy = call(&u, "airk_status", json!({})).await;
+        assert_eq!(public, legacy);
+        for name in ["status", "airk_status"] {
+            assert_eq!(
+                call(&u, name, json!({"unexpected":true})).await["isError"],
+                true
+            );
+        }
+        assert_eq!(native.calls.lock().unwrap().len(), 2);
+        native
+            .busy_status
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            call(&u, "status", json!({})).await,
+            call(&u, "airk_status", json!({})).await
+        );
+        assert!(ui.calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn legacy_status_has_the_public_observation_deadline_and_null_evidence() {
+        let (u, native, _, ui) = fixture(false, true);
+        native
+            .stall_status
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let result = body(&call(&u, "airk_status", json!({})).await).unwrap();
+        assert_eq!(result["index_error"]["code"], "status_timeout");
+        assert_eq!(result["index_error"]["stage"], "observation");
+        for key in ["publication", "files", "chunks"] {
+            assert!(result[key].is_null());
+        }
+        assert_eq!(native.calls.lock().unwrap().len(), 1);
+        assert!(ui.calls.lock().unwrap().is_empty());
     }
 
     #[tokio::test]
