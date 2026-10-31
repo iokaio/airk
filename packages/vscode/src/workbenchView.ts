@@ -182,7 +182,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                     const generation=this.generation,info=(await this.evidence().call('airk_file_info',{path:card.path,response_mode:'full'})).payload,source=object(info.source);
                     if(generation!==this.generation){throw new Error('Project changed before opening the source.');}this.authorized();
                     if(typeof source.root!=='string'||typeof source.relative_path!=='string'){throw new Error('AIRK did not report the original source location.');}
-                    const result=await openSource({root:source.root,relative:source.relative_path,contentHash:card.hash,startLine:card.start,lineBasis:typeof info.line_basis==='string'?info.line_basis:undefined});this.notice=result.message;this.send();
+                    const result=await openSource({root:source.root,relative:source.relative_path,contentHash:card.hash,startLine:card.start,lineBasis:typeof info.line_basis==='string'?info.line_basis:undefined},vscode.ViewColumn.Active);this.notice=result.message;this.send();
                 }break;
             }
             case 'copy':case 'export':{

@@ -130,9 +130,11 @@ test('workspace libraries browse nested files without creating folders and load 
 });
 /** Load explorerWorkspaceIO against a stub editor whose folder is a real temporary directory. */
 function load(root: string, script: Script) {
-    const events: string[] = [];
+    const events: string[] = [], columns: unknown[] = [];
     const stub = {
-        Uri, FileType: { File: 1, Directory: 2 }, ViewColumn: { Beside: 2 },
+        Uri, FileType: { File: 1, Directory: 2 }, ViewColumn: { Beside: -2, Active: -1 },
+        Range: class { constructor(..._args: unknown[]) {} },
+        commands: { executeCommand: async (_command: string, _uri: Uri, options: { viewColumn?: unknown }) => { columns.push(options?.viewColumn); } },
         workspace: {
             isTrusted: true,
             workspaceFolders: [{ name: 'fixture', uri: Uri.file(root) }],
@@ -149,14 +151,14 @@ function load(root: string, script: Script) {
             showOpenDialog: async (options: { defaultUri: Uri }) => { events.push(`open ${options.defaultUri.fsPath}`); return script.open ? [script.open] : undefined; },
             showSaveDialog: async (options: { defaultUri: Uri }) => { events.push(`dialog ${options.defaultUri.fsPath}`); return script.save; },
             showWarningMessage: async (text: string) => { events.push(`confirm ${text}`); script.confirm?.(); return script.replace ? 'Replace' : undefined; },
-            showTextDocument: async (uri: Uri) => { events.push(`open ${uri.fsPath}`); },
+            showTextDocument: async (uri: Uri, options?: { viewColumn?: unknown }) => { events.push(`open ${uri.fsPath}`); columns.push(options?.viewColumn); },
             showQuickPick: async () => undefined,
         },
     };
     const loader = Module as unknown as { _load: (...args: any[]) => any }, original = loader._load;
     loader._load = function (request: string, ...args: any[]) { return request === 'vscode' ? stub : original.call(this, request, ...args); };
     delete require.cache[require.resolve('../explorerWorkspaceIO')];
-    try { return { io: require('../explorerWorkspaceIO') as typeof import('../explorerWorkspaceIO'), events, stub }; }
+    try { return { io: require('../explorerWorkspaceIO') as typeof import('../explorerWorkspaceIO'), events, columns, stub }; }
     finally { loader._load = original; }
 }
 
@@ -250,4 +252,17 @@ test('denied stat and a concurrent creator cannot become permission to overwrite
     }) as any);
     await assert.rejects(load(root, { save: Uri.file(target) }).io.savePlanInWorkspace('plan', 'plan.md'), /exist/i);
     race.mock.restore(); assert.equal(fs.readFileSync(target, 'utf8'), 'concurrent creator');
+});
+
+test('cited sources open beside the Explorer tab but in the main editor from the Workbench', async t => {
+    const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'airk-open-')));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(root, 'notes.md'), '# Notes\nCopper harbor.\n');
+    const location = { root, relative: 'notes.md', contentHash: 'stale', startLine: 2 };
+    const explorer = load(root, {});
+    assert.equal((await explorer.io.openSource(location)).opened, true);
+    const workbench = load(root, {});
+    await workbench.io.openSource(location, -1);
+    await workbench.io.openSource({ ...location, lineBasis: 'extracted_text' }, -1);
+    assert.deepEqual([...explorer.columns, ...workbench.columns], [-2, -1, -1], 'the Workbench never splits the editor');
 });
