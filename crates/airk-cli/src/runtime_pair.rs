@@ -107,6 +107,11 @@ pub struct RuntimePair {
 }
 
 pub fn digest_file(path: &Path) -> Result<String> {
+    digest_file_checked(path, &|| Ok(()))
+}
+
+pub(crate) fn digest_file_checked(path: &Path, check: &dyn Fn() -> Result<()>) -> Result<String> {
+    check()?;
     let metadata = fs::symlink_metadata(path)?;
     ensure!(
         metadata.is_file()
@@ -127,6 +132,7 @@ pub fn digest_file(path: &Path) -> Result<String> {
     let mut buffer = [0; 64 * 1024];
     let mut remaining = MAX_EXECUTABLE_BYTES;
     loop {
+        check()?;
         let count = file.read(&mut buffer)?;
         if count == 0 {
             break;

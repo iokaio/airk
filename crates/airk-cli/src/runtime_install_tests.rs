@@ -1259,3 +1259,222 @@ fn healthy_startup_reset_does_not_treat_a_dangling_link_as_absent() -> Result<()
     assert!(state.attempts_unix_ms.is_empty());
     Ok(())
 }
+
+#[tokio::test]
+async fn closed_saved_restart_completion_cannot_admit_an_independent_start() -> Result<()> {
+    use airk_core::{
+        identity::Incarnation,
+        service::RequestKey,
+        service_lifecycle::{LifecycleAction, LifecyclePhase, LifecycleRequest},
+    };
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let record = registry.begin_lifecycle(&LifecycleRequest {
+        caller: Incarnation::from_bytes([41; 16]),
+        key: RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([42; 16]),
+        },
+        action: LifecycleAction::Restart,
+        expected_instance: Incarnation::from_bytes([43; 16]),
+        runtime: identity.parse()?,
+        manager: false,
+    })?;
+    let record = registry.advance_lifecycle(&record, LifecyclePhase::Starting)?;
+    let cancel = setup::SetupCancellation::default();
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    // The saved operation's real receipt is completed, not abandoned on close.
+    // Daemon restart itself is outside this fixture; only its owned completion
+    // result is injected into the actual post-settlement adapter.
+    let mut settlement = Box::pin(setup::settle_then_checkpoint(
+        async {
+            released.await?;
+            registry.advance_lifecycle(&record, LifecyclePhase::Complete)?;
+            Ok(())
+        },
+        Some(&cancel),
+    ));
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(settlement.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    cancel.close();
+    release.send(()).expect("saved completion retained");
+    assert!(settlement.await.is_err());
+    assert!(registry.pending_lifecycle()?.is_none());
+    assert!(!registry.service_explicitly_stopped()?);
+    assert!(!root.join(format!("startup-{identity}.json")).exists());
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn saved_stop_still_completes_after_close_and_remains_stopped() -> Result<()> {
+    use airk_core::{
+        identity::Incarnation,
+        service::RequestKey,
+        service_lifecycle::{LifecycleAction, LifecycleRequest},
+    };
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let mut registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    registry.begin_lifecycle(&LifecycleRequest {
+        caller: Incarnation::from_bytes([51; 16]),
+        key: RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([52; 16]),
+        },
+        action: LifecycleAction::Stop,
+        expected_instance: Incarnation::from_bytes([53; 16]),
+        runtime: identity.parse()?,
+        manager: false,
+    })?;
+    drop(registry);
+    let lock = install_lock(&root)?;
+    let _authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let cancel = setup::SetupCancellation::default();
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let mut settlement = Box::pin(setup::settle_then_checkpoint(
+        async {
+            released.await?;
+            lifecycle::settle(&root).await
+        },
+        Some(&cancel),
+    ));
+    std::future::poll_fn(|cx| {
+        assert!(std::future::Future::poll(settlement.as_mut(), cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    cancel.close();
+    release.send(()).expect("saved STOP retained");
+    let error = settlement
+        .await
+        .err()
+        .context("STOP must retain its stopped barrier")?;
+    assert!(format!("{error:#}").contains("service_explicitly_stopped"));
+    let registry = airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?;
+    assert!(registry.pending_lifecycle()?.is_none());
+    assert!(registry.service_explicitly_stopped()?);
+    assert!(!root.join(format!("startup-{identity}.json")).exists());
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[test]
+fn frontend_metadata_defers_missing_payload_to_locked_native_verification() -> Result<()> {
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    let control = layout::control(&root)?;
+    let payload = root.join("runtimes").join(&identity);
+    fs::remove_file(payload.join(main_name()))?;
+    fs::remove_file(payload.join(helper_name()))?;
+    fs::write(payload.join("LICENSE"), b"changed inert ancillary fixture")?;
+    assert_eq!(installed_metadata_control(&root)?, control);
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    assert!(selected_verified(&authority).is_err());
+    assert!(!root.join("bootstrap.json").exists());
+    assert!(!root.join(format!("startup-{identity}.json")).exists());
+    Ok(())
+}
+
+#[test]
+fn frontend_metadata_still_authenticates_pair_and_selection() -> Result<()> {
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    let pair = root
+        .join("runtimes")
+        .join(&identity)
+        .join("airk-runtime.json");
+    let original = fs::read(&pair)?;
+    fs::write(&pair, b"{}")?;
+    assert!(installed_metadata_control(&root).is_err());
+    fs::write(&pair, original)?;
+    assert_eq!(installed_metadata_control(&root)?, layout::control(&root)?);
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: "0".repeat(64),
+            previous: None,
+        },
+    )?;
+    assert!(installed_metadata_control(&root).is_err());
+    Ok(())
+}
+
+#[test]
+fn managed_frontend_metadata_authenticates_both_modes_without_reading_payload() -> Result<()> {
+    for lifecycle in ["external", "user_on_demand"] {
+        let (owner, root, identity) = selected_connection_fixture()?;
+        let provider = owner.path().join("provider");
+        fs::rename(root.join("runtimes").join(&identity), &provider)?;
+        let provider = provider.canonicalize()?;
+        let approval: serde_json::Value =
+            serde_json::from_slice(&fs::read(provider.join("approval.json"))?)?;
+        let executable = runtime_pair::digest_file(&provider.join(main_name()))?;
+        let mut policy = serde_json::json!({
+            "schema": 1, "install": root.canonicalize()?, "source": provider,
+            "approval": approval, "executable_sha256": executable, "lifecycle": lifecycle,
+        });
+        replace_json(&root, "managed-runtime.json", &policy)?;
+        fs::remove_file(root.join("selected.json"))?;
+        fs::remove_file(provider.join("approval.json"))?;
+        let managed = managed::read(&root)?.expect("managed policy");
+        assert_eq!(installed_metadata_control(&root)?, layout::control(&root)?);
+        managed
+            .verify()
+            .context("valid external provider must qualify before tampering")?;
+        let license = fs::read(provider.join("LICENSE"))?;
+        fs::write(provider.join("LICENSE"), b"inert changed fixture")?;
+        assert_eq!(installed_metadata_control(&root)?, layout::control(&root)?);
+        let ancillary_error = managed.verify().unwrap_err();
+        assert!(format!("{ancillary_error:#}").contains("LICENSE"));
+        fs::write(provider.join("LICENSE"), license)?;
+        managed.verify().context("restored provider must qualify")?;
+        fs::remove_file(provider.join(main_name()))?;
+        fs::remove_file(provider.join(helper_name()))?;
+        assert_eq!(installed_metadata_control(&root)?, layout::control(&root)?);
+        let missing_error = managed.verify().unwrap_err();
+        assert_ne!(format!("{missing_error:#}"), format!("{ancillary_error:#}"));
+        assert!(!root.join("bootstrap.json").exists());
+        assert!(!root.join(format!("startup-{identity}.json")).exists());
+        policy["executable_sha256"] = "0".repeat(64).into();
+        replace_json(&root, "managed-runtime.json", &policy)?;
+        assert!(
+            installed_metadata_control(&root).is_err(),
+            "metadata must authenticate executable pin"
+        );
+        policy["executable_sha256"] = executable.into();
+        replace_json(&root, "managed-runtime.json", &policy)?;
+        fs::write(provider.join("airk-runtime.json"), b"{}")?;
+        assert!(
+            installed_metadata_control(&root).is_err(),
+            "pair authentication remains mandatory"
+        );
+    }
+    Ok(())
+}

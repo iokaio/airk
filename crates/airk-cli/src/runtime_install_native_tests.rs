@@ -300,3 +300,112 @@ async fn native_direct_ensure_settles_stop_with_missing_ancillary_bytes() -> Res
     let cleanup = fixture.cleanup().await;
     result.and(cleanup)
 }
+
+#[tokio::test]
+#[ignore = "requires a freshly built sealed pair and explicit approved digest; run serially"]
+async fn native_mcp_eof_joins_installer_wait_without_late_startup() -> Result<()> {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    for mode in [
+        "unregistered_source",
+        "registered_source",
+        "installed_pinned",
+    ] {
+        eprintln!("cold frontend scenario: {mode}");
+        let fixture = NativeFixture::new().await?;
+        let result = async {
+        let source = fixture._owner.path().join("source");
+        fs::create_dir(&source)?;
+        fs::write(source.join("README.md"), b"Original isolated EOF fixture.\n")?;
+        let data = fixture._owner.path().join("data");
+        local_ipc::prepare_root(&data)?;
+        let registration = airk_core::service::ProjectRegistration::new(
+            source.canonicalize()?.to_string_lossy().into_owned(),
+            data.canonicalize()?.to_string_lossy().into_owned(),
+            "eof-fixture".into(),
+        )?;
+        if mode != "unregistered_source" {
+            let registered = service_runtime::request_for_version(
+                &fixture.control, ControlMethod::Register { project: registration.clone() },
+                env!("CARGO_PKG_VERSION"),
+            ).await?;
+            ensure!(matches!(registered, ControlResponse::Registered { .. }), "original project registration failed");
+        }
+        fixture.cleanup().await?;
+        let registry = airk_store::service::registry::ServiceRegistry::open(
+            &fixture.control, airk_kernel::service_broker::new_instance_id()?,
+        )?;
+        ensure!(!registry.service_explicitly_stopped()?, "fixture STOP barrier would mask late startup");
+        drop(registry);
+        let receipt = fixture.root.join(format!("startup-{}.json", fixture.identity));
+        let bootstrap = fixture.root.join("bootstrap.json");
+        let receipt_before = fs::read(&receipt).ok();
+        let bootstrap_before = fs::read(&bootstrap).ok();
+        let lock = install_lock(&fixture.root)?;
+        let executable = fixture.root.join("runtimes").join(&fixture.identity).join(main_name());
+        let diagnostics = PathBuf::from(std::env::var_os("AIRK_NATIVE_EOF_DIAGNOSTIC_DIR")
+            .context("AIRK_NATIVE_EOF_DIAGNOSTIC_DIR must name owned external diagnostics")?).join(mode);
+        fs::create_dir(&diagnostics)?;
+        let stderr = OpenOptions::new().write(true).create_new(true)
+            .open(diagnostics.join("eof-child-stderr.log"))?;
+        let mut command = tokio::process::Command::new(executable);
+        command.arg("--service-install-dir").arg(&fixture.root).arg("--root").arg(&source);
+        if mode == "installed_pinned" {
+            command.arg("--data-dir").arg(&data).arg("--collection").arg(&registration.collection)
+                .arg("--service-project").arg(registration.binding.to_string());
+        }
+        let mut child = command.arg("mcp")
+            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::from(stderr)).kill_on_drop(true).spawn()?;
+        let exchange = async {
+            let mut input = child.stdin.take().context("child input missing")?;
+            let mut lines = tokio::io::BufReader::new(child.stdout.take().context("child output missing")?).lines();
+            input.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{},\"clientInfo\":{\"name\":\"fixture\",\"version\":\"1\"}}}\n").await?;
+            let first = tokio::time::timeout(Duration::from_secs(10), lines.next_line()).await.context("EOF fixture initialize deadline")??.context("initialize missing")?;
+            ensure!(serde_json::from_str::<serde_json::Value>(&first)?["result"].is_object(), "initialize rejected");
+            input.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/list\"}\n").await?;
+            let listed = tokio::time::timeout(Duration::from_secs(10), lines.next_line()).await.context("EOF fixture catalog deadline")??.context("catalog missing")?;
+            ensure!(serde_json::from_str::<serde_json::Value>(&listed)?["result"]["tools"].is_array(), "catalog unavailable while installer lock held");
+            input.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"help\",\"arguments\":{}}}\n").await?;
+            let help = tokio::time::timeout(Duration::from_secs(10), lines.next_line()).await
+                .context("EOF fixture local help deadline")??.context("local help missing")?;
+            let help: serde_json::Value = serde_json::from_str(&help)?;
+            let help: serde_json::Value = serde_json::from_str(help["result"]["content"][0]["text"].as_str().context("local help content missing")?)?;
+            ensure!(help["topics"].is_array(), "bundled help unavailable while lock held");
+            ensure!(fs::read(&receipt).ok() == receipt_before && fs::read(&bootstrap).ok() == bootstrap_before,
+                "static initialization/catalog/help changed startup receipts");
+            input.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"status\",\"arguments\":{}}}\n").await?;
+            let status = tokio::time::timeout(Duration::from_secs(10), lines.next_line())
+                .await.context("EOF fixture first native response deadline")??.context("first native deadline response missing")?;
+            fs::write(diagnostics.join("eof-first-status.json"), &status)?;
+            let status: serde_json::Value = serde_json::from_str(&status)?;
+            let value: serde_json::Value = serde_json::from_str(
+                status["result"]["content"][0]["text"].as_str().context("status content missing")?
+            )?;
+            ensure!(value["index_error"]["code"] == "status_timeout", "native request did not reach retained setup deadline: {value}");
+            ensure!(value["publication"].is_null(), "deadline fabricated index publication");
+            input.shutdown().await?;
+            drop(input);
+            let status = tokio::time::timeout(Duration::from_secs(10), child.wait()).await.context("EOF fixture child drain deadline")??;
+            ensure!(status.success(), "normal EOF failed to drain owned setup");
+            Ok::<(), anyhow::Error>(())
+        }.await;
+        if exchange.is_err() {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
+        // The installer lock remains held through child exit and observations.
+        ensure!(fs::read(&receipt).ok() == receipt_before, "EOF changed startup receipt");
+        ensure!(fs::read(&bootstrap).ok() == bootstrap_before, "EOF changed bootstrap receipt");
+        ensure!(fixture.health().await.is_err(), "EOF admitted a late service start");
+        wait_quiescent(&fixture.root).await?;
+        drop(lock);
+        ensure!(fs::read(source.join("README.md"))? == b"Original isolated EOF fixture.\n", "source bytes changed");
+        exchange
+    }.await;
+        let cleanup = fixture.cleanup().await;
+        result
+            .and(cleanup)
+            .with_context(|| format!("cold frontend scenario {mode}"))?;
+    }
+    Ok(())
+}

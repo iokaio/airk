@@ -23,58 +23,283 @@ struct Explorer {
     control: PathBuf,
 }
 
-/// A request deadline must not restart authenticated installation setup. The
-/// session retains its one task; dropping the session cancels that task.
+// A shared ticket keeps one attempt's failure available to every admitted waiter.
+type SharedReadiness = std::result::Result<(), Arc<anyhow::Error>>;
+
+#[derive(Debug)]
+struct SharedReadinessError(Arc<anyhow::Error>);
+impl SharedReadinessError {
+    // Sharing changes top-level anyhow identity; keep explicit access to the
+    // original typed root instead of duplicating it in the displayed chain.
+    fn original(&self) -> &anyhow::Error {
+        self.0.as_ref()
+    }
+}
+impl std::fmt::Display for SharedReadinessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+impl std::error::Error for SharedReadinessError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        let original: &(dyn std::error::Error + Send + Sync + 'static) = self.original().as_ref();
+        original.source()
+    }
+}
+
 #[derive(Default)]
 struct RuntimeReadiness {
-    state: tokio::sync::Mutex<Option<ReadinessState>>,
+    state: tokio::sync::Mutex<ReadinessState>,
+    shutdown_gate: tokio::sync::Mutex<()>,
+    closing: std::sync::atomic::AtomicBool,
+    admission: Arc<crate::runtime_install::SetupAdmission>,
 }
+#[derive(Default)]
 enum ReadinessState {
-    Running(tokio::task::JoinHandle<Result<()>>),
+    #[default]
+    Idle,
+    Running(Arc<ReadinessAttempt>),
     Ready,
+    Closed,
 }
-impl Drop for ReadinessState {
-    fn drop(&mut self) {
-        if let Self::Running(task) = self {
-            task.abort();
+struct ReadinessAttempt {
+    result: tokio::sync::watch::Receiver<Option<SharedReadiness>>,
+    driver_result: tokio::sync::OnceCell<SharedReadiness>,
+    failed_completion: tokio::sync::OnceCell<SharedReadiness>,
+    setup: Option<Arc<crate::runtime_install::SetupCancellation>>,
+    abort: std::sync::OnceLock<tokio::task::AbortHandle>,
+    task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+impl ReadinessAttempt {
+    fn close(&self) {
+        if let Some(setup) = &self.setup {
+            setup.close();
+        } else if let Some(abort) = self.abort.get() {
+            abort.abort();
         }
     }
 }
+impl Drop for ReadinessAttempt {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+impl Drop for RuntimeReadiness {
+    fn drop(&mut self) {
+        self.close_admission();
+        if let ReadinessState::Running(attempt) = self.state.get_mut() {
+            // Cooperative owners retain their own attempt/worker handles until
+            // completion. Drop signals close; ordinary EOF explicitly joins.
+            attempt.close();
+        }
+    }
+}
+impl ReadinessAttempt {
+    async fn joined_driver(&self) -> SharedReadiness {
+        self.driver_result
+            .get_or_init(|| async {
+                let mut slot = self.task.lock().await;
+                let outcome = if let Some(task) = slot.as_mut() {
+                    task.await.map_err(|error| {
+                        Arc::new(
+                            anyhow::Error::from(error)
+                                .context("installed runtime verification task failed"),
+                        )
+                    })
+                } else {
+                    Ok(())
+                };
+                // No cancelable await between consuming the handle and persisting
+                // this exact outcome in the OnceCell.
+                *slot = None;
+                outcome
+            })
+            .await
+            .clone()
+    }
+    async fn failed_join(&self) -> SharedReadiness {
+        let cause = match self.joined_driver().await {
+            Err(error) => error,
+            Ok(()) => Arc::new(anyhow::anyhow!(
+                "installed runtime verification task ended without result"
+            )),
+        };
+        // Cause availability is NOT attempt completion. All tickets await this
+        // retained worker drain before any failed attempt can return to Idle.
+        self.failed_completion
+            .get_or_init(|| async {
+                if let Some(setup) = &self.setup {
+                    setup.close();
+                    if let Err(cleanup) = setup.drain().await {
+                        return Err(Arc::new(
+                            anyhow::Error::new(SharedReadinessError(cause.clone()))
+                                .context(format!("owned setup drain also failed: {cleanup:#}")),
+                        ));
+                    }
+                }
+                Err(cause)
+            })
+            .await
+            .clone()
+    }
+}
 impl RuntimeReadiness {
+    fn close_admission(&self) {
+        self.closing
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.admission.close();
+    }
     async fn ensure(&self, install: &std::path::Path, control: &std::path::Path) -> Result<()> {
         let install = install.to_path_buf();
         let control = control.to_path_buf();
-        self.run(move || async move {
-            let observed = crate::runtime_install::installed_control(&install).await?;
-            ensure!(observed == control, "selected service control changed");
-            Ok(())
-        })
+        self.run_inner(
+            move |setup| async move {
+                let observed = crate::runtime_install::installed_control_cooperative(
+                    install,
+                    setup.expect("owned setup control"),
+                )
+                .await?;
+                ensure!(observed == control, "selected service control changed");
+                Ok(())
+            },
+            true,
+        )
         .await
     }
 
+    #[cfg(test)]
     async fn run<F, Fut>(&self, initialize: F) -> Result<()>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
-        let mut state = self.state.lock().await;
-        if state.is_none() {
-            *state = Some(ReadinessState::Running(tokio::spawn(initialize())));
-        }
-        let result = match state.as_mut().unwrap() {
-            ReadinessState::Ready => return Ok(()),
-            ReadinessState::Running(task) => task
-                .await
-                .context("installed runtime verification task failed")
-                .and_then(|result| result),
+        self.run_inner(move |_| initialize(), false).await
+    }
+
+    async fn run_inner<F, Fut>(&self, initialize: F, cooperative: bool) -> Result<()>
+    where
+        F: FnOnce(Option<Arc<crate::runtime_install::SetupCancellation>>) -> Fut,
+        Fut: std::future::Future<Output = Result<()>> + Send + 'static,
+    {
+        let attempt = {
+            let mut state = self.state.lock().await;
+            ensure!(
+                !self.closing.load(std::sync::atomic::Ordering::Acquire),
+                "runtime readiness session closed"
+            );
+            match &*state {
+                ReadinessState::Ready => return Ok(()),
+                ReadinessState::Closed => anyhow::bail!("runtime readiness session closed"),
+                ReadinessState::Running(attempt) => attempt.clone(),
+                ReadinessState::Idle => {
+                    let (sender, result) = tokio::sync::watch::channel(None);
+                    let setup = cooperative.then(|| {
+                        Arc::new(crate::runtime_install::SetupCancellation::for_session(
+                            self.admission.clone(),
+                        ))
+                    });
+                    let future = initialize(setup.clone());
+                    let attempt = Arc::new(ReadinessAttempt {
+                        result,
+                        driver_result: tokio::sync::OnceCell::new(),
+                        failed_completion: tokio::sync::OnceCell::new(),
+                        setup,
+                        abort: std::sync::OnceLock::new(),
+                        task: tokio::sync::Mutex::new(None),
+                    });
+                    let keep_attempt = attempt.clone();
+                    let task = tokio::spawn(async move {
+                        // Retain the owner and its real handle while cooperative
+                        // work drains, even if the outer session is dropped.
+                        let _keep_attempt = keep_attempt;
+                        let outcome = future.await.map_err(Arc::new);
+                        let _ = sender.send_replace(Some(outcome));
+                    });
+                    let _ = attempt.abort.set(task.abort_handle());
+                    *attempt.task.try_lock().expect("new readiness task slot") = Some(task);
+                    *state = ReadinessState::Running(attempt.clone());
+                    attempt
+                }
+            }
         };
-        // Failures never certify readiness. A later request can re-observe the
-        // installation, retaining all existing payload/control/health checks.
-        *state = result.as_ref().ok().map(|_| ReadinessState::Ready);
-        result
+        let mut ticket = attempt.result.clone();
+        let outcome = loop {
+            if let Some(outcome) = ticket.borrow_and_update().clone() {
+                break outcome;
+            }
+            if ticket.changed().await.is_err() {
+                break attempt.failed_join().await;
+            }
+        };
+        {
+            let mut state = self.state.lock().await;
+            ensure!(
+                !self.closing.load(std::sync::atomic::Ordering::Acquire),
+                "runtime readiness session closed"
+            );
+            // Arc identity is the attempt generation fence; an old ticket cannot reset a later attempt.
+            if matches!(&*state, ReadinessState::Running(current) if Arc::ptr_eq(current, &attempt))
+            {
+                *state = if outcome.is_ok() {
+                    ReadinessState::Ready
+                } else {
+                    ReadinessState::Idle
+                };
+            }
+            if matches!(*state, ReadinessState::Closed) {
+                anyhow::bail!("runtime readiness session closed");
+            }
+        }
+        outcome.map_err(|error| anyhow::Error::new(SharedReadinessError(error)))
+    }
+
+    /// EOF closes new setup admission and joins the owned driver/worker.
+    /// Cooperative work is signaled, never aborted or detached; an already blocked
+    /// OS call has no promised hard shutdown deadline.
+    async fn shutdown(&self) -> Result<()> {
+        self.close_admission();
+        let _shutdown = self.shutdown_gate.lock().await;
+        self.closing
+            .store(true, std::sync::atomic::Ordering::Release);
+        let attempt = {
+            let state = self.state.lock().await;
+            match &*state {
+                ReadinessState::Running(attempt) => Some(attempt.clone()),
+                _ => None,
+            }
+        };
+        let mut joined: SharedReadiness = Ok(());
+        let mut drained = Ok(());
+        if let Some(attempt) = attempt {
+            attempt.close();
+            joined = attempt.joined_driver().await;
+            // Explicit shutdown aborts only the legacy synthetic async path;
+            // cooperative production drivers/workers are always closed and joined.
+            if attempt.setup.is_none()
+                && joined.as_ref().err().is_some_and(|error| {
+                    error
+                        .chain()
+                        .find_map(|cause| cause.downcast_ref::<tokio::task::JoinError>())
+                        .is_some_and(tokio::task::JoinError::is_cancelled)
+                })
+            {
+                joined = Ok(());
+            }
+            if let Some(setup) = &attempt.setup {
+                drained = setup.drain().await;
+            }
+        }
+        *self.state.lock().await = ReadinessState::Closed;
+        match (joined, drained) {
+            (Err(error), Err(cleanup)) => Err(anyhow::Error::new(SharedReadinessError(error))
+                .context(format!(
+                    "runtime readiness cleanup also failed: {cleanup:#}"
+                ))),
+            (Err(error), _) => Err(anyhow::Error::new(SharedReadinessError(error))),
+            (Ok(()), drained) => drained,
+        }
     }
 }
-
 struct RootNative {
     scope: crate::service_frontend::RootScope,
     control: PathBuf,
@@ -319,7 +544,20 @@ pub async fn serve(
     });
     let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
     crate::client_owner::watch()?;
-    airk_mcp::remote::serve(Arc::new(backend)).await
+    let close = ready.clone();
+    let served = airk_mcp::remote::serve_with_input_lifecycle(
+        Arc::new(backend),
+        Arc::new(move || close.close_admission()),
+    )
+    .await;
+    let cleanup = ready.shutdown().await;
+    match (served, cleanup) {
+        (Err(error), Err(cleanup)) => Err(error.context(format!(
+            "runtime readiness cleanup also failed: {cleanup:#}"
+        ))),
+        (Err(error), _) => Err(error),
+        (Ok(()), cleanup) => cleanup,
+    }
 }
 
 pub async fn serve_roots(
@@ -368,12 +606,137 @@ pub async fn serve_roots(
     });
     let backend = Unified::new(projects, (!no_default).then_some(primary), explorer)?;
     crate::client_owner::watch()?;
-    airk_mcp::remote::serve(Arc::new(backend)).await
+    let close = ready.clone();
+    let served = airk_mcp::remote::serve_with_input_lifecycle(
+        Arc::new(backend),
+        Arc::new(move || close.close_admission()),
+    )
+    .await;
+    let cleanup = ready.shutdown().await;
+    match (served, cleanup) {
+        (Err(error), Err(cleanup)) => Err(error.context(format!(
+            "runtime readiness cleanup also failed: {cleanup:#}"
+        ))),
+        (Err(error), _) => Err(error),
+        (Ok(()), cleanup) => cleanup,
+    }
 }
 
 #[cfg(test)]
 mod readiness_tests {
     use super::*;
+    use std::future::Future;
+
+    #[test]
+    fn shared_error_preserves_exact_plain_and_nested_chains() {
+        for nested in [false, true] {
+            let original = anyhow::Error::from(std::io::Error::other("typed failure"));
+            let original = if nested {
+                original.context("verification context")
+            } else {
+                original
+            };
+            let expected = format!("{original:#}");
+            let wrapped = anyhow::Error::new(SharedReadinessError(Arc::new(original)));
+            assert_eq!(format!("{wrapped:#}"), expected);
+            assert!(
+                wrapped
+                    .downcast_ref::<SharedReadinessError>()
+                    .unwrap()
+                    .original()
+                    .downcast_ref::<std::io::Error>()
+                    .is_some()
+            );
+            assert_eq!(wrapped.chain().count(), if nested { 2 } else { 1 });
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_failure_and_shutdown_drains_preserve_join_cause() -> Result<()> {
+        for shutdown in [false, true] {
+            let ready = RuntimeReadiness::default();
+            let setup = Arc::new(crate::runtime_install::SetupCancellation::default());
+            let (release, released) = std::sync::mpsc::channel();
+            let (started, began) = tokio::sync::oneshot::channel();
+            let worker_setup = setup.clone();
+            let driver = tokio::spawn(async move {
+                let mut work = Box::pin(worker_setup.run_worker(move |_| {
+                    let _ = started.send(());
+                    released.recv().context("worker release missing")?;
+                    Ok(PathBuf::from("joined"))
+                }));
+                tokio::select! {
+                    _ = &mut work => panic!("worker unexpectedly finished"),
+                    _ = began => panic!("retained driver panic"),
+                }
+            });
+            let (_sender, result) = tokio::sync::watch::channel(None);
+            let attempt = Arc::new(ReadinessAttempt {
+                result,
+                driver_result: tokio::sync::OnceCell::new(),
+                failed_completion: tokio::sync::OnceCell::new(),
+                setup: Some(setup.clone()),
+                abort: std::sync::OnceLock::new(),
+                task: tokio::sync::Mutex::new(Some(driver)),
+            });
+            *ready.state.lock().await = ReadinessState::Running(attempt.clone());
+            let original = attempt.joined_driver().await.unwrap_err();
+            drop(_sender);
+            assert!(
+                original
+                    .chain()
+                    .any(|e| e.downcast_ref::<tokio::task::JoinError>().is_some())
+            );
+            let mut first: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + '_>> =
+                if shutdown {
+                    Box::pin(async {
+                        let _ = ready.shutdown().await;
+                    })
+                } else {
+                    Box::pin(async {
+                        let _ = attempt.failed_join().await;
+                    })
+                };
+            std::future::poll_fn(|cx| {
+                assert!(first.as_mut().poll(cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            drop(first);
+            assert!(setup.worker_is_owned());
+            assert!(attempt.failed_completion.get().is_none());
+            assert!(matches!(
+                *ready.state.lock().await,
+                ReadinessState::Running(_)
+            ));
+            if !shutdown {
+                let mut second =
+                    Box::pin(ready.run(|| async { panic!("replacement before drain") }));
+                std::future::poll_fn(|cx| {
+                    assert!(second.as_mut().poll(cx).is_pending());
+                    std::task::Poll::Ready(())
+                })
+                .await;
+                drop(second);
+            }
+            release.send(())?;
+            let error = if shutdown {
+                ready.shutdown().await.unwrap_err()
+            } else {
+                anyhow::Error::new(SharedReadinessError(
+                    attempt.failed_join().await.unwrap_err(),
+                ))
+            };
+            assert!(format!("{error:#}").contains("retained driver panic"));
+            assert!(
+                error
+                    .chain()
+                    .any(|e| e.downcast_ref::<tokio::task::JoinError>().is_some())
+            );
+            assert!(!setup.worker_is_owned());
+        }
+        Ok(())
+    }
 
     #[tokio::test]
     async fn request_deadline_retains_one_initialization_and_its_result() -> Result<()> {
@@ -465,6 +828,290 @@ mod readiness_tests {
         drop(waiting);
         drop(ready);
         tokio::time::timeout(Duration::from_secs(5), observed).await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn coalesced_failure_tickets_do_not_poison_later_repair_or_reset_ready() -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let mut first = Box::pin(ready.run(|| async move {
+            released.await?;
+            Err(
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "owned fixture denial")
+                    .into(),
+            )
+        }));
+        let mut second =
+            Box::pin(ready.run(|| async { panic!("shared waiter must not initialize") }));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(first.as_mut(), cx).is_pending());
+            assert!(std::future::Future::poll(second.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        release.send(()).unwrap();
+        let first_error = first.await.unwrap_err();
+        assert!(
+            first_error
+                .downcast_ref::<SharedReadinessError>()
+                .expect("shared failure")
+                .original()
+                .chain()
+                .any(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+                })
+        );
+        ready.run(|| async { Ok(()) }).await?;
+        let second_error = second.await.unwrap_err();
+        assert_eq!(second_error.to_string(), first_error.to_string());
+        ready
+            .run(|| async { panic!("old failure ticket must not reset repaired readiness") })
+            .await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn explicit_owner_shutdown_joins_pending_attempt_and_closes_admission() -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let mut waiting =
+            Box::pin(ready.run(|| async { std::future::pending::<Result<()>>().await }));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(waiting.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        ready.shutdown().await?;
+        assert!(
+            waiting
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("session closed")
+        );
+        assert!(
+            ready
+                .run(|| async { panic!("closed owner cannot initialize") })
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+    #[tokio::test]
+    async fn panic_and_abort_fan_out_real_join_failures_then_allow_repair() -> Result<()> {
+        for panic_case in [false, true] {
+            let ready = RuntimeReadiness::default();
+            let (release, released) = tokio::sync::oneshot::channel();
+            let mut first = Box::pin(ready.run(|| async move {
+                released.await?;
+                if panic_case {
+                    panic!("original owned initializer panic");
+                }
+                std::future::pending::<Result<()>>().await
+            }));
+            let mut second = Box::pin(ready.run(|| async { panic!("must share attempt") }));
+            std::future::poll_fn(|cx| {
+                assert!(std::future::Future::poll(first.as_mut(), cx).is_pending());
+                assert!(std::future::Future::poll(second.as_mut(), cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            if panic_case {
+                release.send(()).unwrap();
+            } else {
+                let attempt = {
+                    let state = ready.state.lock().await;
+                    let ReadinessState::Running(attempt) = &*state else {
+                        panic!("owned attempt required")
+                    };
+                    attempt.clone()
+                };
+                let slot = attempt.task.lock().await;
+                slot.as_ref().unwrap().abort();
+            }
+            let first_error = first.await.unwrap_err();
+            let second_error = second.await.unwrap_err();
+            assert_eq!(
+                first_error.to_string(),
+                "installed runtime verification task failed"
+            );
+            assert_eq!(second_error.to_string(), first_error.to_string());
+            for error in [&first_error, &second_error] {
+                let join = error
+                    .chain()
+                    .find_map(|cause| cause.downcast_ref::<tokio::task::JoinError>())
+                    .expect("real task JoinError remains discoverable");
+                assert_eq!(join.is_panic(), panic_case);
+                assert_eq!(join.is_cancelled(), !panic_case);
+                if panic_case {
+                    assert!(format!("{error:#}").contains("original owned initializer panic"));
+                }
+            }
+            ready.run(|| async { Ok(()) }).await?;
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shared_failure_keeps_display_classification_and_source_chain() -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let error = ready
+            .run(|| async {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "service_explicitly_stopped: original owned refusal",
+                )
+                .into())
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "service_explicitly_stopped: original owned refusal"
+        );
+        assert!(error.to_string().contains("service_explicitly_stopped"));
+        assert!(
+            error
+                .downcast_ref::<SharedReadinessError>()
+                .expect("shared failure")
+                .original()
+                .chain()
+                .any(|cause| {
+                    cause
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|value| value.kind() == std::io::ErrorKind::PermissionDenied)
+                })
+        );
+        ready.run(|| async { Ok(()) }).await?;
+        Ok(())
+    }
+    #[tokio::test]
+    async fn cancelled_shutdown_retains_attempt_handle_for_a_later_drain() -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let mut waiting =
+            Box::pin(ready.run(|| async { std::future::pending::<Result<()>>().await }));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(waiting.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        let attempt = {
+            let state = ready.state.lock().await;
+            let ReadinessState::Running(attempt) = &*state else {
+                panic!("owned attempt required")
+            };
+            attempt.clone()
+        };
+        // Stall disposal at its owner-held handle, not with wall-clock sleeps.
+        let slot = attempt.task.lock().await;
+        let mut shutdown = Box::pin(ready.shutdown());
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(shutdown.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(shutdown);
+        assert!(
+            slot.is_some(),
+            "cancelled shutdown cannot take/detach the task"
+        );
+        assert!(
+            matches!(&*ready.state.lock().await, ReadinessState::Running(current)
+        if Arc::ptr_eq(current, &attempt))
+        );
+        assert!(
+            ready
+                .run(|| async { panic!("closing owner cannot admit replacement") })
+                .await
+                .is_err()
+        );
+        drop(slot);
+        ready.shutdown().await?;
+        assert!(
+            attempt.task.lock().await.is_none(),
+            "later shutdown joins the retained task"
+        );
+        assert!(waiting.await.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cooperative_setup_shutdown_keeps_worker_owned_until_join() -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let (started, began) = tokio::sync::oneshot::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let mut waiting = Box::pin(ready.run_inner(
+            move |setup| async move {
+                setup
+                    .expect("owned setup")
+                    .run_worker(move |_| {
+                        let _ = started.send(());
+                        released.recv().context("owned release missing")?;
+                        Ok(PathBuf::from("owned-complete"))
+                    })
+                    .await?;
+                Ok(())
+            },
+            true,
+        ));
+        tokio::select! {
+            _ = &mut waiting => anyhow::bail!("worker must remain pending"),
+            result = began => result?,
+        }
+        assert!(
+            tokio::time::timeout(
+                Duration::ZERO,
+                ready.run(|| async { panic!("a waiter cannot replace owned setup") })
+            )
+            .await
+            .is_err()
+        );
+        let attempt = {
+            let state = ready.state.lock().await;
+            let ReadinessState::Running(attempt) = &*state else {
+                panic!("owned attempt required")
+            };
+            attempt.clone()
+        };
+        let setup = attempt
+            .setup
+            .as_ref()
+            .expect("cooperative worker owner")
+            .clone();
+        let mut shutdown = Box::pin(ready.shutdown());
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(shutdown.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(shutdown);
+        assert!(
+            attempt.task.lock().await.is_some(),
+            "driver handle remains owned after canceled join"
+        );
+        assert!(
+            setup.worker_is_owned(),
+            "blocking worker handle remains owned while blocked"
+        );
+        assert!(
+            ready
+                .run(|| async { panic!("closed setup cannot restart") })
+                .await
+                .is_err()
+        );
+        release.send(())?;
+        ready.shutdown().await?;
+        assert!(
+            attempt.task.lock().await.is_none(),
+            "second shutdown joined the driver"
+        );
+        assert!(
+            !setup.worker_is_owned(),
+            "second shutdown joined the blocking worker"
+        );
+        assert!(waiting.await.is_err());
         Ok(())
     }
 }

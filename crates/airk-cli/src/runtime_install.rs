@@ -20,6 +20,9 @@ use std::{
 
 #[path = "runtime_activation.rs"]
 mod activation;
+#[path = "runtime_setup.rs"]
+mod setup;
+pub(crate) use setup::{SetupAdmission, SetupCancellation, installed_control_cooperative};
 #[path = "runtime_data_migration.rs"]
 mod data_migration;
 #[path = "runtime_inventory.rs"]
@@ -402,14 +405,18 @@ fn require_matching_health(approval: &Approval, health: &ServiceHealth) -> Resul
     Ok(())
 }
 
-/// Verify the selected payload without electing a service or starting project work.
+/// Validate frontend selection metadata without authorizing executable payloads.
 pub fn installed_metadata_control(root: &Path) -> Result<PathBuf> {
     // External policy can be pinned before its supervisor starts the service.
     // Selection is published only after matching health, so the first client
     // must validate the pin before asking ensure to observe that health.
     let approval = match managed::read(root)? {
-        Some(policy) => policy.verify()?.1,
-        None => selected(root)?.2,
+        // Provider pin/metadata remains authoritative without reading actual
+        // images or model assets until the first native request.
+        Some(policy) => policy.metadata_approval()?,
+        // This authenticates bounded manifest/pair metadata and the selected
+        // identity. It is not a VerifiedSelection and cannot authorize a start.
+        None => selected_preflight(root)?.approval,
     };
     ensure!(
         approval.version == env!("CARGO_PKG_VERSION"),
@@ -937,12 +944,36 @@ fn validate_inventory_structure(root: &Path, manifest: &InstallManifest) -> Resu
 fn manifest_with_hasher(
     root: &Path,
     approved: &str,
-    mut hash: impl FnMut(&Path) -> Result<String>,
+    hash: impl FnMut(&Path) -> Result<String>,
 ) -> Result<(Vec<u8>, InstallManifest)> {
+    manifest_with_hasher_checked(root, approved, hash, &|| Ok(()))
+}
+
+fn manifest_checked(
+    root: &Path,
+    approved: &str,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<(Vec<u8>, InstallManifest)> {
+    manifest_with_hasher_checked(
+        root,
+        approved,
+        |path| runtime_pair::digest_file_checked(path, check),
+        check,
+    )
+}
+
+fn manifest_with_hasher_checked(
+    root: &Path,
+    approved: &str,
+    mut hash: impl FnMut(&Path) -> Result<String>,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<(Vec<u8>, InstallManifest)> {
+    check()?;
     let (bytes, manifest) = manifest_metadata(root, approved)?;
     validate_inventory_structure(root, &manifest)?;
     let mut total = 0u64;
     for (name, expected) in &manifest.files {
+        check()?;
         digest(expected)?;
         ensure!(!staging::reserved(name), "reserved payload name");
         let file = payload_path(root, name)?;
@@ -964,6 +995,7 @@ fn manifest_with_hasher(
     // trust a digest captured earlier in inventory traversal: another listed
     // file's processing could precede a changed image. The same real hasher
     // counts ALL manifest-owned image reads, with no hidden pair rehash.
+    check()?;
     let (_, _, pair) =
         runtime_pair::read_installed_pair(&root.join(main_name()), &manifest.version)?;
     let main = payload_path(root, main_name())?;
@@ -1082,6 +1114,15 @@ fn verify_runtime_inventory(
     root: &Path,
     identity: &str,
 ) -> Result<(PathBuf, Approval, InstallManifest)> {
+    verify_runtime_inventory_checked(root, identity, &|| Ok(()))
+}
+
+fn verify_runtime_inventory_checked(
+    root: &Path,
+    identity: &str,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<(PathBuf, Approval, InstallManifest)> {
+    check()?;
     digest(identity)?;
     ensure!(root.is_dir(), "runtime installation is missing");
     local_ipc::prepare_root(root)?;
@@ -1090,16 +1131,25 @@ fn verify_runtime_inventory(
             policy.approval.manifest_sha256 == identity,
             "managed runtime is pinned to another approved identity"
         );
-        return policy.verify_inventory();
+        return policy.verify_inventory_checked(check);
     }
-    let (main, approval, inventory) = owned_inventory(root, identity)?;
-    managed::verify_topology(runtime_pair::payload_root(&main)?, &inventory, true)?;
+    let (main, approval, inventory) = owned_inventory_checked(root, identity, check)?;
+    managed::verify_topology_checked(runtime_pair::payload_root(&main)?, &inventory, true, check)?;
     Ok((main, approval, inventory))
 }
 
 /// Ownership proof for bounded retirement. Unknown files still prevent execution,
 /// but do not prevent saving the inventory needed to resume their safe retirement.
 fn owned_inventory(root: &Path, identity: &str) -> Result<(PathBuf, Approval, InstallManifest)> {
+    owned_inventory_checked(root, identity, &|| Ok(()))
+}
+
+fn owned_inventory_checked(
+    root: &Path,
+    identity: &str,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<(PathBuf, Approval, InstallManifest)> {
+    check()?;
     digest(identity)?;
     ensure!(root.is_dir(), "runtime installation is missing");
     local_ipc::prepare_root(root)?;
@@ -1112,7 +1162,7 @@ fn owned_inventory(root: &Path, identity: &str) -> Result<(PathBuf, Approval, In
         approval.schema == 1 && approval.manifest_sha256 == identity,
         "runtime approval identity mismatch"
     );
-    let (_, manifest) = manifest(&directory, identity)?;
+    let (_, manifest) = manifest_checked(&directory, identity, check)?;
     ensure!(
         manifest.version == approval.version,
         "runtime approval version mismatch"
@@ -1300,28 +1350,84 @@ async fn start_with_digest(
     enforce_backoff: bool,
     verified_digest: Option<&str>,
 ) -> Result<ServiceHealth> {
+    start_with_digest_checked(root, approval, main, enforce_backoff, verified_digest, None).await
+}
+
+async fn start_with_digest_checked(
+    root: &Path,
+    approval: &Approval,
+    main: &Path,
+    enforce_backoff: bool,
+    verified_digest: Option<&str>,
+    cancel: Option<&setup::SetupCancellation>,
+) -> Result<ServiceHealth> {
+    if let Some(cancel) = cancel {
+        cancel.checkpoint()?;
+    }
     let control = layout::control(root)?;
     local_ipc::prepare_root(&control)?;
     let expected_sha256 = match verified_digest {
         Some(digest) => digest.to_owned(),
-        None => runtime_pair::digest_file(main)?,
+        None => runtime_pair::digest_file_checked(main, &|| {
+            cancel.map_or(Ok(()), setup::SetupCancellation::checkpoint)
+        })?,
     };
-    if let Ok(observation) = health(root, approval, &expected_sha256).await {
+    start_with_observation(
+        root,
+        approval,
+        main,
+        enforce_backoff,
+        cancel,
+        &control,
+        &expected_sha256,
+        health(root, approval, &expected_sha256),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)] // Keep verified inputs explicit at the injected health boundary.
+async fn start_with_observation(
+    root: &Path,
+    approval: &Approval,
+    main: &Path,
+    enforce_backoff: bool,
+    cancel: Option<&setup::SetupCancellation>,
+    control: &Path,
+    expected_sha256: &str,
+    observation: impl std::future::Future<Output = Result<ServiceHealth>>,
+) -> Result<ServiceHealth> {
+    if cancel.is_some() {
+        ensure!(
+            enforce_backoff,
+            "session startup requires a durable startup receipt"
+        );
+    }
+    let (observation, _attempt) = setup::observe_or_effect(observation, cancel, || {
+        if enforce_backoff {
+            startup_attempt(root, &approval.manifest_sha256, unix_ms()?)
+        } else {
+            Ok(())
+        }
+    })
+    .await?;
+    if let Some(observation) = observation {
         if observation.uptime_ms >= 60_000 {
-            clear_startup_attempts(root, &approval.manifest_sha256)?;
+            if let Some(cancel) = cancel {
+                cancel.effect(|| clear_startup_attempts(root, &approval.manifest_sha256))?;
+            } else {
+                clear_startup_attempts(root, &approval.manifest_sha256)?;
+            }
         }
         return Ok(observation);
     }
-    if enforce_backoff {
-        startup_attempt(root, &approval.manifest_sha256, unix_ms()?)?;
-    }
+    // The exact receipt-backed attempt above now settles once, even after EOF.
     let service_executable =
         crate::process_roles::executable(main, crate::process_roles::Role::Service)?;
     let mut command = Command::new(&service_executable);
     command
         .arg("serve")
         .arg("--runtime-dir")
-        .arg(&control)
+        .arg(control)
         .args(["--idle-exit-seconds", "180"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1369,7 +1475,7 @@ async fn start_with_digest(
     };
     let until = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
-        if let Ok(observation) = health(root, approval, &expected_sha256).await {
+        if let Ok(observation) = health(root, approval, expected_sha256).await {
             let _ = bootstrap(root, "ready", Some(observation.process_id), None);
             // Reap if this host process remains alive after its detached child exits.
             let _ = std::thread::Builder::new()
@@ -1419,27 +1525,15 @@ struct SelectedPreflight {
     control: PathBuf,
     approval: Approval,
 }
-fn selected_preflight(root: &Path) -> Result<SelectedPreflight> {
-    let selection = guarded_selection(root)?;
-    ensure!(
-        managed::read(root)?.is_none(),
-        "installed service changed; reconnect through the selected launcher"
-    );
-    let directory = root.join("runtimes").join(&selection.active);
-    ensure!(directory.is_dir(), "approved runtime is not staged");
-    local_ipc::prepare_root(&directory)?;
-    let approval: Approval =
-        serde_json::from_slice(&read_bounded(&directory.join("approval.json"), 4096)?)?;
-    ensure!(
-        approval.schema == 1 && approval.manifest_sha256 == selection.active,
-        "runtime approval identity mismatch"
-    );
-    let (_, inventory) = manifest_metadata(&directory, &selection.active)?;
+/// Bounded authenticated delivery metadata only; never an execution capability.
+fn approved_inventory_metadata(directory: &Path, approval: &Approval) -> Result<InstallManifest> {
+    ensure!(approval.schema == 1, "runtime approval identity mismatch");
+    let (_, inventory) = manifest_metadata(directory, &approval.manifest_sha256)?;
     ensure!(
         inventory.version == approval.version,
         "runtime approval version mismatch"
     );
-    validate_inventory_structure(&directory, &inventory)?;
+    validate_inventory_structure(directory, &inventory)?;
     for (name, hash) in &inventory.files {
         digest(hash)?;
         ensure!(!staging::reserved(name), "reserved payload name");
@@ -1465,6 +1559,25 @@ fn selected_preflight(root: &Path) -> Result<SelectedPreflight> {
             && pair.embed_sha256 == inventory.files[helper_name()],
         "runtime executable pair digest mismatch"
     );
+    Ok(inventory)
+}
+
+fn selected_preflight(root: &Path) -> Result<SelectedPreflight> {
+    let selection = guarded_selection(root)?;
+    ensure!(
+        managed::read(root)?.is_none(),
+        "installed service changed; reconnect through the selected launcher"
+    );
+    let directory = root.join("runtimes").join(&selection.active);
+    ensure!(directory.is_dir(), "approved runtime is not staged");
+    local_ipc::prepare_root(&directory)?;
+    let approval: Approval =
+        serde_json::from_slice(&read_bounded(&directory.join("approval.json"), 4096)?)?;
+    ensure!(
+        approval.schema == 1 && approval.manifest_sha256 == selection.active,
+        "runtime approval identity mismatch"
+    );
+    approved_inventory_metadata(&directory, &approval)?;
     ensure!(
         approval.version == env!("CARGO_PKG_VERSION"),
         "matching runtime version required"
@@ -1522,7 +1635,17 @@ fn prepare_connection_with<'a>(
 }
 
 fn selected_verified<'a>(authority: &'a InstallerAuthority<'a>) -> Result<VerifiedSelection<'a>> {
-    let (selection, main, approval, inventory) = selected_inventory(authority.root)?;
+    selected_verified_checked(authority, &|| Ok(()))
+}
+
+fn selected_verified_checked<'a>(
+    authority: &'a InstallerAuthority<'a>,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<VerifiedSelection<'a>> {
+    check()?;
+    let selection = guarded_selection(authority.root)?;
+    let (main, approval, inventory) =
+        verify_runtime_inventory_checked(authority.root, &selection.active, check)?;
     ensure!(
         selection.active == approval.manifest_sha256,
         "runtime selection identity mismatch"
@@ -1544,30 +1667,56 @@ pub async fn ensure_running(root: &Path) -> Result<ServiceHealth> {
 }
 
 async fn ensure_running_locked(authority: &InstallerAuthority<'_>) -> Result<ServiceHealth> {
-    ensure_running_locked_after_settlement(authority, || Ok(())).await
+    ensure_running_locked_checked(authority, None).await
 }
-// The single boundary callback permits the opt-in native fixture to damage an
-// ancillary file AFTER real lifecycle/activation effects, before requalification.
-// Production always supplies a no-op; it never supplies or caches a proof.
+// Preserve the real post-settlement F03 qualification gate for unrestricted callers.
+#[cfg(test)]
 async fn ensure_running_locked_after_settlement(
     authority: &InstallerAuthority<'_>,
     after_settlement: impl FnOnce() -> Result<()>,
 ) -> Result<ServiceHealth> {
+    ensure_running_locked_checked_after_settlement(authority, None, after_settlement).await
+}
+
+async fn ensure_running_locked_checked(
+    authority: &InstallerAuthority<'_>,
+    cancel: Option<&setup::SetupCancellation>,
+) -> Result<ServiceHealth> {
+    ensure_running_locked_checked_after_settlement(authority, cancel, || Ok(())).await
+}
+
+async fn ensure_running_locked_checked_after_settlement(
+    authority: &InstallerAuthority<'_>,
+    cancel: Option<&setup::SetupCancellation>,
+    after_settlement: impl FnOnce() -> Result<()>,
+) -> Result<ServiceHealth> {
+    if let Some(cancel) = cancel {
+        cancel.checkpoint()?;
+    }
+
     let root = authority.root;
     // Preserve direct callers' settlement order: a pending STOP authenticates
     // saved identity and must not require a runnable payload just to drain it.
     payload_repair::require_settled(root)?;
-    lifecycle::settle(root).await?;
+    setup::settle_then_checkpoint(lifecycle::settle(root), cancel).await?;
     if managed::read(root)?.is_some() {
-        return managed::ensure(root).await;
+        return managed::ensure_checked(root, cancel).await;
     }
     if activation::pending(root)?.is_some() {
-        activation::resume(root).await?;
+        if let Some(cancel) = cancel {
+            cancel.checkpoint()?;
+        }
+        // resume authenticates the saved exact Intent under this installer lock.
+        setup::settle_then_checkpoint(activation::resume(root), cancel).await?;
     }
     launcher_repair::require_settled(root)?;
     after_settlement()?;
-    let verified = selected_verified(authority)?;
-    activation::start_verified(&verified).await
+    let check = || cancel.map_or(Ok(()), setup::SetupCancellation::checkpoint);
+    let verified = selected_verified_checked(authority, &check)?;
+    if let Some(cancel) = cancel {
+        cancel.checkpoint()?;
+    }
+    activation::start_verified_checked(&verified, cancel).await
 }
 
 pub(crate) fn startup_selected(root: &Path) -> Result<(PathBuf, Approval)> {
