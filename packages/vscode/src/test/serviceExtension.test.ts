@@ -23,10 +23,20 @@ test('service activation advertises reviewed bindings without indexing and prese
     await new ServiceWorkspace(storage,{reviewProject:async()=>registration,registerProject:async()=>registration},()=>true)
         .register(binding,source,registration.data_root,registration.collection,async()=>true);
     let discoveries=0,ensures=0,stopped=false,provider:any;const outputShows:Array<[string,boolean]>=[];
+    context.mock.method(RuntimeHost.prototype,'discoverForConnection',function(this:RuntimeHost){return this.discover();});
     context.mock.method(RuntimeHost.prototype,'discover',async()=>{discoveries++;return {bundle:{},installDir:root,installed:true,location:{},inspection:{
         selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:'1.4.0',verification_basis:'trusted_distribution'},
         executable:binding.executable,launcher:binding.launcher,control_dir:binding.controlDir}};});
     context.mock.method(RuntimeHost.prototype,'ensure',async(explicit?:boolean)=>{ensures++;assert.notEqual(explicit,true);if(stopped)throw new ServiceError('service_explicitly_stopped');return binding;});
+    context.mock.method(RuntimeHost.prototype as any,'invoke',async(_command:string,args:string[])=>{
+        assert.deepEqual(args.slice(0,2),['runtime','source-scope']);
+        const row=registration;
+        return {install_dir:binding.installDir,control_dir:binding.controlDir,runtime_sha256:binding.runtimeSha256,
+            scope:{schema:1,root:row.root,collection:args.includes('--index-collection')?args[args.indexOf('--index-collection')+1]:null,
+                namespace:'12'.repeat(16),revision:7,observed_unix_ms:1,outcome:'registered',registration:row,fencing_generation:1}};
+    });
+    context.mock.method(RuntimeHost.prototype,'client',()=>({projects:async(_after:unknown,_revision:unknown,_limit:unknown,inactive:boolean)=>({revision:1,cached:true,observed_unix_ms:1,after:null,
+        projects:inactive?[]:[{project:{registration}}]}),dispose(){}}) as any);
     const disposable={dispose(){}},event=()=>disposable;
     const stub:any={workspace:{isTrusted:true,workspaceFolders:[{name:'Fixture',uri:{scheme:'file',fsPath:source}}],
         getConfiguration:()=>({get:(key:string,fallback?:unknown)=>key==='explorer.assistance.enabled'?false:fallback,inspect:(key:string)=>({globalValue:key==='mcp.responseMode'?'full':key==='cli.autoInstall'?false:undefined})}),
@@ -101,4 +111,76 @@ test('service activation advertises reviewed bindings without indexing and prese
         stub.workspace.isTrusted=false;assert.deepEqual(await api.getServerDefinitions(),[]);
         const before=ensures;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),/runtime_client_no_longer_authorized/);assert.equal(ensures,before);
     }finally{extension?.deactivate();loader._load=original;delete require.cache[require.resolve('../serviceExtension')];await fs.rm(root,{recursive:true,force:true});}
+});
+
+
+test('selected Explorer project is available while other root waits without narrowing workspace MCP scope',{timeout:30000},async context=>{
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-selected-startup-')),source=path.join(root,'first'),other=path.join(root,'second');
+    await fs.mkdir(source);await fs.mkdir(other);const canonical=await fs.realpath(source),otherCanonical=await fs.realpath(other);
+    const values=new Map<string,unknown>(),storage={keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key:string,value:unknown)=>{values.set(key,value);}};
+    const binding={installDir:root,controlDir:path.join(root,'control'),executable:path.join(root,'selected'),launcher:path.join(root,'launcher'),runtimeSha256:'ab'.repeat(32),version:'1.8.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    const registrations=[{...binding,binding:'cd'.repeat(32),root:canonical,data_root:path.join(root,'data'),collection:'first'},
+        {...binding,binding:'ef'.repeat(32),root:otherCanonical,data_root:path.join(root,'data'),collection:'second'}];
+    const workspace=new ServiceWorkspace(storage,{reviewProject:async(_binding,opened)=>registrations[opened===source?0:1],registerProject:async(_binding,review)=>review},()=>true);
+    for(const [index,opened] of [source,other].entries())await workspace.register(binding,opened,registrations[index].data_root,registrations[index].collection,async()=>true);
+    context.mock.method(RuntimeHost.prototype,'discoverForConnection',function(this:RuntimeHost){return this.discover();});
+    let stopped=false,exactFailure=false;
+    context.mock.method(RuntimeHost.prototype,'discover',async()=>({bundle:{},installDir:root,installed:true,location:{},inspection:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:binding.verificationBasis},executable:binding.executable,launcher:binding.launcher,control_dir:binding.controlDir,lifecycle:{explicitly_stopped:stopped}}}) as any);
+    let selectedOutcome='registered',selectedProject=registrations[0].binding;
+    context.mock.method(RuntimeHost.prototype as any,'invoke',async(_command:string,args:string[])=>{
+        assert.deepEqual(args.slice(0,2),['runtime','source-scope']);
+        if(exactFailure)throw new Error('original scoped metadata fixture failure');
+        const row=registrations.find(value=>value.root===args[args.indexOf('--source-root')+1])!;
+        return {install_dir:binding.installDir,control_dir:binding.controlDir,runtime_sha256:binding.runtimeSha256,
+            scope:{schema:1,root:row.root,collection:args.includes('--index-collection')?args[args.indexOf('--index-collection')+1]:null,
+                namespace:'12'.repeat(16),revision:7,observed_unix_ms:1,outcome:selectedOutcome,registration:selectedOutcome==='registered'?{...row,binding:selectedProject}:null,fencing_generation:selectedOutcome==='registered'?1:null}};
+    });
+    let pageReads=0;
+    context.mock.method(RuntimeHost.prototype,'client',()=>({projects:async(_after:unknown,_revision:unknown,_limit:unknown,inactive:boolean)=>{pageReads++;await held;return {revision:7,cached:true,observed_unix_ms:1,after:null,projects:inactive?[]:registrations.map(registration=>({project:{registration}}))};},dispose(){}}) as any);
+    let release!:()=>void,published!:()=>void,host:any,controller:any,definitionsChanged=0;
+    const held=new Promise<void>(resolve=>{release=resolve;}),selected=new Promise<void>(resolve=>{published=resolve;});
+    const nativeFs=require('node:fs/promises'),realpath=nativeFs.realpath;
+    context.mock.method(nativeFs,'realpath',async(value:any,...args:any[])=>{if(String(value)===other)await held;return realpath(value,...args);});
+    const disposable={dispose(){}},event=()=>disposable;
+    class Emitter {private listeners:Array<()=>void>=[];event=(listener:()=>void)=>{this.listeners.push(listener);return disposable;};fire(){for(const listener of this.listeners)listener();}dispose(){}}
+    class Workbench {visible=false;onDidChangeVisibility=event;constructor(_context:unknown,value:any){host=value;value.onDidChangeSpecs(()=>{if(value.specs().length===1)published();});}dispose(){}async toggle(){}}
+    const stub:any={workspace:{isTrusted:true,workspaceFolders:[source,other].map((fsPath,index)=>({name:String(index),uri:{scheme:'file',fsPath}})),
+        getConfiguration:()=>({get:(key:string,fallback?:unknown)=>key==='explorer.assistance.enabled'?false:fallback,inspect:(key:string)=>({globalValue:key==='cli.autoInstall'?false:undefined})}),onDidChangeWorkspaceFolders:event,onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event},
+        window:{createOutputChannel:()=>({appendLine(){},dispose(){}}),createStatusBarItem:()=>({show(){},dispose(){}}),registerWebviewViewProvider:()=>disposable,createTreeView:(_name:string,options:any)=>{controller=options.treeDataProvider;return disposable;},onDidChangeActiveTextEditor:event,showWarningMessage:async()=>undefined},
+        commands:{registerCommand:()=>disposable,executeCommand:async()=>{}},lm:{registerMcpServerDefinitionProvider:(name:string,provider:any)=>{if(name==='airk.collections')provider.onDidChangeMcpServerDefinitions(()=>{definitionsChanged++;});return disposable;}},
+        env:{},StatusBarAlignment:{Left:1},EventEmitter:Emitter,TreeItem:class{},Uri:{file:(fsPath:string)=>({fsPath})},McpStdioServerDefinition:class{cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
+    const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;let extension:any;
+    loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:request==='./workbenchView'?{WorkbenchView:Workbench}:original.call(this,request,...args);};
+    try{
+        delete require.cache[require.resolve('../serviceExtension')];extension=require('../serviceExtension');
+        const api=await extension.activate({extensionPath:root,extension:{packageJSON:{version:binding.version}},globalState:storage,workspaceState:storage,subscriptions:[]} as any);
+        await selected;assert.equal(host.specs()[0].service.project,registrations[0].binding);
+        assert.equal(pageReads,0,'selected UI must publish without requesting unrelated console pages');
+        assert.equal(definitionsChanged,0,'early UI publication cannot emit a partial MCP definition');
+        let completed=false;const definitions=api.getServerDefinitions().then((value:any)=>{completed=true;return value;});
+        await Promise.resolve();assert.equal(completed,false,'complete workspace scopes still await the other root');
+        release();const result=await definitions;assert.equal(result.length,1);
+        assert.ok(result[0].args.includes('--no-default-project'));
+        assert.ok(result[0].args.includes('--additional-root'));assert.ok(result[0].args.includes(otherCanonical));
+        const configured=JSON.stringify(controller.specs),events=definitionsChanged;
+        exactFailure=true;await controller.refresh();
+        assert.deepEqual(host.specs().map((spec:any)=>spec.service.project).sort(),registrations.map(row=>row.binding).sort(),
+            'a failed positive refresh falls back to complete UI specs without a stale exclusion');
+        exactFailure=false;await controller.observeSelected(binding);
+        stopped=true;await controller.refresh();
+        assert.deepEqual(host.specs().map((spec:any)=>spec.service.project).sort(),registrations.map(row=>row.binding).sort(),
+            'Stop removes early eligibility without hiding complete saved UI declarations');
+        stopped=false;
+        selectedOutcome='removed';await controller.observeSelected(binding);
+        assert.ok(!host.specs().some((spec:any)=>spec.root===canonical),'native removed scope cannot remain visible through stale complete UI specs');
+        assert.equal(JSON.stringify(controller.specs),configured,'UI removal does not rewrite configured MCP scopes');
+        exactFailure=true;await controller.refresh();
+        assert.ok(!host.specs().some((spec:any)=>spec.root===canonical),'transient failure cannot erase an explicit native negative fence');
+        exactFailure=false;
+        selectedOutcome='registered';selectedProject='56'.repeat(32);await controller.observeSelected(binding);
+        assert.deepEqual(host.specs().filter((spec:any)=>spec.root===canonical).map((spec:any)=>spec.service.project),[selectedProject]);
+        assert.equal(JSON.stringify(controller.specs),configured);assert.equal(definitionsChanged,events);
+
+        stub.workspace.isTrusted=false;assert.deepEqual(await api.getServerDefinitions(),[]);
+    }finally{release?.();extension?.deactivate();loader._load=original;delete require.cache[require.resolve('../serviceExtension')];await fs.rm(root,{recursive:true,force:true});}
 });

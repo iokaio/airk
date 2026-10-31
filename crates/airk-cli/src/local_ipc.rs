@@ -12,6 +12,7 @@ mod platform;
 #[cfg(unix)]
 #[path = "local_ipc_unix.rs"]
 mod platform;
+pub(crate) use platform::require_existing_root;
 pub use platform::{Listener, Stream, connect, current_user, prepare_root};
 #[cfg(windows)]
 pub(crate) use platform::{create_root, process_user, require_owner_private};

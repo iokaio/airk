@@ -397,6 +397,11 @@ fn explorer_commands_write_results_only_to_new_output_files() -> Result<()> {
 /// editor are exercised elsewhere; each entry names that test so it cannot silently rot.
 const ELSEWHERE: &[(&str, &str, &str)] = &[
     (
+        "runtime source-scope",
+        "crates/airk-cli/src/runtime_install_commands.rs",
+        "source_scope_authenticates_digest_control_and_missing_state_without_creation",
+    ),
+    (
         "bridge",
         "crates/airk-cli/tests/service_runtime.rs",
         "bridge",

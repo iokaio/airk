@@ -10,7 +10,7 @@ import * as path from 'node:path';
 import { ASSISTANCE_IPC_LIMIT, type AssistanceIpcReply, type AssistanceWindowStatus, type ExplorerHandoff, parseWindowDescriptor, WINDOW_DESCRIPTOR_LIMIT, WINDOW_SCHEMA, type WindowDescriptor } from './explorerContracts';
 import { DRAFT_KINDS, type DraftKind } from './explorerDrafts';
 import type { DraftClient, Submission, SuggestionStore } from './explorerSuggestions';
-import { restrictWindowsDirectory } from './privateDirectory';
+import { restrictWindowsDirectory, type PrivateDirectoryGuard } from './privateDirectory';
 
 export const DESCRIPTOR_TTL_MS = 30 * 60_000;
 export const ROTATE_MS = 10 * 60_000;
@@ -36,15 +36,22 @@ export interface AssistanceHostPort {
 export const windowsDirectory = (directory: string) => path.join(directory, 'windows');
 
 /** Write a user-only file atomically: temporary sibling, then rename. */
-export function writePrivate(file: string, content: string): void {
-    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-    if (process.platform !== 'win32') { fs.chmodSync(path.dirname(file), 0o700); }
-    else { restrictWindowsDirectory(path.dirname(file)); }
-    const temporary = `${file}.${randomBytes(8).toString('hex')}.tmp`;
-    try {
-        fs.writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 });
-        fs.renameSync(temporary, file);
-    } finally { fs.rmSync(temporary, { force: true }); }
+export async function preparePrivateDirectory(directory:string,valid:()=>boolean=()=>true):Promise<PrivateDirectoryGuard>{
+    if(!valid())throw new Error('Assistance setup is no longer authorized.');
+    await fs.promises.mkdir(directory,{recursive:true,mode:0o700});
+    let guard:PrivateDirectoryGuard={assertCurrent:()=>{if(!valid())throw new Error('Assistance setup is no longer authorized.');}};
+    if(process.platform!=='win32')await fs.promises.chmod(directory,0o700);
+    else guard=await restrictWindowsDirectory(directory,undefined,valid);
+    guard.assertCurrent();return guard;
+}
+export async function writePrivate(file:string,content:string,valid:()=>boolean=()=>true):Promise<void>{
+    const guard=await preparePrivateDirectory(path.dirname(file),valid);
+    guard.assertCurrent();
+    if(!valid())throw new Error('Assistance publication is no longer authorized.');
+    const temporary=`${file}.${randomBytes(8).toString('hex')}.tmp`;
+    // No await splits this accepted, atomic owned publication.
+    try{fs.writeFileSync(temporary,content,{flag:'wx',mode:0o600});fs.renameSync(temporary,file);}
+    finally{fs.rmSync(temporary,{force:true});}
 }
 
 /** Remove expired or unreadable window descriptors left by windows that did not close cleanly. */
@@ -70,23 +77,34 @@ export function sweepExpired(directory: string, now = Date.now()): void {
 
 export class AssistanceIpcHost {
     private readonly session = randomBytes(16).toString('hex');
-    private credential = randomBytes(32).toString('hex');
+    private credential:string;
+    private rotating?:Promise<void>;
     private readonly server: net.Server;
     private readonly timer: NodeJS.Timeout;
     private readonly fingerprint: string;
     private disposed = false;
 
     private constructor(private readonly port: AssistanceHostPort, private readonly roots: readonly string[], private readonly endpoint: string, private readonly socketDirectory?: string) {
+        this.credential=randomBytes(32).toString('hex'); // constructor follows successful ACL preparation
         this.fingerprint = createHash('sha256').update([this.session, ...roots].join('\0')).digest('hex').slice(0, 16);
         this.server = net.createServer(socket => this.accept(socket));
-        this.timer = setInterval(() => this.rotate(), ROTATE_MS);
+        this.timer = setInterval(() => {void this.rotate().catch(()=>{});}, ROTATE_MS);
         this.timer.unref();
     }
 
     /** Listen and publish this window's descriptor; undefined when the window has no usable folder. */
     static async start(port: AssistanceHostPort): Promise<AssistanceIpcHost | undefined> {
-        const roots = [...new Set(port.roots.flatMap(root => { try { return [fs.realpathSync.native(root)]; } catch { return []; } }))].slice(0, 32);
+        const roots:string[]=[];
+        for(const root of port.roots){
+            if(roots.length===32)break;
+            if(port.authorized?.()===false)throw new Error('Assistance setup is no longer authorized.');
+            try{const canonical=await fs.promises.realpath(root);if(!roots.includes(canonical))roots.push(canonical);}catch(error){
+                if(port.authorized?.()===false)throw error;
+            }
+        }
         if (!roots.length) { return undefined; }
+        await preparePrivateDirectory(windowsDirectory(port.directory),()=>port.authorized?.()!==false);
+        if(port.authorized?.()===false)throw new Error('Assistance setup is no longer authorized.');
         sweepExpired(port.directory);
         let endpoint: string, socketDirectory: string | undefined;
         if (process.platform === 'win32') {
@@ -101,26 +119,31 @@ export class AssistanceIpcHost {
         try {
             await new Promise<void>((resolve, reject) => { host.server.once('error', reject); host.server.listen(endpoint, () => { host.server.off('error', reject); resolve(); }); });
             if (socketDirectory) { fs.chmodSync(endpoint, 0o600); }
-            host.publish();
+            await host.publish();
             return host;
         } catch (error) { host.dispose(); throw error; }
     }
 
     private get file(): string { return path.join(windowsDirectory(this.port.directory), `${this.session}.json`); }
 
-    private publish(): void {
-        const descriptor: WindowDescriptor = { schema: WINDOW_SCHEMA, session_id: this.session, endpoint: this.endpoint, credential: this.credential,
+    private async publish(credential=this.credential):Promise<void> {
+        if(this.disposed||this.port.authorized?.()===false)throw new Error('Assistance publication is no longer authorized.');
+        const descriptor: WindowDescriptor = { schema: WINDOW_SCHEMA, session_id: this.session, endpoint: this.endpoint, credential,
             roots: this.roots, binding_fingerprint: this.fingerprint, extension_version: this.port.version, expires_unix_ms: Date.now() + DESCRIPTOR_TTL_MS };
-        writePrivate(this.file, JSON.stringify(descriptor));
+        await writePrivate(this.file,JSON.stringify(descriptor),()=>!this.disposed&&this.port.authorized?.()!==false);
     }
 
     /** New credential and expiry; a server holding the old credential must reread the descriptor. */
-    rotate(): void {
-        if (this.disposed) { return; }
-        const previous = this.credential;
-        this.credential = randomBytes(32).toString('hex');
-        // Keep answering the published credential if the new descriptor could not be written.
-        try { this.publish(); } catch { this.credential = previous; }
+    rotate():Promise<void>{
+        if(this.rotating)return this.rotating;
+        this.rotating=(async()=>{
+            if(this.disposed)return;
+            await preparePrivateDirectory(path.dirname(this.file),()=>!this.disposed&&this.port.authorized?.()!==false);
+            const next=randomBytes(32).toString('hex');
+            // Keep accepting the previously published credential until commit.
+            await this.publish(next);this.credential=next;
+        })().finally(()=>{this.rotating=undefined;});
+        return this.rotating;
     }
 
     private accept(socket: net.Socket): void {

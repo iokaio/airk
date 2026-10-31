@@ -62,6 +62,24 @@ function legacyTarget(input:unknown):LegacyStartupTarget {
     return {root:safePath(value.root),data_dir:safePath(value.data_dir),collection,executable:safePath(value.executable)};
 }
 function legacyArguments(target:LegacyStartupTarget):string[]{return ['--root',target.root,'--data-dir',target.data_dir,'--collection',target.collection,'--executable',target.executable];}
+function sameNativeLocation(left:string,right:string):boolean {
+    return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,
+        process.platform==='win32'?path.toNamespacedPath(right):right)==='';
+}
+export interface NativeSourceScope {
+    readonly root:string; readonly collection:string|null;
+    readonly namespace:string|null; readonly revision:number|null;
+    readonly observed_unix_ms:number|null;
+    readonly outcome:'registered'|'missing'|'removed'|'ambiguous';
+    readonly registration:Readonly<{binding:string;root:string;data_root:string;collection:string}>|null;
+    readonly fencing_generation:number|null;
+}
+const exactScopeOwners=new WeakMap<NativeSourceScope,{binding:string;root:string;collection:string|null}>();
+const exactBindingIdentity=(binding:RuntimeBinding)=>JSON.stringify(binding);
+export function exactScopeMatches(value:NativeSourceScope,binding:RuntimeBinding,root:string,collection:string|null):boolean {
+    const owner=exactScopeOwners.get(value);
+    return !!owner&&owner.binding===exactBindingIdentity(binding)&&owner.root===root&&owner.collection===collection;
+}
 function projectRegistration(value:unknown):{binding:string;root:string;data_root:string;collection:string}{
     const registration=record(value),collection=registration.collection;
     if(typeof collection!=='string'||collection.length>128||!collection.length||collection==='.'||collection==='..'||!/^[A-Za-z0-9._-]+$/.test(collection))throw new ServiceError('invalid_project_registration');
@@ -163,7 +181,7 @@ export async function verifyBundledRuntime(extensionPath:string,version:string,
 export class RuntimeHost {
     private bundle?:Promise<VerifiedBundle>;
     private preparing?:Promise<RuntimeBinding>;
-    private discovering?:Promise<BootstrapObservation>;
+    private discovering?:{execution:Promise<BootstrapObservation>;full?:Promise<BootstrapObservation>;connections:number;fullSettled:boolean};
     private tested?:Promise<void>;
     private readonly transitionReviews=new WeakSet<RuntimeTransitionReview>();
     private readonly projectReviews=new WeakSet<ProjectRegistrationReview>();
@@ -185,9 +203,58 @@ export class RuntimeHost {
     private verified():Promise<VerifiedBundle>{
         this.bundle??=verifyBundledRuntime(this.extensionPath,this.version).catch(error=>{this.bundle=undefined;throw error;});return this.bundle;
     }
-    discover():Promise<BootstrapObservation>{
-        this.discovering??=this.discoverOnce().finally(()=>{this.discovering=undefined;});
-        return this.discovering.then(value=>structuredClone(value));
+    private discovery():NonNullable<RuntimeHost['discovering']>{
+        if(this.discovering)return this.discovering;
+        const attempt:NonNullable<RuntimeHost['discovering']>={execution:this.discoverOnce(),connections:0,fullSettled:false};
+        this.discovering=attempt;return attempt;
+    }
+    private retireDiscovery(attempt:NonNullable<RuntimeHost['discovering']>):void{
+        if(attempt.connections===0&&(!attempt.full||attempt.fullSettled)&&this.discovering===attempt)this.discovering=undefined;
+    }
+    private fullDiscovery(attempt:NonNullable<RuntimeHost['discovering']>):Promise<BootstrapObservation>{
+        if(attempt.full)return attempt.full;
+        attempt.full=attempt.execution.then(async value=>{
+            const observation=structuredClone(value);
+            if(observation.installed){
+                try{observation.diagnosis=await this.invoke(observation.bundle.main,['runtime','diagnose','--install-dir',observation.installDir]);}
+                catch{this.active();observation.error??='runtime_diagnostics_unavailable';}
+            }
+            return observation;
+        }).finally(()=>{attempt.fullSettled=true;this.retireDiscovery(attempt);});
+        // Full is owned only after an explicit caller or mandatory fallback.
+        // A connection waiter never cancels an accepted shared full discovery.
+        void attempt.full.catch(()=>{});
+        return attempt.full;
+    }
+    discover():Promise<BootstrapObservation>{return this.fullDiscovery(this.discovery()).then(value=>structuredClone(value));}
+    /** Current verified execution metadata + exact existing healthy service only.
+     * Never starts/elects a process or settles lifecycle work. Missing native
+     * recovery observations, managed pins and pending work keep full discovery. */
+    async discoverForConnection():Promise<BootstrapObservation>{
+        const attempt=this.discovery();attempt.connections++;
+        try{
+        const observed=await attempt.execution;this.active();
+        const inspection=observed.inspection;
+        if(!inspection||observed.error||inspection.payload_verified!==true||inspection.metadata_only===true||this.options.managed)
+            {const complete=await this.fullDiscovery(attempt);this.active();return structuredClone(complete);}
+        const lifecycle=record(inspection.lifecycle??{});
+        if(lifecycle.explicitly_stopped===true)throw new ServiceError('service_explicitly_stopped');
+        const binding=this.binding(inspection,observed.installDir);
+        if(binding.version!==this.version)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
+        const recovery=record(inspection.connection_observation??{}),repair=record(inspection.payload_repair??{});
+        if(recovery.schema!==1||recovery.activation_pending!==false||recovery.launcher_repair_pending!==false
+            ||!['none','completed'].includes(String(repair.phase))||lifecycle.explicitly_stopped!==false||lifecycle.pending!==null
+            ||typeof inspection.registry_namespace!=='string'||!/^[a-f0-9]{32}$/.test(inspection.registry_namespace))
+            {const complete=await this.fullDiscovery(attempt);this.active();return structuredClone(complete);}
+        const client=this.client(binding);
+        try{
+            const response=await client.rpc('health','health');this.active();const health=record(response.observation);
+            if(health.version!==this.version||health.runtime_sha256!==binding.runtimeSha256||record(health.policy).accepting!==true)
+                throw new ServiceError('runtime_selection_changed_review_again');
+            identifier(health.instance,16);
+            return structuredClone(observed);
+        }finally{client.dispose();}
+        }finally{attempt.connections--;this.retireDiscovery(attempt);}
     }
     private async discoverOnce():Promise<BootstrapObservation>{
         const bundle=await this.verified();
@@ -209,8 +276,6 @@ export class RuntimeHost {
                 if(snapshot.schema===1&&snapshot.metadata_only===true&&snapshot.payload_verified===false){observation.inspection=snapshot;observation.error='selected_runtime_payload_unverified';}}
             catch{/* Preserve unavailable state without nominating a different installation. */}
         }
-        try {observation.diagnosis=await this.invoke(bundle.main,['runtime','diagnose','--install-dir',installDir]);}
-        catch {observation.error??='runtime_diagnostics_unavailable';}
         return observation;
     }
     /** A verified installation can reconnect without running install/ensure again.
@@ -296,6 +361,34 @@ export class RuntimeHost {
         const result=await this.invoke(bundle.main,['runtime','retire-previous','--install-dir',binding.installDir,
             '--expected-active',binding.runtimeSha256],180000);
         if(result.active!==binding.runtimeSha256)throw new ServiceError('crossed_runtime_retirement_receipt',true);
+    }
+    /** Native saved-scope observation only; not permission to start or broker evidence. */
+    async sourceScope(binding:RuntimeBinding,root:string,collection:string|null):Promise<NativeSourceScope> {
+        this.active();safePath(root);
+        if(binding.version!==this.version||binding.payloadVerified===false)throw new ServiceError('selected_runtime_payload_unverified');
+        if(collection!==null&&(!/^[A-Za-z0-9._-]{1,128}$/.test(collection)||['.','..'].includes(collection)))throw new ServiceError('invalid_project_registration');
+        const identity=exactBindingIdentity(binding);
+        const response=await this.invoke(binding.executable,['runtime','source-scope','--install-dir',binding.installDir,
+            '--expected-control',binding.controlDir,'--expected-runtime',binding.runtimeSha256,'--source-root',root,
+            ...(collection===null?[]:['--index-collection',collection])],15000);
+        this.active();
+        if(identity!==exactBindingIdentity(binding)||response.install_dir!==binding.installDir||response.control_dir!==binding.controlDir||response.runtime_sha256!==binding.runtimeSha256)throw new ServiceError('crossed_source_scope_observation');
+        const raw=record(response.scope);
+        if(Object.keys(raw).sort().join(',')!=='collection,fencing_generation,namespace,observed_unix_ms,outcome,registration,revision,root,schema'||raw.schema!==1||raw.collection!==collection||!['registered','missing','removed','ambiguous'].includes(String(raw.outcome)))throw new ServiceError('invalid_source_scope_observation');
+        const canonical=safePath(raw.root);
+        if(!sameNativeLocation(canonical,root))throw new ServiceError('crossed_source_scope_observation');
+        const namespace=raw.namespace===null?null:identifier(raw.namespace,16);
+        const revision=raw.revision===null?null:(count(raw.revision),raw.revision as number);
+        const observed=raw.observed_unix_ms===null?null:(count(raw.observed_unix_ms),raw.observed_unix_ms as number);
+        if((namespace===null)!==(revision===null)||namespace===null&&raw.outcome!=='missing')throw new ServiceError('invalid_source_scope_observation');
+        const registration=raw.registration===null?null:projectRegistration(raw.registration);
+        const generation=raw.fencing_generation===null?null:(count(raw.fencing_generation),raw.fencing_generation as number);
+        if(raw.outcome==='registered'){
+            if(!registration||namespace===null||generation===null||!sameNativeLocation(registration.root,canonical)||collection!==null&&registration.collection!==collection)throw new ServiceError('crossed_source_scope_observation');
+        }else if(registration!==null||generation!==null)throw new ServiceError('invalid_source_scope_observation');
+        if(registration)Object.freeze(registration);
+        const value:NativeSourceScope=Object.freeze({root:canonical,collection,namespace,revision,observed_unix_ms:observed,outcome:raw.outcome as NativeSourceScope['outcome'],registration,fencing_generation:generation});
+        exactScopeOwners.set(value,{binding:identity,root,collection});return value;
     }
     client(binding:RuntimeBinding):ServiceClient {
         this.active();

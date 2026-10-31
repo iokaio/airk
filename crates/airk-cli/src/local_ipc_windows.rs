@@ -161,6 +161,16 @@ pub fn prepare_root(root: &Path) -> Result<()> {
         std::fs::create_dir_all(parent)?;
         create_directory(root, &user, true)?;
     }
+    validate_existing_root(root, &user)
+}
+
+/// Validate existing owned runtime state without creating missing directories.
+pub(crate) fn require_existing_root(root: &Path) -> Result<()> {
+    let user = current_user()?;
+    validate_existing_root(root, &user)
+}
+
+fn validate_existing_root(root: &Path, user: &str) -> Result<()> {
     for ancestor in root.ancestors().filter(|p| !p.as_os_str().is_empty()) {
         use std::os::windows::fs::MetadataExt;
         let metadata = std::fs::symlink_metadata(ancestor)?;

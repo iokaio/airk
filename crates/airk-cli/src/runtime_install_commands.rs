@@ -4,6 +4,39 @@ use super::*;
 
 pub async fn run(command: &RuntimeCommand) -> Result<()> {
     let output = match command {
+        RuntimeCommand::SourceScope {
+            install_dir,
+            expected_control,
+            expected_runtime,
+            source_root,
+            index_collection,
+        } => {
+            // The lock binds selection/policy/control metadata throughout the one
+            // registry transaction. No payload proof, lifecycle settlement or start.
+            let scope =
+                crate::service_frontend::RootScope::new(source_root, index_collection.clone())?;
+            let _lock = existing_install_lock(install_dir)?;
+            let approval = match managed::read(install_dir)? {
+                Some(policy) => policy.metadata_approval()?,
+                None => selected_preflight(install_dir)?.approval,
+            };
+            ensure!(
+                approval.version == env!("CARGO_PKG_VERSION")
+                    && approval.manifest_sha256 == *expected_runtime,
+                "source scope runtime changed"
+            );
+            let control = layout::saved_control(install_dir)?;
+            local_ipc::require_existing_root(control.parent().context("control parent missing")?)?;
+            local_ipc::require_existing_root(&control)?;
+            layout::validate_control(&control)?;
+            ensure!(control == *expected_control, "source scope control changed");
+            let observed = scope.metadata_before(
+                &control,
+                std::time::Instant::now() + std::time::Duration::from_secs(2),
+            )?;
+            serde_json::json!({"install_dir":install_dir,"control_dir":control,"runtime_sha256":approval.manifest_sha256,"scope":observed})
+        }
+
         RuntimeCommand::LoginForeground { channel } => {
             #[cfg(target_os = "macos")]
             {
@@ -314,7 +347,10 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 }
                 _ => None,
             };
-            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?})
+            // Optional, current receipt observations only; not an execution proof
+            // across lock waits. Actual native startup retains all locked guards.
+            let connection_observation = connection_observation(install_dir);
+            serde_json::json!({"selection":selection,"executable":executable,"approval":approval,"launcher":launcher,"universal_launcher":universal_launcher,"managed_policy":policy,"control_dir":control.ok(),"state_error":state_error,"lifecycle":lifecycle,"registry_namespace":registry_namespace,"payload_verified":true,"payload_repair":payload_repair::status(install_dir)?,"connection_observation":connection_observation})
         }
         RuntimeCommand::Remove {
             install_dir,
@@ -487,4 +523,261 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
     };
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
+}
+
+fn connection_observation(root: &Path) -> Option<serde_json::Value> {
+    match (activation::pending(root), launcher_repair::pending(root)) {
+        (Ok(activation), Ok(launcher)) => Some(serde_json::json!({"schema":1,
+            "activation_pending":activation.is_some(),"launcher_repair_pending":launcher.is_some()})),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod connection_observation_tests {
+    use super::*;
+
+    fn inventory(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
+        let mut files = BTreeMap::new();
+        if !root.exists() {
+            return Ok(files);
+        }
+        for entry in fs::read_dir(root)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                files.insert(path.clone(), Vec::new());
+                files.extend(inventory(&path)?);
+            } else {
+                files.insert(path.clone(), fs::read(path)?);
+            }
+        }
+        Ok(files)
+    }
+
+    fn query(root: &Path, source: &Path, control: PathBuf, digest: String) -> RuntimeCommand {
+        RuntimeCommand::SourceScope {
+            install_dir: root.into(),
+            expected_control: control,
+            expected_runtime: digest,
+            source_root: source.into(),
+            index_collection: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn source_scope_rejected_metadata_never_creates_install_lock_or_state() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let root = base.join("absent-install");
+        let source = base.join("source");
+        fs::create_dir(&source)?;
+        assert!(
+            run(&query(&root, &source, root.join("control"), "a".repeat(64)))
+                .await
+                .is_err()
+        );
+        assert!(!root.exists());
+        local_ipc::prepare_root(&root)?;
+        let before = inventory(&root)?;
+        assert!(
+            run(&query(&root, &source, root.join("control"), "a".repeat(64)))
+                .await
+                .is_err()
+        );
+        assert_eq!(inventory(&root)?, before);
+        assert!(!root.join("install-1.4.lock").exists());
+        drop(install_lock(&root)?);
+        fs::write(root.join("selected.json"), b"{}")?;
+        let before = inventory(&root)?;
+        assert!(
+            run(&query(&root, &source, root.join("control"), "a".repeat(64)))
+                .await
+                .is_err()
+        );
+        assert_eq!(inventory(&root)?, before);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_scope_authenticates_digest_control_and_missing_state_without_creation()
+    -> Result<()> {
+        let (owner, root, digest) = super::super::tests::unselected_fixture()?;
+        replace_json(
+            &root,
+            "selected.json",
+            &Selection {
+                schema: 1,
+                active: digest.clone(),
+                previous: None,
+            },
+        )?;
+        drop(install_lock(&root)?);
+        let source = owner.path().canonicalize()?.join("source");
+        fs::create_dir(&source)?;
+        let control = layout::saved_control(&root)?;
+        local_ipc::prepare_root(&control)?;
+        let before = inventory(&root)?;
+        run(&query(&root, &source, control.clone(), digest.clone())).await?;
+        assert_eq!(
+            inventory(&root)?,
+            before,
+            "valid absent registry remains read-only"
+        );
+        for (expected_control, expected_digest) in [
+            (control.clone(), "0".repeat(64)),
+            (root.join("wrong-control"), digest.clone()),
+        ] {
+            assert!(
+                run(&query(&root, &source, expected_control, expected_digest))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(inventory(&root)?, before);
+        }
+        fs::remove_dir(&control)?;
+        let before = inventory(&root)?;
+        assert!(
+            run(&query(&root, &source, control.clone(), digest))
+                .await
+                .is_err()
+        );
+        assert_eq!(inventory(&root)?, before);
+        assert!(!control.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_scope_preserves_pending_stop_and_activation_without_election() -> Result<()> {
+        use airk_core::identity::{Incarnation, Sha256Digest};
+        use airk_core::service::RequestKey;
+        use airk_core::service_lifecycle::{LifecycleAction, LifecycleRequest};
+        use airk_store::service::registry::ServiceRegistry;
+        let (owner, root, digest) = super::super::tests::unselected_fixture()?;
+        replace_json(
+            &root,
+            "selected.json",
+            &Selection {
+                schema: 1,
+                active: digest.clone(),
+                previous: None,
+            },
+        )?;
+        drop(install_lock(&root)?);
+        let control = layout::saved_control(&root)?;
+        local_ipc::prepare_root(&control)?;
+        let source = owner.path().canonicalize()?.join("source");
+        fs::create_dir(&source)?;
+        let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([71; 16]))?;
+        let (namespace, epoch) = registry.request_epoch()?;
+        let record = registry.begin_lifecycle(&LifecycleRequest {
+            caller: Incarnation::from_bytes([72; 16]),
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: Incarnation::from_bytes([73; 16]),
+            },
+            action: LifecycleAction::Stop,
+            expected_instance: Incarnation::from_bytes([71; 16]),
+            runtime: Sha256Digest::from_bytes([74; 32]),
+            manager: false,
+        })?;
+        assert!(registry.service_explicitly_stopped()?);
+        drop(registry);
+        replace_json(
+            &root,
+            "activation.json",
+            &serde_json::json!({"schema":1,"install":root,
+            "control":control,"candidate":digest,"prior":null,"manager":false,"phase":"probe"}),
+        )?;
+        let before = inventory(&root)?;
+        run(&query(&root, &source, control.clone(), digest.clone())).await?;
+        assert_eq!(inventory(&root)?, before);
+        let registry = ServiceRegistry::open_saved(&control)?;
+        assert!(registry.service_explicitly_stopped()?);
+        assert_eq!(
+            registry
+                .pending_lifecycle()?
+                .context("Stop disappeared")?
+                .id,
+            record.id
+        );
+        assert!(!root.join("bootstrap.json").exists());
+        assert!(!root.join(format!("startup-{digest}.json")).exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_scope_managed_metadata_authenticates_both_modes_without_starting() -> Result<()>
+    {
+        for lifecycle in ["external", "user_on_demand"] {
+            let (owner, root, digest) = super::super::tests::unselected_fixture()?;
+            drop(install_lock(&root)?);
+            let control = layout::saved_control(&root)?;
+            local_ipc::prepare_root(&control)?;
+            let source = owner.path().canonicalize()?.join("source");
+            fs::create_dir(&source)?;
+            let provider = owner.path().join("provider");
+            fs::rename(root.join("runtimes").join(&digest), &provider)?;
+            let provider = provider.canonicalize()?;
+            let approval: serde_json::Value =
+                serde_json::from_slice(&fs::read(provider.join("approval.json"))?)?;
+            fs::remove_file(provider.join("approval.json"))?;
+            let executable = runtime_pair::digest_file(&provider.join(main_name()))?;
+            let mut policy = serde_json::json!({"schema":1,"install":root,"source":provider,
+                "approval":approval,"executable_sha256":executable,"lifecycle":lifecycle});
+            replace_json(&root, "managed-runtime.json", &policy)?;
+            managed::read(&root)?
+                .context("managed policy absent")?
+                .verify()?;
+            let before = inventory(owner.path())?;
+            run(&query(&root, &source, control.clone(), digest.clone())).await?;
+            assert_eq!(inventory(owner.path())?, before);
+            policy["executable_sha256"] = "0".repeat(64).into();
+            replace_json(&root, "managed-runtime.json", &policy)?;
+            let before = inventory(owner.path())?;
+            assert!(
+                run(&query(&root, &source, control, digest.clone()))
+                    .await
+                    .is_err()
+            );
+            assert_eq!(inventory(owner.path())?, before);
+            assert!(!root.join("bootstrap.json").exists());
+            assert!(!root.join(format!("startup-{digest}.json")).exists());
+        }
+        Ok(())
+    }
+    #[test]
+    fn current_pending_or_malformed_activation_cannot_report_settled() -> Result<()> {
+        let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
+        assert_eq!(
+            connection_observation(&root),
+            Some(serde_json::json!({"schema":1,
+            "activation_pending":false,"launcher_repair_pending":false}))
+        );
+        replace_json(
+            &root,
+            "selected.json",
+            &Selection {
+                schema: 1,
+                active: identity.clone(),
+                previous: None,
+            },
+        )?;
+        replace_json(
+            &root,
+            "activation.json",
+            &serde_json::json!({"schema":1,"install":root,
+            "control":layout::control(&root)?,"candidate":identity,"prior":null,"manager":false,"phase":"probe"}),
+        )?;
+        assert_eq!(
+            connection_observation(&root).context("valid current intent was not observed")?["activation_pending"],
+            true
+        );
+        fs::write(root.join("activation.json"), b"{")?;
+        assert!(
+            connection_observation(&root).is_none(),
+            "malformed receipt is unknown, never settled"
+        );
+        Ok(())
+    }
 }

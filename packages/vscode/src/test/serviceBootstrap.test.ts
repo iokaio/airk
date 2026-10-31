@@ -493,3 +493,147 @@ test('activation admits supported forward upgrades and rejects downgrades, unkno
         assert.equal(automaticUpgrade(from, to), false, `${from} → ${to}`);
     }
 });
+
+
+test('healthy authenticated connection discovery does not wait for optional diagnostics', {timeout:30000},async()=>{
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const inspection={selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
+        executable:path.join(f.source,f.main),launcher:path.join(install,'launcher'),control_dir:path.join(install,'control'),payload_verified:true,
+        lifecycle:{explicitly_stopped:false,pending:null},payload_repair:{phase:'none'},registry_namespace:'12'.repeat(16),
+        connection_observation:{schema:1,activation_pending:false,launcher_repair_pending:false}};
+    let release!:()=>void,entered!:()=>void,fullDone=false;
+    const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;}),calls:string[][]=[];
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
+        calls.push(args);
+        switch(args[1]){case 'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+            case 'location':return {protocol:1,install_dir:install};case 'inspect':return inspection;
+            case 'diagnose':entered();await held;return {};default:throw new Error('Unexpected native effect');}
+    });
+    host.client=()=>new ServiceClient({async request(){return {status:'health',observation:{version:'1.4.0',runtime_sha256:f.digest,instance:'34'.repeat(16),policy:{accepting:true}}};},dispose(){}});
+    const full=host.discover().then(value=>{fullDone=true;return value;});
+    try{
+        const connection=host.discoverForConnection();await began;
+        const current=await connection;assert.equal(current.inspection?.payload_verified,true);assert.equal(fullDone,false);
+        assert.equal(calls.filter(args=>args[1]==='self-test').length,1);assert.equal(calls.filter(args=>args[1]==='inspect').length,1);
+        assert.equal(calls.filter(args=>args[1]==='ensure'||args[1]==='activate').length,0);
+        release();assert.deepEqual((await full).diagnosis,{});
+    }finally{release();await full.catch(()=>{});await f.cleanup();}
+});
+
+test('connection discovery refuses mandatory self-test failure before diagnostics',async()=>{
+    const f=await fixture();let diagnostics=0;
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable'},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'failed',metadata_console:1};
+        if(args[1]==='diagnose')diagnostics++;throw new Error('Mandatory failure must stop discovery');
+    });
+    try{await assert.rejects(host.discoverForConnection(),/service_runtime_self_test_failed/);assert.equal(diagnostics,0);}
+    finally{await f.cleanup();}
+});
+
+
+test('pending or unavailable current recovery observation keeps diagnostics in the connection barrier',{timeout:30000},async()=>{
+    for(const connection_observation of [undefined,{schema:1,activation_pending:true,launcher_repair_pending:false}]){
+        const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+        let release!:()=>void,entered!:()=>void,done=false,health=0;
+        const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
+        const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
+            if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+            if(args[1]==='location')return {protocol:1,install_dir:install};
+            if(args[1]==='inspect')return {selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
+                executable:path.join(f.source,f.main),launcher:null,control_dir:path.join(install,'control'),payload_verified:true,
+                lifecycle:{explicitly_stopped:false,pending:null},payload_repair:{phase:'none'},registry_namespace:'12'.repeat(16),connection_observation};
+            if(args[1]==='diagnose'){entered();await held;return {pending_activation:connection_observation?{phase:'probe'}:null};}
+            throw new Error('Unexpected lifecycle execution');
+        });
+        host.client=()=>{health++;throw new Error('Unsettled observation must not probe a healthy shortcut');};
+        const pending=host.discoverForConnection().then(value=>{done=true;return value;});
+        try{await began;await Promise.resolve();assert.equal(done,false);assert.equal(health,0);release();await pending;}
+        finally{release();await pending.catch(()=>{});await f.cleanup();}
+    }
+});
+
+
+test('explicit Stop refuses the connection shortcut while optional diagnose is still blocked',{timeout:30000},async()=>{
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);let release!:()=>void,entered!:()=>void;
+    const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
+        if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+        if(args[1]==='location')return {protocol:1,install_dir:install};
+        if(args[1]==='inspect')return {selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
+            executable:path.join(f.source,f.main),launcher:null,control_dir:path.join(install,'control'),payload_verified:true,lifecycle:{explicitly_stopped:true,pending:null}};
+        if(args[1]==='diagnose'){entered();await held;return {};}
+        throw new Error('Explicit Stop cannot admit native lifecycle work');
+    });
+    host.client=()=>{throw new Error('Stopped observation cannot admit health or registry query');};
+    const full=host.discover();
+    try{await began;await assert.rejects(host.discoverForConnection(),/service_explicitly_stopped/);}
+    finally{release();await full.catch(()=>{});await f.cleanup();}
+});
+
+
+function lazySignal<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done;});return {promise,resolve};}
+async function lazyDiscoveryFixture(){
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const calls:string[][]=[];let healthCalls=0,disposed=0;
+    const state={failSelfTest:false,stopped:false,healthError:undefined as Error|undefined,
+        health:undefined as undefined|((number:number)=>Promise<void>)};
+    const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
+        calls.push(args);
+        switch(args[1]){
+            case 'self-test':return {protocol:1,version:'1.4.0',self_test:state.failSelfTest?'failed':'passed',metadata_console:1};
+            case 'location':return {protocol:1,install_dir:install};
+            case 'inspect':return {selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
+                executable:path.join(f.source,f.main),launcher:path.join(install,'launcher'),control_dir:path.join(install,'control'),payload_verified:true,
+                lifecycle:{explicitly_stopped:state.stopped,pending:null},payload_repair:{phase:'none'},registry_namespace:'12'.repeat(16),
+                connection_observation:{schema:1,activation_pending:false,launcher_repair_pending:false}};
+            case 'diagnose':return {fixture:'full'};
+            default:throw new Error('Unexpected native execution effect');
+        }
+    });
+    host.client=()=>new ServiceClient({async request(){
+        const number=++healthCalls;if(state.health)await state.health(number);if(state.healthError)throw state.healthError;
+        return {status:'health',observation:{version:'1.4.0',runtime_sha256:f.digest,instance:'34'.repeat(16),policy:{accepting:true}}};
+    },dispose(){disposed++;}});
+    return {host,state,calls,count:(name:string)=>calls.filter(args=>args[1]===name).length,disposed:()=>disposed,cleanup:f.cleanup};
+}
+test('lone healthy connection runs zero diagnose and later full discovery obtains fresh inspect exactly once',{timeout:30000},async()=>{
+    const f=await lazyDiscoveryFixture();
+    try{
+        const connection=await f.host.discoverForConnection();assert.equal(connection.diagnosis,undefined);
+        assert.equal(f.count('inspect'),1);assert.equal(f.count('diagnose'),0);assert.equal(f.disposed(),1);
+        const [first,second]=await Promise.all([f.host.discover(),f.host.discover()]);
+        assert.deepEqual(first.diagnosis,{fixture:'full'});assert.deepEqual(second,first);
+        assert.equal(f.count('inspect'),2,'finished connection-only attempt is not a persistent inspect cache');
+        assert.equal(f.count('diagnose'),1);assert.equal(f.count('self-test'),1,'existing successful self-test cache retained');
+    }finally{await f.cleanup();}
+});
+test('mandatory health and Stop failures retire connection-only attempts without diagnostics or poisoned reuse',{timeout:30000},async()=>{
+    for(const failure of ['self-test','health','stop']){
+        const f=await lazyDiscoveryFixture(),original=new Error('actual fixture health failure');
+        try{
+            f.state.failSelfTest=failure==='self-test';f.state.stopped=failure==='stop';f.state.healthError=failure==='health'?original:undefined;
+            if(failure==='health')await assert.rejects(f.host.discoverForConnection(),error=>error===original);
+            else await assert.rejects(f.host.discoverForConnection(),failure==='stop'?/service_explicitly_stopped/:/service_runtime_self_test_failed/);
+            assert.equal(f.count('diagnose'),0);
+            const before=f.count('inspect');f.state.failSelfTest=false;f.state.stopped=false;f.state.healthError=undefined;
+            assert.equal((await f.host.discoverForConnection()).inspection?.payload_verified,true);
+            assert.equal(f.count('inspect'),before+1);assert.equal(f.count('diagnose'),0);
+        }finally{await f.cleanup();}
+    }
+});
+test('connection waiters share mandatory work until the last health completes even after full settles',{timeout:30000},async()=>{
+    const f=await lazyDiscoveryFixture(),entered=[lazySignal<void>(),lazySignal<void>(),lazySignal<void>()],release=[lazySignal<void>(),lazySignal<void>(),lazySignal<void>()];
+    f.state.health=async number=>{if(number<=3){entered[number-1].resolve();await release[number-1].promise;}};
+    let first:Promise<unknown>|undefined,second:Promise<unknown>|undefined,third:Promise<unknown>|undefined;
+    try{
+        first=f.host.discoverForConnection();second=f.host.discoverForConnection();
+        await Promise.all([entered[0].promise,entered[1].promise]);release[0].resolve();await first;
+        third=f.host.discoverForConnection();await entered[2].promise;
+        assert.equal(f.count('inspect'),1,'third caller must share while second still owns health');assert.equal(f.count('diagnose'),0);
+        release[2].resolve();await third;
+        assert.deepEqual((await f.host.discover()).diagnosis,{fixture:'full'});assert.equal(f.count('inspect'),1);assert.equal(f.count('diagnose'),1);
+        await f.host.discoverForConnection();assert.equal(f.count('inspect'),1,'settled full stays in active attempt until remaining connection finishes');
+        release[1].resolve();await second;
+        await f.host.discover();assert.equal(f.count('inspect'),2);assert.equal(f.count('diagnose'),2);
+    }finally{release.forEach(gate=>gate.resolve());await Promise.allSettled([first,second,third]);await f.cleanup();}
+});

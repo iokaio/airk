@@ -65,6 +65,20 @@ pub enum VerificationBasis {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommand {
+    /// Read one exact saved source scope, without electing a service or opening an index.
+    SourceScope {
+        #[arg(long)]
+        install_dir: PathBuf,
+        #[arg(long)]
+        expected_control: PathBuf,
+        #[arg(long)]
+        expected_runtime: String,
+        #[arg(long)]
+        source_root: PathBuf,
+        #[arg(long)]
+        index_collection: Option<String>,
+    },
+
     /// Run one externally supervised Linux container service from an approved read-only image pair.
     ContainerHost {
         #[arg(long)]
@@ -780,6 +794,25 @@ fn install_lock(root: &Path) -> Result<File> {
     Ok(file)
 }
 
+/// Read-only observations may lock an existing installation, never initialize it.
+fn existing_install_lock(root: &Path) -> Result<File> {
+    ensure!(root.is_absolute(), "installation location must be absolute");
+    let text = root.to_str().context("installation path must be UTF-8")?;
+    ensure!(
+        text.len() <= 4096 && !text.chars().any(char::is_control),
+        "installation path exceeds native identity bound"
+    );
+    local_ipc::require_existing_root(root)?;
+    let lock = root.join("install-1.4.lock");
+    safe_file(&lock)?;
+    ensure!(fs::metadata(&lock)?.len() == 0, "invalid install lock");
+    let file = OpenOptions::new().read(true).write(true).open(&lock)?;
+    safe_file(&lock)?;
+    file.try_lock()
+        .context("another AIRK installer/launcher is active; retry after it finishes")?;
+    Ok(file)
+}
+
 async fn connection_install_lock(root: &Path, budget: Duration) -> Result<File> {
     let file = open_install_lock(root)?;
     let deadline = tokio::time::Instant::now() + budget;
@@ -1178,7 +1211,7 @@ pub fn selected(root: &Path) -> Result<(Selection, PathBuf, Approval)> {
 fn guarded_selection(root: &Path) -> Result<Selection> {
     payload_repair::require_settled(root)?;
     ensure!(root.is_dir(), "runtime installation is missing");
-    local_ipc::prepare_root(root)?;
+    local_ipc::require_existing_root(root)?;
     ensure!(
         !root.join("uninstall.json").try_exists()?,
         "runtime uninstall is in progress; resume uninstall before installing or launching"
@@ -1570,7 +1603,7 @@ fn selected_preflight(root: &Path) -> Result<SelectedPreflight> {
     );
     let directory = root.join("runtimes").join(&selection.active);
     ensure!(directory.is_dir(), "approved runtime is not staged");
-    local_ipc::prepare_root(&directory)?;
+    local_ipc::require_existing_root(&directory)?;
     let approval: Approval =
         serde_json::from_slice(&read_bounded(&directory.join("approval.json"), 4096)?)?;
     ensure!(

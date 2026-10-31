@@ -4,8 +4,8 @@ import { test } from 'node:test';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { renamedDefaultDataRoot, ServiceWorkspace } from '../serviceWorkspace';
-import { ProjectRegistrationReview, RuntimeBinding } from '../serviceBootstrap';
+import { readWorkspaceRegistrations, renamedDefaultDataRoot, ServiceWorkspace } from '../serviceWorkspace';
+import { RuntimeHost, ProjectRegistrationReview, RuntimeBinding } from '../serviceBootstrap';
 
 test('saved historical defaults follow the renamed native root while custom and existing locations stay selected',async()=>{
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-storage-'));
@@ -123,4 +123,58 @@ test('native removal withdraws only the matching editor launch receipt and prese
         assert.deepEqual(await workspace.definitions(binding,[source]),[]);
         assert.equal(values.size,0);
     }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+
+test('early selected scope uses native namespace and refuses forged, removed, ambiguous and canceled observations',async()=>{
+    const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-selected-exact-'))),source=path.join(root,'source');await fs.mkdir(source);
+    const binding:RuntimeBinding={installDir:root,controlDir:path.join(root,'control'),runtimeSha256:'ab'.repeat(32),version:'1.8.0',executable:path.join(root,'airk'),launcher:path.join(root,'launcher'),lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
+    let allowed=true,namespace='11'.repeat(16),revision=9,outcome='registered',project='cd'.repeat(32);
+    const registration={root:source,data_root:path.join(root,'data'),collection:'fixture',binding:project};
+    const values=new Map<string,unknown>();
+    const workspace=new ServiceWorkspace({keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,update:async(key,value)=>{values.set(key,value);}},
+        {reviewProject:async()=>({...binding,...registration}),registerProject:async(_binding,value)=>value},()=>allowed);
+    let suspend:Promise<void>|undefined,entered:(()=>void)|undefined;const requests:string[][]=[];
+    const host=new RuntimeHost(root,'1.8.0',{channel:'stable'},async(command,args)=>{
+        assert.equal(command,binding.executable);assert.deepEqual(args.slice(0,2),['runtime','source-scope']);requests.push(args);
+        entered?.();if(suspend)await suspend;
+        return {install_dir:binding.installDir,control_dir:binding.controlDir,runtime_sha256:binding.runtimeSha256,
+            scope:{schema:1,root:source,collection:args.includes('--index-collection')?'fixture':null,namespace,revision,observed_unix_ms:17,outcome,
+                registration:outcome==='registered'?{...registration,binding:project}:null,fencing_generation:outcome==='registered'?3:null}};
+    },()=>allowed);
+    const read=(root:string,collection:string|null)=>host.sourceScope(binding,root,collection);
+    try{
+        await assert.rejects(workspace.selectedObservation(binding,source,async()=>({} as any)),/not_authoritative/);
+        const first=await workspace.selectedObservation(binding,source,read);
+        assert.equal(first.kind,'registered');assert.equal(first.namespace,namespace);
+        if(first.kind==='registered'){assert.equal(first.fencing_generation,3);assert.equal(first.spec.service!.project,project);}
+        const observed=await read(source,null);assert.ok(Object.isFrozen(observed));assert.ok(Object.isFrozen(observed.registration));
+        await assert.rejects(workspace.selectedObservation({...binding,controlDir:path.join(root,'other')},source,async()=>observed),/not_authoritative/);
+        await workspace.register(binding,source,registration.data_root,registration.collection,async()=>true);
+        for(const state of ['removed','missing','ambiguous']){outcome=state;assert.equal((await workspace.selectedObservation(binding,source,read)).kind,state);}
+        outcome='registered';namespace='22'.repeat(16);project='ef'.repeat(32);revision=10;
+        const replaced=await workspace.selectedObservation(binding,source,read);
+        assert.equal(replaced.namespace,namespace);if(replaced.kind==='registered')assert.equal(replaced.spec.service!.project,project);
+        let release!:()=>void;suspend=new Promise<void>(resolve=>{release=resolve;});
+        const admitted=new Promise<void>(resolve=>{entered=resolve;});
+        const pending=workspace.selectedObservation(binding,source,read);await admitted;allowed=false;release();
+        await assert.rejects(pending,/no_longer_authorized/);
+        assert.ok(requests.every(args=>!args.includes('console')&&!args.includes('ensure')));
+    }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+test('Windows exact native source accepts normal/verbatim equivalents and refuses foreign roots',{skip:process.platform!=='win32'},async()=>{
+    const root=path.resolve(os.tmpdir(),'airk-f09-normalization'),verbatim=path.toNamespacedPath(root);
+    const binding:RuntimeBinding={installDir:path.dirname(root),controlDir:path.join(path.dirname(root),'control'),runtimeSha256:'ab'.repeat(32),version:'1.8.0',executable:path.join(path.dirname(root),'airk.exe'),launcher:path.join(path.dirname(root),'launcher.exe'),lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
+    let nativeRoot=verbatim,registeredRoot=root;
+    const host=new RuntimeHost(path.dirname(root),'1.8.0',{channel:'stable'},async()=>({install_dir:binding.installDir,control_dir:binding.controlDir,runtime_sha256:binding.runtimeSha256,
+        scope:{schema:1,root:nativeRoot,collection:null,namespace:'11'.repeat(16),revision:1,observed_unix_ms:1,outcome:'registered',
+            registration:{binding:'cd'.repeat(32),root:registeredRoot,data_root:path.join(path.dirname(root),'data'),collection:'fixture'},fencing_generation:1}}));
+    assert.equal((await host.sourceScope(binding,root,null)).outcome,'registered');
+    nativeRoot=root;registeredRoot=verbatim;
+    assert.equal((await host.sourceScope(binding,verbatim,null)).outcome,'registered');
+    registeredRoot=path.join(path.dirname(root),'foreign');
+    await assert.rejects(host.sourceScope(binding,root,null),/crossed_source_scope/);
+    registeredRoot=root;nativeRoot=path.join(path.dirname(root),'foreign');
+    await assert.rejects(host.sourceScope(binding,root,null),/crossed_source_scope/);
 });
