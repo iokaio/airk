@@ -1,6 +1,6 @@
 # Native VS Code extension
 
-**1.8.0 source candidate (unpublished):** [candidate preparation](releases/release-1.8.0.md) synchronizes package versions and admits supported forward runtime upgrades through the 1.8 line. Optimization phases remain pending; no performance improvement is claimed.
+**1.8.0 source candidate (unpublished):** [candidate preparation](releases/release-1.8.0.md) synchronizes package versions and admits supported forward runtime upgrades through the 1.8 line. Explorer publishes verified service health before optional management observations finish; index readiness remains separate. Search sends its full successful result once through the retained session notification, followed by a small completion acknowledgment. Native retrieval optimization remains in progress; no measured latency improvement is claimed.
 
 **1.7.6 stable release (published 2026-10-31):** [first-use review, native execution control, uninstall cleanup and data purge](releases/release-1.7.6.md). Published 1.7.3: [Marketplace image links and release promotion](releases/release-1.7.3.md).
 

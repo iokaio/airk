@@ -11,7 +11,7 @@ import { displayPath } from './explorerSource';
  * retries, confirmations and page-scoped validation behave exactly as they do today.
  */
 export interface ControlSource {
-    readonly controller: { readonly state: ServiceConsoleState };
+    readonly controller: { readonly state: ServiceConsoleState; readonly observationIdentity?: string };
     run(action: string, fields?: Record<string, unknown>): Promise<void>;
     retain(): { dispose(): void };
     onDidChangeState(listener: (state: ServiceConsoleState) => void): { dispose(): void };
@@ -72,6 +72,7 @@ export function connectionOf(state: ServiceConsoleState, extensionVersion: strin
 export class ExplorerControl {
     constructor(private readonly source: ControlSource, private readonly extensionVersion: string) {}
     get state(): ServiceConsoleState { return this.source.controller.state; }
+    get observationIdentity(): string | undefined { return this.source.controller.observationIdentity; }
     projects(): ProjectSummary[] { return projectSummaries(this.state); }
     connection(): ConnectionState { return connectionOf(this.state, this.extensionVersion); }
     observedAt(): number | undefined { return (this.state.inactiveProjects ? this.state.activePage : this.state.page)?.observed_unix_ms; }

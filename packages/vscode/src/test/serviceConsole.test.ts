@@ -612,3 +612,98 @@ test('removed-project browsing refreshes active Explorer choices without changin
         assert.equal(f.controller.state.inactiveProjects,true);
     }finally{f.controller.dispose();}
 });
+
+
+// Run the actual controller and ServiceClient path; defer only transport replies.
+test('verified health is published before every optional console probe finishes',async()=>{
+    for(const blockedMethod of ['resources','embedding_status','source_status','logs','request_epoch','console','workers','events']){
+        const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
+        let release!:()=>void,entered!:()=>void;
+        const gate=new Promise<void>(resolve=>{release=resolve;});
+        const blocked=new Promise<void>(resolve=>{entered=resolve;});
+        // Capture values at publication time. Holding mutable state references would
+        // incorrectly turn an old disconnected observation into a later healthy one.
+        f.host.changed=state=>snapshots.push(structuredClone(state));
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            const name=typeof method==='string'?method:Object.keys(method as object)[0];
+            if(name===blockedMethod){entered();await gate;}
+            return base.transport.request(method);
+        }});
+        const poll=f.controller.refresh();
+        try{
+            await blocked;
+            const early=snapshots.find(state=>state.connected&&state.health.state==='live'&&state.busy);
+            assert.ok(early,`health must publish before ${blockedMethod}`);
+            assert.equal(early!.health.value?.status,'health');
+            assert.equal(f.controller.state.busy,true);
+            const immutable=structuredClone(early);
+            release();await poll;
+            assert.equal(f.controller.state.connected,true);
+            assert.equal(f.controller.state.busy,false);
+            assert.deepEqual(early,immutable,'later optional observations cannot rewrite captured publications');
+        }finally{release();await poll;f.controller.dispose();}
+    }
+});
+
+test('early verified health does not manufacture health after a native refusal',async()=>{
+    const f=fixture(),snapshots:ServiceConsoleState[]=[],methods:string[]=[];
+    f.host.changed=state=>snapshots.push(structuredClone(state));
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];methods.push(name);
+        if(name==='health')throw new ServiceError('service_explicitly_stopped');
+        throw new Error('Optional probes must not run after failed health');
+    }});
+    try{
+        await f.controller.refresh();
+        assert.deepEqual(methods,['health']);
+        assert.ok(!snapshots.some(state=>state.connected));
+        assert.equal(f.controller.state.connected,false);
+        assert.equal(f.controller.state.health.state,'failed');
+        assert.equal(f.controller.state.health.code,'service_explicitly_stopped');
+    }finally{f.controller.dispose();}
+});
+
+test('trust revocation and disposal reject a delayed health reply before early publication',async()=>{
+    for(const cancel of ['trust','dispose'] as const){
+        const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
+        let release!:()=>void,entered!:()=>void;
+        const gate=new Promise<void>(resolve=>{release=resolve;});
+        const blocked=new Promise<void>(resolve=>{entered=resolve;});
+        f.host.changed=state=>snapshots.push(structuredClone(state));
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            if(method==='health'){entered();await gate;}
+            return base.transport.request(method);
+        }});
+        const poll=f.controller.refresh();
+        try{
+            await blocked;
+            if(cancel==='trust')f.setTrusted(false);else f.controller.dispose();
+            const before=snapshots.length;release();await poll;
+            assert.ok(!snapshots.some(state=>state.connected));
+            if(cancel==='dispose')assert.equal(snapshots.length,before,'disposed controller cannot publish late health');
+            else assert.equal(snapshots.at(-1)!.trusted,false);
+        }finally{release();await poll;f.controller.dispose();}
+    }
+});
+
+test('optional failure retains genuine early health and records the failed observation',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
+    let release!:()=>void,entered!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;});
+    const blocked=new Promise<void>(resolve=>{entered=resolve;});
+    f.host.changed=state=>snapshots.push(structuredClone(state));
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        if(method==='resources'){entered();await gate;throw new ServiceError('resource_observation_failed');}
+        return base.transport.request(method);
+    }});
+    const poll=f.controller.refresh();
+    try{
+        await blocked;const early=snapshots.find(state=>state.connected&&state.busy)!;
+        assert.ok(early);assert.equal(early.resources.state,'unavailable');
+        release();await poll;
+        assert.equal(early.resources.state,'unavailable','captured early snapshot stays immutable');
+        assert.equal(f.controller.state.resources.state,'failed');
+        assert.equal(f.controller.state.resources.code,'resource_observation_failed');
+        assert.equal(f.controller.state.connected,true);
+    }finally{release();await poll;f.controller.dispose();}
+});

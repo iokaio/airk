@@ -1,4 +1,4 @@
-# 1.8.0 candidate preparation
+# 1.8.0 optimization candidate
 
 This is an unpublished source candidate on `feat/optimizations`. The latest published stable release remains [1.7.6](release-1.7.6.md). No publication or cross-platform qualification is implied.
 
@@ -14,3 +14,7 @@ F01c adds an opt-in [isolated real-corpus measurement runner](../ci-and-builds.m
 The measurement report separates workflow completion from observed probe outcomes, distinguishes a budget exhausted before submission from uncertain transport failure, and records cleanup stages without erasing failures after a forced reap. Original-fixture diagnosis observed that durable semantic-ready coverage can precede embedding-helper admission after service restart; this remains a native startup finding.
 
 The first real-corpus baseline completed AIRK's 30 running-service and 30 reopen sessions, after 43 minutes 9 seconds to full semantic readiness. Bookbuilder's source index succeeded, but semantic work remained partial when its one-hour budget expired; later session/reopen phases were not reached. The report also retained a cleanup warning, followed by independent confirmation that owned test processes/state were gone and both source trees were unchanged. The [execution ledger](../optimizations.md#f01c-named-corpus-observations-october-31-utc) records measurements, routes, failed and unmeasured cases. These baseline failures remain open optimization/qualification work, not passing performance results.
+
+Early F08(a/b) publishes authenticated service health before optional management observations finish, keeping service connection separate from index/helper readiness. First or changed service identity hides unconfirmed registry rows, and detailed-status replies are fenced by runtime, service, registry, project, trust and panel identity. Search delivers its full successful result once through the retained session notification and returns a small correlated completion acknowledgment. Native/MCP result values and schemas are unchanged. Visibility-aware polling and scalar status adoption remain later F08 work. Validation and review for this phase are recorded in the execution ledger; installed-editor latency comparisons remain unmeasured.
+
+The F08(a/b) local extension gate passed compile/catalog parity, 88 focused tests and the full suite: 454 passed, zero failed, 15 declared environment/platform skips (469 total). Repository, version, documentation-classifier, instruction-parity and whitespace checks passed. These host/controller tests verify publication ordering and single delivery; they do not measure installed-editor speed or qualify native changes.

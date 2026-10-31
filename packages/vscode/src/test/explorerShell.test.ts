@@ -26,7 +26,7 @@ const vscodeStub = {
             let closed: () => void = () => undefined;
             const panel = {
                 options, posted: [] as any[], disposed: false,
-                webview: { html: '', cspSource: 'vscode-resource:', asWebviewUri: (uri: any) => uri, postMessage: async (message: unknown) => { panel.posted.push(message); return true; },
+                webview: { html: '', cspSource: 'vscode-resource:', asWebviewUri: (uri: any) => uri, postMessage: async (message: unknown) => { panel.posted.push(structuredClone(message)); return true; },
                     onDidReceiveMessage: (handler: (value: unknown) => void) => { receive = handler; return disposable; } },
                 onDidChangeViewState: () => disposable,
                 onDidDispose: (handler: () => void) => { closed = handler; return disposable; },
@@ -179,7 +179,9 @@ test('search results, drafts and page survive closing Explorer without workspace
     try {
         explorer.open('#search/query'); const first = panels.at(-1);
         first.send({ v: 1, type: 'ready', requestId: 'ready' }); await flush();
-        const result = await (explorer as any).dispatch({ v: 1, type: 'search.run', requestId: 'run', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false });
+        const acknowledgment = await (explorer as any).dispatch({ v: 1, type: 'search.run', requestId: 'run', query: 'x', mode: 'lexical', limit: 5, maxBytes: 8192, fullChunks: false });
+        assert.deepEqual(acknowledgment, { completed: true });
+        const result = first.posted.filter((entry: any) => entry.type === 'search.session' && entry.session.result).at(-1).session.result;
         const epoch = explorer.snapshot().selectionEpoch!;
         await (explorer as any).dispatch({ v: 1, type: 'search.form', requestId: 'draft', project, selectionEpoch: epoch,
             query: 'unsent edit', mode: 'hybrid', pathPrefix: 'src/', limit: 100, maxBytes: 16384, fullChunks: true });
@@ -214,6 +216,8 @@ test('a search finishing after panel recreation restores results without replayi
         const restored = reopened.posted.filter((entry: any) => entry.type === 'search.session').at(-1).session;
         assert.equal(restored.busy, false); assert.equal(restored.result.hits[0].text, 'late result');
         assert.ok(!reopened.posted.some((entry: any) => entry.type === 'result' && entry.requestId === 'w1'));
+        assert.equal([...first.posted, ...reopened.posted].filter((entry: any) => entry.type === 'search.session' && entry.session.result).length, 1,
+            'late authorized evidence is delivered once to the current panel, with no old completion response');
     } finally { explorer.dispose(); }
 });
 
@@ -349,7 +353,9 @@ test('status selection generations load the new project after a pending old requ
     const instance = Object.create(ExplorerController.prototype) as any;
     let release!: (value: any) => void;
     const calls: string[] = [];
-    Object.assign(instance, { selected: 'A', selectionEpoch: 1, host: { trusted: () => true }, publish() {},
+    Object.assign(instance, { selected: 'A', selectionEpoch: 1,
+        host: { trusted: () => true, specs: () => ['A','B'].map(binding => ({command:'/launcher',root:`/src/${binding}`,service:{project:binding}})) },
+        control: {observationIdentity:'same-owner'},panel:{open:true,generation:1},retained:disposable,publish() {},
         session() { const selected = this.selected; return { call: () => {
             calls.push(selected);
             return selected === 'A' ? new Promise(resolve => { release = resolve; }) : Promise.resolve({ payload: { index_state: 'available', publication: { token: 'B' } } });
@@ -426,8 +432,10 @@ test('the controller publishes state, loads published status and rejects invalid
     const results = Object.fromEntries(panel.posted.filter((message: any) => message.type === 'result').map((message: any) => [message.requestId, message]));
     assert.equal(results.p1.ok, false); assert.equal(results.p1.error.code, 'NO_PROJECT');
     assert.equal(results.n1.ok, false); assert.equal(results.n1.error.code, 'INVALID_MESSAGE');
-    assert.equal(results.s1.ok, true, JSON.stringify(results.s1)); assert.equal(results.s1.data.hits[0].path, 'a.ts'); assert.match(results.s1.data.hits[0].ref, /^h/);
-    assert.equal(results.s1.data.ordering, 'index_identity');
+    assert.equal(results.s1.ok, true, JSON.stringify(results.s1)); assert.deepEqual(results.s1.data, {completed:true});
+    const completedSearch=panel.posted.filter((message:any)=>message.type==='search.session'&&message.session.result).at(-1).session.result;
+    assert.equal(completedSearch.hits[0].path, 'a.ts'); assert.match(completedSearch.hits[0].ref, /^h/);
+    assert.equal(completedSearch.ordering, 'index_identity');
     assert.equal(results.o1.ok, false); assert.equal(results.o1.error.code, 'UNKNOWN_REFERENCE');
     assert.equal(results.s2.ok, false); assert.equal(results.s2.error.code, 'INVALID_MESSAGE');
     assert.equal(results.m1.ok, true, JSON.stringify(results.m1));
@@ -529,4 +537,293 @@ test('the Inbox reaches the webview as summaries; review, resolve and discard go
     explorer.showInbox();
     assert.ok(panel.posted.some((message: any) => message.type === 'inbox'));
     explorer.dispose();
+});
+
+
+// Actual console -> event -> ExplorerController -> cloned panel-message path.
+// Only the native control transport and evidence boundary are deferred fixtures.
+const { ServiceConsoleController } = require('../serviceConsoleController') as typeof import('../serviceConsoleController');
+const { ServiceClient } = require('../serviceClient') as typeof import('../serviceClient');
+const { EvidenceClient } = require('../explorerEvidence') as typeof import('../explorerEvidence');
+function f08Deferred<T>() {
+    let resolve!: (value:T)=>void;
+    const promise=new Promise<T>(done=>{resolve=done;});
+    return {promise,resolve};
+}
+function promptFeedbackHost(context:any,blockedMethod='resources',savedCounts=false) {
+    const other='cd'.repeat(32),namespace='12'.repeat(16),instance='34'.repeat(16),version='1.8.0';
+    let trusted=true,retained=0,current!:InstanceType<typeof ServiceConsoleController>;
+    let liveInstance=instance,liveNamespace=namespace,epochGate:ReturnType<typeof f08Deferred<void>>|undefined;
+    const changed=new Set<(state:any)=>void>(),specChanges=new Set<()=>void>(),values=new Map<string,unknown>();
+    const clientSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],gates:Array<{entered:ReturnType<typeof f08Deferred<void>>;release:ReturnType<typeof f08Deferred<void>>}>=[];
+    const evidenceSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],evidence:Array<{project:string;spec:any;result:ReturnType<typeof f08Deferred<any>>}>=[];
+    const polls:Promise<void>[]=[],consoleSnapshots:any[]=[];
+    let specs=[project,other].map((binding,index)=>({command:'/launcher',root:`/src/prompt-${index}`,dataDir:`/data/${index}`,collection:`prompt-${index}`,name:`prompt-${index}`,service:{installDir:'/install',project:binding}}));
+    const page={revision:1,cached:true,observed_unix_ms:1,after:null,projects:specs.map(spec=>({project:{registration:{binding:spec.service.project,root:spec.root,data_root:spec.dataDir,collection:spec.collection},paused:false,fencing_generation:1},progress:null,inspection:savedCounts?{snapshot:{index_state:'available',publication:'saved-old-registry-publication',indexed_files:99}}:null}))};
+    const binding={installDir:'/install',controlDir:'/control',executable:'/main',launcher:null,runtimeSha256:'56'.repeat(32),version,lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
+    const runtime:any={
+        discover:async()=>({bundle:{main:'/main',helper:'/helper',source:'/bundle',digest:binding.runtimeSha256,version,platform:'test'},installDir:'/install',installed:true,location:{},inspection:{control_dir:'/control',registry_namespace:namespace,approval:{version},console:page}}),
+        binding:()=>binding,ensure:async()=>binding,snapshot:async()=>({}),repair:async()=>({}),prepareConfiguration:async()=>({}),reviewTransition:async()=>({}),transition:async()=>({}),
+        client:()=>{
+            const index=gates.length,gate={entered:f08Deferred<void>(),release:f08Deferred<void>()};gates.push(gate);
+            (clientSignals[index]??=f08Deferred<void>()).resolve();
+            return new ServiceClient({dispose(){},async request(method:any){
+                const name=typeof method==='string'?method:Object.keys(method)[0];
+                if(name===blockedMethod){gate.entered.resolve();await gate.release.promise;}
+                if(name==='request_epoch'&&epochGate)await epochGate.promise;
+                switch(name){
+                    case 'health':return {status:'health',observation:{instance:liveInstance,version,policy:{accepting:true}}};
+                    case 'resources':return {status:'resources',observation:{configuration:{preset:'balanced'}}};
+                    case 'embedding_status':return {status:'embedding_status',available:false,loads:0};
+                    case 'source_status':return {status:'source_status',available:false};
+                    case 'request_epoch':return {status:'request_epoch',namespace:liveNamespace,epoch:1};
+                    case 'console':case 'inactive_console':return {status:'console',page};
+                    case 'workers':return {status:'workers',observations:page.projects.map(row=>({project:row.project.registration.binding,identity:null,restarting:false,automatic_start_blocked:false})),age_ms:1};
+                    case 'events':return {status:'events',page:{namespace:liveNamespace,retained_prefix_lost:false,events:[],next:null,tail:{namespace:liveNamespace,project:null,after:0,through:null}}};
+                    case 'logs':return {status:'logs',page:{schema:1,records:[]}};
+                    default:throw new Error(`Unexpected prompt-feedback metadata operation ${name}`);
+                }
+            }});
+        },
+    };
+    const consoleHost:any={version,authority:'local-test',runtime,
+        storage:{keys:()=>[...values.keys()],get:(key:string)=>values.get(key),update:async(key:string,value:unknown)=>{values.set(key,value);}},
+        trusted:()=>trusted,changed:(state:any)=>{consoleSnapshots.push(structuredClone(state));for(const listener of changed)listener(state);},
+        confirm:async()=>true,copy:async()=>{},logs:async()=>{},resources:async()=>undefined,lifecycle:async()=>({})};
+    current=new ServiceConsoleController(consoleHost);
+    const startPoll=()=>{const poll=current.refresh();polls.push(poll);return poll;};
+    const source={get controller(){return current;},
+        run:async(action:string)=>{const selected=current;if(!await selected.whenIdle())return;await selected.action({type:'service',revision:selected.state.revision,action});},
+        retain:()=>{if(++retained===1)void startPoll();let released=false;return {dispose(){if(!released){released=true;retained--;}}};},
+        onDidChangeState:(listener:(state:any)=>void)=>{changed.add(listener);return {dispose(){changed.delete(listener);}};}};
+    const suggestions=new SuggestionStore({binding:()=> 'ab12ab12ab12ab12',revisions:()=>({}),publication:()=>undefined,ttlMs:()=>3600_000});
+    const host:any={extensionUri:{path:'/ext'},version,trusted:()=>trusted,specs:()=>specs,activeProject:()=>project,
+        onDidChangeSpecs:(listener:()=>void)=>{specChanges.add(listener);return {dispose(){specChanges.delete(listener);}};},
+        log(){},setStatusBar(){},workspaceState:{get:(_key:string,fallback:unknown)=>fallback,update:async()=>{}},suggestions,control:source};
+    context.mock.method(EvidenceClient.prototype,'call',function(this:InstanceType<typeof EvidenceClient>,tool:string){
+        assert.equal(tool,'airk_diagnostics');
+        const index=evidence.length;
+        const pending={project:this.project,spec:structuredClone(this.spec),result:f08Deferred<any>()};evidence.push(pending);
+        (evidenceSignals[index]??=f08Deferred<void>()).resolve();return pending.result.promise;
+    });
+    const explorer=new ExplorerController(host);
+    const unavailable={payload:{index_state:'unavailable',publication:null,files:null,chunks:null,index_error:{code:'index_status_unavailable'}}};
+    return {explorer,host,source,evidence,consoleSnapshots,
+        get console(){return current;},
+        async blocked(index=0){await(clientSignals[index]??=f08Deferred<void>()).promise;await gates[index].entered.promise;},
+        release(index=0){gates[index].release.resolve();},
+        async requested(index=0){await(evidenceSignals[index]??=f08Deferred<void>()).promise;return evidence[index];},
+        finish(index=0,result:any=unavailable){evidence[index].result.resolve(result);},
+        async settleStatus(){
+            // Initial unknown ownership may invalidate the first diagnostics;
+            // complete each independently admitted replacement, never relabel it.
+            for(let turn=0;turn<12&&!explorer.snapshot().status;turn++){
+                for(const request of evidence)request.result.resolve(unavailable);
+                await flush();
+            }
+            assert.ok(explorer.snapshot().status,'current identity needs its own completed observation');
+        },
+        restartIdentity(){liveInstance='78'.repeat(16);liveNamespace='9a'.repeat(16);epochGate=f08Deferred<void>();},
+        releaseEpoch(){epochGate?.resolve();},
+        poll(){return startPoll();},
+        trust(value:boolean){trusted=value;},
+        changeSpec(){specs=specs.map((spec,index)=>index?spec:{...spec,command:'/new-approved-launcher'});for(const listener of specChanges)listener();},
+        reset(){current.dispose();current=new ServiceConsoleController(consoleHost);if(retained)void startPoll();},
+        async cleanup(){explorer.dispose();current.dispose();epochGate?.resolve();for(const gate of gates)gate.release.resolve();for(const request of evidence)request.result.resolve(unavailable);await Promise.all(polls);},
+    };
+}
+
+test('actual Explorer publishes authenticated health while optional metadata is blocked without claiming an index',async context=>{
+    for(const blocked of ['resources','logs']){
+        const f=promptFeedbackHost(context,blocked);
+        try{
+            f.explorer.open('#search/query');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});
+            await f.blocked();await f.requested();
+            const early=panel.posted.filter((entry:any)=>entry.type==='state'&&entry.state.connection==='ready').at(-1)?.state;
+            assert.ok(early,`verified connection must reach the real Explorer before ${blocked}`);
+            assert.equal(early.selectedProject,project);assert.equal(early.projects.length,0,'saved rows wait for current registry continuity');
+            assert.equal(early.status,undefined,'deferred detailed evidence is not fabricated from healthy service');
+            assert.ok(early.projects.every((entry:any)=>entry.publication===undefined&&entry.indexedFiles===undefined));
+            assert.equal(f.console.state.busy,true);
+            const captured=structuredClone(early);
+            f.release();await f.console.whenIdle();f.finish();await f.settleStatus();await flush();
+            assert.deepEqual(early,captured,'captured postMessage value does not change when later controller fields change');
+            const final=panel.posted.filter((entry:any)=>entry.type==='state').at(-1).state;
+            assert.equal(final.status.indexState,'unavailable');assert.equal(final.status.publication,undefined);
+        }finally{await f.cleanup();context.mock.restoreAll();}
+    }
+});
+
+test('actual Explorer ignores delayed old health from reset and from revoked trust',async context=>{
+    for(const stop of ['reset','trust'] as const){
+        const f=promptFeedbackHost(context,'health');
+        try{
+            f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await f.blocked();
+            if(stop==='reset'){f.reset();await f.blocked(1);}else f.trust(false);
+            const before=panel.posted.length;f.release(0);await flush();
+            assert.ok(!panel.posted.slice(before).some((entry:any)=>entry.type==='state'&&entry.state.connection==='ready'));
+            assert.equal(f.console.state.connected,false);
+            if(stop==='reset'){f.release(1);await f.console.whenIdle();assert.equal(f.console.state.connected,true);}
+            else assert.equal(f.console.state.trusted,false);
+        }finally{await f.cleanup();context.mock.restoreAll();}
+    }
+});
+
+test('actual Explorer fences delayed detailed evidence by current project and immutable launch spec',async context=>{
+    for(const change of ['project','spec'] as const){
+        const f=promptFeedbackHost(context);
+        try{
+            f.explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await f.blocked();const old=await f.requested();
+            if(change==='project')panel.send({v:1,type:'project.select',requestId:'select',project:'cd'.repeat(32)});else f.changeSpec();
+            f.finish(0,{payload:{index_state:'available',publication:{token:'old-unaccepted-publication'},files:99,chunks:99}});
+            const replacement=await f.requested(1);assert.notDeepEqual(replacement.spec,old.spec);
+            assert.ok(!panel.posted.some((entry:any)=>entry.type==='state'&&entry.state.status?.publication==='old-unaccepted-publication'));
+            f.finish(1);f.release();await f.console.whenIdle();await flush();
+            assert.equal(f.explorer.snapshot().status?.indexState,'unavailable');
+        }finally{await f.cleanup();context.mock.restoreAll();}
+    }
+});
+
+test('actual Explorer does not publish old status into recreated panel or revoked trust',async context=>{
+    for(const change of ['panel','trust'] as const){
+        const f=promptFeedbackHost(context);
+        try{
+            f.explorer.open();const first=panels.at(-1);first.send({v:1,type:'ready',requestId:'ready'});await f.blocked();await f.requested();
+            if(change==='panel'){first.dispose();f.explorer.open();panels.at(-1).send({v:1,type:'ready',requestId:'new-ready'});}else f.trust(false);
+            const recipient=panels.at(-1),before=recipient.posted.length;
+            f.finish(0,{payload:{index_state:'available',publication:{token:'old-panel-or-trust-publication'},files:99,chunks:99}});await flush();
+            assert.ok(!recipient.posted.slice(before).some((entry:any)=>entry.type==='state'&&entry.state.status?.publication==='old-panel-or-trust-publication'));
+            if(change==='panel'){await f.requested(1);f.finish(1);}else assert.equal(f.explorer.snapshot().status,undefined);
+            f.release();await f.console.whenIdle();
+        }finally{await f.cleanup();context.mock.restoreAll();}
+    }
+});
+
+const r03Request=(requestId:string)=>({v:1,type:'search.run',requestId,query:'x',mode:'lexical',limit:5,maxBytes:8192,fullChunks:false});
+const r03Evidence=(text='one-full-evidence-delivery')=>({publication:'airk-r1:t',payload:{truncated:false,
+    publication:{token:'airk-r1:t'},hits:[{citation:{path:'a.ts',start_line:2,end_line:4,content_hash:'cd'.repeat(32)},text,truncated:false}]}});
+function r03Pending(explorer:InstanceType<typeof ExplorerController>){
+    const requests:Array<{resolve:(value:any)=>void;reject:(error:Error)=>void}>=[];
+    (explorer as any).session=()=>({call:(tool:string)=>tool==='airk_search'
+        ?new Promise((resolve,reject)=>{requests.push({resolve,reject});})
+        :Promise.resolve({payload:{index_state:'available',publication:{token:'airk-r1:t'}}})});
+    return requests;
+}
+
+test('Search posts one complete evidence session and a small correctly correlated acknowledgment',async()=>{
+    const {explorer}=controller();
+    try{
+        explorer.open('#search/query');const panel=panels.at(-1);
+        panel.send({v:1,type:'ready',requestId:'ready'});await flush();
+        const before=panel.posted.length;
+        panel.send(r03Request('r03-complete'));await flush();
+        const posted=panel.posted.slice(before),sessions=posted.filter((row:any)=>row.type==='search.session');
+        assert.equal(sessions.length,2,'one busy observation and one completed observation');
+        assert.equal(sessions[0].session.busy,true);assert.equal(sessions[0].session.result,undefined);
+        assert.equal(sessions[1].session.busy,false);
+        const result=sessions[1].session.result;
+        assert.equal(result.hits[0].text,'x');
+        assert.equal((explorer as any).refs.get(result.hits[0].ref,project).path,'a.ts');
+        const replies=posted.filter((row:any)=>row.type==='result');
+        assert.deepEqual(replies,[{v:1,type:'result',requestId:'r03-complete',ok:true,data:{completed:true}}]);
+        assert.equal(posted.filter((row:any)=>row.session?.result||row.data?.hits).length,1);
+        assert.equal('hits' in replies[0].data,false);assert.equal('publication' in replies[0].data,false);
+        // Reopening is an intentional retained-session delivery, not a duplicate response.
+        panel.dispose();explorer.open();const reopened=panels.at(-1);
+        reopened.send({v:1,type:'ready',requestId:'ready'});await flush();
+        assert.deepEqual(reopened.posted.find((row:any)=>row.type==='search.session').session.result,result);
+        assert.ok(!reopened.posted.some((row:any)=>row.type==='result'&&row.requestId==='r03-complete'));
+    }finally{explorer.dispose();}
+});
+
+test('Search native failure preserves busy/error delivery and a correlated failure without success acknowledgment',async()=>{
+    const {explorer}=controller();
+    try{
+        explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
+        const pending=r03Pending(explorer),before=panel.posted.length;
+        panel.send(r03Request('r03-failed'));pending[0].reject(new Error('Original search failure'));await flush();
+        const posted=panel.posted.slice(before),sessions=posted.filter((row:any)=>row.type==='search.session');
+        assert.equal(sessions.length,2);assert.equal(sessions[0].session.busy,true);
+        assert.equal(sessions[1].session.busy,false);assert.match(sessions[1].session.error,/Original search failure/);
+        assert.equal(sessions[1].session.result,undefined);
+        const replies=posted.filter((row:any)=>row.type==='result');
+        assert.equal(replies.length,1);assert.equal(replies[0].requestId,'r03-failed');assert.equal(replies[0].ok,false);
+        assert.equal(replies[0].data,undefined);
+    }finally{explorer.dispose();}
+});
+
+test('superseded Search keeps one winning evidence delivery and independently correlated outcomes',async()=>{
+    const {explorer}=controller();
+    try{
+        explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
+        const pending=r03Pending(explorer),before=panel.posted.length;
+        panel.send(r03Request('r03-old'));panel.send(r03Request('r03-new'));
+        pending[1].resolve(r03Evidence());await flush();
+        pending[0].resolve(r03Evidence('stale-evidence-must-not-appear'));await flush();
+        const posted=panel.posted.slice(before),complete=posted.filter((row:any)=>row.type==='search.session'&&row.session.result);
+        assert.equal(complete.length,1);assert.equal(complete[0].session.result.hits[0].text,'one-full-evidence-delivery');
+        assert.equal(JSON.stringify(posted).split('one-full-evidence-delivery').length-1,1);
+        assert.ok(!JSON.stringify(posted).includes('stale-evidence-must-not-appear'));
+        const replies=posted.filter((row:any)=>row.type==='result');assert.equal(replies.length,2);
+        assert.deepEqual(replies.find((row:any)=>row.requestId==='r03-new').data,{completed:true});
+        const stale=replies.find((row:any)=>row.requestId==='r03-old');
+        assert.equal(stale.ok,false);assert.equal(stale.error.code,'REQUEST_SUPERSEDED');
+    }finally{explorer.dispose();}
+});
+
+test('late Search cannot deliver evidence or success acknowledgment after project spec or trust scope changes',async()=>{
+    for(const change of ['project','spec','trust'] as const){
+        const {explorer,host}=controller();
+        try{
+            explorer.open();const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
+            const pending=r03Pending(explorer);panel.send(r03Request('r03-scope'));
+            if(change==='project')(explorer as any).select(undefined);
+            else if(change==='trust')host.trusted=()=>false;
+            else{const saved=host.specs();host.specs=()=>saved.map(spec=>({...spec,command:'/changed-launcher'}));}
+            const before=panel.posted.length;pending[0].resolve(r03Evidence('wrong-scope-evidence'));await flush();
+            const posted=panel.posted.slice(before);
+            assert.ok(!posted.some((row:any)=>row.type==='search.session'&&row.session.result));
+            assert.ok(!JSON.stringify(posted).includes('wrong-scope-evidence'));
+            const reply=posted.find((row:any)=>row.type==='result'&&row.requestId==='r03-scope');
+            assert.equal(reply.ok,false);assert.equal(reply.error.code,'REQUEST_SUPERSEDED');
+        }finally{explorer.dispose();}
+    }
+});
+
+
+test('actual Explorer fences same-spec diagnostics and saved counts across authenticated instance and delayed registry rebind',async context=>{
+    const f=promptFeedbackHost(context,'resources',true);
+    try{
+        f.explorer.open();const panel=panels.at(-1);
+        panel.send({v:1,type:'ready',requestId:'ready'});await f.blocked();await f.requested();
+        const early=panel.posted.filter((entry:any)=>entry.type==='state'&&entry.state.connection==='ready').at(-1).state;
+        assert.equal(early.projects.length,0,'first authenticated health cannot relabel unconfirmed saved registry counts');
+        f.release();await f.console.whenIdle();f.finish();await f.settleStatus();
+        assert.equal((f.console.state.page?.projects[0].inspection as any)?.snapshot.indexed_files,99,
+            'the transport really supplied saved counts before the ownership change');
+        const spec=structuredClone(f.host.specs());
+        const oldRequest=f.evidence.length;
+        panel.send({v:1,type:'status.refresh',requestId:'old-scope-status'});
+        await f.requested(oldRequest);await f.console.whenIdle();
+        const oldIdentity=f.console.observationIdentity;
+        f.restartIdentity();const poll=f.poll();await flush();
+        assert.notEqual(f.console.observationIdentity,oldIdentity);
+        assert.equal(f.console.state.busy,true,'new epoch reply remains independently blocked');
+        assert.deepEqual(f.host.specs(),spec,'runtime and registry ownership can change under identical launch specs');
+        const boundary=panel.posted.length;
+        const current=panel.posted.filter((entry:any)=>entry.type==='state').at(-1).state;
+        assert.equal(current.connection,'ready');assert.deepEqual(current.projects,[]);
+        assert.equal(current.status,undefined);
+        assert.equal(f.explorer.publication,undefined,'Assistance/export publication access shares the same ownership fence');
+        f.finish(oldRequest,{payload:{index_state:'available',publication:{token:'old-delayed-diagnostics'},files:777,chunks:888}});
+        await flush();
+        assert.equal(f.explorer.snapshot().status,undefined);
+        assert.ok(!panel.posted.slice(boundary).some((entry:any)=>entry.state?.status?.publication==='old-delayed-diagnostics'));
+        const replacement=await f.requested(oldRequest+1);
+        assert.deepEqual(replacement.spec,spec[0],'replacement is admitted for the same bytes under new ownership');
+        f.releaseEpoch();await poll;
+        f.finish(oldRequest+1);await f.settleStatus();
+        assert.equal(f.explorer.snapshot().status?.indexState,'unavailable');
+        assert.ok(!panel.posted.slice(boundary).some((entry:any)=>entry.state?.status?.files===777));
+    }finally{await f.cleanup();context.mock.restoreAll();}
 });
