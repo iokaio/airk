@@ -456,3 +456,806 @@ async fn damaged_payload_cannot_authorize_stopping_an_unowned_login_job() -> Res
     assert!(!directory.join("LICENSE").exists());
     Ok(())
 }
+
+#[test]
+fn manifest_hashes_every_inventory_file_once_and_still_checks_pair_fields() -> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    let payload = root.join("runtimes").join(&identity);
+    let mut hashes = BTreeMap::<PathBuf, usize>::new();
+    let (_, inventory) = manifest_with_hasher(&payload, &identity, |path| {
+        *hashes.entry(path.to_path_buf()).or_default() += 1;
+        runtime_pair::digest_file(path)
+    })?;
+    assert_eq!(hashes.len(), inventory.files.len());
+    for name in inventory.files.keys() {
+        assert_eq!(hashes.get(&payload.join(name)), Some(&1), "{name}");
+    }
+    assert_eq!(hashes.get(&payload.join(main_name())), Some(&1));
+    assert_eq!(hashes.get(&payload.join(helper_name())), Some(&1));
+    // Authenticate a deliberately inconsistent pair receipt through a new
+    // manifest; successful file hashes alone must not qualify this pair.
+    let mut pair: runtime_pair::RuntimePair =
+        serde_json::from_slice(&fs::read(payload.join("airk-runtime.json"))?)?;
+    pair.embed_sha256 = "a".repeat(64);
+    fs::write(
+        payload.join("airk-runtime.json"),
+        serde_json::to_vec(&pair)?,
+    )?;
+    let mut changed = inventory;
+    changed.files.insert(
+        "airk-runtime.json".into(),
+        runtime_pair::digest_file(&payload.join("airk-runtime.json"))?,
+    );
+    let approved = write_manifest(&payload, &changed)?;
+    let error = manifest(&payload, &approved)
+        .err()
+        .context("inconsistent pair was accepted")?;
+    assert!(
+        error
+            .to_string()
+            .contains("runtime executable pair digest mismatch")
+    );
+    Ok(())
+}
+
+#[test]
+fn locked_selection_keeps_full_topology_and_distinct_role_verification() -> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity.clone(),
+            previous: None,
+        },
+    )?;
+    let main = root.join("runtimes").join(&identity).join(main_name());
+    crate::process_roles::install(&main)?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let verified = selected_verified(&authority)?;
+    assert_eq!(verified.main_sha256, runtime_pair::digest_file(&main)?);
+    let role =
+        crate::process_roles::executable(&verified.main, crate::process_roles::Role::Service)?;
+    assert_ne!(role, verified.main);
+    fs::write(&role, b"modified independent service alias")?;
+    assert!(
+        crate::process_roles::executable(&verified.main, crate::process_roles::Role::Service)
+            .is_err()
+    );
+    assert!(
+        selected_verified(&authority).is_err(),
+        "topology must still hash an independently modified alias"
+    );
+    Ok(())
+}
+
+#[test]
+fn locked_selection_still_refuses_unlisted_and_tampered_payload_files() -> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity.clone(),
+            previous: None,
+        },
+    )?;
+    let payload = root.join("runtimes").join(&identity);
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    assert!(selected_verified(&authority).is_ok());
+    let unknown = payload.join("unlisted-neighbor.bin");
+    fs::write(&unknown, b"original unknown neighboring fixture")?;
+    assert!(selected_verified(&authority).is_err());
+    fs::remove_file(unknown)?;
+    fs::write(payload.join(helper_name()), b"modified helper fixture")?;
+    assert!(selected_verified(&authority).is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn selection_after_installer_wait_is_fully_current_not_the_pre_wait_identity() -> Result<()> {
+    let (_owner, root, first) = unselected_fixture()?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: first.clone(),
+            previous: None,
+        },
+    )?;
+    let pre_wait = selected(&root)?.2;
+    let lock = install_lock(&root)?;
+    let next = root.join("next-original-fixture");
+    local_ipc::prepare_root(&next)?;
+    fixture(&next)?;
+    fs::write(next.join("LICENSE"), b"Different original license fixture")?;
+    let mut inventory: InstallManifest =
+        serde_json::from_slice(&fs::read(next.join("airk-install.json"))?)?;
+    inventory.files.insert(
+        "LICENSE".into(),
+        runtime_pair::digest_file(&next.join("LICENSE"))?,
+    );
+    let second = write_manifest(&next, &inventory)?;
+    replace_json(
+        &next,
+        "approval.json",
+        &Approval {
+            schema: 1,
+            manifest_sha256: second.clone(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            verification_basis: VerificationBasis::OrganizationDigest,
+        },
+    )?;
+    fs::rename(&next, root.join("runtimes").join(&second))?;
+    let (entered, blocked) = tokio::sync::oneshot::channel();
+    let waiting_root = root.clone();
+    let waiter = tokio::spawn(async move {
+        let _ = entered.send(());
+        let lock = connection_install_lock(&waiting_root, Duration::from_secs(5)).await?;
+        let authority = InstallerAuthority {
+            root: &waiting_root,
+            _lock: &lock,
+        };
+        let verified = selected_verified(&authority)?;
+        Ok::<_, anyhow::Error>((
+            verified.approval.manifest_sha256.clone(),
+            verified.main_sha256.clone(),
+        ))
+    });
+    blocked.await?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: second.clone(),
+            previous: Some(first),
+        },
+    )?;
+    drop(lock);
+    let (observed, _) = waiter.await??;
+    assert_eq!(observed, second);
+    assert_ne!(
+        observed, pre_wait.manifest_sha256,
+        "installed_control must retain its reconnect guard rather than accept another selection"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn direct_stopped_ensure_refuses_start_before_qualifying_a_missing_payload() -> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity.clone(),
+            previous: None,
+        },
+    )?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    drop(airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?);
+    let database = control.join("service-1.4.sqlite3");
+    let connection = rusqlite::Connection::open(&database)?;
+    connection.execute(
+        "UPDATE service_lifecycle_state SET stopped=1 WHERE id=1",
+        [],
+    )?;
+    drop(connection);
+    fs::remove_file(root.join("runtimes").join(&identity).join(main_name()))?;
+    let error = ensure_running(&root)
+        .await
+        .err()
+        .context("stopped service was started")?;
+    assert!(error.to_string().contains("service_explicitly_stopped"));
+    assert!(!root.join("bootstrap.json").exists());
+    assert!(!root.join(format!("startup-{identity}.json")).exists());
+    Ok(())
+}
+
+#[test]
+fn final_image_checkpoint_refuses_mutation_during_later_inventory_hash() -> Result<()> {
+    for image in [main_name(), helper_name()] {
+        let (_owner, root, identity) = unselected_fixture()?;
+        let payload = root.join("runtimes").join(&identity);
+        let changed = payload.join(image);
+        let mut injected = false;
+        let result = manifest_with_hasher(&payload, &identity, |path| {
+            let hash = runtime_pair::digest_file(path)?;
+            if path == payload.join("notices/inventory.json") {
+                fs::write(
+                    &changed,
+                    b"changed after early path checks, before final image checkpoint",
+                )?;
+                injected = true;
+            }
+            Ok(hash)
+        });
+        assert!(injected);
+        assert!(
+            result.is_err(),
+            "a previously guarded image must be freshly hashed at the final checkpoint"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn final_image_checkpoint_refuses_a_new_hardlink_after_early_leaf_guard() -> Result<()> {
+    let (owner, root, identity) = unselected_fixture()?;
+    let payload = root.join("runtimes").join(&identity);
+    let mut injected = false;
+    let result = manifest_with_hasher(&payload, &identity, |path| {
+        let hash = runtime_pair::digest_file(path)?;
+        if path == payload.join("notices/inventory.json") {
+            fs::hard_link(
+                payload.join(main_name()),
+                owner.path().join("independent-hardlink"),
+            )?;
+            injected = true;
+        }
+        Ok(hash)
+    });
+    assert!(injected);
+    assert!(
+        result.is_err(),
+        "final leaf guards must reject newly aliased images"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn final_image_checkpoint_refuses_a_new_symlink_after_early_leaf_guard() -> Result<()> {
+    let (owner, root, identity) = unselected_fixture()?;
+    let payload = root.join("runtimes").join(&identity);
+    let original = owner.path().join("independent-original-image");
+    fs::copy(payload.join(main_name()), &original)?;
+    let result = manifest_with_hasher(&payload, &identity, |path| {
+        let hash = runtime_pair::digest_file(path)?;
+        if path == payload.join("notices/inventory.json") {
+            fs::remove_file(payload.join(main_name()))?;
+            std::os::unix::fs::symlink(&original, payload.join(main_name()))?;
+        }
+        Ok(hash)
+    });
+    assert!(result.is_err());
+    Ok(())
+}
+
+#[test]
+fn nonimage_failure_now_precedes_a_deferred_image_failure() -> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    let payload = root.join("runtimes").join(&identity);
+    fs::write(payload.join(main_name()), b"modified image")?;
+    fs::write(payload.join("notices/inventory.json"), b"modified nonimage")?;
+    let error = manifest(&payload, &identity)
+        .err()
+        .context("combined damage was accepted")?;
+    assert!(error.to_string().contains("notices/inventory.json"));
+    Ok(())
+}
+
+fn selected_connection_fixture() -> Result<(tempfile::TempDir, PathBuf, String)> {
+    let (owner, root, identity) = unselected_fixture()?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity.clone(),
+            previous: None,
+        },
+    )?;
+    Ok((owner, root, identity))
+}
+
+#[test]
+fn metadata_preflight_reads_no_executable_bytes_and_common_preparation_verifies_once() -> Result<()>
+{
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    let payload = root.join("runtimes").join(&identity);
+    let main = fs::read(payload.join(main_name()))?;
+    let helper = fs::read(payload.join(helper_name()))?;
+    fs::remove_file(payload.join(main_name()))?;
+    fs::remove_file(payload.join(helper_name()))?;
+    let preflight = selected_preflight(&root)?;
+    // A missing image cannot have been opened/hashed by metadata preflight.
+    fs::write(payload.join(main_name()), main)?;
+    fs::write(payload.join(helper_name()), helper)?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let mut full_passes = 0;
+    let prepared = prepare_connection_with(&authority, &preflight, |authority| {
+        full_passes += 1;
+        selected_verified(authority)
+    })?;
+    assert_eq!(
+        full_passes, 1,
+        "exactly one real complete verifier under lock"
+    );
+    let PreparedConnection::NoEffects(verified) = prepared else {
+        anyhow::bail!("healthy route requested settlement")
+    };
+    assert_eq!(verified.selection.active, identity);
+    assert_eq!(verified.approval, preflight.approval);
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[test]
+fn metadata_preflight_cannot_qualify_a_corrupt_payload_for_connection_effects() -> Result<()> {
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    fs::write(
+        root.join("runtimes").join(&identity).join("LICENSE"),
+        b"changed ancillary fixture",
+    )?;
+    let preflight = selected_preflight(&root)?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let mut full_passes = 0;
+    let result = prepare_connection_with(&authority, &preflight, |authority| {
+        full_passes += 1;
+        selected_verified(authority)
+    });
+    assert!(result.is_err());
+    assert_eq!(full_passes, 1);
+    assert!(!root.join("bootstrap.json").exists());
+    assert!(!root.join(format!("startup-{identity}.json")).exists());
+    Ok(())
+}
+
+#[test]
+fn preflight_scope_from_another_install_never_reaches_full_verification() -> Result<()> {
+    let (_owner_a, root_a, _) = selected_connection_fixture()?;
+    let (_owner_b, root_b, _) = selected_connection_fixture()?;
+    let preflight = selected_preflight(&root_b)?;
+    let lock = install_lock(&root_a)?;
+    let authority = InstallerAuthority {
+        root: &root_a,
+        _lock: &lock,
+    };
+    let mut full_passes = 0;
+    let result = prepare_connection_with(&authority, &preflight, |authority| {
+        full_passes += 1;
+        selected_verified(authority)
+    });
+    assert!(result.is_err());
+    assert_eq!(
+        full_passes, 0,
+        "root/control scope is not just matching payload bytes"
+    );
+    Ok(())
+}
+
+#[test]
+fn same_selected_identity_with_pending_lifecycle_never_retains_its_proof() -> Result<()> {
+    use airk_core::{
+        identity::Incarnation,
+        service::RequestKey,
+        service_lifecycle::{LifecycleAction, LifecycleRequest},
+    };
+    for action in [LifecycleAction::Stop, LifecycleAction::Restart] {
+        let (_owner, root, identity) = selected_connection_fixture()?;
+        let preflight = selected_preflight(&root)?;
+        let lock = install_lock(&root)?;
+        let control = layout::control(&root)?;
+        local_ipc::prepare_root(&control)?;
+        let mut registry = airk_store::service::registry::ServiceRegistry::open(
+            &control,
+            airk_kernel::service_broker::new_instance_id()?,
+        )?;
+        let (namespace, epoch) = registry.saved_request_epoch()?;
+        registry.begin_lifecycle(&LifecycleRequest {
+            caller: Incarnation::from_bytes([21; 16]),
+            key: RequestKey {
+                namespace,
+                epoch,
+                nonce: Incarnation::from_bytes([22; 16]),
+            },
+            action,
+            expected_instance: Incarnation::from_bytes([23; 16]),
+            runtime: identity.parse()?,
+            manager: false,
+        })?;
+        drop(registry);
+        let authority = InstallerAuthority {
+            root: &root,
+            _lock: &lock,
+        };
+        assert!(matches!(
+            prepare_connection(&authority, &preflight)?,
+            PreparedConnection::SettlementRequired
+        ));
+        assert_eq!(selection_record(&root)?.active, identity);
+        assert!(
+            !root.join("bootstrap.json").exists(),
+            "preparation must not resume the pending action"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn pending_activation_and_uncertain_registry_take_no_proof_to_settlement() -> Result<()> {
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    let prior = "c".repeat(64);
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity.clone(),
+            previous: Some(prior.clone()),
+        },
+    )?;
+    let preflight = selected_preflight(&root)?;
+    replace_json(
+        &root,
+        "activation.json",
+        &serde_json::json!({
+            "schema":1,"install":root,"control":preflight.control,"candidate":identity,
+            "prior":{"schema":1,"active":prior,"previous":null},"manager":false,"phase":"probe"
+        }),
+    )?;
+    let lock = install_lock(&root)?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    assert!(matches!(
+        prepare_connection(&authority, &preflight)?,
+        PreparedConnection::SettlementRequired
+    ));
+    fs::remove_file(root.join("activation.json"))?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    fs::write(
+        control.join("service-1.4.sqlite3"),
+        b"damaged saved registry fixture",
+    )?;
+    assert!(
+        matches!(
+            prepare_connection(&authority, &preflight)?,
+            PreparedConnection::SettlementRequired
+        ),
+        "unreadable saved state is never a no-effect witness"
+    );
+    assert_eq!(
+        fs::read(control.join("service-1.4.sqlite3"))?,
+        b"damaged saved registry fixture"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn ancillary_corruption_waits_for_lock_but_manifest_corruption_fails_pre_wait() -> Result<()>
+{
+    use std::future::Future;
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    let payload = root.join("runtimes").join(&identity);
+    fs::write(payload.join("LICENSE"), b"changed ancillary fixture")?;
+    let lock = install_lock(&root)?;
+    let mut future = Box::pin(installed_control(&root));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(
+        future.as_mut().poll(&mut context).is_pending(),
+        "authenticated metadata can now wait before ancillary corruption is inspected"
+    );
+    drop(future);
+    // Cancelling the waiter did not release the other caller's actual lock.
+    assert!(install_lock(&root).is_err());
+    fs::write(
+        payload.join("airk-install.json"),
+        b"changed manifest metadata",
+    )?;
+    let mut future = Box::pin(installed_control(&root));
+    let result = future.as_mut().poll(&mut context);
+    assert!(
+        matches!(result, std::task::Poll::Ready(Err(_))),
+        "manifest authentication must fail before waiting"
+    );
+    drop(future);
+    drop(lock);
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn incompatible_caller_is_rejected_pre_wait_without_connection_effects() -> Result<()> {
+    use std::future::Future;
+    let (_owner, root, old_identity) = selected_connection_fixture()?;
+    let payload = root.join("runtimes").join(&old_identity);
+    let mut pair: runtime_pair::RuntimePair =
+        serde_json::from_slice(&fs::read(payload.join("airk-runtime.json"))?)?;
+    pair.version = "0.0.1".into();
+    fs::write(
+        payload.join("airk-runtime.json"),
+        serde_json::to_vec(&pair)?,
+    )?;
+    let mut inventory: InstallManifest =
+        serde_json::from_slice(&fs::read(payload.join("airk-install.json"))?)?;
+    inventory.version = pair.version.clone();
+    inventory.files.insert(
+        "airk-runtime.json".into(),
+        runtime_pair::digest_file(&payload.join("airk-runtime.json"))?,
+    );
+    let identity = write_manifest(&payload, &inventory)?;
+    replace_json(
+        &payload,
+        "approval.json",
+        &Approval {
+            schema: 1,
+            manifest_sha256: identity.clone(),
+            version: pair.version,
+            verification_basis: VerificationBasis::OrganizationDigest,
+        },
+    )?;
+    fs::rename(&payload, root.join("runtimes").join(&identity))?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: identity,
+            previous: None,
+        },
+    )?;
+    let lock = install_lock(&root)?;
+    let mut future = Box::pin(installed_control(&root));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    let result = future.as_mut().poll(&mut context);
+    let std::task::Poll::Ready(Err(error)) = result else {
+        anyhow::bail!("incompatible caller waited or succeeded")
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("matching runtime version required")
+    );
+    drop(future);
+    drop(lock);
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[test]
+fn changed_selection_since_metadata_preflight_refuses_before_lifecycle_effects() -> Result<()> {
+    let (_owner, root, first) = selected_connection_fixture()?;
+    let preflight = selected_preflight(&root)?;
+    let lock = install_lock(&root)?;
+    let next = root.join("next-connection-fixture");
+    local_ipc::prepare_root(&next)?;
+    fixture(&next)?;
+    fs::write(
+        next.join("LICENSE"),
+        b"new approved identity while caller waits",
+    )?;
+    let mut inventory: InstallManifest =
+        serde_json::from_slice(&fs::read(next.join("airk-install.json"))?)?;
+    inventory.files.insert(
+        "LICENSE".into(),
+        runtime_pair::digest_file(&next.join("LICENSE"))?,
+    );
+    let second = write_manifest(&next, &inventory)?;
+    replace_json(
+        &next,
+        "approval.json",
+        &Approval {
+            schema: 1,
+            manifest_sha256: second.clone(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            verification_basis: VerificationBasis::OrganizationDigest,
+        },
+    )?;
+    fs::rename(&next, root.join("runtimes").join(&second))?;
+    replace_json(
+        &root,
+        "selected.json",
+        &Selection {
+            schema: 1,
+            active: second,
+            previous: Some(first),
+        },
+    )?;
+    let authority = InstallerAuthority {
+        root: &root,
+        _lock: &lock,
+    };
+    let mut full_passes = 0;
+    let result = prepare_connection_with(&authority, &preflight, |authority| {
+        full_passes += 1;
+        selected_verified(authority)
+    });
+    let error = result
+        .err()
+        .context("changed selected identity was accepted")?;
+    assert_eq!(
+        full_passes, 1,
+        "the CURRENT payload is actually qualified before comparison"
+    );
+    assert!(
+        error
+            .to_string()
+            .contains("installed service changed; reconnect")
+    );
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn policy_appearing_while_connection_waits_refuses_before_connection_effects() -> Result<()> {
+    use std::future::Future;
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    let provider = tempfile::tempdir()?;
+    let source = provider.path().canonicalize()?;
+    let lock = install_lock(&root)?;
+    let mut future = Box::pin(installed_control(&root));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(future.as_mut().poll(&mut context).is_pending());
+    let approval = selected_preflight(&root)?.approval;
+    replace_json(
+        &root,
+        "managed-runtime.json",
+        &serde_json::json!({
+            "schema":1,"install":root.canonicalize()?,"source":source,
+            "approval":approval,"executable_sha256":"a".repeat(64),"lifecycle":"external"
+        }),
+    )?;
+    assert!(
+        managed::read(&root)?.is_some(),
+        "fixture is a valid policy, not malformed JSON refusal"
+    );
+    drop(lock);
+    let result = tokio::time::timeout(Duration::from_secs(2), future).await?;
+    let error = result.err().context("new managed authority was ignored")?;
+    assert!(
+        error
+            .to_string()
+            .contains("installed service changed; reconnect")
+    );
+    assert_eq!(selection_record(&root)?.active, identity);
+    assert!(!root.join("bootstrap.json").exists());
+    Ok(())
+}
+
+#[tokio::test]
+async fn valid_control_rebind_while_connection_waits_refuses_before_connection_effects()
+-> Result<()> {
+    use std::future::Future;
+    let (_owner, root, identity) = selected_connection_fixture()?;
+    let old_control = layout::saved_control(&root)?;
+    let lock = install_lock(&root)?;
+    let mut future = Box::pin(installed_control(&root));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(future.as_mut().poll(&mut context).is_pending());
+    let state_owner = tempfile::tempdir()?;
+    let state = state_owner.path().canonicalize()?;
+    let mut saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("runtime-layout.json"))?)?;
+    saved["state"] = serde_json::to_value(&state)?;
+    replace_json(&state, "airk-state-1.4.owner.json", &saved)?;
+    replace_json(&root, "runtime-layout.json", &saved)?;
+    let rebound = layout::saved_control(&root)?;
+    assert_eq!(rebound, state.join("control"));
+    assert_ne!(
+        rebound, old_control,
+        "fixture supplies a valid changed saved scope"
+    );
+    drop(lock);
+    let result = tokio::time::timeout(Duration::from_secs(2), future).await?;
+    let error = result
+        .err()
+        .context("changed control authority was ignored")?;
+    assert!(
+        error
+            .to_string()
+            .contains("installed service changed; reconnect")
+    );
+    assert_eq!(selection_record(&root)?.active, identity);
+    assert!(!root.join("bootstrap.json").exists());
+    assert!(
+        !rebound.exists(),
+        "scope rejection must not initialize the new service"
+    );
+    Ok(())
+}
+
+#[test]
+fn healthy_startup_reset_avoids_noops_without_tightening_damaged_receipts() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?;
+    let identity = "a".repeat(64);
+    let path = root.join(format!("startup-{identity}.json"));
+    clear_startup_attempts(&root, &identity)?;
+    assert!(!path.exists(), "an absent healthy circuit needs no receipt");
+    let canonical = serde_json::to_vec(&StartupAttempts::default())?;
+    fs::write(&path, &canonical)?;
+    clear_startup_attempts(&root, &identity)?;
+    assert_eq!(
+        fs::read(&path)?,
+        canonical,
+        "canonical empty default stays unchanged"
+    );
+    let empty = br#"{ "attempts_unix_ms": [] }"#;
+    fs::write(&path, empty)?;
+    clear_startup_attempts(&root, &identity)?;
+    assert_eq!(
+        fs::read(&path)?,
+        empty,
+        "valid empty bytes remain unchanged"
+    );
+    let oversized = [vec![b' '; 4097], canonical.clone()].concat();
+    fs::write(&path, &oversized)?;
+    clear_startup_attempts(&root, &identity)?;
+    assert_eq!(
+        fs::read(&path)?,
+        canonical,
+        "oversized valid whitespace uses the old replacement path"
+    );
+    for original in [
+        b"damaged receipt".as_slice(),
+        br#"{"attempts_unix_ms":[1]}"#.as_slice(),
+        br#"{"attempts_unix_ms":[1,2,3,4]}"#.as_slice(),
+    ] {
+        fs::write(&path, original)?;
+        clear_startup_attempts(&root, &identity)?;
+        let state: StartupAttempts = serde_json::from_slice(&fs::read(&path)?)?;
+        assert!(state.attempts_unix_ms.is_empty());
+    }
+    fs::remove_file(&path)?;
+    fs::create_dir(&path)?;
+    assert!(clear_startup_attempts(&root, &identity).is_err());
+    assert!(path.is_dir(), "unsafe receipt topology remains preserved");
+    Ok(())
+}
+
+#[test]
+#[cfg(any(unix, windows))]
+#[cfg_attr(
+    windows,
+    ignore = "requires Windows symbolic-link creation rights; run explicitly when provisioned"
+)]
+fn healthy_startup_reset_does_not_treat_a_dangling_link_as_absent() -> Result<()> {
+    let owner = tempfile::tempdir()?;
+    let root = owner.path().canonicalize()?;
+    let identity = "b".repeat(64);
+    let path = root.join(format!("startup-{identity}.json"));
+    let missing = root.join("missing-target");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&missing, &path)?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(&missing, &path)?;
+    assert!(!path.try_exists()?);
+    assert!(fs::symlink_metadata(&path)?.file_type().is_symlink());
+    // replace_json previously replaced dangling links rather than retaining them.
+    clear_startup_attempts(&root, &identity)?;
+    assert!(fs::symlink_metadata(&path)?.is_file());
+    assert!(!fs::symlink_metadata(&path)?.file_type().is_symlink());
+    assert!(!missing.exists());
+    let state: StartupAttempts = serde_json::from_slice(&fs::read(&path)?)?;
+    assert!(state.attempts_unix_ms.is_empty());
+    Ok(())
+}

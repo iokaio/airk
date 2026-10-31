@@ -221,6 +221,43 @@ pub(super) async fn start_selected(
     }
 }
 
+/// Ordinary settled election only. The legacy activation/probe/rollback/startup
+/// routes retain their existing independent verification and saved identities.
+pub(super) async fn start_verified(verified: &VerifiedSelection<'_>) -> Result<ServiceHealth> {
+    let root = verified.authority.root;
+    ensure!(
+        verified.selection.active == verified.approval.manifest_sha256,
+        "runtime selection identity mismatch"
+    );
+    let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
+    if !manager.owns_restart()? {
+        return start_with_digest(
+            root,
+            &verified.approval,
+            &verified.main,
+            true,
+            Some(&verified.main_sha256),
+        )
+        .await;
+    }
+    // OS ownership is still authoritative; never start a competing detached child.
+    if let Ok(observation) = health(root, &verified.approval, &verified.main_sha256).await {
+        return Ok(observation);
+    }
+    manager.start()?;
+    let until = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        if let Ok(observation) = health(root, &verified.approval, &verified.main_sha256).await {
+            return Ok(observation);
+        }
+        ensure!(
+            tokio::time::Instant::now() < until,
+            "OS-managed runtime did not report exact healthy payload within 60 seconds"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 fn manager(root: &Path, intent: &Intent) -> Result<crate::service_manager::ServiceManager> {
     let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
     ensure!(

@@ -84,6 +84,10 @@ impl Managed {
         &self.executable_sha256
     }
     pub(super) fn verify(&self) -> Result<(PathBuf, Approval)> {
+        let (main, approval, _) = self.verify_inventory()?;
+        Ok((main, approval))
+    }
+    pub(super) fn verify_inventory(&self) -> Result<(PathBuf, Approval, InstallManifest)> {
         ensure!(
             self.source.canonicalize()? == self.source,
             "managed payload was redirected"
@@ -95,7 +99,11 @@ impl Managed {
             "managed payload version or executable identity changed"
         );
         verify_topology(&self.source, &inventory, false)?;
-        Ok((self.source.join(main_name()), self.approval.clone()))
+        Ok((
+            self.source.join(main_name()),
+            self.approval.clone(),
+            inventory,
+        ))
     }
 }
 
