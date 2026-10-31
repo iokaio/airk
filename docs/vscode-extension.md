@@ -1,6 +1,6 @@
 # Native VS Code extension
 
-**1.7.6 stable release candidate:** [first-use review, native execution control, uninstall cleanup and data purge](releases/release-1.7.6.md). Published 1.7.3: [Marketplace image links and release promotion](releases/release-1.7.3.md).
+**1.7.6 stable release (published 2026-10-31):** [first-use review, native execution control, uninstall cleanup and data purge](releases/release-1.7.6.md). Published 1.7.3: [Marketplace image links and release promotion](releases/release-1.7.3.md).
 
 Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order and pending extension replacement may still require Reload Window.
 
@@ -20,7 +20,7 @@ In a trusted workspace, automatic setup:
 - updates the user PATH or adds marked shell-profile blocks;
 - registers folders for background indexing.
 
-Before the first installation, 1.7.6 shows a [first-use review](#first-use-review-174) of these effects and lets you defer or decline them. The service can keep indexing after the editor closes; login startup is a separate opt-in. Use an isolated OS environment when evaluating untrusted binaries.
+Before the first installation, 1.7.6 shows a [first-use review](#first-use-review-176) of these effects and lets you defer or decline them. The service can keep indexing after the editor closes; login startup is a separate opt-in. Use an isolated OS environment when evaluating untrusted binaries.
 
 ### Native execution control
 

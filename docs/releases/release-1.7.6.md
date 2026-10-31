@@ -1,6 +1,6 @@
-# 1.7.6 stable release candidate
+# 1.7.6 stable release
 
-Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and npm lock entries are synchronized at 1.7.6. Publication requires green PR and exact-main CI plus the manual release workflows. The intended channel on both destinations is **stable**. This record describes unpublished source until those workflows succeed and their public outputs are verified.
+Date: 2026-10-30. The native workspace, local Cargo lock entries, extension and npm lock entries are synchronized at 1.7.6. Publication requires green PR and exact-main CI plus the manual release workflows. The intended channel on both destinations is **stable**. Those workflows succeeded on 2026-10-31; see [Publication](#publication-2026-10-31).
 
 1.7.6 addresses the outstanding items from [repository review 02](../reviews/review02/README.md); the [review response](../reviews/review02-response.md) maps each draft to its outcome.
 
@@ -45,7 +45,7 @@ Local Windows x64 results, 2026-10-30, on this branch:
 - `build.ps1` produced an installation-free build. Following its README, the service started, a folder was registered and indexed, a lexical search found it, `projects` listed it, and the service shut down.
 - A stable Windows x64 VSIX was packaged and verified by `package-extension.py`. It was not signed and was not exercised through an installed-editor qualification run.
 
-macOS and Linux were not run locally; their results come from CI only.
+macOS was not run locally. On Linux (WSL Ubuntu), workspace clippy was clean. A partial run of the `airk-store`, `airk-kernel`, `airk-cli` and `airk-mcp` tests was interrupted before it finished. It showed no storage-privacy failures; its only failures were model-dependent tests that need the provisioned embedding model, which that environment lacks. Complete macOS and Linux results come from CI.
 
 Open checks, not performed for this record (procedures in [validation](../validation.md)):
 
@@ -55,4 +55,15 @@ Open checks, not performed for this record (procedures in [validation](../valida
 - verification of the other three published 1.7.3 platform packages;
 - macOS and Linux qualification of every new behavior beyond what CI runs.
 
-The Unix storage-privacy tests are `cfg(unix)` and run in CI. They also passed in a local WSL Ubuntu run after the warn-only change.
+The Unix storage-privacy tests are `cfg(unix)`. They passed in CI's Linux and macOS native jobs on the merged commit.
+
+## Publication (2026-10-31)
+
+| Step | Result |
+|---|---|
+| Pull request | [#52](https://github.com/iokaio/airk/pull/52), squash-merged as `5e4f7bd518659ff1649ebce92849eb695e0c71c9` |
+| Main CI | Run `41159573641` succeeded on that commit, including all four native targets, the container and the dependency audit |
+| GitHub release | Run `41163334759` signed Windows (Azure Artifact Signing) and macOS (signing and notarization) for both architectures, then published [`v1.7.6`](https://github.com/iokaio/airk/releases/tag/v1.7.6) with 19 assets at 2026-10-31T03:16:09Z and redeployed the downloads site |
+| Marketplace | Rehearsal run `41163364640` packaged all four platforms; publish run `41163787620` published `iokaio.airk` 1.7.6 for win32-x64, linux-x64, darwin-x64 and darwin-arm64 on the stable channel. The public Marketplace query listed all four about six minutes later |
+
+The published Windows x64 and Linux x64 GitHub assets were checked with [release verification](../release-verification.md#recorded-result-176-windows-x64-and-linux-x64-2026-10-31). The macOS assets were signed and notarized by the release workflow but not re-checked locally.

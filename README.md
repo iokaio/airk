@@ -29,7 +29,7 @@ AIRK builds a searchable local index of your project so you and your coding tool
 
 Try finding a feature’s implementation and design notes, collecting code and test mentions for a bug, or exporting a cited evidence set for a change. AIRK retrieves indexed evidence; your agent handles reasoning and edits. Returned evidence can go to that agent’s provider under its policies. AIRK does not promise complete language understanding, live-file freshness or universal token/cost savings.
 
-**Current source: 1.7.6 stable release candidate.** Adds a first-use setup review, a no-native-execution mode, uninstall cleanup of terminal integration, a data inventory and purge, credential-file default exclusions, private-storage enforcement and a dependency advisory gate. See the [candidate record](docs/releases/release-1.7.6.md), [extension guide](docs/vscode-extension.md), [Workbench implementation](docs/workbench/implementation.md), [agent setup](docs/agent-integration.md) and [documentation index](docs/README.md). AIRK stands for Artifact Indexing and Retrieval Kernel.
+**Current release: 1.7.6 (stable, published 2026-10-31).** Adds a first-use setup review, a no-native-execution mode, uninstall cleanup of terminal integration, a data inventory and purge, credential-file default exclusions, private-storage enforcement and a dependency advisory gate. See the [candidate record](docs/releases/release-1.7.6.md), [extension guide](docs/vscode-extension.md), [Workbench implementation](docs/workbench/implementation.md), [agent setup](docs/agent-integration.md) and [documentation index](docs/README.md). AIRK stands for Artifact Indexing and Retrieval Kernel.
 
 <details>
 <summary>Development updates and earlier release history</summary>
@@ -98,7 +98,7 @@ Successful runtime activation finishes quietly. A detected extension update offe
 
 Trusted startup and **Install or Repair CLI** migrate recognized project-local agent connections to one stable-launcher endpoint. Codex, Claude Code, Copilot, Gemini, Antigravity, Cursor, Roo and Junie files are supported. Other servers, environment values and disabled state are preserved; conflicts, unsafe files and unsaved edits remain for review. Restart the coding agent and approve the renamed tools after migration.
 
-The current stable release candidate version is **1.7.6**; published 1.7.3 is described in its [release record](docs/releases/release-1.7.3.md). The earlier 1.5.0 candidate superseded 1.4.4; its [release notes](docs/releases/release-1.5.0.md) retain their original validation scope.
+The current published stable release is **1.7.6** (see its [release record](docs/releases/release-1.7.6.md)); the previous release, 1.7.3, is described in [its record](docs/releases/release-1.7.3.md). The earlier 1.5.0 candidate superseded 1.4.4; its [release notes](docs/releases/release-1.5.0.md) retain their original validation scope.
 
 CLI installation removes previous extension-managed terminal executable copies regardless of version. It also retires the previous native rollback payload after successful activation, preserving the selected runtime, sources, indexes and settings. Locked files report incomplete cleanup; disconnect old clients and use **AIRK: Install or Repair CLI**, or allow the next trusted activation to retry. Close old terminal sessions completely; **Developer: Reload Window** can preserve their environment.
 

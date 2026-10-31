@@ -1,6 +1,6 @@
 # Extension deployment: adapting VCP's approach
 
-The current package version is **1.7.6**; see [its candidate record](releases/release-1.7.6.md). The VSIX now also ships the AIRK Explorer bundles (`out/explorerWebview.js`/`.css`, Preact MIT notice in its banner) and the Explorer Assistance server (`out/explorerAssistance.js`, Node built-ins only); packaging refuses either bundle if it loads local modules, the VS Code API or a host implementation. Prior 1.4.x build and qualification records below retain their original scope.
+The current package version is **1.7.6**; see [its release record](releases/release-1.7.6.md). The VSIX now also ships the AIRK Explorer bundles (`out/explorerWebview.js`/`.css`, Preact MIT notice in its banner) and the Explorer Assistance server (`out/explorerAssistance.js`, Node built-ins only); packaging refuses either bundle if it loads local modules, the VS Code API or a host implementation. Prior 1.4.x build and qualification records below retain their original scope.
 
 AIRK's native-helper VS Code extension and native/VSIX candidate packaging are implemented. This page records the original packaging design and remains useful for its construction contract; use [extension behavior](vscode-extension.md) and the [release workflow](release-workflow.md) for current operation and publication. Full installed lifecycle qualification remains separate work. [Windows local build/review](windows-local-build.md) provides the PowerShell entry point.
 

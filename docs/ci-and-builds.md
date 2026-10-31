@@ -2,7 +2,7 @@
 
 A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). Its complete cumulative diff must stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only then do PR/main CI run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remains the authenticated producer.
 
-The current development package version is **1.7.6**; see [its candidate record](releases/release-1.7.6.md). The separate [dependency audit](dependency-advisories.md) workflow runs only when lockfiles or the advisory policy change, weekly, and on request; routine CI is unchanged. Prior release and qualification records retain their original scope.
+The current development package version is **1.7.6**; see [its release record](releases/release-1.7.6.md). The separate [dependency audit](dependency-advisories.md) workflow runs only when lockfiles or the advisory policy change, weekly, and on request; routine CI is unchanged. Prior release and qualification records retain their original scope.
 
 Container compilation and ownership tests run as UID/GID 10001. Every cache-using
 build step first repairs only its three mounted Cargo/target cache directories,

@@ -1,6 +1,6 @@
 # Protected PRs, GitHub downloads and extension release
 
-The current package version is **1.7.6**; see [its candidate and validation record](releases/release-1.7.6.md). To check a published package yourself, follow [release verification](release-verification.md). Prior build and qualification records below retain their original scope.
+The current package version is **1.7.6**; see [its release and validation record](releases/release-1.7.6.md). To check a published package yourself, follow [release verification](release-verification.md). Prior build and qualification records below retain their original scope.
 
 For current behavior and upgrade guidance, see the [1.7.6 release notes](releases/release-1.7.6.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](releases/release-1.3.2.md); the [1.3.0 release notes](releases/release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](releases/release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases/releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
 
