@@ -87,6 +87,7 @@ impl FileStore {
             bytes.len() <= MAX_BYTES,
             "extraction policy file exceeds bound"
         );
+        writer.invalidate_census_before_mutation()?;
         let reservation = quota.reserve(collection, bytes.len() as u64)?;
         reservation.charge(bytes.len() as u64)?;
         let mut temporary = tempfile::NamedTempFile::new_in(&directory)?;

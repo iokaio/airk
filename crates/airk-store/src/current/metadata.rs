@@ -35,6 +35,19 @@ fn object(store: &FileStore, digest: Sha256Digest) -> PathBuf {
 }
 
 impl FileStore {
+    pub fn retain_current_metadata_encoded_owned(
+        &self,
+        writer: &crate::WriterLock,
+        path: &str,
+        file: &InventoryFile,
+        reservation: &Reservation,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<FileMetadataRef> {
+        super::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
+        self.retain_current_metadata_encoded(path, file, reservation, mode)
+    }
+
     pub fn retain_current_metadata(
         &self,
         path: &str,

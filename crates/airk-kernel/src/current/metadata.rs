@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 
 pub(super) fn prepare(
     store: &FileStore,
+    writer: &airk_store::WriterLock,
     read: &CurrentRead,
     changes: &[ArtifactChange],
     configuration: Option<&CollectionConfiguration>,
@@ -155,7 +156,8 @@ pub(super) fn prepare(
             captured_bytes <= airk_store::current::MAX_CURRENT_METADATA_READ_BYTES,
             "current captured metadata admission exceeded"
         );
-        references.push(store.retain_current_metadata_encoded(
+        references.push(store.retain_current_metadata_encoded_owned(
+            writer,
             path,
             &file,
             reservation,

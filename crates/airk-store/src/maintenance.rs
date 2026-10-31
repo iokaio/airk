@@ -923,6 +923,7 @@ impl FileStore {
         origin: PolicyOrigin,
     ) -> Result<PolicyReceipt> {
         check_writer(self, writer, quota)?;
+        writer.invalidate_census_before_mutation()?;
         policy.validate()?;
         let receipt = PolicyReceipt {
             digest: digest(&policy)?,
@@ -1563,6 +1564,7 @@ impl FileStore {
         let attempt = (|| -> Result<Option<Reservation>> {
             if let Some(writer) = writer {
                 check_writer(self, writer, quota)?;
+                writer.invalidate_census_before_mutation()?;
             } else {
                 ensure!(
                     self.directory().join("writer.lock").is_file(),
@@ -1831,6 +1833,7 @@ impl FileStore {
         dry_run: bool,
     ) -> Result<crate::retention::PruneReport> {
         check_writer(self, writer, quota)?;
+        writer.invalidate_census_before_mutation()?;
         prune_compat_inner(self, Some(writer), quota, dry_run)
     }
 }

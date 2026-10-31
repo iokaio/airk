@@ -113,11 +113,12 @@ impl ScanWork {
     pub fn resource_change(
         &self,
         store: &FileStore,
+        writer: &airk_store::WriterLock,
         reservation: &Reservation,
     ) -> Result<ResourceChange> {
         self.validate()?;
         let bytes = serde_json::to_vec(self)?;
-        let reference = store.retain_current_resource(&bytes, reservation)?;
+        let reference = store.retain_current_resource_owned(writer, &bytes, reservation)?;
         Ok(ResourceChange {
             key: KEY.into(),
             reference: Some(reference),

@@ -74,6 +74,20 @@ struct Scope {
 #[derive(Clone)]
 pub struct BoundDataRoot(Scope);
 impl BoundDataRoot {
+    pub(crate) fn require_identity(
+        &self,
+        data: &Path,
+        control: &Path,
+        namespace: Incarnation,
+    ) -> Result<()> {
+        self.check()?;
+        ensure!(
+            self.0.data == data && self.0.control == control && self.0.namespace == namespace,
+            "foreign integrity data root"
+        );
+        Ok(())
+    }
+
     /// Recheck the saved authority before every native query or job.
     pub fn check(&self) -> Result<()> {
         ensure!(

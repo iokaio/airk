@@ -362,6 +362,11 @@ impl FileStore {
     ) -> Result<()> {
         sqlite::publish_catalog(&self.directory, snapshot, revision, reservation)
     }
+    /// Native direct-settings adapter: validate the actual writer before its first effect.
+    pub fn invalidate_owned_state_before_mutation(&self, writer: &WriterLock) -> Result<()> {
+        crate::current::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()
+    }
     /// OS-backed exclusivity releases after process death. Legacy lock markers
     /// still fail closed until an operator establishes that their writer exited.
     pub fn lock(&self) -> Result<WriterLock> {
@@ -440,6 +445,7 @@ impl FileStore {
         file.persist_noclobber(&path)
             .context("write collection writer marker; another writer may be active")?;
         let guard = WriterLock {
+            census_mutations: std::sync::atomic::AtomicU64::new(0),
             path,
             _file: advisory,
             _lifecycle: lifecycle,
@@ -489,6 +495,7 @@ impl SnapshotStore for FileStore {
 }
 
 pub struct WriterLock {
+    census_mutations: std::sync::atomic::AtomicU64,
     path: PathBuf,
     _file: File,
     _lifecycle: Option<Arc<File>>,
@@ -505,6 +512,21 @@ pub struct ObjectCaptureGuard<'a> {
 }
 
 impl WriterLock {
+    pub(crate) fn census_mutation_epoch(&self) -> u64 {
+        self.census_mutations
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+    pub(crate) fn invalidate_census_before_mutation(&self) -> Result<()> {
+        self.census_mutations
+            .fetch_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |epoch| epoch.checked_add(1),
+            )
+            .map_err(|_| anyhow::anyhow!("census mutation generation exhausted"))?;
+        Ok(())
+    }
+
     pub fn capture_objects(&self) -> ObjectCaptureGuard<'_> {
         self.object_captures
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
@@ -754,3 +776,9 @@ impl SnapshotStore for MemoryStore {
         Ok(())
     }
 }
+
+#[allow(dead_code)] // Unwired foundation APIs; no read-cutover claim.
+mod private_storage;
+#[cfg(windows)]
+#[allow(dead_code)] // Native walker qualification is a separately scheduled gate.
+mod service_census_windows;

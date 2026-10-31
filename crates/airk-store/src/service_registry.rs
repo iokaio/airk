@@ -1026,6 +1026,29 @@ impl ServiceRegistry {
     }
 }
 
+impl ServiceRegistry {
+    /// Live service ownership only; this does not certify platform privacy or payload bytes.
+    pub(crate) fn integrity_registration(
+        &self,
+        lease: &ProjectLease,
+        bound: &super::data_scope::BoundDataRoot,
+    ) -> Result<(ProjectRegistration, Incarnation, u64)> {
+        ensure!(
+            !lease.derived,
+            "cleanup worker cannot publish integrity state"
+        );
+        let epoch = jobs::worker_epoch(&self.connection, &self.root, lease)?;
+        ensure!(
+            self.is_registered(lease.binding)?,
+            "integrity worker registration removed"
+        );
+        let registration = self.get(lease.binding)?.registration;
+        let namespace = self.incarnation()?;
+        bound.require_identity(Path::new(&registration.data_root), &self.root, namespace)?;
+        Ok((registration, namespace, epoch))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

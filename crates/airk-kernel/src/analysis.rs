@@ -163,7 +163,8 @@ impl Kernel {
                     source_bytes: bytes.len(),
                 },
             )?;
-            *artifact = self.store.retain_payload_with_budget(
+            *artifact = self.store.retain_payload_with_budget_owned(
+                &writer,
                 &prepared,
                 &payload,
                 &profile,

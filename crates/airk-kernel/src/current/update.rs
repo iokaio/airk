@@ -502,6 +502,7 @@ impl CurrentUpdater<'_> {
             .or(applied.as_ref().map(|state| &state.configuration));
         let metadata = super::metadata::prepare(
             self.store,
+            self.writer,
             &read,
             changes,
             configuration,
@@ -801,7 +802,7 @@ impl CurrentUpdater<'_> {
                 }
                 work.fully_ready_unix_ms = Some(super::enrichment::now_unix_ms()?);
             }
-            resources.push(work.resource_change(self.store, self.reservation)?);
+            resources.push(work.resource_change(self.store, self.writer, self.reservation)?);
         }
         if let Some(cache) = &owned_cache {
             let started = std::time::Instant::now();
@@ -845,9 +846,11 @@ impl CurrentUpdater<'_> {
                     .cache_compacted_records
                     .saturating_add(statistics.compacted_records);
             }
-            let reference = self
-                .store
-                .retain_current_resource(&manifest.canonical_bytes()?, self.reservation)?;
+            let reference = self.store.retain_current_resource_owned(
+                self.writer,
+                &manifest.canonical_bytes()?,
+                self.reservation,
+            )?;
             resources.push(airk_store::current::resources::ResourceChange {
                 key: "embedding-cache".into(),
                 reference: Some(reference),

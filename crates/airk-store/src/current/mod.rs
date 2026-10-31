@@ -204,6 +204,7 @@ impl crate::FileStore {
     pub fn write_runtime_bootstrap(&self, writer: &crate::WriterLock, bytes: &[u8]) -> Result<()> {
         use std::io::Write;
         gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
         ensure!(
             bytes.len() <= 2 << 20 && self.runtime_bootstrap()?.is_none(),
             "invalid or existing runtime bootstrap"
@@ -217,6 +218,7 @@ impl crate::FileStore {
     }
     pub fn finish_runtime_bootstrap(&self, writer: &crate::WriterLock) -> Result<()> {
         gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
         std::fs::remove_file(self.directory().join("current-runtime-bootstrap.json"))?;
         crate::maintenance::sync_parent(self.directory())
     }

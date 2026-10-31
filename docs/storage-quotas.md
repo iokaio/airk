@@ -36,6 +36,8 @@ Reservations are conservative. Written bytes may also remain covered by a live r
 
 Before Applying, failed admission preserves the previous readable head. During Applying, a failed write leaves the collection unavailable until exact captured recovery completes. Durable replay allowances survive process exit; ordinary uncommitted staging is reclaimed under ownership checks. Current objects are reclaimed after complete ownership proof, never by guessing from filenames alone. `collections maintain` repeats bounded cleanup and does not advance the token.
 
+The 1.8.0 candidate's optional [integrity observation receipt](service-storage-ownership.md#18-integrity-foundation) uses the existing collection metadata reservations and owning cleanup. Quota refusal preserves the last durable receipt and original sources; it does not prove that a new detection was saved. This adds no default storage allowance.
+
 ## Exact boundary and limitations
 
 This is an application logical-byte quota, not an operating-system filesystem quota or a machine-wide physical disk guarantee. It does not account for allocation-unit slack, filesystem metadata, compression, copy-on-write history or external programs writing files. Separate configured data roots have separate policies. Existing files count by length, so manually placing model assets inside a managed root reduces later admission capacity.

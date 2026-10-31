@@ -185,9 +185,11 @@ impl SemanticWork {
     pub fn resource_change(
         &self,
         store: &FileStore,
+        writer: &airk_store::WriterLock,
         reservation: &Reservation,
     ) -> Result<ResourceChange> {
-        let reference = store.retain_current_resource(&self.canonical_bytes()?, reservation)?;
+        let reference =
+            store.retain_current_resource_owned(writer, &self.canonical_bytes()?, reservation)?;
         Ok(ResourceChange {
             key: KEY.into(),
             reference: Some(reference),
@@ -473,7 +475,7 @@ impl Kernel {
         drop(read);
         let resources = [
             match work {
-                Some(work) => work.resource_change(&self.store, &reservation)?,
+                Some(work) => work.resource_change(&self.store, &writer, &reservation)?,
                 None => ResourceChange {
                     key: KEY.into(),
                     reference: None,
@@ -632,7 +634,7 @@ impl Kernel {
         .apply_with_resources(
             &[],
             None,
-            &[work.resource_change(&self.store, &reservation)?],
+            &[work.resource_change(&self.store, &writer, &reservation)?],
         )?;
         Ok(work.readiness(policy))
     }
@@ -653,7 +655,9 @@ impl Kernel {
         let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         let bytes = serde_json::to_vec(&SavedSearchPolicy { version: 1, policy })?;
-        let reference = self.store.retain_current_resource(&bytes, &reservation)?;
+        let reference = self
+            .store
+            .retain_current_resource_owned(&writer, &bytes, &reservation)?;
         CurrentUpdater {
             store: &self.store,
             quota: &quota,
@@ -700,7 +704,7 @@ impl Kernel {
         .apply_with_resources(
             &[],
             None,
-            &[work.resource_change(&self.store, &reservation)?],
+            &[work.resource_change(&self.store, &writer, &reservation)?],
         )?;
         Ok(())
     }

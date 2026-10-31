@@ -23,6 +23,8 @@ const MAX_RETIRED: usize = 8;
 
 #[path = "service_collection_cleanup.rs"]
 mod cleanup;
+#[path = "service_collection_integrity.rs"]
+pub mod integrity;
 #[path = "service_collection_purge.rs"]
 mod purge;
 
@@ -405,7 +407,8 @@ impl Collection {
                 continue;
             }
             let path = entry.path();
-            let owned = cleanup::owned_scratch(&path, self.binding)
+            let owned = integrity::owned_scratch(&path, self.binding)
+                || cleanup::owned_scratch(&path, self.binding)
                 || json::<Manifest>(&path)
                     .is_ok_and(|value| value.version == 140 && value.owner == self.binding)
                 || json::<Intent>(&path)

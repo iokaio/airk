@@ -138,6 +138,7 @@ impl Kernel {
         let bytes = serde_json::to_vec(&config)?;
         let reservation = self.collection_quota()?.reserve(&self.collection, 16_384)?;
         reservation.charge(bytes.len() as u64)?;
+        self.store.invalidate_owned_state_before_mutation(&_lock)?;
         let mut temporary = tempfile::NamedTempFile::new_in(self.store.directory())?;
         temporary.write_all(&bytes)?;
         temporary.as_file().sync_all()?;

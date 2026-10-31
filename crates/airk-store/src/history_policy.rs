@@ -596,6 +596,7 @@ impl crate::FileStore {
     ) -> Result<HistoryPolicyReceipt> {
         use anyhow::Context;
         crate::maintenance::check_writer(self, writer, quota)?;
+        writer.invalidate_census_before_mutation()?;
         policy.validate()?;
         ensure!(
             !policy.enabled || crate::maintenance::retirement_count(self)? == 0,
@@ -1000,6 +1001,7 @@ impl crate::FileStore {
     ) -> Result<HistoryMaintenanceRun> {
         use anyhow::Context;
         crate::maintenance::check_writer(self, writer, quota)?;
+        writer.invalidate_census_before_mutation()?;
         let mut work = crate::maintenance::WorkBudget::history(budget)?;
         let current = self
             .catalog()?
@@ -1208,6 +1210,7 @@ impl crate::FileStore {
     ) -> Result<PurgeReceipt> {
         use anyhow::Context;
         crate::maintenance::check_writer(self, writer, quota)?;
+        writer.invalidate_census_before_mutation()?;
         let mut work = crate::maintenance::WorkBudget::history(budget)?;
         let plan = purge_plan(self, &request.request, &mut work)?;
         ensure!(

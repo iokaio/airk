@@ -767,9 +767,12 @@ impl Kernel {
             let mut snapshot = verified.clone();
             let reservation = self.publication_reservation()?;
             for artifact in snapshot.artifacts.values_mut() {
-                *artifact =
-                    self.store
-                        .retain_artifact_with_budget(artifact, None, Some(&reservation))?;
+                *artifact = self.store.retain_artifact_with_budget_owned(
+                    &writer,
+                    artifact,
+                    None,
+                    Some(&reservation),
+                )?;
             }
             snapshot.storage_format = 1;
             snapshot.embedding_model = self.configured_model()?;

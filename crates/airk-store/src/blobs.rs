@@ -355,6 +355,53 @@ pub(crate) fn verify_v2_generation(
 }
 
 impl FileStore {
+    pub fn retain_artifact_with_budget_owned(
+        &self,
+        writer: &crate::WriterLock,
+        artifact: &Artifact,
+        source: Option<&[u8]>,
+        reservation: Option<&crate::quota::Reservation>,
+    ) -> Result<Artifact> {
+        crate::current::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
+        self.retain_artifact_with_budget(artifact, source, reservation)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn retain_payload_with_budget_owned(
+        &self,
+        writer: &crate::WriterLock,
+        artifact: &Artifact,
+        payload: &airk_core::extraction::ExtractionPayload,
+        profile: &airk_core::extraction::ExtractionProfile,
+        source: Option<&[u8]>,
+        reservation: Option<&crate::quota::Reservation>,
+    ) -> Result<Artifact> {
+        self.retain_payload_encoded_owned(
+            writer,
+            artifact,
+            payload,
+            profile,
+            source,
+            reservation,
+            airk_core::compression::CompressionMode::Off,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn retain_payload_encoded_owned(
+        &self,
+        writer: &crate::WriterLock,
+        artifact: &Artifact,
+        payload: &airk_core::extraction::ExtractionPayload,
+        profile: &airk_core::extraction::ExtractionProfile,
+        source: Option<&[u8]>,
+        reservation: Option<&crate::quota::Reservation>,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<Artifact> {
+        crate::current::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
+        self.retain_payload_encoded(artifact, payload, profile, source, reservation, mode)
+    }
+
     /// Receipt-authenticated full-generation model dependencies. Historical
     /// representations deliberately do not retain these retrieval assets.
     pub fn model_object_references(

@@ -61,6 +61,7 @@ impl Kernel {
             .collection_quota()?
             .reserve(&self.collection, 96 * 1024)?;
         reservation.charge(96 * 1024)?;
+        self.store.invalidate_owned_state_before_mutation(&lock)?;
         config.save(self.store.directory())?;
         drop(lock);
         self.roots()
@@ -75,6 +76,7 @@ impl Kernel {
             .collection_quota()?
             .reserve(&self.collection, 96 * 1024)?;
         reservation.charge(96 * 1024)?;
+        self.store.invalidate_owned_state_before_mutation(&lock)?;
         config.save(self.store.directory())?;
         drop(lock);
         self.roots()

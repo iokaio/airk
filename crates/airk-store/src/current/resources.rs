@@ -33,6 +33,18 @@ pub struct ResourceChange {
 }
 
 impl FileStore {
+    /// Writer-owned producer seam; legacy callers remain unqualified for census promotion.
+    pub fn retain_current_resource_owned(
+        &self,
+        writer: &crate::WriterLock,
+        bytes: &[u8],
+        reservation: &Reservation,
+    ) -> Result<ResourceReference> {
+        super::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
+        self.retain_current_resource(bytes, reservation)
+    }
+
     pub fn retain_current_resource(
         &self,
         bytes: &[u8],

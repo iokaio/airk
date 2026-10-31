@@ -680,6 +680,7 @@ impl FileStore {
         scope.validate()?;
         database::validate_capacity(database_capacity_bytes)?;
         crate::maintenance::check_writer(self, writer, quota)?;
+        writer.invalidate_census_before_mutation()?;
         ensure!(
             self.collection_id()? == scope.collection,
             "foreign current writer collection"
@@ -2259,5 +2260,24 @@ impl CurrentWriter<'_> {
             released += 1;
         }
         Ok(released)
+    }
+}
+
+impl super::CurrentRead {
+    /// Authenticated journal state in THIS read snapshot, not object integrity
+    /// or a restart capability. An owner must open a fresh read while holding
+    /// the actual logical writer before using it for native-owner enrollment.
+    /// A retained pre-mutation read cannot establish current settled state.
+    pub fn settled_native_head(&self) -> Result<Option<CurrentHead>> {
+        self.with_connection(|connection| {
+            let (phase, head) = state(connection, &self.head().scope)?;
+            ensure!(head == *self.head(), "native owner read snapshot changed");
+            let pending = pending(connection, &head.scope)?;
+            if phase == TransactionPhase::Ready && pending.is_none() {
+                Ok(Some(head))
+            } else {
+                Ok(None)
+            }
+        })
     }
 }
