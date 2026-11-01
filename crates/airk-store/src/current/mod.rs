@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Qualified single-current-index storage foundation. Runtime adoption is separate.
 pub mod analysis;
+pub mod audit_witness;
 pub mod collection;
 mod database;
 pub mod discovery;

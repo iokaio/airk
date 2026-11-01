@@ -666,6 +666,17 @@ impl EnabledComponentAuditProof {
             && crate::service::registry::owner_session::recovery_matches(connection, &self.epoch)?)
     }
 }
+/// Versioned scheduling identity, not native query authority. F14 must select
+/// its complete enabled-component policy before relaxing any strict reader.
+pub fn declared_audit_policy() -> Sha256Digest {
+    airk_core::identity::framed_digest(
+        b"declared-integrity-audit-policy/1",
+        &[
+            &airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION.to_be_bytes(),
+            &3u32.to_be_bytes(),
+        ],
+    )
+}
 pub struct VerifyTurn {
     pub verified_files: u64,
     pub completed: Option<AuditCompletionProof>,
@@ -675,6 +686,7 @@ pub struct VerifyTurn {
     pub required_bytes: Option<u64>,
     pub admitted_bytes: u64,
     pub drained: Option<crate::service::registry::AuditDrainProof>,
+    pub blocked_input: Option<crate::current::audit_witness::AuditInputWitness>,
 }
 impl VerifyTurn {
     // A completed campaign can honestly report unavailable projection coverage.
@@ -1307,6 +1319,7 @@ impl IntegrityOwner<'_> {
         let state_head_for_completion = head.clone();
         let files_before = progress.checked_files;
         let mut blocked_large = false;
+        let mut blocked_input = None;
         let mut required_bytes = None;
         let mut interrupted = false;
         let mut check = || match checkpoint() {
@@ -1328,8 +1341,6 @@ impl IntegrityOwner<'_> {
                     progress.lexical_observed_unix_ms = Some(now);
                 }
                 check()?;
-                let mut used = 0u64;
-                let mut leaf_pages = 0usize;
                 // A fresh CurrentRead reauthenticates the immutable manifest once;
                 // only the fixed-size logical certificate/cursor survived the turn.
                 if progress
@@ -1360,6 +1371,11 @@ impl IntegrityOwner<'_> {
                             max_bytes,
                             now,
                         );
+                        blocked_input = Some(read.file_audit_witness(
+                            &pending_path,
+                            declared_audit_policy(),
+                            max_bytes,
+                        )?);
                         return Ok(());
                     }
                     let native = read
@@ -1394,6 +1410,11 @@ impl IntegrityOwner<'_> {
                             max_bytes,
                             now,
                         );
+                        blocked_input = Some(read.file_audit_witness(
+                            &pending_path,
+                            declared_audit_policy(),
+                            max_bytes,
+                        )?);
                         return Ok(());
                     }
                     if projection.pending.is_some() {
@@ -1463,6 +1484,11 @@ impl IntegrityOwner<'_> {
                             max_bytes,
                             now,
                         );
+                        blocked_input = Some(read.file_audit_witness(
+                            path,
+                            declared_audit_policy(),
+                            max_bytes,
+                        )?);
                         break;
                     }
                     if used.saturating_add(required) > max_bytes {
@@ -1557,6 +1583,11 @@ impl IntegrityOwner<'_> {
                                 record_projection_oversized(
                                     projection, path, required, max_bytes, now,
                                 );
+                                blocked_input = Some(read.file_audit_witness(
+                                    path,
+                                    declared_audit_policy(),
+                                    max_bytes,
+                                )?);
                                 break;
                             }
                             if projection.pending.is_some() {
@@ -1658,6 +1689,8 @@ impl IntegrityOwner<'_> {
                         max_bytes,
                         now,
                     );
+                    blocked_input =
+                        Some(read.import_audit_witness(declared_audit_policy(), max_bytes)?);
                 }
             }
             Ok(())
@@ -1822,6 +1855,7 @@ impl IntegrityOwner<'_> {
             completed,
             progress,
             blocked_large,
+            blocked_input,
             required_bytes,
             admitted_bytes: max_bytes,
             drained,

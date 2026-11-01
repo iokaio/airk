@@ -1343,3 +1343,32 @@ fn optional_text_metadata_refusal_preserves_valid_overlapping_authoritative_chun
     assert_eq!(fixture.store.read_retained_source(&compact)?, b"body");
     Ok(())
 }
+
+#[test]
+fn audit_retry_witness_ignores_unrelated_publications_and_tracks_only_affected_values() -> Result<()>
+{
+    let fixture = Fixture::new()?;
+    let one = retained_input_at(&fixture, "one.txt", "body")?;
+    publish(&fixture, "one.txt", Some(&one), false)?;
+    let policy = Sha256Digest::from_bytes([83; 32]);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let file = read.file_audit_witness("one.txt", policy, 64 << 20)?;
+    let imports = read.import_audit_witness(policy, 64 << 20)?;
+    assert!(serde_json::to_vec(&file)?.len() < 1024);
+    assert!(!read.audit_inputs_changed(&file, policy, 64 << 20)?);
+    drop(read);
+    let two = retained_input_at(&fixture, "two.txt", "unrelated")?;
+    publish(&fixture, "two.txt", Some(&two), false)?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert!(!read.audit_inputs_changed(&file, policy, 64 << 20)?);
+    assert!(!read.audit_inputs_changed(&imports, policy, 64 << 20)?);
+    assert!(read.audit_inputs_changed(&file, policy, 128 << 20)?);
+    assert!(read.audit_inputs_changed(&file, Sha256Digest::from_bytes([84; 32]), 64 << 20)?);
+    drop(read);
+    let changed = retained_input_at(&fixture, "one.txt", "changed")?;
+    publish(&fixture, "one.txt", Some(&changed), false)?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert!(read.audit_inputs_changed(&file, policy, 64 << 20)?);
+    assert!(!read.audit_inputs_changed(&imports, policy, 64 << 20)?);
+    Ok(())
+}

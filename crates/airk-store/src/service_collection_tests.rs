@@ -2544,7 +2544,7 @@ fn publish_import_projection_fixture(
 #[test]
 fn verify_imported_pages_resume_without_reloading_authoritative_analysis() -> Result<()> {
     use airk_core::service::{JobKind, JobOutcome, RequestKey};
-    for upgrade_v2 in [false, true] {
+    for (upgrade_v2, first_import_pages) in [(false, 1), (false, 0), (true, 1)] {
         let (_temporary, collection, mut registry, bound, lease, store, scope) =
             integrity_fixture()?;
         let compact = projection_fixture_artifact(&store, &scope, vec![])?;
@@ -2572,7 +2572,7 @@ fn verify_imported_pages_resume_without_reloading_authoritative_analysis() -> Re
             collection
                 .integrity_owner(&registry, &lease, &bound)?
                 .anchor(&read)?;
-            budget
+            budget - u64::from(first_import_pages == 0)
         };
         let (namespace, epoch) = registry.request_epoch()?;
         let queued = registry.enqueue(
@@ -2595,7 +2595,7 @@ fn verify_imported_pages_resume_without_reloading_authoritative_analysis() -> Re
         let first_coverage = first.progress.projection_coverage().unwrap();
         assert_eq!(
             serde_json::to_value(first_coverage)?["imported"]["pending"]["next_page"],
-            1
+            first_import_pages
         );
         assert!(!first.work_complete());
         let logical = first_coverage.logical_certification_bytes;
@@ -3104,6 +3104,7 @@ fn verify_oversized_object_does_not_advance_and_larger_allowance_completes_same_
     for now in [100, 200] {
         let turn = owner.verify_turn(&mut writer, job.id, 1, bytes - 1, now, || Ok(()))?;
         assert!(turn.blocked_large);
+        assert!(turn.blocked_input.is_some());
         assert_eq!(turn.verified_files, 0);
         assert!(!turn.progress.complete());
         assert!(turn.completed.is_none());
@@ -4044,99 +4045,145 @@ fn recovery_clean_transaction_refuses_actual_late_durable_damage_without_erasing
 #[test]
 fn verify_text_ranges_resume_after_128_pages_without_source_or_payload_reparse() -> Result<()> {
     use airk_core::service::{JobKind, JobOutcome, RequestKey};
-    let (_temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
-    let seed = projection_fixture_artifact(&store, &scope, vec![])?;
-    let mut retrieval = store.load_retrieval_artifact(&seed)?;
-    retrieval.payload.chunks = vec![retrieval.payload.chunks[0].clone(); 129];
-    let artifact = airk_core::binding::bind_payload(
-        &retrieval.payload,
-        &retrieval.profile,
-        airk_core::binding::ArtifactBinding {
-            path: "one.txt",
-            source_hash: seed.content_hash.parse()?,
-            source_bytes: 4,
-        },
-    )?;
-    let quota = Quota::open_service(store.managed_path()?.root)?;
-    let reservation = quota.reserve(&scope.collection, 1 << 20)?;
-    let compact = store.retain_payload_with_budget(
-        &artifact,
-        &retrieval.payload,
-        &retrieval.profile,
-        Some(b"body"),
-        Some(&reservation),
-    )?;
-    drop(reservation);
-    publish_projection_fixture(&store, &quota, &scope, compact.clone())?;
-    {
-        let read = store.current_read(&scope)?;
-        assert_eq!(read.text_range_reference("one.txt")?.unwrap().pages, 129);
-        collection
-            .integrity_owner(&registry, &lease, &bound)?
-            .anchor(&read)?;
-    }
-    let (namespace, epoch) = registry.request_epoch()?;
-    let queued = registry.enqueue(
-        lease.identity().0,
-        namespace,
-        &RequestKey {
+    for (chunks, with_imports) in [(129, false), (128, true)] {
+        let (_temporary, collection, mut registry, bound, lease, store, scope) =
+            integrity_fixture()?;
+        let seed = projection_fixture_artifact(&store, &scope, vec![])?;
+        let mut retrieval = store.load_retrieval_artifact(&seed)?;
+        retrieval.payload.chunks = vec![retrieval.payload.chunks[0].clone(); chunks];
+        let artifact = airk_core::binding::bind_payload(
+            &retrieval.payload,
+            &retrieval.profile,
+            airk_core::binding::ArtifactBinding {
+                path: "one.txt",
+                source_hash: seed.content_hash.parse()?,
+                source_bytes: 4,
+            },
+        )?;
+        let quota = Quota::open_service(store.managed_path()?.root)?;
+        let reservation = quota.reserve(&scope.collection, 1 << 20)?;
+        let compact = store.retain_payload_with_budget(
+            &artifact,
+            &retrieval.payload,
+            &retrieval.profile,
+            Some(b"body"),
+            Some(&reservation),
+        )?;
+        drop(reservation);
+        publish_projection_fixture(&store, &quota, &scope, compact.clone())?;
+        let analysis = if with_imports {
+            Some(publish_import_projection_fixture(&store, &quota, &scope)?)
+        } else {
+            None
+        };
+        let import_pages = if with_imports {
+            store
+                .current_read(&scope)?
+                .imported_projection(&store)?
+                .unwrap()
+                .header()
+                .pages
+        } else {
+            0
+        };
+        {
+            let read = store.current_read(&scope)?;
+            assert_eq!(read.text_range_reference("one.txt")?.unwrap().pages, chunks);
+            collection
+                .integrity_owner(&registry, &lease, &bound)?
+                .anchor(&read)?;
+        }
+        let (namespace, epoch) = registry.request_epoch()?;
+        let queued = registry.enqueue(
+            lease.identity().0,
             namespace,
-            epoch,
-            nonce: Incarnation::from_bytes([181; 16]),
-        },
-        JobKind::Verify,
-    )?;
-    let job = registry
-        .claim_job_id(&lease, queued.id)?
-        .context("Verify not claimed")?
-        .id;
-    let first = collection
-        .integrity_owner(&registry, &lease, &bound)?
-        .verify_turn(&mut store.lock()?, job, 1, 1 << 20, 100, || Ok(()))?;
-    assert!(!first.work_complete());
-    let first_projection = first.progress.projection_coverage().unwrap();
-    let saved = serde_json::to_value(first_projection)?;
-    assert_eq!(saved["pending"]["text_ranges"]["next_page"], 128);
-    assert_eq!(first_projection.leaf_checked_pages, 128);
-    let logical_bytes = first_projection.logical_certification_bytes;
-    let source = store
-        .directory()
-        .join("objects/sources")
-        .join(&compact.content_hash);
-    let payload = store
-        .directory()
-        .join("objects/artifacts")
-        .join(&compact.retained.as_ref().unwrap().object);
-    let held_source = source.with_extension("held");
-    let held_payload = payload.with_extension("held");
-    fs::rename(&source, &held_source)?;
-    fs::rename(&payload, &held_payload)?;
-    let resumed = collection
-        .integrity_owner(&registry, &lease, &bound)?
-        .verify_turn(&mut store.lock()?, job, 1, 1 << 20, 300, || Ok(()));
-    fs::rename(held_source, source)?;
-    fs::rename(held_payload, payload)?;
-    let resumed = resumed?;
-    assert!(resumed.work_complete());
-    assert!(resumed.projection_coverage_complete());
-    let coverage = resumed.progress.projection_coverage().unwrap();
-    assert_eq!(coverage.logical_certification_bytes, logical_bytes);
-    assert_eq!(coverage.leaf_checked_pages, 129);
-    assert_eq!(coverage.scalars.through_unix_ms, Some(100));
-    assert_eq!(coverage.native_facts.through_unix_ms, Some(100));
-    assert_eq!(coverage.native_edges.through_unix_ms, Some(100));
-    assert_eq!(coverage.read_ranges.first_observed_unix_ms, Some(100));
-    assert_eq!(coverage.read_ranges.through_unix_ms, Some(300));
-    let proof = resumed.completed.context("physical range proof absent")?;
-    registry.complete_job_with_maintenance_and_audit_at(
-        &lease,
-        job,
-        JobOutcome::Succeeded {
-            revision: Some(proof.revision()?),
-        },
-        301,
-        None,
-        Some(crate::service::registry::AuditEvidence::Complete(&proof)),
-    )?;
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce: Incarnation::from_bytes([181; 16]),
+            },
+            JobKind::Verify,
+        )?;
+        let job = registry
+            .claim_job_id(&lease, queued.id)?
+            .context("Verify not claimed")?
+            .id;
+        let first = collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .verify_turn(&mut store.lock()?, job, 1, 8 << 20, 100, || Ok(()))?;
+        assert!(!first.work_complete());
+        let first_projection = first.progress.projection_coverage().unwrap();
+        let saved = serde_json::to_value(first_projection)?;
+        if with_imports {
+            assert!(saved.get("pending").is_none());
+            assert_eq!(
+                saved["imported"]["pending"]["next_page"], 0,
+                "import leaves exceeded the shared 128-page turn admission"
+            );
+        } else {
+            assert_eq!(saved["pending"]["text_ranges"]["next_page"], 128);
+        }
+        assert_eq!(first_projection.leaf_checked_pages, 128);
+        let logical_bytes = first_projection.logical_certification_bytes;
+        let source = store
+            .directory()
+            .join("objects/sources")
+            .join(&compact.content_hash);
+        let payload = store
+            .directory()
+            .join("objects/artifacts")
+            .join(&compact.retained.as_ref().unwrap().object);
+        let held_source = source.with_extension("held");
+        let held_payload = payload.with_extension("held");
+        fs::rename(&source, &held_source)?;
+        fs::rename(&payload, &held_payload)?;
+        let analysis_path = analysis
+            .as_ref()
+            .map(|reference| {
+                Ok::<_, anyhow::Error>(
+                    store
+                        .directory()
+                        .join("current-resources")
+                        .join(format!("{}.json", reference.object_digest()?)),
+                )
+            })
+            .transpose()?;
+        if let Some(path) = &analysis_path {
+            fs::rename(path, path.with_extension("held"))?;
+        }
+        let resumed = collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .verify_turn(&mut store.lock()?, job, 1, 8 << 20, 300, || Ok(()));
+        fs::rename(held_source, source)?;
+        fs::rename(held_payload, payload)?;
+        if let Some(path) = &analysis_path {
+            fs::rename(path.with_extension("held"), path)?;
+        }
+        let resumed = resumed?;
+        assert!(resumed.work_complete());
+        assert!(resumed.projection_coverage_complete());
+        let coverage = resumed.progress.projection_coverage().unwrap();
+        assert_eq!(coverage.logical_certification_bytes, logical_bytes);
+        assert_eq!(coverage.leaf_checked_pages, (chunks + import_pages) as u64);
+        assert_eq!(coverage.scalars.through_unix_ms, Some(100));
+        assert_eq!(coverage.native_facts.through_unix_ms, Some(100));
+        assert_eq!(coverage.native_edges.through_unix_ms, Some(100));
+        assert_eq!(coverage.read_ranges.first_observed_unix_ms, Some(100));
+        assert_eq!(
+            coverage.read_ranges.through_unix_ms,
+            Some(if with_imports { 100 } else { 300 })
+        );
+        let proof = resumed.completed.context("physical range proof absent")?;
+        registry.complete_job_with_maintenance_and_audit_at(
+            &lease,
+            job,
+            JobOutcome::Succeeded {
+                revision: Some(proof.revision()?),
+            },
+            301,
+            None,
+            Some(crate::service::registry::AuditEvidence::Complete(&proof)),
+        )?;
+    }
     Ok(())
 }
