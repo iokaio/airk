@@ -463,6 +463,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn status_and_diagnostics_preserve_typed_publication_contention() -> anyhow::Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("source");
+        let data = directory.path().join("data");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("one.rs"), "fn alpha() {}\n")?;
+        let kernel = Kernel::open(&root, Some(data.clone()))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let publication = kernel.status_summary()?["publication"]["token"].clone();
+        let mut tools = LocalTools::new(kernel).await?;
+        tools.set_runtime(serde_json::json!({"schema":1,"service":{"responsive":true}}));
+        tools.set_work(serde_json::json!({"schema":1,"pending_job":null}));
+        // Hold the actual publication gate without altering any source or index
+        // bytes. Both handlers must distinguish this from an unavailable index.
+        let gate = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(data.join("collections-1.2/.current-gates/default"))?;
+        assert!(
+            gate.try_lock().is_ok(),
+            "fixture publication gate must be exclusive"
+        );
+        for tool in ["airk_status", "airk_diagnostics"] {
+            for mode in ["terse", "full"] {
+                let reply = tools
+                    .call(
+                        tool.into(),
+                        serde_json::json!({"response_mode":mode})
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    )
+                    .await?;
+                assert_eq!(reply.is_error, Some(true), "{tool} {mode}: {reply:?}");
+                let hint: serde_json::Value =
+                    serde_json::from_str(&reply.content[0].as_text().unwrap().text)?;
+                assert_eq!(hint["code"], "publication_busy", "{hint}");
+                assert_eq!(hint["action"], "repeat_same_request", "{hint}");
+                assert_eq!(hint["retryable"], true, "{hint}");
+                assert!(
+                    hint["retry_after_ms"]
+                        .as_u64()
+                        .is_some_and(|delay| delay > 0 && delay <= 1000),
+                    "{hint}"
+                );
+                assert!(hint.get("index_state").is_none(), "{hint}");
+            }
+        }
+        gate.unlock()?;
+        drop(gate);
+        for tool in ["airk_status", "airk_diagnostics"] {
+            let status = body(tools.call(tool.into(), Default::default()).await?)?;
+            assert_eq!(status["index_state"], "available");
+            assert_eq!(status["publication"]["token"], publication);
+        }
+        tools.close().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn status_summary_is_light_and_diagnostics_are_explicit_and_client_local()
     -> anyhow::Result<()> {
         let directory = tempfile::tempdir()?;

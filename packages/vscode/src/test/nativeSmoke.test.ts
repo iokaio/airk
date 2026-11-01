@@ -87,7 +87,8 @@ test('basic status includes version and health, caches snapshots and diagnostics
         const {launchArgs}=await import('../model');
         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec),cwd:fixture.owner,clientName:'status-cache-test',clientVersion:'1.6.1'},60000)).session;
         const read=async(name:string,args:Record<string,unknown>={})=>{
-            const result=await requestWithReadRetry(session!,name,args,name==='diagnostics'?60000:15000);return JSON.parse(result.content[0].text);
+            const result=await requestWithReadRetry(session!,name,args,name.endsWith('diagnostics')?60000:15000);
+            const value=JSON.parse(result.content[0].text);assert.deepEqual(result.structuredContent,value,JSON.stringify(result));return value;
         };
         const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
         const first=await quickStatus(session);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
@@ -106,8 +107,8 @@ test('basic status includes version and health, caches snapshots and diagnostics
         const included=await read('status',{response_mode:'terse',include_status:true});assert.equal(included.cached,false);assert.equal(included.generation,undefined);assert.ok(included.freshness);
         const includedHit=await read('status',{response_mode:'terse',include_status:true});assert.equal(includedHit.cached,true);assert.equal(includedHit.observed_unix_ms,included.observed_unix_ms);
         const beforeDetail=await read('status',{response_mode:'terse'});assert.equal(beforeDetail.cached,false);assert.equal((await read('status',{response_mode:'terse'})).cached,true);
-        for(const value of [first,primedTerse,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
-        const detail=await read('diagnostics');assert.ok(detail.runtime);assert.ok(detail.work);
+        for(const value of [first,primedTerse,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.query_concurrency,16,JSON.stringify(value));assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
+        for(const name of ['diagnostics','airk_diagnostics']){const detail=await read(name);assert.equal(detail.query_concurrency,16,JSON.stringify(detail));assert.ok(detail.runtime);assert.ok(detail.work);}
         const after=await read('status',{response_mode:'terse'});assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
     }finally{session?.close();await fixture.dispose();}
 });
@@ -184,9 +185,11 @@ test('mixed four-call batches honor status snapshots and typed read admission',{
                         assert.equal(reply.status,'fulfilled',`${binding} round ${round} ${workload[index][0]}: ${reply.status==='rejected'?String(reply.reason):''}`);
                         assert.notEqual(reply.value.isError,true,`${binding} round ${round} ${workload[index][0]}: ${JSON.stringify(reply.value)}`);
                         const value=JSON.parse(reply.value.content[0].text),evidence=record(value.evidence??value);
-                        assert.equal(record(evidence.publication).token,first.publication.token,JSON.stringify(value));
+                        assert.ok(evidence.publication&&typeof evidence.publication==='object'&&!Array.isArray(evidence.publication),`${binding} round ${round} ${workload[index][0]}: ${JSON.stringify(reply.value)}`);
+                        assert.equal(record(evidence.publication).token,first.publication.token,JSON.stringify(reply.value));
                         if(index===0){
                             assert.equal(value.version,expectedVersion);assert.equal(value.index_state,'available',JSON.stringify(value));
+                            assert.equal(value.query_concurrency,16,JSON.stringify(value));
                             assert.ok(value.observed_unix_ms>=first.observed_unix_ms,JSON.stringify(value));
                             if(value.status_observation!==undefined){
                                 assert.equal(value.status_observation.superseded,true,JSON.stringify(value));
