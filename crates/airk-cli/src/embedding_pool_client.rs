@@ -524,6 +524,41 @@ pub fn close() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn frame_deadlines_keep_helper_kind_and_protocol_errors_stay_permanent() -> Result<()> {
+        use tokio::io::AsyncWriteExt;
+
+        let (_sender, mut receiver) = tokio::io::duplex(32);
+        let error = local_ipc::read_message::<_, serde_json::Value>(&mut receiver, Duration::ZERO)
+            .await
+            .expect_err("silent peer must expire");
+        assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+        let error = transient_helper_error(error);
+        assert!(error.is::<HelperUnavailable>(), "{error:#}");
+        assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+
+        let (mut sender, _receiver) = tokio::io::duplex(1);
+        let error = local_ipc::write_message(&mut sender, &vec![1u8; 32], Duration::ZERO)
+            .await
+            .expect_err("undrained peer must expire");
+        assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+        let error = transient_helper_error(error);
+        assert!(error.is::<HelperUnavailable>(), "{error:#}");
+        assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+
+        let (mut sender, mut receiver) = tokio::io::duplex(8);
+        sender.write_all(&0u32.to_be_bytes()).await?;
+        let error =
+            local_ipc::read_message::<_, serde_json::Value>(&mut receiver, Duration::from_secs(1))
+                .await
+                .expect_err("invalid frame must be refused");
+        let error = transient_helper_error(error);
+        assert!(!error.is::<HelperUnavailable>(), "{error:#}");
+        assert!(!error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+        assert!(error.to_string().contains("invalid native frame length"));
+        Ok(())
+    }
+
     fn fixture_access(runtime: &Path) -> Result<protocol::Access> {
         let instance = airk_kernel::service_broker::new_instance_id()?;
         Ok(protocol::Access {
@@ -658,7 +693,7 @@ mod tests {
             .await?
             .err()
             .context("unready helper became a client")?;
-        assert!(error.is::<HelperUnavailable>());
+        assert!(error.is::<HelperUnavailable>(), "{error:#}");
         assert!(Instant::now() >= deadline);
         {
             let state = hub.state.lock().unwrap();

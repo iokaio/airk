@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Same-user native endpoints. Authentication occurs before deserializing messages.
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Serialize, de::DeserializeOwned};
 use sha2::{Digest, Sha256};
 use std::{path::Path, time::Duration};
@@ -245,7 +245,7 @@ pub async fn read_message_limited<S: AsyncRead + Unpin, T: DeserializeOwned>(
         Ok(Some(serde_json::from_slice(&payload)?))
     })
     .await
-    .map_err(|_| anyhow::anyhow!("native frame read deadline exceeded"))?
+    .context("native frame read deadline exceeded")?
 }
 
 pub async fn write_message<S: AsyncWrite + Unpin, T: Serialize>(
@@ -269,7 +269,7 @@ pub async fn write_message_limited<S: AsyncWrite + Unpin, T: Serialize>(
         stream.flush().await
     })
     .await
-    .map_err(|_| anyhow::anyhow!("native frame write deadline exceeded"))??;
+    .context("native frame write deadline exceeded")??;
     Ok(())
 }
 
