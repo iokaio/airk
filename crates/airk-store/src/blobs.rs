@@ -1238,11 +1238,19 @@ impl FileStore {
     /// Exact split_inclusive newline count, with streaming UTF-8/hash validation.
     /// At most one existing decoded block plus a three-byte UTF-8 tail is retained.
     pub fn verify_retained_source_utf8_lines(&self, entry: &Artifact) -> Result<usize> {
+        self.verify_retained_source_utf8_observed(entry, &mut |_| Ok(()))
+    }
+    pub(crate) fn verify_retained_source_utf8_observed(
+        &self,
+        entry: &Artifact,
+        visit: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<usize> {
         let mut tail = Vec::<u8>::new();
         let mut newlines = 0usize;
         let mut last = None;
         let mut utf8_error = None;
         let mut observer = |chunk: &[u8]| -> Result<()> {
+            visit(chunk)?;
             newlines = newlines
                 .checked_add(chunk.iter().filter(|byte| **byte == b'\n').count())
                 .context("source line count overflow")?;
@@ -1388,6 +1396,57 @@ impl FileStore {
             );
         }
         Ok(())
+    }
+
+    /// A selected immutable logical block, authenticated independently. This does
+    /// not establish private-owner authority or certify unselected source bytes.
+    pub(crate) fn read_retained_source_block(
+        &self,
+        entry: &Artifact,
+        range: std::ops::Range<usize>,
+        expected: airk_core::identity::Sha256Digest,
+    ) -> Result<Vec<u8>> {
+        use std::io::{Seek, SeekFrom};
+        ensure!(
+            range.start < range.end
+                && range.end <= entry.bytes
+                && range.len() <= 65_536
+                && entry.bytes <= airk_core::extraction::MAX_SOURCE_BYTES
+                && entry.retained.as_ref().is_some_and(|r| r.raw_source),
+            "source block outside admitted object"
+        );
+        let bytes = if entry
+            .retained
+            .as_ref()
+            .and_then(|r| r.source_encoding.as_ref())
+            .is_some()
+        {
+            self.read_retained_source_range(entry, range, 2 << 20)?
+        } else {
+            let path = object_path(self.directory(), "sources", &entry.content_hash)?;
+            retained_read_context(
+                (|| -> Result<Vec<u8>> {
+                    let mut file = File::open(&path)?;
+                    ensure!(
+                        file.metadata()?.is_file() && file.metadata()?.len() == entry.bytes as u64,
+                        "retained source block length mismatch"
+                    );
+                    file.seek(SeekFrom::Start(range.start as u64))?;
+                    let mut bytes = vec![0; range.len()];
+                    file.read_exact(&mut bytes)?;
+                    Ok(bytes)
+                })(),
+                "sources",
+                &path,
+                &entry.content_hash,
+            )?
+        };
+        ensure!(
+            airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(&bytes).into())
+                == expected,
+            "retained source block digest mismatch"
+        );
+        Ok(bytes)
     }
 
     pub fn read_retained_source_range(

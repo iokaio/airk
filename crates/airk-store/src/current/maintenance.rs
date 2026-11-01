@@ -116,6 +116,16 @@ impl CurrentRead {
                         .context("projection retention byte overflow")?;
                 }
 
+                if let Some(lines) = &reference.native_lines {
+                    ensure!(
+                        lines.bytes <= super::native_range::MAX_LINE_INDEX_BYTES,
+                        "line retention metadata exceeds bound"
+                    );
+                    retained.insert(
+                        PathBuf::from("current-resources")
+                            .join(format!("{}.json", lines.object_digest()?)),
+                    );
+                }
                 if let Some(edges) = &reference.native_edges {
                     store.retain_projection_paths(edges, &mut retained)?;
                 }

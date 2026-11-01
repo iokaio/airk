@@ -1882,16 +1882,21 @@ impl CurrentWriter<'_> {
                 self.optional_reservations.extend(admitted.reservation);
                 if let Some(roots) = admitted.roots {
                     ensure!(
-                        admitted.edge_roots.len() == roots.len(),
+                        admitted.edge_roots.len() == roots.len()
+                            && admitted.line_roots.len() == roots.len(),
                         "native edge batch mismatch"
                     );
                     let mut references = metadata.to_vec();
-                    for ((reference, root), edges) in
-                        references.iter_mut().zip(roots).zip(admitted.edge_roots)
+                    for (((reference, root), edges), lines) in references
+                        .iter_mut()
+                        .zip(roots)
+                        .zip(admitted.edge_roots)
+                        .zip(admitted.line_roots)
                     {
                         reference.native_facts = Some(root);
                         reference.native_edges_empty = edges.is_none();
                         reference.native_edges = edges;
+                        reference.native_lines = lines;
                         reference.native_facts_omission = None;
                     }
                     projected = Some(references);

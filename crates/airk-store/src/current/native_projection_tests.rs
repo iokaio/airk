@@ -929,3 +929,205 @@ fn projected_replacement_certifies_new_input_before_publish_and_removes_old_hand
     assert!(read.file_metadata(&fixture.store, "same.txt")?.is_none());
     Ok(())
 }
+
+#[test]
+fn native_line_index_preserves_boundaries_and_strict_damage_refusal_through_replay() -> Result<()> {
+    use airk_core::compression::CompressionMode;
+    for mode in [
+        CompressionMode::Off,
+        CompressionMode::Automatic,
+        CompressionMode::Space,
+    ] {
+        let fixture = Fixture::new()?;
+        let text = format!(
+            "{}🦀\r\n{}\n{}tail",
+            "x".repeat(65_535),
+            "y".repeat(2 << 20),
+            "\n".repeat(10_000)
+        );
+        let initial =
+            retained_input_with_facts_budget(&fixture, "lines.txt", &text, Vec::new(), 16 << 20)?;
+        let mut retrieval = fixture.store.load_retrieval_artifact(&initial.artifact)?;
+        retrieval.profile.contract_version = 2;
+        retrieval.payload.contract_version = 2;
+        let artifact = airk_core::binding::bind_payload(
+            &retrieval.payload,
+            &retrieval.profile,
+            airk_core::binding::ArtifactBinding {
+                path: "lines.txt",
+                source_hash: initial.artifact.content_hash.parse()?,
+                source_bytes: text.len(),
+            },
+        )?;
+        let reservation = fixture.quota.reserve(&fixture.scope.collection, 16 << 20)?;
+        let compact = fixture.store.retain_payload_encoded(
+            &artifact,
+            &retrieval.payload,
+            &retrieval.profile,
+            Some(text.as_bytes()),
+            Some(&reservation),
+            mode,
+        )?;
+        let input = CapturedInput::new(compact);
+        let mut file = inventory(&fixture, &input, 1)?;
+        file.indexed_lines = text.split_inclusive('\n').count();
+        publish_options(
+            &fixture,
+            "lines.txt",
+            Some(&input),
+            true,
+            Some(file.clone()),
+            mode,
+            true,
+        )?;
+        let read = fixture.store.current_read(&fixture.scope)?;
+        let range = read
+            .native_line_projection(&fixture.store, "lines.txt")?
+            .context("native range missing")?;
+        assert_eq!(range.lines(), file.indexed_lines);
+        for (start, end) in [
+            (1, 1),
+            (2, 2),
+            (3, file.indexed_lines),
+            (file.indexed_lines, file.indexed_lines),
+        ] {
+            for budget in [1, 3, 65_536] {
+                let expected: String = text
+                    .split_inclusive('\n')
+                    .skip(start - 1)
+                    .take(end - start + 1)
+                    .collect();
+                let mut length = expected.len().min(budget);
+                while !expected.is_char_boundary(length) {
+                    length -= 1;
+                }
+                let selected = range.read_selected(start, end, budget)?;
+                assert_eq!(selected.text, expected[..length]);
+                assert_eq!(selected.truncated, length < expected.len());
+            }
+        }
+        assert_eq!(
+            range
+                .read_strict(file.indexed_lines, file.indexed_lines, 100)?
+                .text,
+            "tail"
+        );
+        assert!(
+            read.certify_file_projections(&fixture.store, "lines.txt")?
+                .scalars
+        );
+        let retained = input.artifact.retained.as_ref().unwrap();
+        if retained.source_encoding.is_none() {
+            let source = fixture
+                .store
+                .directory()
+                .join("objects/sources")
+                .join(&input.artifact.content_hash);
+            let mut corrupt = text.as_bytes().to_vec();
+            corrupt[1 << 20] ^= 1;
+            fs::write(&source, &corrupt)?;
+            assert!(
+                range.read_selected(1, 1, 100).is_ok(),
+                "internal selected helper read an unrelated block"
+            );
+            assert!(
+                range.read_strict(1, 1, 100).is_err(),
+                "public strict reader ignored unselected damage"
+            );
+            corrupt[0] ^= 1;
+            fs::write(&source, &corrupt)?;
+            assert!(range.read_selected(1, 1, 100).is_err());
+            fs::write(source, text.as_bytes())?;
+        }
+        let reference = read.native_line_reference("lines.txt")?.unwrap();
+        let original_index = fixture.store.read_current_resource(&reference)?;
+        let parsed: serde_json::Value = serde_json::from_slice(&original_index)?;
+        let needle = format!(
+            "\"sha256\":\"{}\"",
+            parsed["blocks"][0]["sha256"].as_str().unwrap()
+        );
+        let forged_bytes = String::from_utf8(original_index)?.replacen(
+            &needle,
+            &format!("\"sha256\":\"{}\"", "00".repeat(32)),
+            1,
+        );
+        let forged_index = fixture.store.retain_current_resource_encoded_counted(
+            forged_bytes.as_bytes(),
+            &reservation,
+            mode,
+            None,
+        )?;
+        let metadata_bytes = read
+            .map_get(map::MapDomain::FileMetadata, b"lines.txt")?
+            .unwrap();
+        let mut forged: metadata::FileMetadataRef = serde_json::from_slice(&metadata_bytes)?;
+        forged.native_lines = Some(forged_index);
+        let error = read
+            .with_connection(|connection| {
+                let mut map =
+                    map::MapPlan::new(connection, &fixture.scope, read.head().artifact_root)?;
+                metadata::prepare(
+                    &fixture.store,
+                    &fixture.scope,
+                    &mut map,
+                    &[ArtifactChange::Upsert(Box::new(input.clone()))],
+                    &[forged],
+                    2,
+                )
+            })
+            .err()
+            .context("forged source block digest was accepted")?;
+        assert!(
+            format!("{error:#}").contains("differs from original source"),
+            "{error:#}"
+        );
+        let object = fixture
+            .store
+            .directory()
+            .join("current-resources")
+            .join(format!("{}.json", reference.object_digest()?));
+        let original = fs::read(&object)?;
+        fs::write(&object, b"damaged line index")?;
+        assert!(
+            read.native_line_projection(&fixture.store, "lines.txt")
+                .is_err()
+        );
+        assert!(
+            read.certify_file_projections(&fixture.store, "lines.txt")
+                .is_err()
+        );
+        fs::write(&object, &original)?;
+        let plan = read.reclamation_plan(&fixture.store)?;
+        drop(range);
+        drop(read);
+        let lock = fixture.store.lock()?;
+        let mut writer =
+            fixture
+                .store
+                .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?;
+        writer.reclaim_objects(&plan)?;
+        assert!(object.is_file(), "current line resource was reclaimed");
+    }
+    Ok(())
+}
+
+#[test]
+fn compressed_resources_refuse_decoded_size_above_the_selected_reference() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let reservation = fixture.quota.reserve(&fixture.scope.collection, 2 << 20)?;
+    let bytes = vec![b'x'; 1 << 20];
+    let mut reference = fixture.store.retain_current_resource_encoded_counted(
+        &bytes,
+        &reservation,
+        airk_core::compression::CompressionMode::Space,
+        None,
+    )?;
+    assert!(reference.encoding.is_some());
+    reference.bytes = 1;
+    let error = fixture.store.read_current_resource(&reference).unwrap_err();
+    assert!(
+        format!("{error:#}").contains("decoded bound mismatch"),
+        "{error:#}"
+    );
+    Ok(())
+}

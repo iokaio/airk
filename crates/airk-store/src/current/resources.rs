@@ -289,7 +289,7 @@ impl FileStore {
                 &path,
                 encoding,
                 &encoding.logical_digest,
-                MAX_RESOURCE_BYTES as u64,
+                reference.bytes as u64,
             )?
         } else {
             let mut bytes = Vec::new();

@@ -15,6 +15,17 @@ fn strict_selected_lines_match_chunked_values_and_exact_conditional_preimages() 
         ("dense.txt", "\n".repeat(12_001)),
         ("long.txt", format!("{}🦀\nlast", "x".repeat(65_534))),
     ];
+    // Plain text exercises legacy contract 1; HTML exercises actual contract-2
+    // native source reconstruction, including partial/plain host syntax.
+    let cases = cases
+        .into_iter()
+        .flat_map(|(path, source)| {
+            [
+                (path.to_owned(), source.clone()),
+                (path.replace(".txt", ".html"), source),
+            ]
+        })
+        .collect::<Vec<_>>();
     for (path, source) in &cases {
         std::fs::write(root.path().join(path), source)?;
     }
@@ -22,11 +33,28 @@ fn strict_selected_lines_match_chunked_values_and_exact_conditional_preimages() 
     kernel.configure_vectors(false)?;
     kernel.index()?;
     for (path, source) in cases {
+        let path = path.as_str();
         let read = kernel.current_reader()?;
         let compact = read.artifact(path)?.context("fixture missing")?;
         let artifact = kernel.current_artifact(&read, path, true)?;
         let mut metadata = kernel.empty_snapshot();
         metadata.generation = read.head().sequence;
+        let index = read.native_line_projection(&kernel.store, path)?;
+        if compact
+            .retained
+            .as_ref()
+            .and_then(|retained| retained.profile.as_ref())
+            .is_some_and(|profile| profile.contract_version == 2)
+        {
+            assert_eq!(
+                index
+                    .with_context(|| format!("producer omitted native line index: {path}"))?
+                    .lines(),
+                source.split_inclusive('\n').count()
+            );
+        } else {
+            assert!(index.is_none());
+        }
         let count = source.split_inclusive('\n').count();
         if count == 0 {
             assert!(kernel.read_file(path, 1, 1, 100).is_err());

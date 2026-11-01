@@ -40,6 +40,8 @@ pub struct FileMetadataRef {
     #[serde(default, skip_serializing_if = "is_false")]
     pub native_edges_empty: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_lines: Option<super::resources::ResourceReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_facts_omission: Option<ProjectionOmission>,
     #[serde(skip)]
     line_witness: Option<std::sync::Arc<IndexedLinesWitness>>,
@@ -48,7 +50,7 @@ fn is_false(value: &bool) -> bool {
     !*value
 }
 impl FileMetadataRef {
-    fn validate_projection_declaration(&self) -> Result<()> {
+    pub(super) fn validate_projection_declaration(&self) -> Result<()> {
         ensure!(
             self.native_facts.is_none() || self.native_facts_omission.is_none(),
             "conflicting native projection declaration"
@@ -61,6 +63,10 @@ impl FileMetadataRef {
         ensure!(
             !self.native_edges_empty || self.native_edges.is_none(),
             "conflicting empty native edge declaration"
+        );
+        ensure!(
+            self.native_lines.is_none() || self.scalars.is_some(),
+            "native line declaration lacks scalar component"
         );
         Ok(())
     }
@@ -256,6 +262,7 @@ impl FileStore {
             native_facts: None,
             native_edges: None,
             native_edges_empty: false,
+            native_lines: None,
             native_facts_omission: None,
             line_witness: None,
         };
@@ -399,6 +406,10 @@ impl FileStore {
                 self.retain_prepared_resource(resource, Some(reservation), None)?;
             }
             reference.native_edges = Some(edges.root);
+        }
+        if let Some(lines) = self.prepare_native_line_projection(prepared.artifact(), mode)? {
+            self.retain_prepared_resource(&lines, Some(reservation), None)?;
+            reference.native_lines = Some(lines.reference);
         }
         reference.line_witness = Some(prepared.witness.clone());
         Ok(reference)
@@ -552,6 +563,12 @@ impl CurrentRead {
                 .context("scalar audit artifact missing")?;
             verify_indexed_lines(store, &store.load_projection_artifact(&compact)?, scalars)?;
         }
+        if let Some(reference) = self.native_line_reference(path)? {
+            let artifact = self
+                .artifact(path)?
+                .context("line audit artifact missing")?;
+            store.verify_native_line_projection(&reference, &artifact)?;
+        }
         Ok(scalars.is_some())
     }
     pub(super) fn native_fact_reference(
@@ -674,6 +691,7 @@ pub(super) fn verify_projected_metadata(
     indexed_lines: usize,
     sequence: u64,
 ) -> Result<()> {
+    reference.validate_projection_declaration()?;
     if let Some(scalars) = &reference.scalars {
         scalars.verify(artifact, sequence)?;
         ensure!(
@@ -695,6 +713,9 @@ pub(super) fn verify_projected_metadata(
     }
     if reference.native_edges_empty {
         store.verify_empty_native_edges(artifact)?;
+    }
+    if let Some(lines) = &reference.native_lines {
+        store.verify_native_line_projection(lines, artifact)?;
     }
     Ok(())
 }
@@ -761,6 +782,7 @@ pub(crate) fn prepare(
             None
         };
         if let Some(reference) = reference {
+            reference.validate_projection_declaration()?;
             metadata_bytes = metadata_bytes
                 .checked_add(reference.bytes)
                 .context("metadata admission overflow")?;
@@ -816,6 +838,9 @@ pub(crate) fn prepare(
                         .as_ref()
                         .context("native edge materialization missing")?,
                 )?;
+            }
+            if let Some(lines) = &reference.native_lines {
+                store.verify_native_line_projection(lines, &input.artifact)?;
             }
             for (domain, identity) in handles(&file)? {
                 let c =

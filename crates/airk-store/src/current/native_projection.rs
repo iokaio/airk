@@ -69,6 +69,7 @@ pub struct PreparedNativeProjection {
     resources: Vec<super::resources::PreparedResource>,
     root: ResourceReference,
     edges: Option<ResourceReference>,
+    lines: Option<ResourceReference>,
     memory: usize,
 }
 impl PreparedNativeProjection {
@@ -79,6 +80,7 @@ impl PreparedNativeProjection {
 pub struct NativeProjectionAdmission {
     pub roots: Option<Vec<ResourceReference>>,
     pub edge_roots: Vec<Option<ResourceReference>>,
+    pub line_roots: Vec<Option<ResourceReference>>,
     /// Caller retains this exact guard through Applying, commit or rollback.
     pub reservation: Option<Reservation>,
 }
@@ -422,10 +424,24 @@ impl FileStore {
             resources.extend(edges.resources);
             Some(edges.root)
         };
+        let lines = if let Some(lines) = self.prepare_native_line_projection(artifact, mode)? {
+            memory = memory
+                .checked_add(lines.memory_bytes())
+                .context("line projection memory overflow")?;
+            if memory > MAX_PREPARED_NATIVE_BYTES {
+                return Err(ProjectionPreparationLimit.into());
+            }
+            let reference = lines.reference.clone();
+            resources.push(lines);
+            Some(reference)
+        } else {
+            None
+        };
         Ok(PreparedNativeProjection {
             resources,
             root,
             edges,
+            lines,
             memory,
         })
     }
@@ -461,6 +477,7 @@ impl FileStore {
                     return Ok(NativeProjectionAdmission {
                         roots: None,
                         edge_roots: Vec::new(),
+                        line_roots: Vec::new(),
                         reservation: None,
                     });
                 }
@@ -476,6 +493,7 @@ impl FileStore {
         Ok(NativeProjectionAdmission {
             roots: Some(plans.iter().map(|plan| plan.root.clone()).collect()),
             edge_roots: plans.iter().map(|plan| plan.edges.clone()).collect(),
+            line_roots: plans.iter().map(|plan| plan.lines.clone()).collect(),
             reservation,
         })
     }
@@ -939,12 +957,16 @@ impl CurrentRead {
             .transpose()?
             .unwrap_or(0);
         let manifest = native.map_or(0, |(reference, _)| reference.bytes as u64);
+        let line_index = self
+            .native_line_reference(path)?
+            .map_or(0, |reference| reference.bytes as u64);
         let metadata = self.file_metadata_bytes(path)? as u64;
         (artifact.bytes as u64)
             .checked_add(retained.object_bytes as u64)
             .and_then(|bytes| bytes.checked_add(metadata))
             .and_then(|bytes| bytes.checked_add(manifest))
             .and_then(|bytes| bytes.checked_add(edges))
+            .and_then(|bytes| bytes.checked_add(line_index))
             .context("projection certification size overflow")
     }
     /// One admitted source/payload/metadata pass for the historical object and
@@ -991,7 +1013,9 @@ impl CurrentRead {
                 .contract_version
                 == 2
             && compact.extraction_method == "utf8";
-        let raw_lines = if utf8 {
+        let raw_lines = if let Some(reference) = self.native_line_reference(path)? {
+            Some(store.verify_native_line_projection(&reference, &compact)?)
+        } else if utf8 {
             Some(store.verify_retained_source_utf8_lines(&compact)?)
         } else {
             store.verify_retained_source_deep(&compact)?;
