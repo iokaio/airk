@@ -2,7 +2,7 @@
 
 A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). Its complete cumulative diff must stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only then do PR/main CI run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remains the authenticated producer.
 
-The current development package version is **1.8.0**; see [its release record](releases/release-1.8.0.md). The separate [dependency audit](dependency-advisories.md) workflow runs only when lockfiles or the advisory policy change, weekly, and on request; routine CI is unchanged. Prior release and qualification records retain their original scope.
+The current package version is **1.8.2**; see [its release record](releases/release-1.8.2.md). The separate [dependency audit](dependency-advisories.md) workflow runs only when lockfiles or the advisory policy change, weekly, and on request; routine CI is unchanged. Prior release and qualification records retain their original scope.
 
 Container compilation and ownership tests run as UID/GID 10001. Every cache-using
 build step first repairs only its three mounted Cargo/target cache directories,
@@ -18,7 +18,7 @@ Native smoke jobs, the container adapter, service-pool campaign and installed-co
 
 Native smoke and qualification tools distinguish a raw diagnostic status from an available publication. They share scoped, bounded observation helpers and preserve explicit failed readiness, typed read-retry limits and exact usage accounting; see the [MCP consumer contract](mcp.md). The mandatory 16-file/model service-client and document-table smokes remain routine on every native host. Local verification uses a freshly constructed matching release pair before a corrective push; hosted CI is not the primary debugging loop.
 
-MCP smoke checks require the exact unified 27-tool catalog, including rejection of missing, duplicate and retired advertised names. Container and native client checks share that expected public catalog, while standalone extension frontend checks use the current 27-tool probe. The 17 prefixed native `airk tools` aliases remain a separate CLI compatibility contract.
+MCP smoke checks require the exact unified 28-tool catalog, including rejection of missing, duplicate and retired advertised names. Container and native client checks share that expected public catalog, while standalone extension frontend checks use the current 28-tool probe. The 18 prefixed native `airk tools` aliases remain a separate CLI compatibility contract.
 
 The existing model-enabled native-client check also starts an owned inference worker, verifies real inference replies and requires a zero exit status after input EOF. Successful replies followed by a native shutdown abort fail qualification. This runs inside the existing native smoke jobs without another build matrix.
 
@@ -75,7 +75,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.0 release notes](releases/release-1.8.0.md) describe current behavior and qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 28-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.2 release notes](releases/release-1.8.2.md) describe current behavior and qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 28-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 
@@ -221,10 +221,10 @@ For the 1.5.12 process changes, routine native CI also runs the offline installe
 
 ## Isolated real-corpus measurements
 
-`scripts/benchmark-real-corpora.py` measures the selected AIRK and bookbuilder repositories without modifying either source tree. Supply explicit corpus roots on every platform, an isolated release runtime from `scripts/build-service-runtime.py`, its independently recorded `airk-install.json` SHA-256, and a new report path outside the runtime and both source roots. Record the builder's source identity and command: the approved builder checks the main's dependency boundary and builds it without default features; a payload seal alone does not prove that feature selection.
+`scripts/benchmark-real-corpora.py` measures the selected AIRK and BigDotNetProject repositories without modifying either source tree. Supply explicit corpus roots on every platform, an isolated release runtime from `scripts/build-service-runtime.py`, its independently recorded `airk-install.json` SHA-256, and a new report path outside the runtime and both source roots. Record the builder's source identity and command: the approved builder checks the main's dependency boundary and builds it without default features; a payload seal alone does not prove that feature selection.
 
 ```powershell
-python scripts/benchmark-real-corpora.py --runtime-dir $runtime --runtime-sha256 $approved --airk D:/code/Github/airk --bookbuilder D:/code/Github/bookbuilder --report $newReport --semantic --excerpt-path README.md --samples 1
+python scripts/benchmark-real-corpora.py --runtime-dir $runtime --runtime-sha256 $approved --airk D:/code/Github/airk --BigDotNetProject D:/code/Github/BigDotNetProject --report $newReport --semantic --excerpt-path README.md --samples 1
 ```
 
 The one-sample default is for development smoke; request `--samples 30` explicitly for the comparison campaign. `--state-parent` defaults to the system temporary directory and must remain inside it. Runtime, control, models, indexes, logs and reports stay outside both source roots. The runner verifies the approved inventory, executable pair and compiled versions before corpus registration; it disables watchers and submits owned jobs once. Read-only Git-visible source identities are checked before and after work; a changed identity invalidates the campaign. Public reports contain aliases, opaque identities, aggregate counts, timings and fixed failure codes, never source paths, queries, excerpts or raw errors. Existing reports are not overwritten.

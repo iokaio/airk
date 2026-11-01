@@ -1,8 +1,8 @@
 # Protected PRs, GitHub downloads and extension release
 
-The current package version is **1.8.0**; see [its release and validation record](releases/release-1.8.0.md). To check a published package yourself, follow [release verification](release-verification.md). Prior build and qualification records below retain their original scope.
+The current package version is **1.8.2**; see [its release and validation record](releases/release-1.8.2.md). To check a published package yourself, follow [release verification](release-verification.md). Prior build and qualification records below retain their original scope.
 
-For current behavior and upgrade guidance, see the [1.8.0 release notes](releases/release-1.8.0.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](releases/release-1.3.2.md); the [1.3.0 release notes](releases/release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](releases/release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases/releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
+For current behavior and upgrade guidance, see the [1.8.2 release notes](releases/release-1.8.2.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](releases/release-1.3.2.md); the [1.3.0 release notes](releases/release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](releases/release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases/releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
 
 Marketplace and GitHub publication are independent manual actions. A merge starts CI and eligible validation/site jobs; it does not publish either destination. To release GitHub downloads without Marketplace publication, dispatch only **GitHub release**. Its `publish` input controls GitHub downloads, not Marketplace.
 
@@ -14,7 +14,7 @@ The [GitHub release workflow](../.github/workflows/github-release.yml) promotes 
 
 Changes to the release workflow or its release/signing contracts on `main` also run a short validation job without signing credentials. This explicit push event registers and validates the workflow independently of manual dispatch. Push runs skip release preflight and all dependent build, signing, publication and deployment jobs; those remain available only through manual dispatch.
 
-New release tags match the checked-in package version (for this branch, **`v1.8.0`**), with no workflow build suffix. Cargo, the extension and both lockfiles must agree. Workflow run IDs/attempts stay in provenance records, not public version names. Existing `-build.N` releases remain supported by tag validation and the downloads page; they are never renamed or overwritten.
+New release tags match the checked-in package version (for this branch, **`v1.8.2`**), with no workflow build suffix. Cargo, the extension and both lockfiles must agree. Workflow run IDs/attempts stay in provenance records, not public version names. Existing `-build.N` releases remain supported by tag validation and the downloads page; they are never renamed or overwritten.
 
 Both manual release workflows check Marketplace and GitHub before promotion when **publish** is enabled:
 

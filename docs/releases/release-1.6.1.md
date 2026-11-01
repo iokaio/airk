@@ -82,7 +82,7 @@ Local Windows validation:
 - Native client qualification passed for two isolated projects with offline inference and six protocol connections across Codex-, Claude Code- and Copilot-style handshakes. Source bytes were preserved. Retained failure receipts and raw logs matched.
 - Native uninstall tests exercised owned live clients/workers/launchers, foreign-process preservation and failed relaunch after executable removal. Detached-worker tests covered the five-second hook deadline and extension-directory removal. Upgrade policy tests reproduced the original 1.6.0 refusal and pass for the shipped target.
 
-A small local installed-runtime fixture measured a 645-byte basic status JSON body (about 1.4 KB including the MCP text/structured envelope), 3.7–4.3 ms cache hits, a 29 ms uncached warm check and a 1.2-second first check. The detailed diagnostics body was about 7.6 KB. These are local fixture observations, not Bookbuilder or remote-machine latency qualification. First-use runtime verification remains intact.
+A small local installed-runtime fixture measured a 645-byte basic status JSON body (about 1.4 KB including the MCP text/structured envelope), 3.7–4.3 ms cache hits, a 29 ms uncached warm check and a 1.2-second first check. The detailed diagnostics body was about 7.6 KB. These are local fixture observations, not BigDotNetProject or remote-machine latency qualification. First-use runtime verification remains intact.
 
 The guidance plan remains documentation only. No hosted CI, publication, macOS/Linux execution or complete VS Code interactive uninstall/upgrade qualification is claimed for this candidate. The VSIX is for the requested manual Windows test.
 

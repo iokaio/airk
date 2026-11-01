@@ -19,7 +19,7 @@ const libraryFiles = {
     recipes: { schema: 'airk.explorer.search-recipe/1', name: 'Preview recipe', query: 'source identity', mode: 'lexical', limit: 20, maxBytes: 16384, fullChunks: false },
 };
 const projects = Array.from({ length: 8 }, (_, at) => ({ project: at ? at.toString(16).padStart(64, '0') : project,
-    name: ['airk', 'bookbuilder', 'design-library'][at % 3] + (at > 2 ? `-${at}` : ''), collection: `sample-${at}`,
+    name: ['airk', 'BigDotNetProject', 'design-library'][at % 3] + (at > 2 ? `-${at}` : ''), collection: `sample-${at}`,
     root: `D:\\Projects\\AIRK preview\\${at ? 'supporting-projects' : 'airk'}\\source-${at}`,
     current: at === 0, watching: true, paused: at === 2, indexedFiles: at === 1 ? undefined : 1158 + at, semantic: 'partial', publication, observedAt: Date.now() }));
 const state = { revision: 1, extensionVersion: `${version}-preview`, trusted: true, connection: 'ready', selectedProject: project,

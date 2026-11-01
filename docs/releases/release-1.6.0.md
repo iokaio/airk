@@ -49,7 +49,7 @@ additional model profile.
 See [Semantic index optimization](../semantic-index-optimization.md) for reproducible inputs,
 asset hashes, measurement scope and limitations. The local Windows AVX2 benchmark
 used the published 1.5.12 helper and ONNX Runtime 1.22.1, with two fresh processes
-per profile and identical 2,048-passage Bookbuilder samples.
+per profile and identical 2,048-passage BigDotNetProject samples.
 
 | Profile | Passages/second | Peak working set (MiB) | Known-file top-five hits |
 |---|---:|---:|---:|
@@ -93,7 +93,7 @@ query labels, vectors and raw reports remain private and ignored.
   `8909d7be1fd7dd9e65d608d1a685811b455d99e915af4f19362b29bc27c9d5dc`.
 
 These checks do not establish native Mac signing/notarization, ARM or VNNI
-performance, or full Bookbuilder indexing time. Hosted platform CI and release
+performance, or full BigDotNetProject indexing time. Hosted platform CI and release
 receipts establish their own scope; the earlier component benchmark is not a
 whole-application memory guarantee.
 

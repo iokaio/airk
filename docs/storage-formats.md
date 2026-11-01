@@ -33,7 +33,7 @@ Different-format legacy indexes retain their existing offline ownership and reti
 
 A targeted offline evidence set is preferable to copying millions of objects: retained logs, service registry with its sidecars, collection ownership/active manifests, selected current database with its sidecars, and counts/bytes by directory. A few representative objects can then be requested from the large directories. A random sample without reference metadata cannot prove that files are unused. Keep the original tree intact until the diagnosis is complete.
 
-Local October 28 investigation: the shipped 1.5.9 runtime indexed the local Bookbuilder source into an isolated fresh store: 8,122 files, 65,364 chunks and ten publications in roughly 15 minutes. This does not reproduce the other machine's retained state, establish its failure cause, or qualify semantic indexing. The old remote storage tree has not yet been analyzed. See [raw diagnostic access](service-logging.md).
+Local October 28 investigation: the shipped 1.5.9 runtime indexed the local BigDotNetProject source into an isolated fresh store: 8,122 files, 65,364 chunks and ten publications in roughly 15 minutes. This does not reproduce the other machine's retained state, establish its failure cause, or qualify semantic indexing. The old remote storage tree has not yet been analyzed. See [raw diagnostic access](service-logging.md).
 
 
 ## 1.6.4 project removal

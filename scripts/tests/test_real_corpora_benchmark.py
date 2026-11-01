@@ -197,7 +197,7 @@ for line in sys.stdin:
     def args(self, owner, a, b, report):
         runtime = owner / 'runtime'
         runtime.mkdir(exist_ok=True)
-        return SimpleNamespace(airk=a, bookbuilder=b, report=report, runtime_dir=runtime,
+        return SimpleNamespace(airk=a, BigDotNetProject=b, report=report, runtime_dir=runtime,
                                state_parent=owner / 'state', samples=1, command_timeout=5, job_timeout=10)
 
     def test_rejected_output_creates_no_source_directory_even_on_failure(self):

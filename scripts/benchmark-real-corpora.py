@@ -756,7 +756,7 @@ def diagnostic_identity(fixture, project):
 
 
 def run(args, result=None):
-    corpus = [Path(args.airk), Path(args.bookbuilder)]
+    corpus = [Path(args.airk), Path(args.BigDotNetProject)]
     roots = isolate(corpus, [args.runtime_dir, args.report, args.state_parent])
     state_parent = physical(args.state_parent)
     require(inside(state_parent, physical(tempfile.gettempdir())), 'temporary_state_required')
@@ -778,7 +778,7 @@ def run(args, result=None):
         primary = None
         try:
             timed_preparation(result, 'owned_service_start_ms', fixture.start)
-            for alias, root, before in zip(('airk', 'bookbuilder'), roots, identity):
+            for alias, root, before in zip(('airk', 'BigDotNetProject'), roots, identity):
                 data = owner / f'data-{alias}'
                 data.mkdir()
                 row = {'alias': alias, 'source': before, 'watch_enabled': False, 'semantic_requested': args.semantic,
@@ -844,7 +844,7 @@ def run(args, result=None):
 
 def validate_output(args):
     # All checks precede mkdir/open, including when the campaign itself fails.
-    isolate([args.airk, args.bookbuilder], [args.report, args.runtime_dir, args.state_parent])
+    isolate([args.airk, args.BigDotNetProject], [args.report, args.runtime_dir, args.state_parent])
     report = physical(args.report, exists=False)
     runtime = physical(args.runtime_dir, exists=False)
     require(not inside(report, runtime) and not inside(runtime, report), 'report_runtime_overlap')
@@ -915,7 +915,7 @@ def main():
     parser.add_argument('--runtime-dir', type=Path, required=True)
     parser.add_argument('--runtime-sha256', required=True, help='Install digest approved from the reviewed lightweight builder run')
     parser.add_argument('--airk', type=Path, required=True, help='Read-only AIRK corpus root')
-    parser.add_argument('--bookbuilder', type=Path, required=True, help='Read-only bookbuilder corpus root')
+    parser.add_argument('--BigDotNetProject', type=Path, required=True, help='Read-only BigDotNetProject corpus root')
     parser.add_argument('--state-parent', type=Path, default=Path(tempfile.gettempdir()))
     parser.add_argument('--report', type=Path, required=True)
     parser.add_argument('--samples', type=int, default=1)
