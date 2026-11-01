@@ -8,6 +8,41 @@ use airk_store::current::{CurrentRead, CurrentScope, CurrentToken, postings::Loo
 use anyhow::{Context, Result, ensure};
 use std::sync::Arc;
 
+/// Selection is resolved after the same strict source/extraction checks as before.
+#[derive(Clone, Copy)]
+pub(crate) enum LineSelection {
+    Range {
+        start: usize,
+        end: usize,
+    },
+    Context {
+        line: usize,
+        before: usize,
+        after: usize,
+        /// Conditional context historically uses the maximum chunk end.
+        maximum_end: bool,
+    },
+}
+impl LineSelection {
+    fn range(self, lines: usize) -> Result<(usize, usize)> {
+        match self {
+            Self::Range { start, end } => Ok((start, end)),
+            Self::Context {
+                line,
+                before,
+                after,
+                ..
+            } => {
+                ensure!(line > 0 && line <= lines, "line is outside indexed source");
+                Ok((
+                    line.saturating_sub(before).max(1),
+                    line.saturating_add(after).min(lines),
+                ))
+            }
+        }
+    }
+}
+
 pub(crate) fn revision(token: CurrentToken) -> RevisionToken {
     RevisionToken {
         incarnation: token.incarnation,
@@ -273,6 +308,78 @@ impl Kernel {
         Ok(artifact)
     }
 
+    /// Authenticate the complete retained inputs, then prepare only selected text.
+    /// Sparse physical reads require the separate private-owner component policy.
+    pub(crate) fn current_read_lines(
+        &self,
+        read: &CurrentRead,
+        path: &str,
+        selection: LineSelection,
+        max_bytes: usize,
+    ) -> Result<SearchResponse> {
+        let compact = read.artifact(path)?.context("indexed file not found")?;
+        let artifact = self.store.load_retained(&compact)?;
+        let bytes = self.store.read_retained_source(&compact)?;
+        let mut metadata = self.empty_snapshot();
+        metadata.generation = read.head().sequence;
+        let publication = Some(envelope(read)?);
+        if artifact.extraction_method == "utf8"
+            && compact
+                .retained
+                .as_ref()
+                .and_then(|r| r.profile.as_ref())
+                .is_some_and(|p| p.contract_version == 2)
+        {
+            let source = std::str::from_utf8(&bytes)?;
+            let lines = source.split_inclusive('\n').count();
+            let (start, end) = selection.range(lines)?;
+            airk_core::validate_budget(1, max_bytes)?;
+            ensure!(start > 0 && end >= start, "invalid line range");
+            ensure!(end <= lines, "line range exceeds indexed source");
+            return Self::selected_lines_response(
+                publication,
+                &metadata,
+                &artifact,
+                path,
+                start,
+                end,
+                airk_core::DocumentLocation::Lines { start, end },
+                source
+                    .split_inclusive('\n')
+                    .take(end)
+                    .enumerate()
+                    .map(|(offset, line)| (offset + 1, line)),
+                max_bytes,
+            );
+        }
+        let lines = if matches!(
+            selection,
+            LineSelection::Context {
+                maximum_end: true,
+                ..
+            }
+        ) {
+            artifact
+                .chunks
+                .iter()
+                .map(|chunk| chunk.end_line)
+                .max()
+                .unwrap_or(0)
+        } else {
+            artifact.chunks.last().map_or(0, |chunk| chunk.end_line)
+        };
+        let (start, end) = selection.range(lines)?;
+        Self::read_snapshot(
+            publication,
+            &metadata,
+            &artifact,
+            path,
+            start,
+            end,
+            max_bytes,
+        )
+    }
+
     pub(crate) fn current_file_info(&self, read: &CurrentRead, path: &str) -> Result<FileInfo> {
         let artifact = read.artifact(path)?.context("indexed file not found")?;
         let retained = artifact
@@ -343,3 +450,7 @@ impl Kernel {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "range_preparation_tests.rs"]
+mod range_preparation_tests;
