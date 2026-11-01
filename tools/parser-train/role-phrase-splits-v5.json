@@ -1,0 +1,4259 @@
+{
+  "schema": "airk.parser.role-phrase-splits/1",
+  "campaign": "broader-phrasing/5",
+  "seed": 84183,
+  "role_source_sha256": "1c284f3b4db103476321d161cccdbb8fac97f08173762ba95a2715139a5e3401",
+  "canonicalization": "Lowercase/whitespace, trailing sentence punctuation and known polite/role wrappers removed; token/baseline aliases and kind-placeholder expansions unified.",
+  "duplicate_family_links": [
+    {
+      "first": "role/2",
+      "second": "role/161",
+      "canonical_template": "tell me about the class {s}"
+    },
+    {
+      "first": "role/79",
+      "second": "role/203",
+      "canonical_template": "find import statements mentioning {s}"
+    },
+    {
+      "first": "role/89",
+      "second": "role/208",
+      "canonical_template": "what indexed evidence changed since {token}"
+    },
+    {
+      "first": "role/94",
+      "second": "role/214",
+      "canonical_template": "how many files are currently indexed"
+    },
+    {
+      "first": "role/121",
+      "second": "role/237",
+      "canonical_template": "tell me about it"
+    },
+    {
+      "first": "role/20",
+      "second": "role/251",
+      "canonical_template": "tell me about {s}"
+    },
+    {
+      "first": "role/168",
+      "second": "role/296",
+      "canonical_template": "find references to {s}"
+    },
+    {
+      "first": "role/72",
+      "second": "role/319",
+      "canonical_template": "what language was detected for {p}"
+    },
+    {
+      "first": "role/89",
+      "second": "role/323",
+      "canonical_template": "what indexed evidence changed since {token}"
+    },
+    {
+      "first": "role/243",
+      "second": "role/362",
+      "canonical_template": "tell me about struct {s}"
+    },
+    {
+      "first": "role/50",
+      "second": "role/424",
+      "canonical_template": "read {p}"
+    },
+    {
+      "first": "role/184",
+      "second": "role/426",
+      "canonical_template": "what is the outline of {p}"
+    },
+    {
+      "first": "role/252",
+      "second": "conversational/search/train/know-topic/1",
+      "canonical_template": "i would like to know about {s}"
+    },
+    {
+      "first": "role/20",
+      "second": "conversational/search/train/tell-topic/0",
+      "canonical_template": "tell me about {s}"
+    },
+    {
+      "first": "role/253",
+      "second": "conversational/search/train/show-topic/1",
+      "canonical_template": "what is {s}"
+    },
+    {
+      "first": "role/366",
+      "second": "baseline/find_definition/phrase/origin/0",
+      "canonical_template": "take me to the definition of {s}"
+    },
+    {
+      "first": "role/373",
+      "second": "baseline/find_definition/phrase/owner-file/0",
+      "canonical_template": "which source file declares {s}"
+    },
+    {
+      "first": "role/239",
+      "second": "baseline/find_definition/legacy/1/0",
+      "canonical_template": "find the definition of {s}"
+    },
+    {
+      "first": "role/361",
+      "second": "baseline/find_definition/contract/1/0",
+      "canonical_template": "show me the declaration of {s}"
+    },
+    {
+      "first": "role/245",
+      "second": "conversational/find_definition/train/know-typed/0",
+      "canonical_template": "i want to know about class {s}"
+    },
+    {
+      "first": "role/243",
+      "second": "conversational/find_definition/train/tell-typed/1",
+      "canonical_template": "tell me about struct {s}"
+    },
+    {
+      "first": "role/0",
+      "second": "conversational/find_definition/train/find-typed/0",
+      "canonical_template": "find the struct {s}"
+    },
+    {
+      "first": "role/244",
+      "second": "conversational/find_definition/train/find-typed/1",
+      "canonical_template": "find the {s} interface"
+    },
+    {
+      "first": "role/299",
+      "second": "baseline/references/legacy/0/0",
+      "canonical_template": "who calls {s}"
+    },
+    {
+      "first": "role/168",
+      "second": "baseline/references/legacy/1/0",
+      "canonical_template": "find references to {s}"
+    },
+    {
+      "first": "role/43",
+      "second": "baseline/references/contract/0/7",
+      "canonical_template": "look up textual references to {s}"
+    },
+    {
+      "first": "baseline/references/phrase/reference-list/0",
+      "second": "baseline/references/contract/4/3",
+      "canonical_template": "return the reference locations for {s}"
+    },
+    {
+      "first": "role/50",
+      "second": "baseline/read_file/legacy/0/0",
+      "canonical_template": "read {p}"
+    },
+    {
+      "first": "role/175",
+      "second": "baseline/read_file/legacy/2/0",
+      "canonical_template": "open the indexed text of {p}"
+    },
+    {
+      "first": "baseline/read_file/phrase/code-content/1",
+      "second": "baseline/read_file/contract/0/0",
+      "canonical_template": "show me the source contents of {p}"
+    },
+    {
+      "first": "baseline/read_file/phrase/lines/1",
+      "second": "baseline/read_file/contract/2/9",
+      "canonical_template": "fetch source lines from {p}"
+    },
+    {
+      "first": "baseline/read_file/phrase/passage-request/1",
+      "second": "baseline/read_file/contract/3/5",
+      "canonical_template": "give me a text excerpt from {p}"
+    },
+    {
+      "first": "role/304",
+      "second": "baseline/read_file/contract/4/0",
+      "canonical_template": "show me the indexed text of {p}"
+    },
+    {
+      "first": "role/183",
+      "second": "baseline/outline/phrase/outline-request/1",
+      "canonical_template": "show the headings in {p}"
+    },
+    {
+      "first": "role/60",
+      "second": "baseline/outline/legacy/0/0",
+      "canonical_template": "outline {p}"
+    },
+    {
+      "first": "baseline/outline/legacy/4/0",
+      "second": "baseline/outline/contract/2/1",
+      "canonical_template": "get the heading tree of {p}"
+    },
+    {
+      "first": "baseline/file_info/phrase/hash-request/0",
+      "second": "baseline/file_info/contract/1/3",
+      "canonical_template": "return the source content fingerprint for {p}"
+    },
+    {
+      "first": "role/204",
+      "second": "baseline/imports/legacy/3/0",
+      "canonical_template": "where is {s} imported"
+    },
+    {
+      "first": "role/328",
+      "second": "baseline/status/phrase/publication/0",
+      "canonical_template": "show the current index publication"
+    },
+    {
+      "first": "baseline/status/phrase/summary/1",
+      "second": "baseline/status/contract/6/1",
+      "canonical_template": "get the collection readiness summary"
+    }
+  ],
+  "contradictory_labels": 0,
+  "coverage_moves": [
+    {
+      "group": "joint-v5/5bd5369588d66d17",
+      "reason": "train-role-intent",
+      "role": "architect",
+      "intent": "status"
+    },
+    {
+      "group": "joint-v5/3a5756d101a11369",
+      "reason": "train-role-intent",
+      "role": "writer",
+      "intent": "diagnostics"
+    },
+    {
+      "group": "joint-v5/38867a2be0c63c8a",
+      "reason": "train-role-intent",
+      "role": "writer",
+      "intent": "status"
+    },
+    {
+      "group": "joint-v5/01398e90c51955fd",
+      "reason": "held-role-coverage",
+      "role": "architect",
+      "split": "validation"
+    },
+    {
+      "group": "joint-v5/16d34e21ecde098f",
+      "reason": "held-role-coverage",
+      "role": "architect",
+      "split": "validation"
+    },
+    {
+      "group": "joint-v5/1df00f0347d398ff",
+      "reason": "held-role-coverage",
+      "role": "architect",
+      "split": "validation"
+    },
+    {
+      "group": "joint-v5/0cb8dade3ae9fee9",
+      "reason": "held-role-coverage",
+      "role": "writer",
+      "split": "validation"
+    },
+    {
+      "group": "joint-v5/0e8ad06160e1067f",
+      "reason": "held-role-coverage",
+      "role": "writer",
+      "split": "validation"
+    },
+    {
+      "group": "joint-v5/12370b2d13f26c54",
+      "reason": "held-role-coverage",
+      "role": "writer",
+      "split": "calibration"
+    },
+    {
+      "group": "joint-v5/144e609cce718a45",
+      "reason": "held-role-coverage",
+      "role": "writer",
+      "split": "calibration"
+    },
+    {
+      "group": "joint-v5/24c28c744991962f",
+      "reason": "held-role-coverage",
+      "role": "writer",
+      "split": "calibration"
+    },
+    {
+      "group": "joint-v5/46c127a60e85ca76",
+      "reason": "held-role-coverage",
+      "role": "writer",
+      "split": "calibration"
+    },
+    {
+      "group": "joint-v5/4c5dcd7b90919919",
+      "reason": "held-role-coverage",
+      "role": "writer",
+      "split": "calibration"
+    }
+  ],
+  "families": [
+    {
+      "family": "architect/ambiguous-target",
+      "group": "joint-v5/85f52168ced96ed1",
+      "split": "train"
+    },
+    {
+      "family": "architect/architecture-artifact-inventory",
+      "group": "joint-v5/4ce2105bb3c02f52",
+      "split": "train"
+    },
+    {
+      "family": "architect/architecture-rationale",
+      "group": "joint-v5/b332dcb2ac879d70",
+      "split": "train"
+    },
+    {
+      "family": "architect/architecture-record-discovery",
+      "group": "joint-v5/39188498761dc3f5",
+      "split": "train"
+    },
+    {
+      "family": "architect/architecture-statements",
+      "group": "joint-v5/31236ef8501d1464",
+      "split": "train"
+    },
+    {
+      "family": "architect/architecture-topic",
+      "group": "joint-v5/dc888ff80b53f5ed",
+      "split": "validation"
+    },
+    {
+      "family": "architect/artifact-provenance",
+      "group": "joint-v5/a5925d3593aa1dab",
+      "split": "train"
+    },
+    {
+      "family": "architect/boundary-contract-evidence",
+      "group": "joint-v5/73f526a9219b9bdf",
+      "split": "train"
+    },
+    {
+      "family": "architect/boundary-name-occurrences",
+      "group": "joint-v5/41d921219df094e0",
+      "split": "train"
+    },
+    {
+      "family": "architect/caller-candidates",
+      "group": "joint-v5/8f2d8cee319fbfde",
+      "split": "calibration"
+    },
+    {
+      "family": "architect/complete-resolution",
+      "group": "joint-v5/7be399567fc3db2c",
+      "split": "calibration"
+    },
+    {
+      "family": "architect/component-inventory",
+      "group": "joint-v5/68be42771cfa09c6",
+      "split": "train"
+    },
+    {
+      "family": "architect/compound-delete",
+      "group": "joint-v5/99d40e7d49b8b0a1",
+      "split": "calibration"
+    },
+    {
+      "family": "architect/compound-mutation",
+      "group": "joint-v5/63632bda85d448d4",
+      "split": "validation"
+    },
+    {
+      "family": "architect/definition-kind",
+      "group": "joint-v5/6e445423c9e71885",
+      "split": "train"
+    },
+    {
+      "family": "architect/definition-qualified",
+      "group": "joint-v5/34d2afe66aa4a527",
+      "split": "train"
+    },
+    {
+      "family": "architect/definition-surface",
+      "group": "joint-v5/de4dedeb921183b2",
+      "split": "train"
+    },
+    {
+      "family": "architect/design-judgment",
+      "group": "joint-v5/8d04e3b31b42902d",
+      "split": "calibration"
+    },
+    {
+      "family": "architect/existing-explanation",
+      "group": "joint-v5/a3f882511f3fdf2f",
+      "split": "calibration"
+    },
+    {
+      "family": "architect/generation-and-judgment",
+      "group": "joint-v5/6236781eaeec31bb",
+      "split": "train"
+    },
+    {
+      "family": "architect/generation-request",
+      "group": "joint-v5/502b53d51d218678",
+      "split": "calibration"
+    },
+    {
+      "family": "architect/management-action",
+      "group": "joint-v5/b2f189d9e9574606",
+      "split": "train"
+    },
+    {
+      "family": "architect/missing-baseline",
+      "group": "joint-v5/abe44beee2f29e47",
+      "split": "validation"
+    },
+    {
+      "family": "architect/missing-path",
+      "group": "joint-v5/01398e90c51955fd",
+      "split": "validation"
+    },
+    {
+      "family": "architect/missing-selection",
+      "group": "joint-v5/e97bed771a7e0021",
+      "split": "train"
+    },
+    {
+      "family": "architect/missing-target-judgment",
+      "group": "joint-v5/61fc594e86f4a130",
+      "split": "calibration"
+    },
+    {
+      "family": "architect/module-imports",
+      "group": "joint-v5/4af2b6182e477ae5",
+      "split": "train"
+    },
+    {
+      "family": "architect/module-includes",
+      "group": "joint-v5/16d34e21ecde098f",
+      "split": "validation"
+    },
+    {
+      "family": "architect/navigate-structure",
+      "group": "joint-v5/85304cda6faa890a",
+      "split": "train"
+    },
+    {
+      "family": "architect/outside-scope",
+      "group": "joint-v5/9d414d7c0b24c9a7",
+      "split": "calibration"
+    },
+    {
+      "family": "architect/publishing-action",
+      "group": "joint-v5/445e105772b6456a",
+      "split": "train"
+    },
+    {
+      "family": "architect/read-design-artifact",
+      "group": "joint-v5/a911b099f4ccf720",
+      "split": "train"
+    },
+    {
+      "family": "architect/retrieval-guidance",
+      "group": "joint-v5/0aae478d92c8f99e",
+      "split": "train"
+    },
+    {
+      "family": "architect/retrieval-readiness",
+      "group": "joint-v5/5bd5369588d66d17",
+      "split": "train"
+    },
+    {
+      "family": "architect/revision-observation",
+      "group": "joint-v5/7b28e8894a6cc40a",
+      "split": "train"
+    },
+    {
+      "family": "architect/runtime-observation",
+      "group": "joint-v5/998ea89f85733c82",
+      "split": "train"
+    },
+    {
+      "family": "architect/symbol-or-topic-about",
+      "group": "joint-v5/6cf47bc65ac2e181",
+      "split": "calibration"
+    },
+    {
+      "family": "architect/unbounded-proof",
+      "group": "joint-v5/e2a212332cb65c94",
+      "split": "train"
+    },
+    {
+      "family": "architect/unsupported-mutation",
+      "group": "joint-v5/7e574d370345999f",
+      "split": "train"
+    },
+    {
+      "family": "architect/written-decisions",
+      "group": "joint-v5/83659fc82a1af88a",
+      "split": "train"
+    },
+    {
+      "family": "architect/written-requirements",
+      "group": "joint-v5/1df00f0347d398ff",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/changes/contract/0",
+      "group": "joint-v5/2350d62eb4f9d754",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/changes/contract/1",
+      "group": "joint-v5/0c3d1bc79461f9ab",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/changes/contract/2",
+      "group": "joint-v5/d9d784fee5d1f087",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/contract/3",
+      "group": "joint-v5/32a11c152dfe7903",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/changes/contract/4",
+      "group": "joint-v5/884222af70b97466",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/contract/5",
+      "group": "joint-v5/9319b4136cb93671",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/contract/6",
+      "group": "joint-v5/b69e9f428b1fad9b",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/changes/contract/7",
+      "group": "joint-v5/adb39e69285d9880",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/legacy/0",
+      "group": "joint-v5/4139639f53341151",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/changes/legacy/1",
+      "group": "joint-v5/b9e0e08ec2117717",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/legacy/2",
+      "group": "joint-v5/46896a6a9d796e4b",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/changes/legacy/3",
+      "group": "joint-v5/c1eb0d937401670d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/legacy/4",
+      "group": "joint-v5/67966ceb59e5b845",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/legacy/5",
+      "group": "joint-v5/14adc8ebc5c8de30",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/changes/legacy/6",
+      "group": "joint-v5/9418b53b68d0b220",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/legacy/7",
+      "group": "joint-v5/68d860b564e195d3",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/changes/legacy/8",
+      "group": "joint-v5/74ce9fba0ac91858",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/legacy/9",
+      "group": "joint-v5/f68eaf9c6ada655c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/phrase/baseline",
+      "group": "joint-v5/17ac9936a61b7e43",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/changes/phrase/baseline-request",
+      "group": "joint-v5/802e0b6e75e4000f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/phrase/change-question",
+      "group": "joint-v5/90474e7a0e1e44b7",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/phrase/change-request",
+      "group": "joint-v5/c6200afd6976aaad",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/phrase/citation-question",
+      "group": "joint-v5/0d61e879436d09b4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/phrase/citations",
+      "group": "joint-v5/5ef80b333651a6d2",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/changes/phrase/diff",
+      "group": "joint-v5/05f4cbb6620defad",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/phrase/hashes",
+      "group": "joint-v5/d86176f12fd0f030",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/changes/phrase/observations",
+      "group": "joint-v5/94f2b26da20d1a9c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/phrase/publication",
+      "group": "joint-v5/5483fb7f16ad25cc",
+      "split": "train"
+    },
+    {
+      "family": "baseline/changes/phrase/remembered",
+      "group": "joint-v5/79d56fb06d2093eb",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/changes/phrase/removed",
+      "group": "joint-v5/b120e154cdf3f0e5",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/contract/0",
+      "group": "joint-v5/cb672ac2ef4140c5",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/contract/1",
+      "group": "joint-v5/6470e3d4b51ce5a4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/contract/2",
+      "group": "joint-v5/bc999f3956339eb2",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/diagnostics/contract/3",
+      "group": "joint-v5/2b5d4876ab283469",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/diagnostics/contract/4",
+      "group": "joint-v5/c3420cc5e8e14276",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/contract/5",
+      "group": "joint-v5/c2dcaf69b0c8a0cc",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/contract/6",
+      "group": "joint-v5/5040917c40d3004d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/contract/7",
+      "group": "joint-v5/35a8d8217c67b9f6",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/0",
+      "group": "joint-v5/54f51ca5cf01c5d2",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/1",
+      "group": "joint-v5/84b675bebed7692b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/2",
+      "group": "joint-v5/44b3bf3dd1bd00e2",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/3",
+      "group": "joint-v5/6021710b7947e42f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/4",
+      "group": "joint-v5/ae4e8423a6187a86",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/5",
+      "group": "joint-v5/d020ae954111055d",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/6",
+      "group": "joint-v5/bbbeca6cafa7b96f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/7",
+      "group": "joint-v5/b4b7202fd551eeeb",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/8",
+      "group": "joint-v5/69c01ee2c16565ff",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/diagnostics/legacy/9",
+      "group": "joint-v5/a31a15e90d5f8677",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/diagnostic-question",
+      "group": "joint-v5/82f5fc210b8bcd87",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/diagnostic-request",
+      "group": "joint-v5/ac5ed1d91fbf62bb",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/jobs",
+      "group": "joint-v5/e9ce512cdae3c6cf",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/ownership",
+      "group": "joint-v5/ff8f1647f4909137",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/process",
+      "group": "joint-v5/00c2bcf408ab1714",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/queue",
+      "group": "joint-v5/0c371c64cfe71ff1",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/runtime",
+      "group": "joint-v5/ab8a4ac60a322a3e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/troubleshooting",
+      "group": "joint-v5/f2bac5186e77a2fe",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/watcher",
+      "group": "joint-v5/f03fb833300e1e6d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/work-request",
+      "group": "joint-v5/a08e40aac21769b4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/worker-question",
+      "group": "joint-v5/ee6d6f87248f6f41",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/diagnostics/phrase/workers",
+      "group": "joint-v5/dc72747292f92eba",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/contract/0",
+      "group": "joint-v5/daa01954ba172b14",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/contract/1",
+      "group": "joint-v5/7e735cdd965af4ef",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/contract/2",
+      "group": "joint-v5/8ca0f04703f55d94",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/contract/3",
+      "group": "joint-v5/1cc8181b46d4a035",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/contract/4",
+      "group": "joint-v5/70dd1ffaca4e4bbc",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/contract/5",
+      "group": "joint-v5/7d6c9ebb9894445f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/contract/6",
+      "group": "joint-v5/6964765e733407dd",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/facts/contract/7",
+      "group": "joint-v5/8bf17e5ed36f3e93",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/legacy/0",
+      "group": "joint-v5/ca78fa60475b4c91",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/legacy/1",
+      "group": "joint-v5/e0b36f65d80699b5",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/legacy/2",
+      "group": "joint-v5/82ca66c08ac726d1",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/legacy/3",
+      "group": "joint-v5/c03e3cee1b1211d3",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/legacy/4",
+      "group": "joint-v5/2b29e242936044a9",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/facts/legacy/5",
+      "group": "joint-v5/bbed13d46ce0511b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/legacy/6",
+      "group": "joint-v5/7e0023424f7a0ed3",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/legacy/7",
+      "group": "joint-v5/d74e80ba16752e5d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/legacy/8",
+      "group": "joint-v5/be52190f0068a1b4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/legacy/9",
+      "group": "joint-v5/1e9761bce7a9eaac",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/phrase/acceptance",
+      "group": "joint-v5/099088eb43ed1e1d",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/facts/phrase/architecture",
+      "group": "joint-v5/b491af461f9a6205",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/facts/phrase/configuration",
+      "group": "joint-v5/d770d5d82c693a30",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/phrase/constraints",
+      "group": "joint-v5/e1efa065dd9a1b54",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/phrase/criteria-question",
+      "group": "joint-v5/d8d31e37d46cb9c4",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/facts/phrase/decision-request",
+      "group": "joint-v5/daf5dd871aea8d2a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/phrase/decisions",
+      "group": "joint-v5/ff8d6af7d8c6c499",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/phrase/design",
+      "group": "joint-v5/a53fb274324536ad",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/facts/phrase/fact-question",
+      "group": "joint-v5/61e7dd6b2dca99df",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/phrase/fact-request",
+      "group": "joint-v5/72cbf6436e7b9e02",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/facts/phrase/obligations",
+      "group": "joint-v5/bb46354fabdf18f0",
+      "split": "train"
+    },
+    {
+      "family": "baseline/facts/phrase/requirements",
+      "group": "joint-v5/b8453321908abb02",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/contract/0",
+      "group": "joint-v5/7fd4bee9f4ed98c5",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/contract/1",
+      "group": "joint-v5/b3e6911be51565e8",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/file_info/contract/2",
+      "group": "joint-v5/73187ad4db75d2e3",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/contract/3",
+      "group": "joint-v5/c4033c10f0796667",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/contract/4",
+      "group": "joint-v5/6d3b6d580e5b656b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/contract/5",
+      "group": "joint-v5/672b6ea2911c72fc",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/contract/6",
+      "group": "joint-v5/59bdeb03d84674a3",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/file_info/contract/7",
+      "group": "joint-v5/3b1aebe431a22c4b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/legacy/0",
+      "group": "joint-v5/5868f9d2f5d44382",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/legacy/1",
+      "group": "joint-v5/d03b2ec2092be7a3",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/legacy/2",
+      "group": "joint-v5/8b5010be85e02387",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/file_info/legacy/3",
+      "group": "joint-v5/b7a6ba1dd36873e0",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/legacy/4",
+      "group": "joint-v5/66fff3ece70be81e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/legacy/5",
+      "group": "joint-v5/a35c58aea2e0a2a4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/legacy/6",
+      "group": "joint-v5/e10230bd57129d7e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/legacy/7",
+      "group": "joint-v5/588cff78b19e6876",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/legacy/8",
+      "group": "joint-v5/5b38fb0ca95129b0",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/legacy/9",
+      "group": "joint-v5/df7768474082baf9",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/phrase/counts",
+      "group": "joint-v5/1280f3bf84cb5aeb",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/file_info/phrase/extraction",
+      "group": "joint-v5/570649d535c51a5b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/phrase/hash",
+      "group": "joint-v5/499695f9d4035f1e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/phrase/hash-request",
+      "group": "joint-v5/b3e6911be51565e8",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/file_info/phrase/identity",
+      "group": "joint-v5/7b481f99400aed75",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/phrase/language",
+      "group": "joint-v5/a11b2064d771273b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/phrase/metadata",
+      "group": "joint-v5/88342172ba6c8be7",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/phrase/metadata-question",
+      "group": "joint-v5/76b78a1e25b372c4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/phrase/metadata-request",
+      "group": "joint-v5/25274123d8ea8928",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/file_info/phrase/original",
+      "group": "joint-v5/8734b10ff280f5cf",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/phrase/parser",
+      "group": "joint-v5/4fee2c75b2fbfae5",
+      "split": "train"
+    },
+    {
+      "family": "baseline/file_info/phrase/profile-question",
+      "group": "joint-v5/f21afc66d1e0c919",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/contract/0",
+      "group": "joint-v5/ed61465cff411fce",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/find_definition/contract/1",
+      "group": "joint-v5/76e595b272465e29",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/contract/2",
+      "group": "joint-v5/2103a6052b6b5264",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/contract/3",
+      "group": "joint-v5/27ed6ab0098b235a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/contract/4",
+      "group": "joint-v5/1a34ec29aad1e277",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/contract/5",
+      "group": "joint-v5/5558c98827fcf494",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/contract/6",
+      "group": "joint-v5/ac5d03500e0be53c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/contract/7",
+      "group": "joint-v5/6c961948cc35891f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/legacy/0",
+      "group": "joint-v5/e777becae019403e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/legacy/1",
+      "group": "joint-v5/de4dedeb921183b2",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/legacy/2",
+      "group": "joint-v5/9f67aee9a8eca769",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/legacy/3",
+      "group": "joint-v5/59c48f642df94d52",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/find_definition/legacy/4",
+      "group": "joint-v5/a9692e602bda3ba1",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/legacy/5",
+      "group": "joint-v5/f4149c42e3483c27",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/legacy/6",
+      "group": "joint-v5/96a8f2a0b7fec045",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/legacy/7",
+      "group": "joint-v5/5a1b1c279aabb770",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/legacy/8",
+      "group": "joint-v5/0661cd14203e41a4",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/find_definition/legacy/9",
+      "group": "joint-v5/3b3ce01eb4ca9093",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/find_definition/phrase/declaration-question",
+      "group": "joint-v5/917e4b4ec04ffda3",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/declaration-result",
+      "group": "joint-v5/6234ac39599a7988",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/declared",
+      "group": "joint-v5/e247fd37b713cf33",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/find_definition/phrase/definition-request",
+      "group": "joint-v5/5c59229534bee5d7",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/exact",
+      "group": "joint-v5/6b04b3f9635f6828",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/function",
+      "group": "joint-v5/f470f6093f0d15a0",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/named-object",
+      "group": "joint-v5/73cedd817bab4b19",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/navigation",
+      "group": "joint-v5/139664d63e1eec6e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/origin",
+      "group": "joint-v5/1e1e0731d729c148",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/owner-file",
+      "group": "joint-v5/2253c503ad607c85",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/symbol",
+      "group": "joint-v5/ec0c2ca3ccf918bd",
+      "split": "train"
+    },
+    {
+      "family": "baseline/find_definition/phrase/type",
+      "group": "joint-v5/b3eecfe71505436e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/contract/0",
+      "group": "joint-v5/526b5c342ac4106f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/contract/1",
+      "group": "joint-v5/771edc159f0d59fa",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/contract/2",
+      "group": "joint-v5/a5640a56d3ba951c",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/help/contract/3",
+      "group": "joint-v5/ac8e944599b827be",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/contract/4",
+      "group": "joint-v5/ee9e1d8b1ca129b6",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/contract/5",
+      "group": "joint-v5/51a8295fbf21b0fc",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/contract/6",
+      "group": "joint-v5/4e6b623983cd37b9",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/contract/7",
+      "group": "joint-v5/b691d8dfaccbea58",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/legacy/0",
+      "group": "joint-v5/75d79327c4852cd0",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/help/legacy/1",
+      "group": "joint-v5/0ef7fc6b190c3636",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/legacy/2",
+      "group": "joint-v5/ae281634833ab6b6",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/legacy/3",
+      "group": "joint-v5/b66d1d77798815cd",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/help/legacy/4",
+      "group": "joint-v5/e056255e9c387b5d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/legacy/5",
+      "group": "joint-v5/62de306bcb83b78d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/legacy/6",
+      "group": "joint-v5/c7331afe6461f700",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/legacy/7",
+      "group": "joint-v5/53ffb402c9388c3e",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/help/legacy/8",
+      "group": "joint-v5/a4f9f3c6ab4827e5",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/help/legacy/9",
+      "group": "joint-v5/0621bc5bd4e6f190",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/citation",
+      "group": "joint-v5/792877b136861e29",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/commands",
+      "group": "joint-v5/c3bfcaf015e4bb97",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/configuration",
+      "group": "joint-v5/dbdaacb8a4491612",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/help-question",
+      "group": "joint-v5/550b814942a849eb",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/help-request",
+      "group": "joint-v5/55d3b8853e0bb177",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/help/phrase/limits",
+      "group": "joint-v5/ef0a855b3ff324ac",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/manual",
+      "group": "joint-v5/3134fbeadb3fe8a6",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/manual-request",
+      "group": "joint-v5/f102abb13d8279d8",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/help/phrase/syntax",
+      "group": "joint-v5/5f630e295e4569f5",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/tool-question",
+      "group": "joint-v5/4c0a3103d59d115b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/tools",
+      "group": "joint-v5/947d5398593654da",
+      "split": "train"
+    },
+    {
+      "family": "baseline/help/phrase/workflow",
+      "group": "joint-v5/3a9c7a30c173e062",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/contract/0",
+      "group": "joint-v5/16fd07e3b144e2b5",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/imports/contract/1",
+      "group": "joint-v5/3873590bffb0d456",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/contract/2",
+      "group": "joint-v5/04755d4c64fa9786",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/contract/3",
+      "group": "joint-v5/4e13a7f4ee0e6046",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/contract/4",
+      "group": "joint-v5/40bfff325c139ec9",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/contract/5",
+      "group": "joint-v5/c7e5a6e6848f8299",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/contract/6",
+      "group": "joint-v5/2009a58c25dafddc",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/contract/7",
+      "group": "joint-v5/634bfe89eed49713",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/legacy/0",
+      "group": "joint-v5/000decb4994cc429",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/legacy/1",
+      "group": "joint-v5/bb0bd8995c91a6dd",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/legacy/2",
+      "group": "joint-v5/627079652e2ec823",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/imports/legacy/3",
+      "group": "joint-v5/0afa0cf9f33ebdd5",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/imports/legacy/4",
+      "group": "joint-v5/4bbaf65a3a0a499d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/legacy/5",
+      "group": "joint-v5/cc5e9b16c8dd7c20",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/legacy/6",
+      "group": "joint-v5/b12af983c4f03979",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/legacy/7",
+      "group": "joint-v5/4f27a0443e30f132",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/imports/legacy/8",
+      "group": "joint-v5/16de94e54b0f6cc9",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/legacy/9",
+      "group": "joint-v5/8acf8c20b2ec3c60",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/phrase/dependencies",
+      "group": "joint-v5/3ef6f16f613aca89",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/phrase/dependency-lines",
+      "group": "joint-v5/9e29ad6338ef896d",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/imports/phrase/dependency-question",
+      "group": "joint-v5/2d87fcf4ca469b5f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/phrase/import-question",
+      "group": "joint-v5/23f6b4e65c151197",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/phrase/import-request",
+      "group": "joint-v5/73da439103c859f9",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/imports/phrase/imports",
+      "group": "joint-v5/176d52ca653dfd5b",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/imports/phrase/include",
+      "group": "joint-v5/f44513cf6809d8e4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/phrase/include-request",
+      "group": "joint-v5/e887b1b58f1e6007",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/phrase/included",
+      "group": "joint-v5/314476dae91bbd98",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/phrase/module",
+      "group": "joint-v5/6778562cfe1742ee",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/phrase/require",
+      "group": "joint-v5/f29e69b2423081e2",
+      "split": "train"
+    },
+    {
+      "family": "baseline/imports/phrase/use",
+      "group": "joint-v5/f62cacbd2025ab22",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/contract/0",
+      "group": "joint-v5/13f8d5c5653291bd",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/contract/1",
+      "group": "joint-v5/e4c793431154b977",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/contract/2",
+      "group": "joint-v5/bde142202761e5be",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/contract/3",
+      "group": "joint-v5/3f2cb6588e2dea33",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/list_files/contract/4",
+      "group": "joint-v5/04d90f74f7d4b291",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/contract/5",
+      "group": "joint-v5/195f39d51d93aa6a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/contract/6",
+      "group": "joint-v5/6809d71be7e4e651",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/contract/7",
+      "group": "joint-v5/b0b23b724adbeb4c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/legacy/0",
+      "group": "joint-v5/cf3452b804209805",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/legacy/1",
+      "group": "joint-v5/f3f41ff233d9ec73",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/legacy/2",
+      "group": "joint-v5/0412324f7b6bfd28",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/list_files/legacy/3",
+      "group": "joint-v5/5de20921dff2f19f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/legacy/4",
+      "group": "joint-v5/bb6aae56e42ecc60",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/legacy/5",
+      "group": "joint-v5/6d7a27c0e4f22ec2",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/legacy/6",
+      "group": "joint-v5/6c32d80e643d9552",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/legacy/7",
+      "group": "joint-v5/ab96361a9d169835",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/list_files/legacy/8",
+      "group": "joint-v5/b0b8a0eb076322a3",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/legacy/9",
+      "group": "joint-v5/f685b8344b925726",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/list_files/phrase/browse",
+      "group": "joint-v5/9a4175283b0091aa",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/list_files/phrase/captured",
+      "group": "joint-v5/34838631f9ace373",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/phrase/directory-question",
+      "group": "joint-v5/a9ce393138709288",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/phrase/file-question",
+      "group": "joint-v5/2fd15498768677ff",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/phrase/filenames",
+      "group": "joint-v5/170f8be09ca90e1a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/phrase/folder",
+      "group": "joint-v5/e7a0afd48f4a00e8",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/phrase/inventory",
+      "group": "joint-v5/371f080354c7bca9",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/phrase/inventory-request",
+      "group": "joint-v5/b98c9e67d345a553",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/phrase/listing",
+      "group": "joint-v5/fc8630d612727557",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/phrase/path-request",
+      "group": "joint-v5/f76a0ad61b00ad74",
+      "split": "train"
+    },
+    {
+      "family": "baseline/list_files/phrase/paths",
+      "group": "joint-v5/c0c0797d90efadaf",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/list_files/phrase/scope",
+      "group": "joint-v5/46f53f700f6e6b1a",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/outline/contract/0",
+      "group": "joint-v5/32e61f02ce0aee68",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/contract/1",
+      "group": "joint-v5/f5e3546b885d89f6",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/contract/2",
+      "group": "joint-v5/e460a55462461678",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/contract/3",
+      "group": "joint-v5/19612350bb21e5b6",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/contract/4",
+      "group": "joint-v5/9a83e574b72bbb90",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/contract/5",
+      "group": "joint-v5/277485aa3b0c452e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/contract/6",
+      "group": "joint-v5/1f18a561b6aca3cf",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/outline/contract/7",
+      "group": "joint-v5/632f58ac49545514",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/outline/legacy/0",
+      "group": "joint-v5/4997f6959a262b88",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/legacy/1",
+      "group": "joint-v5/3690f7d804e1c878",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/outline/legacy/2",
+      "group": "joint-v5/0bc1175ad13cc82f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/legacy/3",
+      "group": "joint-v5/bf1fc92cb8d54f43",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/outline/legacy/4",
+      "group": "joint-v5/e460a55462461678",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/legacy/5",
+      "group": "joint-v5/74aaf8f40d74ec47",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/legacy/6",
+      "group": "joint-v5/3c2cd300413d72cc",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/legacy/7",
+      "group": "joint-v5/642491b0360d7c6f",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/outline/legacy/8",
+      "group": "joint-v5/86bc2ac773b6d2a9",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/legacy/9",
+      "group": "joint-v5/29c1a2adf9765163",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/definitions",
+      "group": "joint-v5/c98d8daa188b5f33",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/headings",
+      "group": "joint-v5/6c4897cd7d213597",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/outline/phrase/hierarchy",
+      "group": "joint-v5/e444352a06457d97",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/members",
+      "group": "joint-v5/71957864a37530be",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/outline/phrase/navigation",
+      "group": "joint-v5/00af6b140629d54a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/outline",
+      "group": "joint-v5/3fec7a177c24817f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/outline-question",
+      "group": "joint-v5/49bf374fdcac12ed",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/outline-request",
+      "group": "joint-v5/ef1a843045c3c060",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/section-request",
+      "group": "joint-v5/35735b1a88a7bedf",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/sections",
+      "group": "joint-v5/0a65204da0809b0f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/structure",
+      "group": "joint-v5/7dd30f5fcb3c9b70",
+      "split": "train"
+    },
+    {
+      "family": "baseline/outline/phrase/structure-request",
+      "group": "joint-v5/02cfadede9a5008c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/contract/0",
+      "group": "joint-v5/4675522a394e26ac",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/contract/1",
+      "group": "joint-v5/cf0ac65aef410ea1",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/contract/2",
+      "group": "joint-v5/0302cdd144fd1e82",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/contract/3",
+      "group": "joint-v5/1d353fe250101762",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/contract/4",
+      "group": "joint-v5/a911b099f4ccf720",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/contract/5",
+      "group": "joint-v5/da21fe1c1f20c7d3",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/contract/6",
+      "group": "joint-v5/43b13da197dd3e9d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/contract/7",
+      "group": "joint-v5/7fa77bd2dc2bae8e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/legacy/0",
+      "group": "joint-v5/eb62e22cb299440c",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/read_file/legacy/1",
+      "group": "joint-v5/04ef945611255914",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/legacy/2",
+      "group": "joint-v5/7cffe3bc766fa811",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/legacy/3",
+      "group": "joint-v5/f88dc6fa425c303e",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/read_file/legacy/4",
+      "group": "joint-v5/1fc83e47b4071ef8",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/legacy/5",
+      "group": "joint-v5/4af15c2978f4302e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/legacy/6",
+      "group": "joint-v5/7bdc7837a7717552",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/legacy/7",
+      "group": "joint-v5/86a3e3400ebe7893",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/read_file/legacy/8",
+      "group": "joint-v5/4565601a9c203461",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/legacy/9",
+      "group": "joint-v5/ed7f8b825b45a5f4",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/read_file/phrase/body",
+      "group": "joint-v5/ceeba133ff51920f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/phrase/code-content",
+      "group": "joint-v5/4675522a394e26ac",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/phrase/content-question",
+      "group": "joint-v5/ee2782700d8b9e4e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/phrase/contents",
+      "group": "joint-v5/39e8b5d7d89c5dd6",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/phrase/excerpt",
+      "group": "joint-v5/f6ab8e9a240503fc",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/read_file/phrase/inspect-text",
+      "group": "joint-v5/f367bde6e079e411",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/phrase/line-request",
+      "group": "joint-v5/c2ed57b5f4607811",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/read_file/phrase/lines",
+      "group": "joint-v5/0302cdd144fd1e82",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/phrase/passage-request",
+      "group": "joint-v5/1d353fe250101762",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/phrase/read",
+      "group": "joint-v5/46a20c1211c497e9",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/phrase/read-request",
+      "group": "joint-v5/4a114df99c93bc9d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/read_file/phrase/snapshot",
+      "group": "joint-v5/67fc399a96b55a2c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/contract/0",
+      "group": "joint-v5/1d5a0fe7fad13f18",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/references/contract/1",
+      "group": "joint-v5/78522ef4705dfafa",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/references/contract/2",
+      "group": "joint-v5/2f7fed8414d8d5e2",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/contract/3",
+      "group": "joint-v5/07bccc5bd9005edd",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/references/contract/4",
+      "group": "joint-v5/241d32fc7840c6f9",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/references/contract/5",
+      "group": "joint-v5/69600b3ed899a491",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/contract/6",
+      "group": "joint-v5/1a0c543b3e484d90",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/contract/7",
+      "group": "joint-v5/007294b8d49f5a5f",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/references/legacy/0",
+      "group": "joint-v5/8f2d8cee319fbfde",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/references/legacy/1",
+      "group": "joint-v5/41d921219df094e0",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/legacy/2",
+      "group": "joint-v5/39c7f29af8535819",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/references/legacy/3",
+      "group": "joint-v5/39375e10242a4b5b",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/references/legacy/4",
+      "group": "joint-v5/a21d87fe68eb285e",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/legacy/5",
+      "group": "joint-v5/d6fe4b60e932cee4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/legacy/6",
+      "group": "joint-v5/55d7f9bc0bdc5b82",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/legacy/7",
+      "group": "joint-v5/e2246c57972734cf",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/legacy/8",
+      "group": "joint-v5/d1651220ec9b1a10",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/legacy/9",
+      "group": "joint-v5/a0927b6945d99273",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/phrase/callers",
+      "group": "joint-v5/120d8c088de02784",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/phrase/consumers",
+      "group": "joint-v5/933d34197402c0c7",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/references/phrase/cross-reference",
+      "group": "joint-v5/53607fa7c5a5b9ec",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/phrase/invocations",
+      "group": "joint-v5/08b55edca203490a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/phrase/mentions",
+      "group": "joint-v5/2524da6989a78186",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/phrase/named-mentions",
+      "group": "joint-v5/caddf2e3b3826f9a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/phrase/occurrence",
+      "group": "joint-v5/d01187d5e7d7f0f0",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/phrase/reference-list",
+      "group": "joint-v5/241d32fc7840c6f9",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/references/phrase/reference-request",
+      "group": "joint-v5/73d337cb8a0f9eba",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/phrase/search-usage",
+      "group": "joint-v5/0c0ef4c871f959bc",
+      "split": "train"
+    },
+    {
+      "family": "baseline/references/phrase/usage",
+      "group": "joint-v5/913fd78e50973873",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/references/phrase/usage-question",
+      "group": "joint-v5/a6b2a89d12f85b19",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/contract/0",
+      "group": "joint-v5/d260e18f2d4ca69c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/contract/1",
+      "group": "joint-v5/70f263ca4a779556",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/contract/2",
+      "group": "joint-v5/c9914eacac559d5a",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/search/contract/3",
+      "group": "joint-v5/a50e83bf6c948ae8",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/search/contract/4",
+      "group": "joint-v5/d78bdbef73080181",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/contract/5",
+      "group": "joint-v5/12ffe3786cde8764",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/contract/6",
+      "group": "joint-v5/d0d57a6c37e91b7f",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/contract/7",
+      "group": "joint-v5/d20a512c40e25244",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/legacy/0",
+      "group": "joint-v5/6014bb22dd9c8aa2",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/legacy/1",
+      "group": "joint-v5/c9928e53850346f1",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/legacy/2",
+      "group": "joint-v5/d36c194dc6f9b832",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/legacy/3",
+      "group": "joint-v5/75f3ca984df1cb1c",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/search/legacy/4",
+      "group": "joint-v5/228c35484b587cf9",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/legacy/5",
+      "group": "joint-v5/30caffc93fb34e0a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/legacy/6",
+      "group": "joint-v5/95a99938c835d5a9",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/search/legacy/7",
+      "group": "joint-v5/6071a9eb1d22ca3b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/legacy/8",
+      "group": "joint-v5/aea58a8972c5c4ea",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/search/legacy/9",
+      "group": "joint-v5/17c9d1d731614fca",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/discovery",
+      "group": "joint-v5/ec469de781acf1ce",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/evidence",
+      "group": "joint-v5/98f77e2d22f93fac",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/evidence-request",
+      "group": "joint-v5/f44c102d3e4f00d4",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/search/phrase/examples",
+      "group": "joint-v5/26da359fbe77ffae",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/search/phrase/keyword",
+      "group": "joint-v5/0d6d7d25b232e955",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/lookup-request",
+      "group": "joint-v5/f2f1a35167d04dee",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/mentioned-topic",
+      "group": "joint-v5/650eef120541927c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/notes",
+      "group": "joint-v5/dddb540c1dd34d34",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/snippet",
+      "group": "joint-v5/11be15dca3ff5bcb",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/topic",
+      "group": "joint-v5/df84b6c15242df75",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/topic-question",
+      "group": "joint-v5/a3cc1b92785d71be",
+      "split": "train"
+    },
+    {
+      "family": "baseline/search/phrase/written",
+      "group": "joint-v5/35898b37727ac943",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/contract/0",
+      "group": "joint-v5/203b1182555ae5c4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/contract/1",
+      "group": "joint-v5/eda50d8ff8819d79",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/contract/2",
+      "group": "joint-v5/5e0e250e57e836f6",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/status/contract/3",
+      "group": "joint-v5/5d42cbff6de14d6c",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/status/contract/4",
+      "group": "joint-v5/4219a90115e33411",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/contract/5",
+      "group": "joint-v5/19fbedf8f98e049a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/contract/6",
+      "group": "joint-v5/25fbf091b1cc182b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/contract/7",
+      "group": "joint-v5/31a9026f821fd83d",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/status/legacy/0",
+      "group": "joint-v5/bccd05556de8274b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/legacy/1",
+      "group": "joint-v5/706e82ba209bcd6a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/legacy/2",
+      "group": "joint-v5/b132c333301d3e21",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/legacy/3",
+      "group": "joint-v5/0d98e4de9b77e166",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/status/legacy/4",
+      "group": "joint-v5/3347ffdf6b4f44f3",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/status/legacy/5",
+      "group": "joint-v5/0a57e92add6ab76d",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/status/legacy/6",
+      "group": "joint-v5/7944d7db9a5b8003",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/legacy/7",
+      "group": "joint-v5/8c3054948aaf3e66",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/legacy/8",
+      "group": "joint-v5/e65765e77a87c2b9",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/status/legacy/9",
+      "group": "joint-v5/dc5404b33c5891d8",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/phrase/availability-question",
+      "group": "joint-v5/c939a4cc10db08e4",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/phrase/available",
+      "group": "joint-v5/49eec5f38e88bd25",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/phrase/counts",
+      "group": "joint-v5/370645a68b5ce3bc",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/phrase/health",
+      "group": "joint-v5/fbf9e9efdb35034d",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/phrase/progress",
+      "group": "joint-v5/5fb14366b7c77614",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/phrase/publication",
+      "group": "joint-v5/5bd5369588d66d17",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/phrase/readiness",
+      "group": "joint-v5/46f7f6da4a83c7af",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/phrase/readiness-request",
+      "group": "joint-v5/ba6fa6d8cf99ec8d",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/status/phrase/semantic",
+      "group": "joint-v5/e5fde6efbcd7dc83",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/status/phrase/status-question",
+      "group": "joint-v5/238793bca239867c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/status/phrase/status-request",
+      "group": "joint-v5/f5ac7b5d0eff1bab",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/status/phrase/summary",
+      "group": "joint-v5/25fbf091b1cc182b",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/ambiguous",
+      "group": "joint-v5/8d0a7203dcec19cd",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/answer-question",
+      "group": "joint-v5/ce722fd02f49ad52",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/chain-question",
+      "group": "joint-v5/933da9b150b45b39",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/compare",
+      "group": "joint-v5/fc3f83b187ec003a",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/compound-edit",
+      "group": "joint-v5/4fd42af35bfc2383",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/compound-request",
+      "group": "joint-v5/d542b42304e06345",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/compound-shell",
+      "group": "joint-v5/2de54438f6a965cf",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/create",
+      "group": "joint-v5/7ddbdb3acef45dce",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/delete",
+      "group": "joint-v5/99667f2087a29082",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/describe",
+      "group": "joint-v5/6d18dfc301f56fb0",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/edit",
+      "group": "joint-v5/9939fc2bc796e447",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/edit-request",
+      "group": "joint-v5/357d6ce0a8cfbbc0",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/execution-request",
+      "group": "joint-v5/1e8f7e95a3852aec",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/format",
+      "group": "joint-v5/cf5a01a723123421",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/unsupported/generate",
+      "group": "joint-v5/1614d7bae0ac730f",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/git",
+      "group": "joint-v5/8a5dfc949fb02c58",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/implement-question",
+      "group": "joint-v5/72e85f2ac9dd81b5",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/install",
+      "group": "joint-v5/ba505215e88f0ba0",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/live",
+      "group": "joint-v5/eeeb53fdfdc9b686",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/management",
+      "group": "joint-v5/f6da8dd73bca1118",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/management-action",
+      "group": "joint-v5/61d8ea3d371a4c64",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/missing",
+      "group": "joint-v5/b1231af30e2a1b4a",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/missing-file",
+      "group": "joint-v5/b07a721abb4576da",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/multi-request",
+      "group": "joint-v5/d963afcd2f2e30de",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/multi-retrieval",
+      "group": "joint-v5/839251b301a46022",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/mutation-request",
+      "group": "joint-v5/65f732b471903884",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/network",
+      "group": "joint-v5/bcc83f1a1c7ab891",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/publish-question",
+      "group": "joint-v5/ee1506c291795be4",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/quoted-action",
+      "group": "joint-v5/d93cc164839d69c5",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/quoted-instruction",
+      "group": "joint-v5/ad59d4c48036b093",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/reason",
+      "group": "joint-v5/e02e4e814f30a28c",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/reason-request",
+      "group": "joint-v5/7944b6afb3e65527",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/review-action",
+      "group": "joint-v5/21a6af6b9afc8e26",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/rewrite",
+      "group": "joint-v5/5ae3c96dac979e4e",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/unsupported/run-question",
+      "group": "joint-v5/99ad182df10834a1",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/security",
+      "group": "joint-v5/9003dae5b1342e62",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/shell",
+      "group": "joint-v5/44f70167644480d3",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/summarize",
+      "group": "joint-v5/91e289efc0fcf3d5",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/tests",
+      "group": "joint-v5/a5a2c8ff92157433",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/unbound",
+      "group": "joint-v5/540aa856c7f60a93",
+      "split": "calibration"
+    },
+    {
+      "family": "baseline/unsupported/unclear-request",
+      "group": "joint-v5/6bd0ec365bd8f3fb",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/unsupported/unknown-question",
+      "group": "joint-v5/ea290b26a80386d9",
+      "split": "validation"
+    },
+    {
+      "family": "baseline/unsupported/web",
+      "group": "joint-v5/5d31f0fe4490ff90",
+      "split": "train"
+    },
+    {
+      "family": "baseline/unsupported/web-question",
+      "group": "joint-v5/c10082d4549ebc36",
+      "split": "validation"
+    },
+    {
+      "family": "conversational/find_definition/calibration/find-type-location",
+      "group": "joint-v5/105cddc2b8a1f3c0",
+      "split": "train"
+    },
+    {
+      "family": "conversational/find_definition/calibration/more-typed",
+      "group": "joint-v5/5ec02aac76322b50",
+      "split": "train"
+    },
+    {
+      "family": "conversational/find_definition/calibration/tell-typed-source",
+      "group": "joint-v5/7d6d482b30fb61da",
+      "split": "calibration"
+    },
+    {
+      "family": "conversational/find_definition/calibration/what-typed",
+      "group": "joint-v5/beef486e57cd0b98",
+      "split": "calibration"
+    },
+    {
+      "family": "conversational/find_definition/train/find-typed",
+      "group": "joint-v5/6e445423c9e71885",
+      "split": "train"
+    },
+    {
+      "family": "conversational/find_definition/train/information-typed",
+      "group": "joint-v5/d9e16dcefd5a38ef",
+      "split": "validation"
+    },
+    {
+      "family": "conversational/find_definition/train/know-typed",
+      "group": "joint-v5/6e445423c9e71885",
+      "split": "train"
+    },
+    {
+      "family": "conversational/find_definition/train/quoted-symbol",
+      "group": "joint-v5/e59d06825d67108b",
+      "split": "validation"
+    },
+    {
+      "family": "conversational/find_definition/train/tell-typed",
+      "group": "joint-v5/6e445423c9e71885",
+      "split": "train"
+    },
+    {
+      "family": "conversational/find_definition/validation/details-typed",
+      "group": "joint-v5/2a3404fad5e1efe7",
+      "split": "train"
+    },
+    {
+      "family": "conversational/find_definition/validation/find-declared",
+      "group": "joint-v5/621b00ce5f4293b6",
+      "split": "train"
+    },
+    {
+      "family": "conversational/find_definition/validation/learn-typed",
+      "group": "joint-v5/f463272d7d483579",
+      "split": "calibration"
+    },
+    {
+      "family": "conversational/find_definition/validation/tell-declaration",
+      "group": "joint-v5/8a25c65110ff697c",
+      "split": "train"
+    },
+    {
+      "family": "conversational/search/calibration/find-topic-results",
+      "group": "joint-v5/786789989abdcaaa",
+      "split": "train"
+    },
+    {
+      "family": "conversational/search/calibration/tell-topic-matches",
+      "group": "joint-v5/81f4db8201ccafdc",
+      "split": "train"
+    },
+    {
+      "family": "conversational/search/calibration/topic-index",
+      "group": "joint-v5/737b78e8ea2534dd",
+      "split": "train"
+    },
+    {
+      "family": "conversational/search/calibration/topic-more",
+      "group": "joint-v5/7c94c330ffb6eef1",
+      "split": "validation"
+    },
+    {
+      "family": "conversational/search/train/find-topic",
+      "group": "joint-v5/5732de5f8853a929",
+      "split": "train"
+    },
+    {
+      "family": "conversational/search/train/information-topic",
+      "group": "joint-v5/8d5e5359e2790cb3",
+      "split": "validation"
+    },
+    {
+      "family": "conversational/search/train/know-topic",
+      "group": "joint-v5/6cf47bc65ac2e181",
+      "split": "calibration"
+    },
+    {
+      "family": "conversational/search/train/show-topic",
+      "group": "joint-v5/6cf47bc65ac2e181",
+      "split": "calibration"
+    },
+    {
+      "family": "conversational/search/train/tell-topic",
+      "group": "joint-v5/6cf47bc65ac2e181",
+      "split": "calibration"
+    },
+    {
+      "family": "conversational/search/train/topic-material",
+      "group": "joint-v5/a09bf7404baa5b32",
+      "split": "train"
+    },
+    {
+      "family": "conversational/search/validation/find-topic-passages",
+      "group": "joint-v5/1a9b67f760bf6961",
+      "split": "train"
+    },
+    {
+      "family": "conversational/search/validation/learn-topic",
+      "group": "joint-v5/29f0e092386a4d21",
+      "split": "calibration"
+    },
+    {
+      "family": "conversational/search/validation/tell-topic-evidence",
+      "group": "joint-v5/51ef063ff9a0eec6",
+      "split": "calibration"
+    },
+    {
+      "family": "conversational/search/validation/topic-details",
+      "group": "joint-v5/ec123ae6ef7a9d75",
+      "split": "train"
+    },
+    {
+      "family": "conversational/unsupported/calibration/typed-proof",
+      "group": "joint-v5/22f1619e6a1872b1",
+      "split": "train"
+    },
+    {
+      "family": "conversational/unsupported/calibration/typed-publish",
+      "group": "joint-v5/37a025266f431856",
+      "split": "train"
+    },
+    {
+      "family": "conversational/unsupported/train/symbol-change",
+      "group": "joint-v5/996deff9cd306a59",
+      "split": "train"
+    },
+    {
+      "family": "conversational/unsupported/train/symbol-comparison",
+      "group": "joint-v5/ba5970cb067cc91c",
+      "split": "train"
+    },
+    {
+      "family": "conversational/unsupported/train/symbol-reasoning",
+      "group": "joint-v5/6ceebb6b92e6aff4",
+      "split": "validation"
+    },
+    {
+      "family": "conversational/unsupported/train/typed-change",
+      "group": "joint-v5/ad1a525d919caaa7",
+      "split": "calibration"
+    },
+    {
+      "family": "conversational/unsupported/train/typed-explanation",
+      "group": "joint-v5/c152c43fbe7e3da4",
+      "split": "validation"
+    },
+    {
+      "family": "conversational/unsupported/validation/typed-generation",
+      "group": "joint-v5/99dc49573ac51bb1",
+      "split": "train"
+    },
+    {
+      "family": "conversational/unsupported/validation/typed-run",
+      "group": "joint-v5/1d93d5a897240df7",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.changes.retained-baseline",
+      "group": "joint-v5/ecf0854a41b12178",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.changes.scoped",
+      "group": "joint-v5/47c1940abd1e7800",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.changes.since-token",
+      "group": "joint-v5/7b28e8894a6cc40a",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.changes.validate",
+      "group": "joint-v5/b2f43ee411b2df7d",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.diagnostics.jobs-watchers",
+      "group": "joint-v5/11164bd2a12038b5",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.diagnostics.runtime",
+      "group": "joint-v5/07c0f1a2f3e4b9db",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.diagnostics.service",
+      "group": "joint-v5/cdc6af56a2511c27",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.diagnostics.worker",
+      "group": "joint-v5/e76887d343849dbf",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.facts.acceptance",
+      "group": "joint-v5/65dedc7cc8175886",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.facts.architecture",
+      "group": "joint-v5/02f46c9ae867d505",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.facts.constraints",
+      "group": "joint-v5/7d6191ae99b6111a",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.facts.decisions",
+      "group": "joint-v5/5a0cb20f4386d881",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.facts.exact-document",
+      "group": "joint-v5/ff7464cf0d79879c",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.facts.requirements",
+      "group": "joint-v5/e424428c9ca7a065",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.files.directory",
+      "group": "joint-v5/bef26a7b3ec591f7",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.files.find-under",
+      "group": "joint-v5/8842cbe19e6a984b",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.files.inventory",
+      "group": "joint-v5/865abac5643be21c",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.files.paths-question",
+      "group": "joint-v5/99ba416957afddd4",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.files.project-inventory",
+      "group": "joint-v5/54b51669db1ccc26",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.files.source-list",
+      "group": "joint-v5/8b00a4386a6121a4",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.help.commands",
+      "group": "joint-v5/4ffbba64d00a0a5c",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.help.recipes",
+      "group": "joint-v5/e6dc86a82c31b807",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.help.source-excerpt",
+      "group": "joint-v5/5c53fe2cb54940ad",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.help.syntax",
+      "group": "joint-v5/e4138eb4ed2f469e",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.imports.file-question",
+      "group": "joint-v5/0ac38ef0b14381db",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.imports.includes",
+      "group": "joint-v5/6e5b48ed52e82402",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.imports.mentions",
+      "group": "joint-v5/0afa0cf9f33ebdd5",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.imports.module-question",
+      "group": "joint-v5/bc371f78cefc7aa2",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.imports.qualified-module",
+      "group": "joint-v5/4b005d3daa09b5a8",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.imports.scoped",
+      "group": "joint-v5/dc23925b3b9f5fef",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.info.extraction-profile",
+      "group": "joint-v5/64fe08bd9bc273a0",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.info.hash",
+      "group": "joint-v5/1c4938f992fc1ec2",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.info.language",
+      "group": "joint-v5/a5925d3593aa1dab",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.info.metadata",
+      "group": "joint-v5/90345e78fc73ee60",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.info.parser-profile",
+      "group": "joint-v5/9c6f006ef0713831",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.about-delete",
+      "group": "joint-v5/0d1105bf646f48b8",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.negative.ambiguous-comparison",
+      "group": "joint-v5/422f56e4b585386c",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.negative.auto-patch",
+      "group": "joint-v5/46fe301169d16d3b",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.causal-reasoning",
+      "group": "joint-v5/153a3d9a4ba61463",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.negative.commit-push",
+      "group": "joint-v5/9c8926348f9df529",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.conversation-reference",
+      "group": "joint-v5/c4f83009fcd3616b",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.cross-scope",
+      "group": "joint-v5/892d504af570b775",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.design-judgment",
+      "group": "joint-v5/572f15af165b0bbd",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.executed-coverage",
+      "group": "joint-v5/0c34a98af4296f9a",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.external-review",
+      "group": "joint-v5/884dbe74ab6148da",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.find-refactor",
+      "group": "joint-v5/004f5e64fff3ef3f",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.fix",
+      "group": "joint-v5/551dea749045d7e7",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.generate-code",
+      "group": "joint-v5/c6aae14aea86c42f",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.install",
+      "group": "joint-v5/01315ae78c7c74f8",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.management-delete",
+      "group": "joint-v5/9845b5c8130928cb",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.missing-baseline",
+      "group": "joint-v5/c3181d038967c296",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.negative.pronoun",
+      "group": "joint-v5/978e35be6d8db37b",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.negative.proof",
+      "group": "joint-v5/bfe207cb40a6c066",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.negative.read-run-fix",
+      "group": "joint-v5/962021b9e72a2a65",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.negative.rewrite",
+      "group": "joint-v5/efab5b003c9dc025",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.negative.run-tests",
+      "group": "joint-v5/a17f9310ec858c6f",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.negative.semantic-safety",
+      "group": "joint-v5/9f5a9c449ef78b42",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.outline.bare",
+      "group": "joint-v5/4997f6959a262b88",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.outline.declarations",
+      "group": "joint-v5/413faef5e9ed2e80",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.outline.headings",
+      "group": "joint-v5/5ba22bb4ed0af701",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.outline.navigation",
+      "group": "joint-v5/a007c1431a8597d9",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.outline.structure-question",
+      "group": "joint-v5/bcabf921f2e72915",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.outline.types-functions",
+      "group": "joint-v5/d8b5f1038d859508",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.read.bare",
+      "group": "joint-v5/eb62e22cb299440c",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.read.bare-filename",
+      "group": "joint-v5/37a9f47c6ec357fb",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.read.colon-range",
+      "group": "joint-v5/26604ce57a2341b9",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.read.contents",
+      "group": "joint-v5/a152e4faf8300d13",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.read.excerpt",
+      "group": "joint-v5/35a2fb88623aecf2",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.read.indexed-source",
+      "group": "joint-v5/fd29a27f20f7dd8b",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.read.quoted-space-path",
+      "group": "joint-v5/75993ea6f06de49e",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.read.single-line",
+      "group": "joint-v5/87e9a06cb56d033a",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.read.through-range",
+      "group": "joint-v5/dbba7707669c3f72",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.read.word-number",
+      "group": "joint-v5/f060c90669f63770",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.refs.bounded-occurrences",
+      "group": "joint-v5/1e60a85a5923a2a5",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.refs.call-candidates",
+      "group": "joint-v5/51882bcfb2b70fdf",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.refs.explicit-textual",
+      "group": "joint-v5/1d5a0fe7fad13f18",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.refs.find-usages",
+      "group": "joint-v5/8a5b895c3de76e8b",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.refs.function-call-wording",
+      "group": "joint-v5/99791aff17a9b69c",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.refs.identifier-mentions",
+      "group": "joint-v5/91c1541b41ac05c2",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.refs.qualified",
+      "group": "joint-v5/b12ecd2778bd9162",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.refs.question",
+      "group": "joint-v5/f3aef53c236ba682",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.refs.scoped-occurrences",
+      "group": "joint-v5/e53035f352664245",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.refs.snake",
+      "group": "joint-v5/bc66ff502321a99d",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.refs.tell-where",
+      "group": "joint-v5/22937da1ea76c474",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.refs.test-mentions",
+      "group": "joint-v5/d534b8ec96f97b9b",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.status.completion",
+      "group": "joint-v5/838242d1d30c2c09",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.status.counts",
+      "group": "joint-v5/38867a2be0c63c8a",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.status.publication-readiness",
+      "group": "joint-v5/abd170b346cfddc9",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.status.search-readiness",
+      "group": "joint-v5/1f428412849a988a",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.symbol.alias",
+      "group": "joint-v5/ae1c3ee2792787d0",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.symbol.class-about",
+      "group": "joint-v5/24c28c744991962f",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.symbol.colon-qualified",
+      "group": "joint-v5/92641e7c277c0493",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.dot-qualified",
+      "group": "joint-v5/bd9ce3e6c35f6ce3",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.symbol.enum-question",
+      "group": "joint-v5/57ac3015a15e244f",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.symbol.function-navigation",
+      "group": "joint-v5/8276a9a33c4b89f8",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.indexed-definition",
+      "group": "joint-v5/1619e9fc00b1d369",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.indirect-definition",
+      "group": "joint-v5/59e953e763a73b3a",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.symbol.interface-location",
+      "group": "joint-v5/1466bfda7558dd8a",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.location-question",
+      "group": "joint-v5/53e32850f1ce284a",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.lower-snake",
+      "group": "joint-v5/a6938e6cbcc27563",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.method-suffix",
+      "group": "joint-v5/52d66d8e7e310188",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.modal-declaration",
+      "group": "joint-v5/ee78c838e7cd8cf6",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.symbol.multiword-resolution",
+      "group": "joint-v5/664a44e119f25c65",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.possessive",
+      "group": "joint-v5/12f725de08822aa5",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.symbol.quoted-question",
+      "group": "joint-v5/63f6adfbf63d4103",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.symbol.quoted-source",
+      "group": "joint-v5/99902a81267d0882",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.trait-learning",
+      "group": "joint-v5/78d7fb23f0c72472",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.type-first",
+      "group": "joint-v5/6e445423c9e71885",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.symbol.type-last-polite",
+      "group": "joint-v5/fb4a04ef2d8c92fd",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.about",
+      "group": "joint-v5/6cf47bc65ac2e181",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.topic.background",
+      "group": "joint-v5/5e39601b1c2b4eea",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.code-snippets",
+      "group": "joint-v5/1a850cd7c6d46d4f",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.topic.comments",
+      "group": "joint-v5/d457b3ad52fa8304",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.config-mentions",
+      "group": "joint-v5/6527333bd82a08ad",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.discussion-location",
+      "group": "joint-v5/821687e715f61a16",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.documentation-existence",
+      "group": "joint-v5/d50560c6b4242bf2",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.exact-phrase",
+      "group": "joint-v5/5ab91c7aa9cc4721",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.topic.examples",
+      "group": "joint-v5/c7f9e6d2dca4a86d",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.existing-explanation",
+      "group": "joint-v5/2dee0fe03a294923",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.handling-code",
+      "group": "joint-v5/f93b93e0bb2cc09b",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.implementation-notes",
+      "group": "joint-v5/51f71184e40aaada",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.topic.learning-scope",
+      "group": "joint-v5/db55b7853556ebfa",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.literal-scope",
+      "group": "joint-v5/c8634d6c3c3a4ea3",
+      "split": "validation"
+    },
+    {
+      "family": "developer/dev.topic.runtime-explanation",
+      "group": "joint-v5/c415b843ca0ab2cb",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.string-literal",
+      "group": "joint-v5/964687165c7e28a6",
+      "split": "train"
+    },
+    {
+      "family": "developer/dev.topic.walkthrough",
+      "group": "joint-v5/55b7499ee1af6306",
+      "split": "calibration"
+    },
+    {
+      "family": "developer/dev.topic.written-claims",
+      "group": "joint-v5/b0297c6b7f6ded93",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-acceptance",
+      "group": "joint-v5/206a5c54a26bf441",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-assertion-helper",
+      "group": "joint-v5/ef06af3063ac6fdd",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-assertion-references",
+      "group": "joint-v5/9ec96c47edb370fa",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-assertion-text",
+      "group": "joint-v5/7bddc3d6a8f0673a",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-boundary-cases",
+      "group": "joint-v5/6181e57cc6d16be8",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-bounds",
+      "group": "joint-v5/bc1ad7aa4105d079",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-builder-definition",
+      "group": "joint-v5/1e1a0241f9eb7503",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-cancellation-cases",
+      "group": "joint-v5/49c509b67d7799e9",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-changes-baseline",
+      "group": "joint-v5/0c2b3a62aded015f",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-changes-fixture",
+      "group": "joint-v5/c0c4162a49b909dd",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-changes-regression",
+      "group": "joint-v5/7e6f4f26672dca31",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-changes-validate",
+      "group": "joint-v5/ea81463bde4d1a07",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-cleanup-usages",
+      "group": "joint-v5/8ca6f3df3ecb83cf",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-coverage-candidates",
+      "group": "joint-v5/3db1bd1187d48d0d",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-definition-file",
+      "group": "joint-v5/2253c503ad607c85",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-diagnostics-queue",
+      "group": "joint-v5/c033d4f379b921bb",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-diagnostics-runtime",
+      "group": "joint-v5/9e2a461a9d895d8d",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-diagnostics-service",
+      "group": "joint-v5/b3f36aa4597e00b4",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-diagnostics-watcher",
+      "group": "joint-v5/93b47767f5878669",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-diagnostics-worker",
+      "group": "joint-v5/afd83da72b2f77d3",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-document-facts",
+      "group": "joint-v5/f9fde41894c1bad4",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-enum-definition",
+      "group": "joint-v5/d9f5fb95accf7c85",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-failure-contract",
+      "group": "joint-v5/b2d2517e4ba18182",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-failure-logs",
+      "group": "joint-v5/03b7e01ba16b3eda",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-failure-message",
+      "group": "joint-v5/0ec6aed8d8ad53cf",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-failure-notes",
+      "group": "joint-v5/bbcbb62bd3fd587e",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-failure-symbol-mentions",
+      "group": "joint-v5/351f5ffca6f12128",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-fixture-topic",
+      "group": "joint-v5/94fd6289861679c1",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-fixture-type",
+      "group": "joint-v5/6e445423c9e71885",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-fixture-usages",
+      "group": "joint-v5/ed86205b7cc1cb3a",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-flaky-evidence",
+      "group": "joint-v5/dd714f88137bf639",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-generic-case",
+      "group": "joint-v5/d03ab5c19e78582b",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-help-commands",
+      "group": "joint-v5/1fb202ceca794e1c",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-help-parse",
+      "group": "joint-v5/0674524557b35973",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-help-recipes",
+      "group": "joint-v5/6695224263cc8a30",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-help-scope",
+      "group": "joint-v5/b02888136a444f8f",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-imports-fixture",
+      "group": "joint-v5/64d6ddd00f8c8238",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-imports-mocks",
+      "group": "joint-v5/3b9de208f6603bb9",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-imports-tests",
+      "group": "joint-v5/2b012bffbabb2851",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-info-hash",
+      "group": "joint-v5/582851f654642c2d",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-info-language",
+      "group": "joint-v5/409fdbf1f2ca04dc",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-info-lines",
+      "group": "joint-v5/6dfca5210367b420",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-info-profile",
+      "group": "joint-v5/90e9916d3bf4280d",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-invalid-input",
+      "group": "joint-v5/fdda6d8563156bc2",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-known-limits",
+      "group": "joint-v5/207215b1caa9c836",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-list-fixtures",
+      "group": "joint-v5/5014f66beae567f7",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-list-inventory",
+      "group": "joint-v5/740b4006ff270027",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-list-snapshots",
+      "group": "joint-v5/ed29a3cb77758c29",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-list-test-paths",
+      "group": "joint-v5/d48eabf5681477e4",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-list-tests",
+      "group": "joint-v5/559514b46d44c2f1",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-method-definition",
+      "group": "joint-v5/49d350920207c207",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-mock-class",
+      "group": "joint-v5/00cea13e09f98196",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-mock-consumers",
+      "group": "joint-v5/a675e8f965e950ed",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-must-requirement",
+      "group": "joint-v5/90cbd973e3161b6f",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-negative-ambiguous",
+      "group": "joint-v5/52f513d4ab092b4b",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-assertion",
+      "group": "joint-v5/2334b5c91fde8c5a",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-baseline",
+      "group": "joint-v5/a117118e37c3d5e7",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-negative-certify",
+      "group": "joint-v5/ea5f70fc14bbf28b",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-negative-compound",
+      "group": "joint-v5/0a9f88d72787acd4",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-coverage",
+      "group": "joint-v5/ed1d2f86baaa534d",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-evaluate",
+      "group": "joint-v5/40043c04756ed95f",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-fix",
+      "group": "joint-v5/777b78746e06c418",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-installer",
+      "group": "joint-v5/c29387e5c684e3e7",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-negative-missing",
+      "group": "joint-v5/39290216c9050b5f",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-multiple",
+      "group": "joint-v5/ec90f45f489d2a2b",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-publish",
+      "group": "joint-v5/3dba350631787e4c",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-reindex",
+      "group": "joint-v5/d822e6e1b4951a73",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-negative-run",
+      "group": "joint-v5/624431c407f55f6f",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-tests",
+      "group": "joint-v5/e0f8e95323b8a9bc",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-negative-tutorial",
+      "group": "joint-v5/7d84642295340202",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-negative-write",
+      "group": "joint-v5/3766ea44f7587407",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-outline-fixture",
+      "group": "joint-v5/ef1a843045c3c060",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-outline-headings",
+      "group": "joint-v5/a0ba1625b2c91eae",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-outline-structure",
+      "group": "joint-v5/2ce7ac481271d789",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-outline-tests",
+      "group": "joint-v5/233940acf2833806",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-parameterized-uses",
+      "group": "joint-v5/b450c79afcafc136",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-plain-references",
+      "group": "joint-v5/7abc91b3720196ba",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-platform-regression",
+      "group": "joint-v5/853411dab27b7065",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-quoted-symbol",
+      "group": "joint-v5/17c1f1f2008da347",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-race-fixtures",
+      "group": "joint-v5/26256aed9ae95705",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-read-assertion",
+      "group": "joint-v5/c5375079e16c308b",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-read-contract",
+      "group": "joint-v5/eb62e22cb299440c",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-read-excerpt",
+      "group": "joint-v5/094ae0073c2d9ec3",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-read-first-lines",
+      "group": "joint-v5/5fbe50f0fbcd7736",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-read-fixture",
+      "group": "joint-v5/449b30fa5047b0f8",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-read-quoted",
+      "group": "joint-v5/48a8eef6a24da697",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-read-test",
+      "group": "joint-v5/2e4a18ed9824ef65",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-receipt-tests",
+      "group": "joint-v5/98968ce29f05fc3d",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-regression-notes",
+      "group": "joint-v5/ca31fc96a38a343a",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-regression-references",
+      "group": "joint-v5/b59e3b2724380954",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-release-gates",
+      "group": "joint-v5/c20ffe68d9693c14",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-reproduction",
+      "group": "joint-v5/2f407b18543b68a8",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-requirement-trace",
+      "group": "joint-v5/13d411b59ec4ada6",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-requirements-fragment",
+      "group": "joint-v5/3067d211d3283548",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-retry-cases",
+      "group": "joint-v5/e9180ea2b16e0fdd",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-scope-references",
+      "group": "joint-v5/9d589d331bdf513d",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-setup-usages",
+      "group": "joint-v5/62d06c65c818ba47",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-single-name",
+      "group": "joint-v5/7764a1893825cb18",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-skipped-cases",
+      "group": "joint-v5/42fdc7c63b60f9c1",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-status-counts",
+      "group": "joint-v5/72b721cea08c1562",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-status-publication",
+      "group": "joint-v5/c368a7f9de30cba5",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-status-ready",
+      "group": "joint-v5/3c9261c92bf21fb5",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-status-vector",
+      "group": "joint-v5/1fedeaf2b3624e14",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-status-work",
+      "group": "joint-v5/5fe415e11e22d083",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-test-calls",
+      "group": "joint-v5/ec899344a36fd50e",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-test-data",
+      "group": "joint-v5/dec84e404969181e",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-test-decisions",
+      "group": "joint-v5/3ee6060fc1279c8b",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-test-declaration",
+      "group": "joint-v5/76e595b272465e29",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-test-definition",
+      "group": "joint-v5/3b42bedac418545e",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-test-entry",
+      "group": "joint-v5/1e1e0731d729c148",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-test-harness",
+      "group": "joint-v5/0f91fc9bb05607b0",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-test-helper",
+      "group": "joint-v5/3e8714286b6094bb",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-test-locate",
+      "group": "joint-v5/e50521c2cfe30f85",
+      "split": "calibration"
+    },
+    {
+      "family": "tester/qa-test-mentions",
+      "group": "joint-v5/4d3d94be861ca38b",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-test-obligations",
+      "group": "joint-v5/a979a8a8e2f6e9cf",
+      "split": "train"
+    },
+    {
+      "family": "tester/qa-topic-fragment",
+      "group": "joint-v5/b923af98ec577a04",
+      "split": "validation"
+    },
+    {
+      "family": "tester/qa-trait-definition",
+      "group": "joint-v5/6b42794bcce356a7",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-ambiguous-selection",
+      "group": "joint-v5/978e35be6d8db37b",
+      "split": "calibration"
+    },
+    {
+      "family": "writer/writer-api-import-notes",
+      "group": "joint-v5/0afa0cf9f33ebdd5",
+      "split": "validation"
+    },
+    {
+      "family": "writer/writer-api-name-mentions",
+      "group": "joint-v5/cb4749321356d771",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-api-term-definition",
+      "group": "joint-v5/24c28c744991962f",
+      "split": "calibration"
+    },
+    {
+      "family": "writer/writer-concrete-document-outline",
+      "group": "joint-v5/46c127a60e85ca76",
+      "split": "calibration"
+    },
+    {
+      "family": "writer/writer-concrete-symbol",
+      "group": "joint-v5/144e609cce718a45",
+      "split": "calibration"
+    },
+    {
+      "family": "writer/writer-dates-and-bounds",
+      "group": "joint-v5/4cf1a11d462fcc0c",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-decision-statements",
+      "group": "joint-v5/da0deba1eae79f0f",
+      "split": "validation"
+    },
+    {
+      "family": "writer/writer-dependency-documentation",
+      "group": "joint-v5/cbb56c05dcfd5983",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-docs-inventory",
+      "group": "joint-v5/3f2c6d98efb50ad7",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-document-contents",
+      "group": "joint-v5/7cffe3bc766fa811",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-document-excerpt",
+      "group": "joint-v5/0cb8dade3ae9fee9",
+      "split": "validation"
+    },
+    {
+      "family": "writer/writer-document-extraction",
+      "group": "joint-v5/fe0d1adfbd074842",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-document-headings",
+      "group": "joint-v5/ef1a843045c3c060",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-document-identity",
+      "group": "joint-v5/9235be6359e0738e",
+      "split": "validation"
+    },
+    {
+      "family": "writer/writer-document-navigation",
+      "group": "joint-v5/eaabcb42501875a3",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-document-range",
+      "group": "joint-v5/6fc22225017f247f",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-evidence-review",
+      "group": "joint-v5/4c5dcd7b90919919",
+      "split": "calibration"
+    },
+    {
+      "family": "writer/writer-example-location",
+      "group": "joint-v5/50d35773ba8a0b4f",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-existing-explanation",
+      "group": "joint-v5/d1df50a473135958",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-feature-statements",
+      "group": "joint-v5/aee88464268028b9",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-file-discovery",
+      "group": "joint-v5/5c9677260c388c70",
+      "split": "validation"
+    },
+    {
+      "family": "writer/writer-howto-source",
+      "group": "joint-v5/c5bdbb88ff94bfd1",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-intro-topic",
+      "group": "joint-v5/f659f43d6b28a1ee",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-release-copy",
+      "group": "joint-v5/e137442a601bf832",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-requirement-statements",
+      "group": "joint-v5/0e8ad06160e1067f",
+      "split": "validation"
+    },
+    {
+      "family": "writer/writer-saved-evidence",
+      "group": "joint-v5/7b28e8894a6cc40a",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-symbol-source",
+      "group": "joint-v5/c000c39cbf584ebb",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-term-consistency",
+      "group": "joint-v5/41d921219df094e0",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-term-examples",
+      "group": "joint-v5/56385ed01087e56f",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-unsupported-generation",
+      "group": "joint-v5/89297ae135278f1e",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-unsupported-inference",
+      "group": "joint-v5/e4256c006faddfc0",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-unsupported-publish",
+      "group": "joint-v5/12370b2d13f26c54",
+      "split": "calibration"
+    },
+    {
+      "family": "writer/writer-unsupported-rewrite",
+      "group": "joint-v5/c11fca987b9368ce",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-warning-copy",
+      "group": "joint-v5/f9f34b466f2925e0",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-writer-command-help",
+      "group": "joint-v5/3c017efbcb195f51",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-writer-readiness",
+      "group": "joint-v5/38867a2be0c63c8a",
+      "split": "train"
+    },
+    {
+      "family": "writer/writer-writer-troubleshooting",
+      "group": "joint-v5/3a5756d101a11369",
+      "split": "train"
+    }
+  ],
+  "source_rows": 2124,
+  "original_role_rows": 476
+}

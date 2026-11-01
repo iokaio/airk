@@ -1,0 +1,6 @@
+# Frozen evidence metadata and original license texts have byte-bound hashes.
+# Preserve their exact bytes on every platform; keep normal text diffs available.
+*.json -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+data/*.jsonl.gz -text
+data/licenses/*.txt -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+data/licenses/*.txt.gz -text

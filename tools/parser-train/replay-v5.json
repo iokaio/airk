@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "protocol": "saved-data-replay/1",
+  "base_report": "tools\\parser-train\\qualification-broader-v5.json",
+  "base_report_sha256": "15a2eb2edbda2f7d7d7e69ce1063b970378589df76e7acb12c77dc5510addd41",
+  "fitted_training": {
+    "path": "target/parser-train/data/broader-fitted-v5-696b34a3fb904217.jsonl",
+    "sha256": "696b34a3fb904217bdd658eef3021758c058167b6efe026f5b253077a886150d",
+    "rows": 48000
+  },
+  "fit_rows": 48000,
+  "extra_training": null,
+  "fit_parameters": {
+    "algorithm": "OneVsRestClassifier(LogisticRegression)",
+    "solver": "liblinear",
+    "C": 2.0,
+    "max_iter": 300,
+    "random_state": 84183,
+    "feature_spec": 2,
+    "unsupported_targets": "thirteen zeros",
+    "quantization": "round weights and biases after scaling maximum absolute coefficient to120; int8 weights/int32 biases",
+    "row_order": "exact order in fitted_training JSONL; no additional shuffle"
+  },
+  "threshold": 448,
+  "margin": 476,
+  "asset_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+  "asset_bytes": 852116,
+  "model_path": "target/parser-train/models/intent-3c6fee9de4093ca5.bin",
+  "exact_reproduction": true,
+  "automatic_execution": false,
+  "qualified": false,
+  "held_out_observations": {},
+  "scope": "Local experimental artifact or exact selected-data replay only. No product asset, manifest or catalog changes. No final regression fixtures evaluated or qualification/promotion inferred."
+}

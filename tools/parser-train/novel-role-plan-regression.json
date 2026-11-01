@@ -1,0 +1,1127 @@
+{
+  "asset_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+  "counter_order": [
+    "rows",
+    "correct_operation_and_target",
+    "supported_failures",
+    "wrong_automatic_unsupported"
+  ],
+  "inventory_sha256": "dff065ae71b1bb3c72751100d35edd8013c16df05ba657c14a555041a5c1fc9d",
+  "model": "intent-broader/5",
+  "natural_source_sha256": "f25e0ab21655513fd9115b77678a45407068f42dcb9e9acb98c253cc3fa704dd",
+  "parser_source_sha256": "6e89cfb536c5b32a15f6cf461e070dca0d6ed8e5372939c967a1600d99e6b9aa",
+  "queries": [
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "symbols",
+      "expected_target": "QueueClient",
+      "family": "dev-declaration-origin",
+      "intent": "find_definition",
+      "requires_input": [],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "definition",
+          "tool": "symbols"
+        },
+        {
+          "args": {},
+          "bind": [
+            {
+              "arg": "path",
+              "from": "definition",
+              "select": "unique_definition_path"
+            }
+          ],
+          "id": "structure",
+          "tool": "outline"
+        },
+        {
+          "args": {},
+          "bind": [
+            {
+              "arg": "location",
+              "from": "definition",
+              "select": "hit_locations"
+            }
+          ],
+          "id": "excerpt",
+          "tool": "read_file"
+        }
+      ],
+      "text": "The type QueueClient is unfamiliar to me; could I see its declaration site?"
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "search",
+      "expected_target": "QueueClient",
+      "family": "dev-evidence-fragment",
+      "intent": "search",
+      "requires_input": [],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "query": "QueueClient"
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "search"
+        }
+      ],
+      "text": "I need indexed passages on QueueClient before touching the implementation."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "references",
+      "expected_target": "QueueClient",
+      "family": "dev-identifier-written",
+      "intent": "references",
+      "requires_input": [],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "references"
+        }
+      ],
+      "text": "Could I see every indexed place where the identifier QueueClient is written?"
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "document_facts",
+      "expected_target": "QueueClient",
+      "family": "dev-written-preconditions",
+      "intent": "facts",
+      "requires_input": [],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "kind": "requirement",
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "document_facts"
+        }
+      ],
+      "text": "Retrieve the documented requirement statements concerning QueueClient."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "read_file",
+      "expected_target": "src/client.rs",
+      "family": "dev-bounded-file-view",
+      "intent": "read_file",
+      "requires_input": [],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "end_line": 14,
+            "path": "src/client.rs",
+            "start_line": 6
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "read_file"
+        }
+      ],
+      "text": "Bring up indexed lines 6 through 14 from src/client.rs."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "file_info",
+      "expected_target": "src/client.rs",
+      "family": "dev-extraction-record",
+      "intent": "file_info",
+      "requires_input": [],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "path": "src/client.rs"
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "file_info"
+        }
+      ],
+      "text": "Which extraction profile produced the indexed representation of src/client.rs?"
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "status",
+      "expected_target": null,
+      "family": "dev-readiness-before-investigation",
+      "intent": "status",
+      "requires_input": [],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {},
+          "bind": [],
+          "id": "evidence",
+          "tool": "status"
+        }
+      ],
+      "text": "Before I investigate, is this collection ready for retrieval?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "imports",
+      "expected_target": "QueueClient",
+      "family": "dev-import-spelling",
+      "intent": "imports",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "imports"
+        }
+      ],
+      "text": "Let me inspect written import declarations involving QueueClient."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "outline",
+      "expected_target": "src/client.rs",
+      "family": "dev-structural-navigation",
+      "intent": "outline",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "path": "src/client.rs"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "outline"
+        }
+      ],
+      "text": "A heading and declaration outline for src/client.rs would help me navigate."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "dev-referent-missing",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: search did not meet the confidence requirements (score -172, margin 308). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Can you check that part for me?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "dev-edit-after-lookup",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: find_definition did not meet the confidence requirements (score 157, margin 1029). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Find the declaration of QueueClient and replace its implementation."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "dev-proof-request",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: search did not meet the confidence requirements (score -545, margin 63). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "developer",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Prove that QueueClient cannot race with any other code."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "symbols",
+      "expected_target": "QueueClient",
+      "family": "writer-api-declaration-source",
+      "intent": "find_definition",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "symbols"
+        }
+      ],
+      "text": "For the API reference, point me to the indexed declaration named QueueClient."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "search",
+      "expected_target": "QueueClient",
+      "family": "writer-existing-wording-source",
+      "intent": "search",
+      "requires_input": [],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "query": "QueueClient"
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "search"
+        }
+      ],
+      "text": "I am looking for existing repository wording on QueueClient, with source locations."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "references",
+      "expected_target": "QueueClient",
+      "family": "writer-exact-term-concordance",
+      "intent": "references",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "references"
+        }
+      ],
+      "text": "Please collect textual occurrences of the exact identifier QueueClient for my terminology check."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "document_facts",
+      "expected_target": "QueueClient",
+      "family": "writer-written-acceptance",
+      "intent": "facts",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "document_facts"
+        }
+      ],
+      "text": "What acceptance-criterion statements have been indexed concerning QueueClient?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "read_file",
+      "expected_target": "src/client.rs",
+      "family": "writer-source-excerpt-window",
+      "intent": "read_file",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "end_line": 11,
+            "path": "src/client.rs",
+            "start_line": 3
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "read_file"
+        }
+      ],
+      "text": "Let me read the indexed excerpt at lines 3 to 11 of src/client.rs."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "file_info",
+      "expected_target": "src/client.rs",
+      "family": "writer-extraction-coordinate-provenance",
+      "intent": "file_info",
+      "requires_input": [],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "path": "src/client.rs"
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "file_info"
+        }
+      ],
+      "text": "I need the extraction metadata associated with src/client.rs, rather than its text."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "status",
+      "expected_target": null,
+      "family": "writer-index-availability",
+      "intent": "status",
+      "requires_input": [],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {},
+          "bind": [],
+          "id": "evidence",
+          "tool": "status"
+        }
+      ],
+      "text": "Is there a published index available for looking up documentation?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "list_files",
+      "expected_target": "src/",
+      "family": "writer-folder-inventory",
+      "intent": "list_files",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "prefix": "src/"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "list_files"
+        }
+      ],
+      "text": "Which indexed filenames can I browse beneath src/?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "help",
+      "expected_target": null,
+      "family": "writer-command-discovery",
+      "intent": "help",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {},
+          "bind": [],
+          "id": "proposal",
+          "tool": "help"
+        }
+      ],
+      "text": "Where can I read guidance on the AIRK read-only commands?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "writer-generation-request",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: search did not meet the confidence requirements (score 292, margin 1060). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Write a polished introduction explaining QueueClient for new users."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "writer-document-unspecified",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: search did not meet the confidence requirements (score -206, margin 84). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Open the guide I was thinking about."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "writer-publish-after-finding",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: search did not meet the confidence requirements (score 160, margin 655). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "writer",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Find the documentation about QueueClient and publish an updated copy."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "symbols",
+      "expected_target": "QueueClient",
+      "family": "architect-contract-declaration",
+      "intent": "find_definition",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "symbols"
+        }
+      ],
+      "text": "To inspect this contract, take me to the definition of interface QueueClient."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "search",
+      "expected_target": "QueueClient",
+      "family": "architect-recorded-motivation",
+      "intent": "search",
+      "requires_input": [],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "query": "QueueClient"
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "search"
+        }
+      ],
+      "text": "I want the existing passages recording the motivation for QueueClient."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "references",
+      "expected_target": "QueueClient",
+      "family": "architect-boundary-name-mentions",
+      "intent": "references",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "references"
+        }
+      ],
+      "text": "Collect indexed identifier occurrences for QueueClient so I can inspect its boundary mentions."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "document_facts",
+      "expected_target": "QueueClient",
+      "family": "architect-recorded-design-statements",
+      "intent": "facts",
+      "requires_input": [],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "kind": "architecture",
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "document_facts"
+        }
+      ],
+      "text": "Which recorded architecture statements concern QueueClient?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "read_file",
+      "expected_target": "src/client.rs",
+      "family": "architect-decision-excerpt",
+      "intent": "read_file",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "end_line": 21,
+            "path": "src/client.rs",
+            "start_line": 9
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "read_file"
+        }
+      ],
+      "text": "Could you bring back indexed lines 9 through 21 of src/client.rs?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "file_info",
+      "expected_target": "src/client.rs",
+      "family": "architect-indexed-profile",
+      "intent": "file_info",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "path": "src/client.rs"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "file_info"
+        }
+      ],
+      "text": "Give me the indexed language and extraction profile for src/client.rs."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "status",
+      "expected_target": null,
+      "family": "architect-publication-observation",
+      "intent": "status",
+      "requires_input": [],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {},
+          "bind": [],
+          "id": "evidence",
+          "tool": "status"
+        }
+      ],
+      "text": "What is the current published index generation?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "imports",
+      "expected_target": "QueueClient",
+      "family": "architect-declared-dependency-evidence",
+      "intent": "imports",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "imports"
+        }
+      ],
+      "text": "Bring up written imports that name QueueClient; I want to inspect the declared dependencies."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "diagnostics",
+      "expected_target": null,
+      "family": "architect-runtime-observations",
+      "intent": "diagnostics",
+      "requires_input": [],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {},
+          "bind": [],
+          "id": "evidence",
+          "tool": "diagnostics"
+        }
+      ],
+      "text": "I need detailed observations of native workers, queued jobs and the source watcher."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "architect-design-generation",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: facts did not meet the confidence requirements (score -655, margin 65). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Invent a replacement architecture for QueueClient and justify the tradeoffs."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "architect-ambiguous-choice",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: references did not meet the confidence requirements (score -323, margin 239). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Which of those components should own it?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "architect-migration-after-discovery",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: search did not meet the confidence requirements (score -716, margin 21). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "architect",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Locate the storage layer and migrate it to another database."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "symbols",
+      "expected_target": "QueueClient",
+      "family": "tester-target-declaration",
+      "intent": "find_definition",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "symbols"
+        }
+      ],
+      "text": "Before reproducing this case, show the defining declaration of function QueueClient."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "search",
+      "expected_target": "QueueClient",
+      "family": "tester-existing-fixture-evidence",
+      "intent": "search",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "query": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "search"
+        }
+      ],
+      "text": "Find existing indexed examples discussing QueueClient; I will decide which tests matter."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "references",
+      "expected_target": "QueueClient",
+      "family": "tester-test-name-occurrences",
+      "intent": "references",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "references"
+        }
+      ],
+      "text": "Where does the exact identifier QueueClient occur in indexed text?"
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "document_facts",
+      "expected_target": "QueueClient",
+      "family": "tester-written-test-criteria",
+      "intent": "facts",
+      "requires_input": [],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "kind": "acceptance",
+            "name": "QueueClient"
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "document_facts"
+        }
+      ],
+      "text": "Bring me the written acceptance criteria mentioning QueueClient."
+    },
+    {
+      "automatic": true,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "read_file",
+      "expected_target": "src/client.rs",
+      "family": "tester-bounded-fixture-inspection",
+      "intent": "read_file",
+      "requires_input": [],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "end_line": 17,
+            "path": "src/client.rs",
+            "start_line": 5
+          },
+          "bind": [],
+          "id": "evidence",
+          "tool": "read_file"
+        }
+      ],
+      "text": "Retrieve the indexed source window from line 5 through line 17 in src/client.rs."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "file_info",
+      "expected_target": "src/client.rs",
+      "family": "tester-indexed-source-identity",
+      "intent": "file_info",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "path": "src/client.rs"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "file_info"
+        }
+      ],
+      "text": "Show the indexed content hash and extraction metadata for src/client.rs."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "status",
+      "expected_target": null,
+      "family": "tester-semantic-availability",
+      "intent": "status",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {},
+          "bind": [],
+          "id": "proposal",
+          "tool": "status"
+        }
+      ],
+      "text": "Are lexical and semantic retrieval ready in this collection?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "changes",
+      "expected_target": "airk-r1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "family": "tester-retained-change-observation",
+      "intent": "changes",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "since": "airk-r1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "changes"
+        }
+      ],
+      "text": "List the observed indexed evidence changes relative to baseline airk-r1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": "outline",
+      "expected_target": "src/client.rs",
+      "family": "tester-fixture-navigation",
+      "intent": "outline",
+      "requires_input": [
+        "Review the proposed operation and inputs, then run the plan to collect evidence. Learned requests require explicit plan confirmation in this review build."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [
+        {
+          "args": {
+            "path": "src/client.rs"
+          },
+          "bind": [],
+          "id": "proposal",
+          "tool": "outline"
+        }
+      ],
+      "text": "Which structural navigation entries were indexed for src/client.rs?"
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "tester-execute-suite",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: imports did not meet the confidence requirements (score -679, margin 33). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Run all tests associated with QueueClient and report whether they passed."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "tester-coverage-proof",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: references did not meet the confidence requirements (score -9, margin 680). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Guarantee that every behavior of QueueClient is covered by tests."
+    },
+    {
+      "automatic": false,
+      "correct_operation_and_target": true,
+      "error": null,
+      "expected_primary_tool": null,
+      "expected_target": null,
+      "family": "tester-baseline-unspecified",
+      "intent": "unsupported",
+      "requires_input": [
+        "No evidence steps ran: this wording needs a supported operation and an exact target. Candidate intent: changes did not meet the confidence requirements (score -193, margin 397). Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
+      ],
+      "role": "tester",
+      "split": "novel-holdout",
+      "steps": [],
+      "text": "Show the changes since the version I checked yesterday."
+    }
+  ],
+  "resolved_contract_sha256": "58a646c2169bc55a5cc9235707ec2f49efb4a21b996946c20f30d1499a976d4e",
+  "roles": {
+    "architect": [
+      12,
+      12,
+      0,
+      0
+    ],
+    "developer": [
+      12,
+      12,
+      0,
+      0
+    ],
+    "tester": [
+      12,
+      12,
+      0,
+      0
+    ],
+    "writer": [
+      12,
+      12,
+      0,
+      0
+    ]
+  },
+  "schema": "airk.parser.role-plan-measurement/1",
+  "scope": "Known public role inventory with controlled literal targets; not blind evaluation or native retrieval qualification."
+}

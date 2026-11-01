@@ -71,7 +71,11 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     resolveWebviewView(view:vscode.WebviewView):void{
         this.view=view;
-        const visibility=view.onDidChangeVisibility(()=>this.visibilityChanged.fire());
+        const visibility=view.onDidChangeVisibility(()=>{
+            this.visibilityChanged.fire();
+            // Hidden webviews can miss messages; reconcile without replacing the DOM.
+            if(view.visible){this.send();}
+        });
         this.visibilityChanged.fire();
         view.webview.options={enableScripts:true,enableCommandUris:false,localResourceRoots:[vscode.Uri.joinPath(this.context.extensionUri,'out')]};
         view.webview.html=workbenchHtml(view.webview,this.context.extensionUri,randomBytes(24).toString('base64url'));

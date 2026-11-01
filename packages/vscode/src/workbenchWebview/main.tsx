@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { render } from 'preact';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { applyWorkbenchUpdate, object, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { applyWorkbenchUpdate, object, parseWorkbenchMessage, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
 import { canonical, markdown } from '../workbenchRender';
 import './style.css';
 declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):void };
@@ -17,10 +17,25 @@ function ToolForm({state,scope}:{state:WorkbenchState;scope:string}){
         <button disabled={state.busy} type="submit">Prepare form</button><button disabled={state.busy} type="button" onClick={e=>{if(e.currentTarget.form?.reportValidity()){submit(true);}}}>Run form</button>
     </form></details>;
 }
+function SelectAll({count,checked,mixed,onChange}:{count:number;checked:boolean;mixed:boolean;onChange:(checked:boolean)=>void}){
+    const input=useRef<HTMLInputElement>(null);
+    useLayoutEffect(()=>{if(input.current){input.current.indeterminate=mixed;}},[mixed]);
+    return <label class="select-all" title="Select all matching results in this response"><input ref={input} type="checkbox" checked={checked} aria-checked={mixed?'mixed':checked} disabled={count===0} onChange={e=>onChange(e.currentTarget.checked)}/>Select all {count}</label>;
+}
 function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
     const [format,setFormat]=useState<'structured'|'json'|'markdown'>(turn.format),[show,setShow]=useState(20),[filter,setFilter]=useState(''),[selected,setSelected]=useState<string[]>([]),[edit,setEdit]=useState(false),[draft,setDraft]=useState(''),[issue,setIssue]=useState(''),[group,setGroup]=useState(false);
     const envelope=turn.envelope??{},plan=object(envelope.plan),cards=state.cards[turn.id]??[];
     const rows=useMemo(()=>{const matching=cards.filter(c=>`${c.path} ${c.text}`.toLowerCase().includes(filter.toLowerCase()));if(group)matching.sort((a,b)=>a.path.localeCompare(b.path)||a.start-b.start);return matching;},[cards,filter,group]);
+    const matchingIds=new Set(rows.map(card=>card.id)),selectedMatches=rows.filter(card=>selected.includes(card.id)).length;
+    const allSelected=rows.length>0&&selectedMatches===rows.length,mixedSelection=selectedMatches>0&&!allSelected;
+    const selectMatching=(checked:boolean)=>setSelected(previous=>checked?[...new Set([...previous,...matchingIds])]:previous.filter(id=>!matchingIds.has(id)));
+    const copyFormat=format==='json'?'json':'markdown',copySelection:WorkbenchMessage={type:'copy',turn:turn.id,format:copyFormat,cards:selected};
+    const copySelectionAllowed=selected.length>0&&!!parseWorkbenchMessage(copySelection);
+    const selectionTooLarge=selected.length>0&&!copySelectionAllowed;
+    const copySelectionLabel=`Copy ${selected.length} selected results as ${copyFormat==='json'?'JSON':'Markdown'}`;
+    const copySelectionTitle=selectionTooLarge?'Select fewer results or use Save export':copySelectionLabel;
+    const selectionUi=format==='structured'&&cards.length>0;
+    const selectionRow=()=><div class="selection-toolbar"><SelectAll count={rows.length} checked={allSelected} mixed={mixedSelection} onChange={selectMatching}/><button title={copySelectionTitle} aria-label={copySelectionLabel} disabled={!copySelectionAllowed} onClick={()=>send(copySelection)}>Copy selected ({selected.length})</button></div>;
     const planText=useMemo(()=>canonical(plan),[turn.envelope]);
     const formatted=useMemo(()=>format==='json'?canonical(envelope):format==='markdown'?markdown(turn):'', [format,turn]);
     const publication=object(state.status?.publication).token,old=typeof publication==='string'&&typeof envelope.publication==='string'&&publication!==envelope.publication;
@@ -42,21 +57,24 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
                 {format==='structured'?<>
                     {cards.length>0&&<details class="result-tools"><summary>Filter and group evidence{filter?` · ${rows.length} matches`:''}</summary><label class="filter">Filter retained evidence<input value={filter} onInput={e=>setFilter(e.currentTarget.value)}/></label><button aria-pressed={group} onClick={()=>setGroup(!group)}>Group by file</button><p class="counts">Showing {Math.min(show,rows.length)} of {rows.length} matching retained records.</p></details>}
                     {envelope.truncated===true&&<p class="warning">Upstream or output omissions reported.</p>}
+                    {cards.length>0&&selectionRow()}
+                    {cards.length>0&&selectionTooLarge&&<p class="note" role="status">Too many selected results to copy together. Select fewer results or use Save export.</p>}
                     {rows.slice(0,show).map(card=><div class="card" key={card.id}>
-                        <div class="card-title"><input type="checkbox" aria-label={`Select ${card.path}:${card.start}`} checked={selected.includes(card.id)} onChange={e=>setSelected(e.currentTarget.checked?[...selected,card.id]:selected.filter(id=>id!==card.id))}/><button class="source" onClick={()=>send({type:'open',turn:turn.id,card:card.id})}>{card.path}:{card.start}–{card.end}</button></div>
+                        <div class="card-title"><input type="checkbox" aria-label={`Select ${card.path}:${card.start}`} checked={selected.includes(card.id)} onChange={e=>{const checked=e.currentTarget.checked;setSelected(previous=>checked?[...new Set([...previous,card.id])]:previous.filter(id=>id!==card.id));}}/><button class="source" onClick={()=>send({type:'open',turn:turn.id,card:card.id})}>{card.path}:{card.start}–{card.end}</button></div>
                         <pre>{card.text}</pre><details class="source-details"><summary>Source details</summary><small>Step: {card.step}</small><pre>{canonical({location:card.location,sourceHash:card.hash,publication:card.publication})}</pre></details><button disabled={state.busy} onClick={()=>send({type:'context',turn:turn.id,card:card.id})}>Expand context</button>
                     </div>)}
+                    {cards.length>0&&selectionRow()}
                     {rows.length>show&&<button onClick={()=>setShow(show+20)}>Show 20 more retained records</button>}
                     {(state.continuations?.[turn.id]??[]).map(page=><button disabled={state.busy} onClick={()=>send({type:'continue',turn:turn.id,step:page.id})}>Fetch next {page.tool} page · {page.callsRemaining} calls remain</button>)}
                     {!cards.length&&<pre>{canonical(envelope.steps??envelope)}</pre>}
                 </>:<pre>{formatted}</pre>}
-                <footer><button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown'})}>Copy {format==='json'?'JSON':'Markdown'}</button>
-                    {selected.length>0&&<button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown',cards:selected})}>Copy selected ({selected.length})</button>}
+                <footer>{!selectionUi&&<button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown'})}>Copy {format==='json'?'JSON':'Markdown'}</button>}
+                    {!selectionUi&&selected.length>0&&<button title={copySelectionTitle} disabled={!copySelectionAllowed} onClick={()=>send(copySelection)}>Copy selected ({selected.length})</button>}
                     <button onClick={()=>send({type:'export',turn:turn.id,format:format==='json'?'json':'markdown'})}>Save export…</button>
                 </footer>
             </section>
         </>}
-        {!turn.envelope&&<button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button>}
+        {!turn.envelope&&(state.busy&&state.session?.turns.at(-1)?.id===turn.id?<p role="status">Collecting evidence…</p>:<button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button>)}
     </article>;
 }
 type Menu = 'history' | 'settings' | 'add';
@@ -66,7 +84,17 @@ function Icon({name}:{name:'plus'|'history'|'settings'|'new'|'send'|'stop'}){
 }
 function App(){
     const [state,setState]=useState<WorkbenchState>({projects:[],recent:[],cards:{},busy:false,save:'',persistence:true}),[input,setInput]=useState(''),[recipe,setRecipe]=useState(''),[menu,setMenu]=useState<Menu>(),[history,setHistory]=useState(-1),[scope,setScope]=useState(''),[title,setTitle]=useState('');
-    const composer=useRef<HTMLTextAreaElement>(null),menuTrigger=useRef<string>(),openMenu=useRef<Menu>();
+    const composer=useRef<HTMLTextAreaElement>(null),transcript=useRef<HTMLDivElement>(null),menuTrigger=useRef<string>(),openMenu=useRef<Menu>();
+    const latest=state.session?.turns.at(-1);
+    // Reveal each new request from its query, including when results arrive.
+    // Keep the question above its timestamp, plan and evidence. Status/save refreshes,
+    // output controls and tab switches must leave the reader's position alone.
+    useLayoutEffect(()=>{
+        const container=transcript.current,turn=container?.lastElementChild;
+        if(!container||!latest||!turn){return;}
+        const target=turn.querySelector('.input')??turn;
+        container.scrollTop+=target.getBoundingClientRect().top-container.getBoundingClientRect().top;
+    },[state.session?.id,latest?.id,!!latest?.envelope,latest?.error]);
     openMenu.current=menu;
     const toggle=(next:Menu,event:Event)=>{menuTrigger.current=(event.currentTarget as HTMLElement).getAttribute('aria-controls')??undefined;setMenu(menu===next?undefined:next);setTitle(state.session?.title??'');};
     useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved'].includes(event.data?.type)){setState(previous=>applyWorkbenchUpdate(previous,event.data));}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
@@ -85,7 +113,7 @@ function App(){
             <button class="icon-button" title="New session" aria-label="New session" onClick={()=>{action({type:'new'});setInput('');composer.current?.focus();}}><Icon name="new"/></button>
         </header>
         {state.notice&&<p class="notice" role="status">{state.notice}</p>}
-        <div class="transcript">{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>Open a trusted workspace to get started. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
+        <div class="transcript" ref={transcript}>{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>Open a trusted workspace to get started. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
         <div class="composer">
             {(scope||recipe)&&<div class="compose-context">{scope&&<button title="Clear scope" onClick={()=>setScope('')}>{scope} ×</button>}{recipe&&<button title="Clear recipe" onClick={()=>setRecipe('')}>{RECIPES.find(([id])=>id===recipe)?.[1]} ×</button>}</div>}
             {input.startsWith('/')&&!input.includes(' ')&&<div class="commands" aria-label="Commands">{COMMANDS.filter(c=>c.startsWith(input)).map(c=><button onClick={()=>{setInput(`${c} `);composer.current?.focus();}}>{c}</button>)}</div>}

@@ -38,5 +38,7 @@ main{height:100%;padding:8px 12px 12px;gap:6px;min-width:0}
 
 .result-tools{padding:0 10px;color:var(--vscode-descriptionForeground)}
 .source-details{font-size:.9em;color:var(--vscode-descriptionForeground)}
+.select-all{display:flex;align-items:center;gap:7px;padding:8px 10px;color:var(--vscode-descriptionForeground)}.select-all input{margin:0;flex:none}
+.selection-toolbar{display:flex;align-items:center;gap:6px;padding:8px 10px;min-width:0}.selection-toolbar>.select-all{flex:1;min-width:0;padding:0}.selection-toolbar>button{font-size:.9em;padding:4px 6px;min-width:0}
 
 .icon-accent{stroke:var(--vscode-charts-yellow,#dfc48b)}

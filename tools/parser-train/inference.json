@@ -2,29 +2,92 @@
   {
     "text": "who calls QueueClient",
     "intent": "references",
-    "logit": 456,
-    "margin": 755,
+    "logit": 549,
+    "margin": 865,
     "accepted": true
   },
   {
     "text": "read \"docs/design.md\":2-8",
     "intent": "read_file",
-    "logit": 577,
-    "margin": 937,
-    "accepted": true
+    "logit": 327,
+    "margin": 608,
+    "accepted": false
   },
   {
     "text": "Évidence_client αβ",
-    "intent": "search",
-    "logit": -142,
-    "margin": 94,
+    "intent": "changes",
+    "logit": -187,
+    "margin": 39,
     "accepted": false
   },
   {
     "text": "where is retry_budget defined",
     "intent": "find_definition",
-    "logit": 581,
-    "margin": 1066,
+    "logit": 572,
+    "margin": 823,
+    "accepted": true
+  },
+  {
+    "text": "tell me about Owner",
+    "intent": "find_definition",
+    "logit": 101,
+    "margin": 180,
+    "accepted": false
+  },
+  {
+    "text": "tell me about owner",
+    "intent": "find_definition",
+    "logit": 36,
+    "margin": 130,
+    "accepted": false
+  },
+  {
+    "text": "Find the Owner struct.",
+    "intent": "find_definition",
+    "logit": 553,
+    "margin": 1029,
+    "accepted": true
+  },
+  {
+    "text": "Tell me about the struct `quiet_meter`.",
+    "intent": "find_definition",
+    "logit": 599,
+    "margin": 1212,
+    "accepted": true
+  },
+  {
+    "text": "Find the class net::Peer.",
+    "intent": "find_definition",
+    "logit": 273,
+    "margin": 690,
+    "accepted": false
+  },
+  {
+    "text": "For review, show Évidence_client αβ.",
+    "intent": "imports",
+    "logit": -224,
+    "margin": 106,
+    "accepted": false
+  },
+  {
+    "text": "Tell me about QueueClient",
+    "intent": "find_definition",
+    "logit": 37,
+    "margin": 118,
+    "accepted": false
+  },
+  {
+    "text": "Find the `owner`.",
+    "intent": "find_definition",
+    "logit": -29,
+    "margin": 82,
+    "accepted": false
+  },
+  {
+    "text": "I want to know about struct Owner.",
+    "intent": "find_definition",
+    "logit": 853,
+    "margin": 1471,
     "accepted": true
   }
 ]

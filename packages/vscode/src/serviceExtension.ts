@@ -1026,7 +1026,7 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     const explorerOpen=(route?:unknown)=>controller.explorerController().then(explorer=>explorer.open(typeof route==='string'?route:undefined));
     const workbench=new WorkbenchView(context,controller.explorerHost());
     controller.attachWorkbench(workbench);
-    context.subscriptions.push(workbench,vscode.window.registerWebviewViewProvider('airk.workbench',workbench));
+    context.subscriptions.push(workbench,vscode.window.registerWebviewViewProvider('airk.workbench',workbench,{webviewOptions:{retainContextWhenHidden:true}}));
     const sidebar=new ExplorerSidebar({
         commandUris:['airk.index','airk.serviceConnect','airk.setupAgent','airk.installCli','airk.chooseStorage','airk.indexMode','airk.manageVscodeMcp','airk.explorer.open','airk.collections','airk.explorer.showSuggestions'],
         folders:()=>(vscode.workspace.workspaceFolders??[]).filter(folder=>['file','vscode-remote'].includes(folder.uri.scheme)).length,

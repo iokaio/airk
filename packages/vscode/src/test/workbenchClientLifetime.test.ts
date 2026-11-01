@@ -55,17 +55,32 @@ function fixture(attach=false) {
     type Internal={sessions:typeof store;session?:WorkbenchSession;status?:Value;notice?:string;recent:unknown[];saveQueue:Promise<void>;
         select(id:string):Promise<void>;run(input:string):Promise<void>;save(session:WorkbenchSession):void;message(value:unknown):Promise<void>};
     const state=provider as unknown as Internal;state.sessions=store;
-    const release=new Emitter<void>();
-    if(attach){provider.resolveWebviewView({visible:true,webview:{options:{},html:'',cspSource:'fixture',asWebviewUri:(uri:{fsPath:string})=>uri.fsPath,
+    const release=new Emitter<void>(),visibility=new Emitter<void>();
+    const view={visible:true,webview:{options:{},html:'',cspSource:'fixture',asWebviewUri:(uri:{fsPath:string})=>uri.fsPath,
         postMessage:(message:unknown)=>{messages.push(structuredClone(message));return Promise.resolve(true);},onDidReceiveMessage:()=>({dispose(){}})},
-        onDidChangeVisibility:()=>({dispose(){}}),onDidDispose:release.event} as any);}
+        onDidChangeVisibility:visibility.event,onDidDispose:release.event};
+    if(attach){provider.resolveWebviewView(view as any);}
     return {provider,state,store,created,messages,removed,saved,exports,
         respond:(handler:typeof response)=>{response=handler;},confirm:(handler:typeof confirm)=>{confirm=handler;},
         specs:()=>specs,replace:(next:LaunchSpec[])=>{specs=next;changed.fire();},
         trust:(value:boolean)=>{trusted=value;changed.fire();},native:(value:boolean)=>{native=value;configuration.fire({affectsConfiguration:key=>key==='airk.runtime.nativeExecution'});},
         disposeView:()=>release.fire(),
+        visible:(value:boolean)=>{view.visible=value;visibility.fire();},
     };
 }
+
+test('returning to the retained Workbench reconciles hidden results without recreating its document or client',async()=>{
+    const f=fixture(true);await f.state.select(A);await tick();
+    const client=f.created[0],session=f.state.session;
+    f.visible(false);
+    await f.state.run('/files');await tick();
+    f.messages.length=0;f.visible(true);
+    const update=f.messages.at(-1) as {type:string;state:WorkbenchState};
+    assert.equal(update.type,'state');assert.equal(update.state.session?.id,session?.id);
+    assert.ok(update.state.session?.turns.at(-1)?.envelope);
+    assert.equal(f.created.length,1);assert.equal(f.created[0],client);
+    f.provider.dispose();
+});
 
 test('New and Clear keep one exact client while held old query and first status cannot attach to the new transcript',async()=>{
     for(const reset of ['new','clear']){

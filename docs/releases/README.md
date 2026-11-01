@@ -4,6 +4,10 @@ Versioned release notes and dated release evidence live here. Each record retain
 
 ## Versions
 
+- [1.8.2](./release-1.8.2.md) — unpublished source candidate: conversational evidence parsing, query-first Workbench reveal, expanded role training and included training data/fork guide
+
+- [1.8.1](./release-1.8.1.md) — unpublished source candidate: reveal Workbench results and retain scroll position across sidebar tab switches
+
 - [1.8.0](./release-1.8.0.md) — unpublished source candidate: synchronized versions and supported forward upgrade policy; optimization phases pending
 
 - [1.7.6](./release-1.7.6.md) — published stable release (2026-10-31): review 02 follow-up (setup review, native execution control, uninstall cleanup, data purge, advisory gate)
