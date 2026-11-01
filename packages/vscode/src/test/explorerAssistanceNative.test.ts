@@ -29,7 +29,7 @@ test('one installed endpoint serves evidence and reviewed UI drafts with indepen
         const spec = await fixture.register('assistance');
         const version = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'package.json'), 'utf8')).version;
         // Node stands in for the editor's runtime here; the forwarder treats both the same apart from ELECTRON_RUN_AS_NODE.
-        writeLaunchDescriptor(storage, extensionRoot, version, { path: process.execPath, electron: false });
+        await writeLaunchDescriptor(storage, extensionRoot, version, { path: process.execPath, electron: false });
         const legacy = assistanceEntry(spec, launchDescriptorPath(storage))!;
         const entry = unifiedEntry(spec, launchDescriptorPath(storage));
         const result = await probeAssistance(legacy, spec.root, 'native-test');

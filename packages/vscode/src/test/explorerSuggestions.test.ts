@@ -211,3 +211,60 @@ test('no draft path can reach a management action, a command or the shared conso
     assert.ok(handlers.length > 100, 'suggestion handlers found');
     assert.doesNotMatch(handlers, /control\.run|executeCommand|manage\.action/, 'resolving a suggestion only records the decision');
 });
+
+
+test('receipt projection formats dates once while status, target and TTL remain live', t => {
+    const revisions = { planner: 2 };
+    const { store: inbox } = store({ revisions });
+    const input = { schema_version: '1.0', idempotency_key: 'immutable-receipt', title: 'Plan', expected_target_revision: 2,
+        tasks: [{ task_id: 'T1', title: 'Inspect' }] };
+    const dates = t.mock.method(Date.prototype, 'toISOString');
+    const first = inbox.submit('plan', input, CLIENT); assert.ok(first.ok);
+    assert.equal(dates.mock.callCount(), 2);
+    const again = inbox.submit('plan', input, CLIENT); assert.ok(again.ok);
+    assert.equal(JSON.stringify(again.receipt), JSON.stringify(first.receipt));
+    assert.ok(inbox.resolve(first.receipt.proposal_id, 'applied'));
+    revisions.planner = 3;
+    assert.ok(inbox.acknowledge(first.receipt.proposal_id, 3));
+    const applied = inbox.submit('plan', input, CLIENT); assert.ok(applied.ok);
+    assert.equal(applied.receipt.status, 'applied'); assert.equal(applied.receipt.applied, true);
+    assert.equal(applied.receipt.target_draft_revision, 2);
+    assert.equal(inbox.status(first.receipt.proposal_id)?.current_target_revision, 3);
+    assert.equal(inbox.status(first.receipt.proposal_id)?.applied_target_revision, 3);
+    assert.equal(applied.receipt.received_at, first.receipt.received_at);
+    assert.equal(applied.receipt.expires_at, first.receipt.expires_at);
+    assert.equal(dates.mock.callCount(), 2);
+    const ttl = store();
+    const pending = ttl.store.submit('search', search('projection-expiry'), CLIENT); assert.ok(pending.ok);
+    let notifications = 0;
+    ttl.store.onDidChange(() => { notifications++; });
+    ttl.advance(24 * 3600_000);
+    assert.equal(ttl.store.status(pending.receipt.proposal_id)?.status, 'expired');
+    assert.equal(notifications, 1);
+    assert.equal(ttl.store.status(pending.receipt.proposal_id)?.status, 'expired');
+    assert.equal(notifications, 1);
+});
+
+test('status avoids resolved sorting below retention and preserves oldest eviction above it', t => {
+    const { store: inbox, advance } = store();
+    const ids: string[] = [];
+    for (let index = 0; index <= SUGGESTION_LIMITS.retained; index++) {
+        advance(60_001);
+        const admitted = inbox.submit('search', search(`retained-${index}`), CLIENT); assert.ok(admitted.ok);
+        ids.push(admitted.receipt.proposal_id);
+        assert.ok(inbox.resolve(admitted.receipt.proposal_id, 'rejected'));
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, 'sort')!;
+    const originalSort = Array.prototype.sort;
+    let sortCalls = 0;
+    Object.defineProperty(Array.prototype, 'sort', { ...descriptor,
+        value: function <T>(this: T[], compare?: (a: T, b: T) => number): T[] {
+            sortCalls++;
+            return originalSort.call(this, compare) as T[];
+        } });
+    t.after(() => { Object.defineProperty(Array.prototype, 'sort', descriptor); });
+    assert.equal(inbox.status(ids[0]), undefined);
+    assert.equal(inbox.status(ids[1])?.status, 'rejected');
+    assert.equal(inbox.status(ids.at(-1)!)?.status, 'rejected');
+    assert.equal(sortCalls, 0);
+});

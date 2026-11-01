@@ -189,7 +189,8 @@ function StatusPopover(props: { state: ExplorerViewState; project?: ProjectSumma
                 ['Live source verified', observed(status?.liveSourceVerified)],
                 ['Semantic coverage', status ? `${status.semantic}${status.semanticSelected !== undefined ? ` · ${observed(status.semanticCompleted)} / ${observed(status.semanticSelected)}` : ''}` : 'not observed'],
                 ['Runtime versions match', observed(status?.versionsMatch)],
-                ['Observed', ago(status?.observedAt)],
+                ['Published status observed', ago(status?.observedAt)],
+                ['Detailed observations', ago(status?.detailsObservedAt)],
             ]} />
             <p class="muted">Health, published readiness, source freshness and semantic coverage are separate observations. Ready is not proof that saved files still match the index.</p>
             <div class="actions">

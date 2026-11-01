@@ -385,10 +385,23 @@ fn approved_plan_is_durable_fenced_private_and_preserves_partial_failure() -> Re
     assert_eq!(registry.maintenance_job_control(a_job.id)?, (true, false));
     assert!(registry.claim_job(&b_lease)?.is_none());
     registry.pause_maintenance_plan(plan.id, false, 1700)?;
+    // A progress row/ordinary success is no longer physical audit evidence.
+    assert!(
+        registry
+            .complete_job_at(
+                &a_lease,
+                a_job.id,
+                JobOutcome::Succeeded { revision: None },
+                1800
+            )
+            .is_err()
+    );
     registry.complete_job_at(
         &a_lease,
         a_job.id,
-        JobOutcome::Succeeded { revision: None },
+        JobOutcome::Failed {
+            code: "integrity_coverage_incomplete".into(),
+        },
         1800,
     )?;
     let b_job = registry.claim_job(&b_lease)?.unwrap();
@@ -403,7 +416,14 @@ fn approved_plan_is_durable_fenced_private_and_preserves_partial_failure() -> Re
     let completed = registry.maintenance_plan(plan.id)?;
     assert_eq!(completed.phase, PlanPhase::Finished);
     assert_eq!(completed.outcome, Some(PlanOutcome::PartialFailure));
-    assert_eq!((completed.counts.succeeded, completed.counts.stale), (1, 1));
+    assert_eq!(
+        (
+            completed.counts.succeeded,
+            completed.counts.failed,
+            completed.counts.stale
+        ),
+        (0, 1, 1)
+    );
     assert_eq!(
         registry.maintenance_plan_page(plan.id, None, 1)?.after,
         Some(a.min(b))

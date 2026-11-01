@@ -6,12 +6,26 @@ export interface WorkbenchTurn { id: string; at: number; input: string; format: 
 export interface WorkbenchSession { schema: 1; id: string; project: string; title: string; createdAt: number; updatedAt: number; revision: number; omitted: number; turns: WorkbenchTurn[] }
 export interface EvidenceCard { id: string; path: string; start: number; end: number; hash: string; text: string; location?: unknown; step: string; publication?: string }
 export interface Continuation { id:string; tool:string; callsRemaining:number }
+export interface WorkbenchSessionSummary { id: string; title: string; updatedAt: number; turns: number }
 export interface WorkbenchState {
     projects: { id: string; name: string }[]; project?: string; session?: WorkbenchSession;
-    recent: { id: string; title: string; updatedAt: number; turns: number }[];
+    recent: WorkbenchSessionSummary[];
     cards: Record<string, EvidenceCard[]>; busy: boolean; notice?: string; save: string;
     continuations?:Record<string,Continuation[]>;
     status?: Value; persistence: boolean; operations?: Value;
+}
+/** Host-to-webview display updates. Full result ownership stays in the host. */
+export type WorkbenchUpdate =
+    | {type:'state';state:WorkbenchState}
+    | {type:'status';sessionId:string|undefined;project:string|undefined;status:Value|undefined}
+    | {type:'saved';sessionId:string;project:string;revision:number;recent:WorkbenchState['recent'];save:string};
+/** Shared actual webview consumer; delta fields cannot replace result bodies. */
+export function applyWorkbenchUpdate(previous:WorkbenchState,message:WorkbenchUpdate):WorkbenchState {
+    if(message.type==='state')return message.state;
+    if(message.sessionId!==previous.session?.id||message.project!==previous.session?.project)return previous;
+    if(message.type==='status')return {...previous,status:message.status};
+    if(!previous.session)return previous;
+    return {...previous,session:{...previous.session,revision:message.revision},recent:message.recent,save:message.save};
 }
 export type WorkbenchMessage =
     | { type: 'ready' | 'stop' | 'new' | 'clear' | 'manage' | 'help' | 'refresh' | 'retrySave' | 'fork' | 'forms' }

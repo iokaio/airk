@@ -44,12 +44,20 @@ struct Owner {
     version: u32,
     scope: CurrentScope,
     capacity: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    query_projection_version: Option<u32>,
 }
 
 pub(crate) fn check_owner(directory: &Path, scope: &CurrentScope) -> Result<u64> {
+    Ok(check_owner_with_projection(directory, scope)?.0)
+}
+pub(crate) fn check_owner_with_projection(
+    directory: &Path,
+    scope: &CurrentScope,
+) -> Result<(u64, Option<u32>)> {
     let owner = read_owner(directory)?;
     ensure!(owner.scope == *scope, "foreign current ownership header");
-    Ok(owner.capacity)
+    Ok((owner.capacity, owner.query_projection_version))
 }
 
 pub(crate) fn discover_scope(
@@ -124,6 +132,12 @@ fn read_owner_any(directory: &Path) -> Result<Owner> {
     );
     let owner: Owner = serde_json::from_slice(&bytes)?;
     validate_capacity(owner.capacity)?;
+    ensure!(
+        owner.query_projection_version.is_none_or(|version| (1
+            ..=airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION)
+            .contains(&version)),
+        "unsupported current query projection capability"
+    );
     owner.scope.validate()?;
     ensure!(
         serde_json::to_vec(&owner)? == bytes,
@@ -144,12 +158,14 @@ pub(crate) fn create_owner(directory: &Path, scope: &CurrentScope, capacity: u64
             check_owner(directory, scope)? == capacity,
             "current database capacity differs from captured owner"
         );
+        admit_query_projections(directory, scope)?;
         return Ok(());
     }
     let bytes = serde_json::to_vec(&Owner {
         version: super::wal::version(directory),
         scope: scope.clone(),
         capacity,
+        query_projection_version: Some(airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION),
     })?;
     ensure!(
         bytes.len() <= 65_536,
@@ -174,11 +190,31 @@ pub(crate) fn grow_owner(
         check_owner(directory, scope)? == previous,
         "current database capacity changed under writer"
     );
-    let bytes = serde_json::to_vec(&Owner {
-        version: super::wal::version(directory),
-        scope: scope.clone(),
-        capacity: next,
-    })?;
+    let mut owner = read_owner(directory)?;
+    owner.capacity = next; // retain the exact projection capability through resize
+    let bytes = serde_json::to_vec(&owner)?;
+    ensure!(
+        bytes.len() <= 65_536,
+        "current ownership header exceeds bound"
+    );
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
+    file.write_all(&bytes)?;
+    crate::durability::persist_synced(file, &directory.join(OWNER_FILE))
+}
+
+/// Caller owns the checked collection WriterLock. Publish before opening SQLite
+/// for writes/recovery; a crash leaves a strict-readable old head, not coverage.
+pub(crate) fn admit_query_projections(directory: &Path, scope: &CurrentScope) -> Result<()> {
+    let mut owner = read_owner(directory)?;
+    ensure!(owner.scope == *scope, "foreign current projection owner");
+    if owner.query_projection_version
+        == Some(airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION)
+    {
+        return Ok(());
+    }
+    owner.query_projection_version =
+        Some(airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION);
+    let bytes = serde_json::to_vec(&owner)?;
     ensure!(
         bytes.len() <= 65_536,
         "current ownership header exceeds bound"

@@ -8,7 +8,8 @@ use airk_retrieval::model::{EmbeddingCacheContext, EmbeddingCacheStats, Embeddin
 use airk_store::{
     FileStore,
     current::{
-        ArtifactChange, CapturedInput, CurrentRead, MAX_PENDING_INPUTS, resources::ResourceChange,
+        ArtifactChange, CapturedInput, CurrentRead, MAX_PENDING_INPUTS,
+        collection::CollectionState, resources::ResourceChange,
     },
     quota::Reservation,
 };
@@ -184,9 +185,11 @@ impl SemanticWork {
     pub fn resource_change(
         &self,
         store: &FileStore,
+        writer: &airk_store::WriterLock,
         reservation: &Reservation,
     ) -> Result<ResourceChange> {
-        let reference = store.retain_current_resource(&self.canonical_bytes()?, reservation)?;
+        let reference =
+            store.retain_current_resource_owned(writer, &self.canonical_bytes()?, reservation)?;
         Ok(ResourceChange {
             key: KEY.into(),
             reference: Some(reference),
@@ -207,6 +210,16 @@ pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<Semanti
     let state = read
         .collection_state()?
         .context("current configuration missing")?;
+    readiness_with_state(read, store, &state, policy)
+}
+
+/// Reuse scalar metadata from this exact authorized read; callers retain policy-read ordering.
+pub(super) fn readiness_with_state(
+    read: &CurrentRead,
+    store: &FileStore,
+    state: &CollectionState,
+    policy: DefaultSearchPolicy,
+) -> Result<SemanticReadiness> {
     if crate::shared_models::semantic_upgrade_pending(store, state.configuration.model.as_ref()) {
         return Ok(SemanticReadiness {
             version: 1,
@@ -226,9 +239,6 @@ pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<Semanti
     if let Some(work) = read_work(read, store)? {
         return Ok(work.readiness(policy));
     }
-    let state = read
-        .collection_state()?
-        .context("current configuration missing")?;
     let c = &state.configuration;
     let enabled = c.model.is_some();
     Ok(SemanticReadiness {
@@ -465,7 +475,7 @@ impl Kernel {
         drop(read);
         let resources = [
             match work {
-                Some(work) => work.resource_change(&self.store, &reservation)?,
+                Some(work) => work.resource_change(&self.store, &writer, &reservation)?,
                 None => ResourceChange {
                     key: KEY.into(),
                     reference: None,
@@ -624,7 +634,7 @@ impl Kernel {
         .apply_with_resources(
             &[],
             None,
-            &[work.resource_change(&self.store, &reservation)?],
+            &[work.resource_change(&self.store, &writer, &reservation)?],
         )?;
         Ok(work.readiness(policy))
     }
@@ -645,7 +655,9 @@ impl Kernel {
         let quota = self.collection_quota()?;
         let reservation = self.publication_reservation()?;
         let bytes = serde_json::to_vec(&SavedSearchPolicy { version: 1, policy })?;
-        let reference = self.store.retain_current_resource(&bytes, &reservation)?;
+        let reference = self
+            .store
+            .retain_current_resource_owned(&writer, &bytes, &reservation)?;
         CurrentUpdater {
             store: &self.store,
             quota: &quota,
@@ -692,7 +704,7 @@ impl Kernel {
         .apply_with_resources(
             &[],
             None,
-            &[work.resource_change(&self.store, &reservation)?],
+            &[work.resource_change(&self.store, &writer, &reservation)?],
         )?;
         Ok(())
     }

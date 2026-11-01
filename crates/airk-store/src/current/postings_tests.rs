@@ -20,7 +20,7 @@ fn fact(name: &str, kind: &str) -> airk_core::extraction::LocalFact {
     }
 }
 
-fn written_call(target: &str) -> airk_core::extraction::LocalFact {
+pub(super) fn written_call(target: &str) -> airk_core::extraction::LocalFact {
     let mut value = fact(target, "call");
     value.code = Some(airk_core::extraction::LocalCodeEvidence {
         fingerprints: None,

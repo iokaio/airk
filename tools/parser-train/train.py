@@ -34,7 +34,7 @@ TEMPLATES = {
     'help': ['help with AIRK', 'how do I use commands', 'show AIRK usage guidance', 'explain how to search with AIRK', 'show help topics', 'list available commands'],
 }
 
-def features(text):
+def features(text, feature_spec=1):
     words = re.findall(r'[^\W]+', text.lower(), re.UNICODE)
     def bucket(text):
         value=14695981039346656037
@@ -51,12 +51,25 @@ def features(text):
     if '/' in text or '\\' in text: terms.add('path')
     if ':' in text: terms.add('range')
     if '"' in text or "'" in text: terms.add('quote')
+    if feature_spec == 2:
+        original_words = re.findall(r'[^\W]+', text, re.UNICODE)
+        for present, flag in [
+            (any(index > 0 and len(word) > 1 and word[0].isupper() and any(char.islower() for char in word) for index, word in enumerate(original_words)), 'shape:capitalized'),
+            (any(any(char.isupper() for char in word[1:]) and any(char.islower() for char in word) for word in original_words), 'shape:camel'),
+            (any('_' in word and any(char.isalnum() for char in word) for word in original_words), 'shape:snake'),
+            ('::' in text, 'shape:qualified'),
+            ('`' in text, 'shape:backtick'),
+        ]:
+            if present:
+                terms.add(flag)
+    elif feature_spec != 1:
+        raise ValueError('Unknown intent feature specification')
     return sorted({bucket(term) for term in terms})
 
-def matrix(texts):
+def matrix(texts, feature_spec=1):
     rows=[];cols=[]
     for row,text in enumerate(texts):
-        indices=features(text);rows.extend([row]*len(indices));cols.extend(indices)
+        indices=features(text, feature_spec);rows.extend([row]*len(indices));cols.extend(indices)
     return csr_matrix((np.ones(len(rows)),(rows,cols)),shape=(len(texts),65536))
 
 def main():

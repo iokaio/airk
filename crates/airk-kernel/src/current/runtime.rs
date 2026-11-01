@@ -8,6 +8,41 @@ use airk_store::current::{CurrentRead, CurrentScope, CurrentToken, postings::Loo
 use anyhow::{Context, Result, ensure};
 use std::sync::Arc;
 
+/// Selection is resolved after the same strict source/extraction checks as before.
+#[derive(Clone, Copy)]
+pub(crate) enum LineSelection {
+    Range {
+        start: usize,
+        end: usize,
+    },
+    Context {
+        line: usize,
+        before: usize,
+        after: usize,
+        /// Conditional context historically uses the maximum chunk end.
+        maximum_end: bool,
+    },
+}
+impl LineSelection {
+    fn range(self, lines: usize) -> Result<(usize, usize)> {
+        match self {
+            Self::Range { start, end } => Ok((start, end)),
+            Self::Context {
+                line,
+                before,
+                after,
+                ..
+            } => {
+                ensure!(line > 0 && line <= lines, "line is outside indexed source");
+                Ok((
+                    line.saturating_sub(before).max(1),
+                    line.saturating_add(after).min(lines),
+                ))
+            }
+        }
+    }
+}
+
 pub(crate) fn revision(token: CurrentToken) -> RevisionToken {
     RevisionToken {
         incarnation: token.incarnation,
@@ -31,8 +66,9 @@ impl Kernel {
         let state = read
             .collection_state()?
             .context("current collection configuration missing")?;
-        let semantic = super::enrichment::readiness(&read, &self.store)?;
-        let discovery = super::progress::readiness(&read, &self.store)?;
+        let policy = super::enrichment::read_policy(&read, &self.store)?;
+        let semantic = super::enrichment::readiness_with_state(&read, &self.store, &state, policy)?;
+        let discovery = super::progress::readiness_with_state(&read, &self.store, &state)?;
         let pending = crate::shared_models::semantic_upgrade_pending(
             &self.store,
             state.configuration.model.as_ref(),
@@ -87,7 +123,7 @@ impl Kernel {
         let scope = self
             .current_scope()?
             .context("workspace is not indexed; run airk index first")?;
-        self.store.current_read(&scope)
+        self.attach_private_read(self.store.current_read(&scope)?)
     }
 
     /// A bounded compact scan projection, never a persisted snapshot or a live-source read.
@@ -224,12 +260,9 @@ impl Kernel {
             } else {
                 mode
             };
-        let scope = self
-            .current_scope()?
-            .context("workspace is not indexed; run airk index first")?;
-        let evidence = super::search::search_current_with_snippets(
+        let evidence = super::search::search_current_read_with_snippets(
             &self.store,
-            &scope,
+            self.current_reader()?,
             None,
             mode,
             query,
@@ -272,6 +305,145 @@ impl Kernel {
         Ok(artifact)
     }
 
+    /// Authenticate the complete retained inputs, then prepare only selected text.
+    /// Sparse physical reads require the separate private-owner component policy.
+    pub(crate) fn current_read_lines(
+        &self,
+        read: &CurrentRead,
+        path: &str,
+        selection: LineSelection,
+        max_bytes: usize,
+    ) -> Result<SearchResponse> {
+        let compact = read.artifact(path)?.context("indexed file not found")?;
+        if read.private_query_eligible()? {
+            let selected = if let Some(lines) =
+                read.observe_private_integrity(read.native_line_projection(&self.store, path))?
+            {
+                let (start, end) = selection.range(lines.lines())?;
+                let selected = lines.read_private(start, end, max_bytes)?;
+                Some((
+                    start,
+                    end,
+                    airk_core::DocumentLocation::Lines { start, end },
+                    selected.text,
+                    selected.truncated,
+                ))
+            } else if let Some(lines) =
+                read.observe_private_integrity(read.text_range_projection(&self.store, path))?
+            {
+                let count = if matches!(
+                    selection,
+                    LineSelection::Context {
+                        maximum_end: true,
+                        ..
+                    }
+                ) {
+                    lines.maximum_line_end()
+                } else {
+                    lines.indexed_lines()
+                };
+                let (start, end) = selection.range(count)?;
+                // Context selection uses the maximum coordinate, but retained
+                // snapshot reads still enforce the final chunk end afterward.
+                ensure!(
+                    end <= lines.indexed_lines(),
+                    "line range exceeds indexed source"
+                );
+                let selected = lines.read_private(start, end, max_bytes)?;
+                Some((
+                    start,
+                    end,
+                    selected.location,
+                    selected.text,
+                    selected.truncated,
+                ))
+            } else {
+                None
+            };
+            if let Some((start, end, location, text, truncated)) = selected {
+                return Ok(SearchResponse {
+                    publication: Some(envelope(read)?),
+                    semantic_readiness: None,
+                    discovery_readiness: None,
+                    generation: read.head().sequence,
+                    collection: self.collection.clone(),
+                    hits: vec![airk_core::Hit {
+                        citation: airk_core::Citation {
+                            path: path.into(),
+                            content_hash: compact.content_hash,
+                            start_line: start,
+                            end_line: end,
+                            location,
+                        },
+                        text,
+                        truncated,
+                    }],
+                    truncated,
+                });
+            }
+        }
+        let artifact = self.store.load_retained(&compact)?;
+        let bytes = self.store.read_retained_source(&compact)?;
+        let mut metadata = self.empty_snapshot();
+        metadata.generation = read.head().sequence;
+        let publication = Some(envelope(read)?);
+        if artifact.extraction_method == "utf8"
+            && compact
+                .retained
+                .as_ref()
+                .and_then(|r| r.profile.as_ref())
+                .is_some_and(|p| p.contract_version == 2)
+        {
+            let source = std::str::from_utf8(&bytes)?;
+            let lines = source.split_inclusive('\n').count();
+            let (start, end) = selection.range(lines)?;
+            airk_core::validate_budget(1, max_bytes)?;
+            ensure!(start > 0 && end >= start, "invalid line range");
+            ensure!(end <= lines, "line range exceeds indexed source");
+            return Self::selected_lines_response(
+                publication,
+                &metadata,
+                &artifact,
+                path,
+                start,
+                end,
+                airk_core::DocumentLocation::Lines { start, end },
+                source
+                    .split_inclusive('\n')
+                    .take(end)
+                    .enumerate()
+                    .map(|(offset, line)| (offset + 1, line)),
+                max_bytes,
+            );
+        }
+        let lines = if matches!(
+            selection,
+            LineSelection::Context {
+                maximum_end: true,
+                ..
+            }
+        ) {
+            artifact
+                .chunks
+                .iter()
+                .map(|chunk| chunk.end_line)
+                .max()
+                .unwrap_or(0)
+        } else {
+            artifact.chunks.last().map_or(0, |chunk| chunk.end_line)
+        };
+        let (start, end) = selection.range(lines)?;
+        Self::read_snapshot(
+            publication,
+            &metadata,
+            &artifact,
+            path,
+            start,
+            end,
+            max_bytes,
+        )
+    }
+
     pub(crate) fn current_file_info(&self, read: &CurrentRead, path: &str) -> Result<FileInfo> {
         let artifact = read.artifact(path)?.context("indexed file not found")?;
         let retained = artifact
@@ -286,10 +458,19 @@ impl Kernel {
             .collection_state()?
             .context("current configuration missing")?;
         let selection = &state.configuration.vector_selection;
-        let indexed_lines = read
-            .file_metadata(&self.store, path)?
-            .context("current file metadata missing")?
-            .indexed_lines;
+        let scalars = if read.private_query_eligible()? {
+            read.observe_private_integrity(read.file_scalars(path))?
+        } else {
+            None
+        };
+        let indexed_lines = match scalars {
+            Some(scalars) => scalars.indexed_lines,
+            None => {
+                read.file_metadata(&self.store, path)?
+                    .context("current file metadata missing")?
+                    .indexed_lines
+            }
+        };
         Ok(FileInfo {
             publication: Some(envelope(read)?),
             source: airk_store::roots::source_location(
@@ -342,3 +523,11 @@ impl Kernel {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "range_preparation_tests.rs"]
+mod range_preparation_tests;
+
+#[cfg(test)]
+#[path = "projected_consumer_tests.rs"]
+mod projected_consumer_tests;

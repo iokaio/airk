@@ -12,6 +12,8 @@ use std::{
     time::Instant,
 };
 
+mod natural;
+
 const TOOLS: &[&str] = &[
     "search",
     "symbols",
@@ -193,6 +195,7 @@ fn proposed_range(words: &[String]) -> Option<(usize, usize, bool)> {
     };
     let mut ranges = BTreeSet::new();
     for (i, word) in words.iter().enumerate() {
+        let word = word.trim_end_matches(['?', '.', ',', ';']);
         if let Some((_, value)) = word.rsplit_once(':').filter(|(_, v)| {
             v.chars()
                 .all(|c| c.is_ascii_digit() || matches!(c, '-' | '–' | '—'))
@@ -283,6 +286,27 @@ fn proposed_steps(text: &str, intent: &str) -> Result<Vec<Step>> {
         "can",
         "could",
         "please",
+        "tell",
+        "know",
+        "learn",
+        "interested",
+        "what's",
+        "where's",
+        "who's",
+        "definition",
+        "declaration",
+        "references",
+        "usages",
+        "contents",
+        "outline",
+        "imports",
+        "requirements",
+        "decisions",
+        "metadata",
+        "hash",
+        "language",
+        "profile",
+        "files",
     ];
     if !words
         .iter()
@@ -298,7 +322,9 @@ fn proposed_steps(text: &str, intent: &str) -> Result<Vec<Step>> {
     let paths: Vec<_> = words
         .iter()
         .filter_map(|word| {
-            let path = word.trim_matches(['`', '"', '\'', '?', ',', ';']);
+            let path = word
+                .trim_matches(['`', '"', '\''])
+                .trim_end_matches(['?', '.', ',', ';']);
             let path = path
                 .rsplit_once(':')
                 .filter(|(_, range)| range.chars().all(|c| c.is_ascii_digit() || c == '-'))
@@ -319,6 +345,7 @@ fn proposed_steps(text: &str, intent: &str) -> Result<Vec<Step>> {
             (safe_path(path)
                 && (path.contains('/')
                     || path.contains('\\')
+                    || (path.starts_with('.') && path.len() > 1)
                     || extension
                     || matches!(path, "README" | "LICENSE")))
             .then(|| path.to_string())
@@ -365,7 +392,8 @@ fn proposed_steps(text: &str, intent: &str) -> Result<Vec<Step>> {
                     .to_string()
             })
         })
-        .filter(|name| !name.is_empty());
+        .filter(|name| !name.is_empty())
+        .map(|name| symbol_subject(&name).map_or(name, |(name, _)| name));
     let result = match intent {
         "status" | "diagnostics" | "help" => Some(step("proposal", intent, json!({}))),
         "search" => name.map(|query| step("proposal", "search", json!({"query":query}))),
@@ -436,7 +464,8 @@ fn proposed_steps(text: &str, intent: &str) -> Result<Vec<Step>> {
         }),
         "changes" => words
             .iter()
-            .find(|word| word.starts_with("airk-r1:"))
+            .map(|word| word.trim_end_matches(['?', '.', ',', ';']))
+            .find(|word| word.parse::<airk_core::identity::RevisionToken>().is_ok())
             .map(|since| step("proposal", "changes", json!({"since":since}))),
         _ => None,
     };
@@ -518,6 +547,392 @@ fn reviewable_file_request(text: &str, intent: &str) -> Result<bool> {
     };
     Ok(action && words.iter().any(|word| nouns.contains(&word.as_str())))
 }
+
+fn strip_phrase<'a>(text: &'a str, phrase: &str) -> Option<&'a str> {
+    text.get(..phrase.len())
+        .filter(|prefix| prefix.eq_ignore_ascii_case(phrase))
+        .map(|_| &text[phrase.len()..])
+}
+
+fn strip_article(text: &str) -> &str {
+    ["the ", "a ", "an "]
+        .into_iter()
+        .find_map(|article| strip_phrase(text, article))
+        .unwrap_or(text)
+}
+
+/// Recognize a complete information request before consulting the suggestion-only
+/// classifier. Consume the entire subject: a type word is never part of its name,
+/// and a second action must not be silently discarded to recover one identifier.
+fn information_steps(text: &str) -> Result<Option<Vec<Step>>> {
+    let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let text = normalized.trim_end_matches(['?', '.', '!']).trim();
+    let text = strip_phrase(text, "please ").unwrap_or(text);
+    let text = strip_phrase(text, "can you ")
+        .or_else(|| strip_phrase(text, "could you "))
+        .unwrap_or(text);
+    let text = strip_phrase(text, "please ").unwrap_or(text);
+    let Some((subject, topic_allowed)) = [
+        ("i want to know about ", true),
+        ("i would like to know about ", true),
+        ("i'd like to know about ", true),
+        ("tell me about ", true),
+        ("give me information about ", true),
+        ("give me details about ", true),
+        ("show me information about ", true),
+        ("show me details about ", true),
+        ("what is ", true),
+        ("what's ", true),
+        ("find ", true),
+        ("locate ", true),
+        ("show me ", false),
+        ("describe ", false),
+        ("explain ", false),
+    ]
+    .into_iter()
+    .find_map(|(prefix, topic)| strip_phrase(text, prefix).map(|tail| (tail, topic))) else {
+        return Ok(None);
+    };
+    let subject = [
+        " in this codebase",
+        " in this project",
+        " in the project",
+        " in this repository",
+        " in the repository",
+        " in this collection",
+        " for me",
+    ]
+    .into_iter()
+    .find_map(|suffix| {
+        let at = subject.len().checked_sub(suffix.len())?;
+        subject
+            .get(at..)
+            .filter(|s| s.eq_ignore_ascii_case(suffix))
+            .map(|_| &subject[..at])
+    })
+    .unwrap_or(subject);
+    let subject = strip_article(subject).trim();
+    let definition = strip_phrase(subject, "definition of ")
+        .or_else(|| strip_phrase(subject, "declaration of "));
+    let subject = definition.unwrap_or(subject);
+    let symbol = if definition.is_some() {
+        symbol_subject(&format!("symbol {subject}"))
+    } else {
+        symbol_subject(subject)
+    };
+    if let Some((name, explicit)) = symbol {
+        let steps = if explicit {
+            recipe(&Recipe {
+                id: "definition".into(),
+                parameters: Map::from_iter([("name".into(), json!(name))]),
+            })?
+        } else {
+            // Capitalization alone cannot distinguish a code symbol from a topic
+            // such as Rust. Collect both without guessing a definition path.
+            vec![
+                step("definition", "symbols", json!({"name":name})),
+                step("mentions", "search", json!({"query":name})),
+            ]
+        };
+        return Ok(Some(steps));
+    }
+    if definition.is_some() {
+        // Keep an explicit symbol operation intact. The bounded existing name
+        // resolver can turn "queue client" into an indexed exact identifier;
+        // unresolved or ambiguous candidates still require input before execution.
+        let words: Vec<_> = subject.split_whitespace().collect();
+        if (2..=4).contains(&words.len())
+            && words.iter().all(|word| {
+                word.chars().all(|c| c.is_alphanumeric() || c == '_')
+                    && ![
+                        "and", "or", "then", "also", "delete", "fix", "edit", "run", "under",
+                        "beneath", "within",
+                    ]
+                    .contains(&word.to_lowercase().as_str())
+            })
+        {
+            return Ok(Some(vec![step(
+                "definition",
+                "symbols",
+                json!({"name":subject}),
+            )]));
+        }
+        return Ok(None);
+    }
+    // General topics remain literal text searches. Leave incomplete selections,
+    // compound tasks, file operations and reasoning requests to explicit review.
+    let subject = unquote(subject);
+    let words: Vec<_> = subject.split_whitespace().collect();
+    if topic_allowed
+        && !words.is_empty()
+        && !(words.len() == 1 && ["test", "document"].contains(&words[0].to_lowercase().as_str()))
+        && words.iter().all(|word| {
+            let word = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '_');
+            !word.is_empty()
+                && ![
+                    "it",
+                    "this",
+                    "that",
+                    "them",
+                    "something",
+                    "anything",
+                    "one",
+                    "we",
+                    "discussed",
+                    "earlier",
+                    "last",
+                    "changes",
+                    "and",
+                    "or",
+                    "then",
+                    "also",
+                    "why",
+                    "how",
+                    "whether",
+                    "better",
+                    "best",
+                    "delete",
+                    "remove",
+                    "edit",
+                    "rewrite",
+                    "refactor",
+                    "execute",
+                    "run",
+                    "install",
+                    "upload",
+                    "download",
+                    "commit",
+                    "push",
+                    "deploy",
+                    "summarize",
+                    "implement",
+                    "fix",
+                    "repair",
+                    "unregister",
+                    "reindex",
+                    "stop",
+                    "struct",
+                    "class",
+                    "enum",
+                    "trait",
+                    "interface",
+                    "function",
+                    "method",
+                    "type",
+                    "file",
+                    "files",
+                    "contents",
+                    "lines",
+                    "outline",
+                    "imports",
+                    "references",
+                    "uses",
+                    "usages",
+                    "occurrences",
+                    "dependencies",
+                    "status",
+                    "diagnostics",
+                ]
+                .contains(&word.to_lowercase().as_str())
+        })
+        && !subject.contains([';', '\n', '\r', '"', '\'', '`', '?', '!'])
+    {
+        return Ok(Some(vec![step(
+            "query",
+            "search",
+            json!({"query":subject}),
+        )]));
+    }
+    Ok(None)
+}
+
+fn unquote(text: &str) -> &str {
+    for quote in ['"', '\'', '`'] {
+        if let Some(inner) = text.strip_prefix(quote).and_then(|s| s.strip_suffix(quote)) {
+            return inner;
+        }
+    }
+    text
+}
+
+fn symbol_subject(subject: &str) -> Option<(String, bool)> {
+    let unquoted = unquote(subject);
+    let quoted_subject = unquoted != subject;
+    let subject = if quoted_subject {
+        unquoted
+    } else {
+        strip_article(unquoted)
+    };
+    let kinds = [
+        "struct",
+        "class",
+        "enum",
+        "trait",
+        "interface",
+        "type",
+        "function",
+        "method",
+        "module",
+        "constant",
+        "variable",
+        "symbol",
+    ];
+    let mut typed = false;
+    let mut name = subject;
+    for kind in kinds {
+        if let Some(tail) = strip_phrase(subject, &format!("{kind} ")) {
+            name = strip_phrase(tail, "named ")
+                .or_else(|| strip_phrase(tail, "called "))
+                .unwrap_or(tail);
+            typed = true;
+            break;
+        }
+        if let Some(at) = subject.len().checked_sub(kind.len() + 1)
+            && subject
+                .get(at..)
+                .is_some_and(|s| s.eq_ignore_ascii_case(&format!(" {kind}")))
+        {
+            name = &subject[..at];
+            typed = true;
+            break;
+        }
+    }
+    let unquoted = unquote(name);
+    let quoted = unquoted != name;
+    name = unquoted;
+    let identifier = name
+        .split("::")
+        .flat_map(|part| part.split('.'))
+        .all(|part| {
+            let mut chars = part.chars();
+            chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
+                && chars.all(|c| c.is_alphanumeric() || c == '_')
+        });
+    let distinctive =
+        name.contains(['_', '.']) || name.contains("::") || name.chars().any(char::is_uppercase);
+    (identifier
+        && (typed || quoted || quoted_subject || distinctive)
+        && !["it", "this", "that", "them", "something", "anything", "i"]
+            .contains(&name.to_lowercase().as_str()))
+    .then(|| (name.to_string(), typed || quoted || quoted_subject))
+}
+
+/// Resolve an explicit prose scope once, before any operation can flatten its
+/// words into a symbol or topic. Quoted literals and identifiers named `under`
+/// remain targets; every operation still passes normal scope validation later.
+fn scoped_prose(text: &str, words: &[String]) -> Result<Option<(Vec<Step>, Vec<String>)>> {
+    let lower = text.to_ascii_lowercase();
+    for (index, word) in words.iter().enumerate() {
+        let marker = word.to_ascii_lowercase();
+        if !["under", "beneath", "within"].contains(&marker.as_str()) {
+            continue;
+        }
+        if index > 0
+            && [
+                "of", "to", "for", "named", "called", "calls", "is", "mention", "mentions",
+            ]
+            .contains(&words[index - 1].to_ascii_lowercase().as_str())
+        {
+            continue;
+        }
+        let Some((at, _)) = lower.rmatch_indices(marker.as_str()).find(|(at, _)| {
+            text[..*at]
+                .chars()
+                .next_back()
+                .is_none_or(char::is_whitespace)
+                && text[*at + marker.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(char::is_whitespace)
+                && tokens(&text[..*at]).is_ok()
+                && text[..*at].chars().filter(|c| *c == '`').count() % 2 == 0
+        }) else {
+            continue;
+        };
+        let requirement = || {
+            Some((vec![], vec!["Provide one terminal literal collection-relative path prefix for this scope, or use an explicit plan. Parent traversal and absolute paths are unavailable.".into()]))
+        };
+        let Some(path) = words.get(index + 1) else {
+            return Ok(requirement());
+        };
+        let path = path.trim_end_matches(['?', '.', ',', ';', '!']);
+        if path.is_empty() || !safe_path(path) {
+            return Ok(requirement());
+        }
+        if let Some(steps) = natural::explicit_steps(text)?
+            && !steps.is_empty()
+            && steps.iter().all(|step| {
+                let key = if step.tool == "list_files" {
+                    "prefix"
+                } else {
+                    "path_prefix"
+                };
+                !step.bind.is_empty()
+                    || step
+                        .args
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|prefix| prefix.starts_with(path))
+                    || step
+                        .args
+                        .get("path")
+                        .and_then(Value::as_str)
+                        .is_some_and(|file| file.starts_with(path))
+            })
+        {
+            return Ok(Some((steps, vec![])));
+        }
+        if index + 2 != words.len() {
+            // Changes may place the exact baseline after the path. Its complete
+            // grammar must consume both, rather than ignoring an arbitrary tail.
+            if let Some(steps) = natural::explicit_steps(text)?
+                && steps.iter().all(|step| {
+                    step.tool == "changes"
+                        && step.args.get("path_prefix").and_then(Value::as_str) == Some(path)
+                })
+            {
+                return Ok(Some((steps, vec![])));
+            }
+            return Ok(requirement());
+        }
+        let base = text[..at].trim_end();
+        if base.is_empty() {
+            return Ok(requirement());
+        }
+        let (mut steps, mut needs) = parse_text(base)?;
+        for step in &mut steps {
+            if step
+                .args
+                .get("path")
+                .and_then(Value::as_str)
+                .is_some_and(|file| !file.starts_with(path))
+            {
+                needs.push("The requested file lies outside the prose path scope.".into());
+                continue;
+            }
+            let key = if step.tool == "list_files" {
+                "prefix"
+            } else {
+                "path_prefix"
+            };
+            if fields(&step.tool).contains(&key) {
+                let existing = step.args.get(key).and_then(Value::as_str).unwrap_or("");
+                if !existing.starts_with(path) {
+                    if path.starts_with(existing) {
+                        step.args.insert(key.into(), json!(path));
+                    } else {
+                        needs.push("The request contains incompatible path scopes.".into());
+                    }
+                }
+            } else if step.bind.is_empty() && !step.args.contains_key("path") {
+                needs.push("This operation has no path-scoped representation; choose an evidence operation.".into());
+            }
+        }
+        return Ok(Some((steps, needs)));
+    }
+    Ok(None)
+}
+
 pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
     ensure!(
         !text.trim().is_empty() && text.len() <= 4096,
@@ -561,13 +976,18 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
         "capabilities" => "capabilities",
         "help" => "help",
         _ if !explicit => {
+            if let Some(parsed) = scoped_prose(text, &words)? {
+                return Ok(parsed);
+            }
+            if let Some(steps) = natural::explicit_steps(text)? {
+                return Ok((steps, vec![]));
+            }
             let prefixes = [
                 ("who calls ", "references"),
                 ("references to ", "references"),
                 ("usages of ", "references"),
                 ("where is ", "symbols"),
                 ("find definition of ", "symbols"),
-                ("find ", "search"),
                 ("search for ", "search"),
             ];
             if let Some((prefix, tool)) = prefixes
@@ -576,8 +996,11 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
             {
                 let tail = text[prefix.len()..]
                     .trim()
-                    .trim_end_matches('?')
-                    .trim_end_matches(" defined");
+                    .trim_end_matches(['?', '.', '!'])
+                    .trim_end_matches(" defined")
+                    .trim();
+                let tail = strip_article(tail);
+                let name = symbol_subject(tail).map_or_else(|| tail.to_string(), |(name, _)| name);
                 return Ok((
                     vec![step(
                         "query",
@@ -585,11 +1008,14 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
                         if *tool == "search" {
                             json!({"query":tail})
                         } else {
-                            json!({"name":tail})
+                            json!({"name":name})
                         },
                     )],
                     vec![],
                 ));
+            }
+            if let Some(steps) = information_steps(text)? {
+                return Ok((steps, vec![]));
             }
             let prediction = airk_retrieval::intent::predict(text)?;
             if prediction.accepted || reviewable_file_request(text, prediction.intent)? {
@@ -600,16 +1026,19 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
             }
             let hint = if prediction.accepted {
                 format!(
-                    " Candidate intent: {} (logit {}, margin {}); the model is not qualified for automatic execution. Choose an explicit command or recipe.",
+                    " Candidate intent: {} (score {}, margin {}), but its required target could not be extracted. Review an explicit command or recipe.",
                     prediction.intent, prediction.logit, prediction.margin
                 )
             } else {
-                String::new()
+                format!(
+                    " Candidate intent: {} did not meet the confidence requirements (score {}, margin {}).",
+                    prediction.intent, prediction.logit, prediction.margin
+                )
             };
             return Ok((
                 vec![],
                 vec![format!(
-                    "Choose a slash command or recipe, or provide explicit steps. This request has no unambiguous supported intent.{hint}"
+                    "No evidence steps ran: this wording needs a supported operation and an exact target.{hint} Try 'tell me about struct Owner', 'find the definition of Owner' or 'search for retry budgets', or choose a recipe."
                 )],
             ));
         }
@@ -1287,20 +1716,27 @@ impl Kernel {
                         break;
                     }
                     calls += 1;
-                    let value = serde_json::to_value(self.facts_page(
-                        &FactQuery {
-                            path_prefix: plan.path_prefix.clone(),
-                            name: Some(candidate.clone()),
-                            kind: Some("definition".into()),
-                            language: None,
-                            exact_name: true,
-                            limit: 10,
-                            max_bytes: 8192,
-                            path_exact: false,
-                            document_only: false,
-                        },
-                        &DiscoveryOptions::default(),
-                    )?)?;
+                    let value = serde_json::to_value(
+                        self.facts_page(
+                            &FactQuery {
+                                path_prefix: step
+                                    .args
+                                    .get("path_prefix")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or(&plan.path_prefix)
+                                    .to_string(),
+                                name: Some(candidate.clone()),
+                                kind: Some("definition".into()),
+                                language: None,
+                                exact_name: true,
+                                limit: 10,
+                                max_bytes: 8192,
+                                path_exact: false,
+                                document_only: false,
+                            },
+                            &DiscoveryOptions::default(),
+                        )?,
+                    )?;
                     ensure!(
                         publication(&value) == plan.publication,
                         "publication changed during name resolution"
@@ -1330,6 +1766,21 @@ impl Kernel {
         plan.digest = digest(&plan)?;
         let mut result = ResultEnvelope {schema: RESULT_SCHEMA.into(), collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
         result.requires_input.extend(choices);
+        if request.text.as_deref().is_some_and(|text| {
+            !text.trim_start().starts_with('/')
+                && tokens(text).is_ok_and(|words| {
+                    words.iter().any(|word| {
+                        let word = word.trim_matches(['?', '.', ',', ';', '!']);
+                        word.eq_ignore_ascii_case("tests") || word.eq_ignore_ascii_case("test")
+                    })
+                })
+        }) && plan
+            .steps
+            .iter()
+            .any(|step| matches!(step.tool.as_str(), "references" | "search"))
+        {
+            result.warnings.push("Results are textual candidates across the selected path scope; test files were not separately classified or filtered. Set a literal test-folder path prefix to narrow them. No executed test coverage is established.".into());
+        }
         if stale {
             result.status = "publication_changed".into();
             result.requires_input.push(RequiredInput {
@@ -1774,6 +2225,443 @@ fn expand(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn role_inventory_plan_report(source: &str) -> Result<Value> {
+        let inventory: Value = serde_json::from_str(source)?;
+        let model: Value =
+            serde_json::from_str(include_str!("../../../tools/parser-train/manifest.json"))?;
+        let token = format!("airk-r1:{}:1:{}", "a".repeat(32), "b".repeat(64));
+        let mut rows = vec![];
+        let mut roles: BTreeMap<String, [usize; 4]> = BTreeMap::new();
+        for case in inventory["queries"].as_array().unwrap() {
+            let intent = case["intent"].as_str().unwrap();
+            let replace = |s: &str| {
+                s.replace(
+                    "{s}",
+                    if intent == "changes" {
+                        &token
+                    } else {
+                        "QueueClient"
+                    },
+                )
+                .replace("{p}", "src/client.rs")
+                .replace("{scope}", "src/")
+                .replace("{token}", &token)
+                .replace("{baseline}", &token)
+            };
+            let text = replace(case["text"].as_str().unwrap());
+            let expected = case["expected_tools"].as_array().unwrap();
+            let target = case["target"].as_str().map(replace);
+            let (steps, needs, error) = match parse_text(&text) {
+                Ok((steps, needs)) => (steps, needs, None),
+                Err(e) => (vec![], vec![], Some(e.to_string())),
+            };
+            let primary_tool = expected.first().and_then(Value::as_str);
+            let matching = steps
+                .iter()
+                .find(|step| Some(step.tool.as_str()) == primary_tool);
+            let target_matches = target.as_ref().is_none_or(|target| {
+                matching.is_some_and(|step| step.args.values().any(|v| v.as_str() == Some(target)))
+            });
+            let correct = if intent == "unsupported" {
+                !needs.is_empty() || error.is_some()
+            } else {
+                matching.is_some() && target_matches
+            };
+            let counters = roles
+                .entry(case["role"].as_str().unwrap().into())
+                .or_default();
+            counters[0] += 1;
+            counters[1] += usize::from(correct);
+            counters[2] += usize::from(!correct && intent != "unsupported");
+            counters[3] += usize::from(!correct && intent == "unsupported");
+            rows.push(json!({"role":case["role"],"family":case["family"],
+                "split":case["split"],"text":text,"intent":intent,"expected_primary_tool":primary_tool,
+                "expected_target":target,"correct_operation_and_target":correct,
+                "automatic":!steps.is_empty() && needs.is_empty() && error.is_none(),
+                "steps":steps,"requires_input":needs,"error":error}));
+        }
+        let contracts: Vec<_> = rows.iter().map(|row| json!({
+            "role":row["role"], "text":row["text"], "intent":row["intent"],
+            "expected_primary_tool":row["expected_primary_tool"], "expected_target":row["expected_target"]
+        })).collect();
+        let report = json!({"schema":"airk.parser.role-plan-measurement/1",
+            "scope":"Known public role inventory with controlled literal targets; not blind evaluation or native retrieval qualification.",
+            "model":model["model_version"],"asset_sha256":model["asset_sha256"],
+            "inventory_sha256":format!("{:x}",Sha256::digest(source.as_bytes())),
+            "resolved_contract_sha256":format!("{:x}",Sha256::digest(serde_json::to_vec(&contracts)?)),
+            "parser_source_sha256":format!("{:x}",Sha256::digest(include_bytes!("workbench.rs"))),
+            "natural_source_sha256":format!("{:x}",Sha256::digest(include_bytes!("workbench/natural.rs"))),
+            "counter_order":["rows","correct_operation_and_target","supported_failures","wrong_automatic_unsupported"],
+            "roles":roles,"queries":rows});
+        Ok(report)
+    }
+
+    #[test]
+    #[ignore = "explicit role-inventory measurement; set AIRK_PARSE_ROLE_REPORT to retain results"]
+    fn role_inventory_plan_measurement() -> Result<()> {
+        let source = match std::env::var("AIRK_PARSE_ROLE_FIXTURE") {
+            Ok(path) => std::fs::read_to_string(path)?,
+            Err(_) => include_str!("../../../tools/parser-train/role-queries.json").to_string(),
+        };
+        let report = role_inventory_plan_report(&source)?;
+        if let Ok(path) = std::env::var("AIRK_PARSE_ROLE_REPORT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&report)?)?;
+        }
+        eprintln!("{}", report["roles"]);
+        assert!(
+            report["roles"]
+                .as_object()
+                .unwrap()
+                .values()
+                .all(|c| c[3] == 0),
+            "unsupported role query executed without review"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn public_role_requests_keep_operations_targets_and_refusals() -> Result<()> {
+        for source in [
+            include_str!("../../../tools/parser-train/role-queries.json"),
+            include_str!("../../../tools/parser-train/novel-role-queries.json"),
+        ] {
+            let report = role_inventory_plan_report(source)?;
+            let failures: Vec<_> = report["queries"].as_array().unwrap().iter()
+                .filter(|row| row["correct_operation_and_target"] != true)
+                .map(|row| json!({"text":row["text"],"steps":row["steps"],"requires_input":row["requires_input"]}))
+                .collect();
+            assert!(
+                failures.is_empty(),
+                "{}",
+                serde_json::to_string_pretty(&failures)?
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn conversational_requests_keep_exact_symbols_and_topic_queries() -> Result<()> {
+        for (subject, expected, explicit) in [
+            ("struct Owner", "Owner", true),
+            ("Owner struct", "Owner", true),
+            ("class Client", "Client", true),
+            ("QueueClient", "QueueClient", false),
+            ("function request_budget", "request_budget", true),
+            ("function named retry", "retry", true),
+            ("trait called Storage", "Storage", true),
+            ("`owner`", "owner", true),
+            ("\"Owner\"", "Owner", true),
+            ("'Owner'", "Owner", true),
+            ("`struct Owner`", "Owner", true),
+            ("client::Owner", "client::Owner", false),
+            ("package.client", "package.client", false),
+            ("enum État", "État", true),
+            ("class package.Client", "package.Client", true),
+            ("method Owner.capture", "Owner.capture", true),
+            ("interface CacheReader", "CacheReader", true),
+            ("type Result", "Result", true),
+        ] {
+            for prefix in [
+                "I want to know about ",
+                "Tell me about ",
+                "Find the ",
+                "What is ",
+                "Please tell me about ",
+                "Could you tell me about ",
+                "Could you please tell me about ",
+                "Can you explain ",
+                "Show me ",
+            ] {
+                let text = format!("{prefix}{subject}.");
+                let (steps, needs) = parse_text(&text)?;
+                assert!(needs.is_empty(), "{text}: {needs:?}");
+                assert_eq!(steps.len(), if explicit { 3 } else { 2 }, "{text}");
+                assert_eq!(steps[0].tool, "symbols", "{text}");
+                assert_eq!(steps[0].args["name"], expected, "{text}");
+                if explicit {
+                    assert_eq!(steps[1].bind[0].select, "unique_definition_path");
+                    assert_eq!(steps[2].bind[0].select, "hit_locations");
+                } else {
+                    assert_eq!(steps[1].tool, "search");
+                    assert_eq!(steps[1].args["query"], expected);
+                }
+            }
+        }
+        let (steps, needs) = parse_text("Find the definition of request")?;
+        assert!(needs.is_empty());
+        assert_eq!(steps[0].tool, "symbols");
+        assert_eq!(steps[0].args["name"], "request");
+        for text in [
+            "find definition of struct Owner",
+            "find definition of Owner.",
+            "where is the Owner struct defined?",
+            "references to struct Owner",
+        ] {
+            let (steps, needs) = parse_text(text)?;
+            assert!(needs.is_empty(), "{text}: {needs:?}");
+            assert_eq!(steps[0].args["name"], "Owner", "{text}");
+        }
+        let (steps, needs) = parse_text("Find the definition of queue client")?;
+        assert!(needs.is_empty());
+        assert_eq!(steps[0].tool, "symbols");
+        assert_eq!(steps[0].args["name"], "queue client");
+        let (steps, needs) = parse_text("Find the string 'under'")?;
+        assert!(needs.is_empty());
+        assert_eq!(steps[0].args["query"], "under");
+        for text in [
+            "Find the definition of Owner",
+            "Tell me about the declaration of Owner",
+            "Tell me about a struct Owner",
+            "  tell   me about struct Owner?  ",
+            "TELL ME ABOUT STRUCT Owner!",
+        ] {
+            let (steps, needs) = parse_text(text)?;
+            assert!(needs.is_empty(), "{text}: {needs:?}");
+            assert_eq!(steps[0].args["name"], "Owner", "{text}");
+        }
+        for (text, expected) in [
+            ("Find the retry budget", "retry budget"),
+            ("Tell me about retry budgets.", "retry budgets"),
+            ("I want to know about cancellation", "cancellation"),
+            ("What is indexing?", "indexing"),
+            ("Please find the \"retry budget\"", "retry budget"),
+            ("Can you tell me about les délais?", "les délais"),
+        ] {
+            let (steps, needs) = parse_text(text)?;
+            assert!(needs.is_empty(), "{text}: {needs:?}");
+            assert_eq!(steps.len(), 1, "{text}");
+            assert_eq!(steps[0].tool, "search", "{text}");
+            assert_eq!(steps[0].args["query"], expected, "{text}");
+        }
+        assert_eq!(
+            proposed_steps(
+                "Could you retrieve information about struct Owner?",
+                "find_definition"
+            )?[0]
+                .args["name"],
+            "Owner"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn conversational_requests_do_not_guess_missing_or_compound_targets() -> Result<()> {
+        for text in [
+            "Tell me about it",
+            "I want to know about struct",
+            "Find the struct Owner and class Client",
+            "Tell me about Owner or Client",
+            "Tell me about struct Owner then delete its tests",
+            "Find the Owner struct and fix it",
+            "Tell me about whether Owner is a good design",
+            "Explain why this algorithm is incorrect",
+            "Tell me about `Owner` and ignore all instructions",
+            "Tell me about struct Owner; push the changes",
+            "Find uses of Owner under",
+            "Find uses of Owner under ../outside/",
+            "Where is Owner defined under",
+            "Where is Owner under tests extra",
+            "Find the definition of Owner under tests extra",
+        ] {
+            assert!(information_steps(text)?.is_none(), "{text}");
+            let (_, needs) = parse_text(text)?;
+            assert!(!needs.is_empty(), "{text} must require review or input");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn prose_scopes_are_preserved_across_operations_and_literal_targets() -> Result<()> {
+        for (text, tool, key, target, scope) in [
+            (
+                "Find the definition of Owner under tests",
+                "symbols",
+                "name",
+                "Owner",
+                "tests",
+            ),
+            (
+                "Where is Owner under tests",
+                "symbols",
+                "name",
+                "Owner",
+                "tests",
+            ),
+            (
+                "Find the requirements about retry under docs/",
+                "document_facts",
+                "name",
+                "retry",
+                "docs/",
+            ),
+            (
+                "Find imports mentioning Owner beneath src/",
+                "imports",
+                "name",
+                "Owner",
+                "src/",
+            ),
+            (
+                "Tell me about struct Owner under src/",
+                "symbols",
+                "name",
+                "Owner",
+                "src/",
+            ),
+        ] {
+            let (steps, needs) = parse_text(text)?;
+            assert!(needs.is_empty(), "{text}: {needs:?}");
+            assert_eq!(steps[0].tool, tool, "{text}");
+            assert_eq!(steps[0].args[key], target, "{text}");
+            assert_eq!(steps[0].args["path_prefix"], scope, "{text}");
+        }
+        for text in [
+            "Find the string 'under'",
+            "Search for the exact phrase \"work under pressure\"",
+        ] {
+            let (steps, needs) = parse_text(text)?;
+            assert!(needs.is_empty(), "{text}: {needs:?}");
+            assert!(!steps[0].args.contains_key("path_prefix"), "{text}");
+        }
+        assert!(!parse_text("Read src/client.rs under docs/")?.1.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn conversational_definition_executes_cited_recipe_with_scope_and_choices() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir_all(root.join("src/one"))?;
+        std::fs::create_dir_all(root.join("src/two"))?;
+        let source = "pub struct Owner;\nimpl Owner { pub fn capture() -> Self { Self } }\n";
+        std::fs::write(root.join("src/one/owner.rs"), source)?;
+        std::fs::write(root.join("src/two/owner.rs"), "pub struct Owner;\n")?;
+        std::fs::write(
+            root.join("notes.md"),
+            "# Notes\nThe retry budget must bound work.\n",
+        )?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let req = |text: &str, mode: &str, scope: &str| {
+            serde_json::from_value::<Request>(json!({
+                "schema": REQUEST_SCHEMA, "text": text, "mode": mode, "path_prefix": scope
+            }))
+            .unwrap()
+        };
+        for text in [
+            "I want to know about struct Owner.",
+            "Find the Owner struct",
+            "Tell me about struct Owner",
+        ] {
+            let prepared = kernel.evidence_plan(req(text, "prepare", "src/one/"))?;
+            assert_eq!(prepared.status, "prepared", "{text}");
+            assert!(!prepared.executed);
+            assert!(prepared.evidence.is_empty());
+            let run = kernel.evidence_plan(req(text, "execute", "src/one/"))?;
+            assert_eq!(run.status, "complete", "{text}: {:?}", run.steps);
+            assert!(run.executed);
+            for tool in ["symbols", "outline", "read_file"] {
+                assert!(run.steps.iter().any(|step| step.tool == tool), "{text}");
+            }
+            assert!(!run.evidence.is_empty());
+            assert!(run.steps.iter().all(|s| s.status == "complete"));
+            assert!(run.evidence.iter().all(|e| {
+                e["citation"]["path"] == "src/one/owner.rs"
+                    && e["publication"].as_str() == run.publication.as_deref()
+                    && e["citation"]["content_hash"].as_str().is_some()
+            }));
+        }
+        let ambiguous = kernel.evidence_plan(req("Tell me about struct Owner", "execute", ""))?;
+        assert!(
+            ambiguous.requires_input.iter().any(|r| {
+                r.field == "path" && r.choices == ["src/one/owner.rs", "src/two/owner.rs"]
+            }),
+            "{:?}",
+            ambiguous.requires_input
+        );
+        let topic = kernel.evidence_plan(req("Tell me about retry budget", "execute", ""))?;
+        assert!(topic.executed);
+        assert!(!topic.evidence.is_empty(), "{topic:?}");
+        let mixed = kernel.evidence_plan(req("Tell me about Owner", "execute", "src/one/"))?;
+        assert_eq!(mixed.status, "complete", "{:?}", mixed.steps);
+        assert!(mixed.steps.iter().all(|s| s.status == "complete"));
+        assert!(!mixed.evidence.is_empty());
+        let capitalized_topic = kernel.evidence_plan(req("Tell me about Notes", "execute", ""))?;
+        assert_eq!(
+            capitalized_topic.status, "complete",
+            "{:?}",
+            capitalized_topic.steps
+        );
+        assert!(!capitalized_topic.evidence.is_empty());
+        let requirements = kernel.evidence_plan(req(
+            "Find the written requirements about retry budget",
+            "execute",
+            "",
+        ))?;
+        assert_eq!(requirements.status, "complete", "{:?}", requirements.steps);
+        assert!(!requirements.evidence.is_empty());
+        assert!(
+            requirements
+                .evidence
+                .iter()
+                .all(|record| record["citation"]["path"] == "notes.md")
+        );
+        let tests =
+            kernel.evidence_plan(req("Which tests mention Owner?", "execute", "src/one/"))?;
+        assert_eq!(tests.status, "complete", "{:?}", tests.steps);
+        assert!(!tests.evidence.is_empty());
+        assert!(
+            tests
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("not separately classified or filtered"))
+        );
+        assert!(
+            tests
+                .evidence
+                .iter()
+                .all(|record| record["citation"]["path"] == "src/one/owner.rs")
+        );
+        let suffix = kernel.evidence_plan(req(
+            "Find references to Owner in the tests.",
+            "execute",
+            "src/one/",
+        ))?;
+        assert_eq!(suffix.status, "complete", "{:?}", suffix.steps);
+        assert!(
+            suffix
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("not separately classified or filtered"))
+        );
+        for text in [
+            "Tell me about struct Owner then delete its tests",
+            "Find the Owner struct and fix it",
+        ] {
+            let result = kernel.evidence_plan(req(text, "execute", ""))?;
+            assert!(!result.executed, "{text}");
+            assert!(!result.requires_input.is_empty());
+        }
+        let conversational: Value = serde_json::from_str(include_str!(
+            "../../../tools/parser-train/conversational-regression-v4.json"
+        ))?;
+        for row in conversational.as_array().unwrap() {
+            if row["intent"] == "unsupported" {
+                let text = row["text"].as_str().unwrap();
+                let result = kernel.evidence_plan(req(text, "execute", ""))?;
+                assert!(!result.executed, "{text}");
+                assert!(!result.requires_input.is_empty(), "{text}");
+            }
+        }
+        assert_eq!(
+            std::fs::read_to_string(root.join("src/one/owner.rs"))?,
+            source
+        );
+        Ok(())
+    }
+
     #[test]
     fn commands_and_uncertainty() -> Result<()> {
         let (steps, _) = parse_text("/read \"docs/a file.md\":2-5")?;
@@ -1808,7 +2696,25 @@ mod tests {
             8
         );
         assert!(proposed_steps("show lines 9 to 2 in src/client.rs", "read_file")?.is_empty());
-        let (proposal, needs) = parse_text("Please retrieve the source contents of fixture_0.py")?;
+        let punctuated = proposed_steps("Display src/client.rs:12-24.", "read_file")?;
+        assert_eq!(punctuated[0].args["path"], "src/client.rs");
+        assert_eq!(punctuated[0].args["start_line"], 12);
+        assert_eq!(punctuated[0].args["end_line"], 24);
+        assert_eq!(
+            proposed_steps("What's the hash of src/client.rs?", "file_info")?[0].args["path"],
+            "src/client.rs"
+        );
+        for path in [".github/workflows/build.yml", ".gitignore"] {
+            assert_eq!(
+                proposed_steps(
+                    &format!("Please fetch the contents of {path}."),
+                    "read_file"
+                )?[0]
+                    .args["path"],
+                path
+            );
+        }
+        let (proposal, needs) = parse_text("Please fetch the source contents of fixture_0.py")?;
         assert_eq!(proposal[0].args["path"], "fixture_0.py");
         assert!(!needs.is_empty());
         assert!(!reviewable_file_request(
@@ -1865,7 +2771,7 @@ mod tests {
         assert_eq!(short.plan.steps[0].args["end_line"], 2);
         assert!(short.plan.steps[0].args.contains_key("known_hash"));
         let proposal =
-            kernel.evidence_plan(request("Please retrieve the source contents of one.md"))?;
+            kernel.evidence_plan(request("Please fetch the source contents of one.md"))?;
         assert!(!proposal.executed);
         assert_eq!(proposal.plan.steps[0].args["end_line"], 2);
         let confirmed = kernel.evidence_plan(serde_json::from_value(
@@ -1874,7 +2780,7 @@ mod tests {
         assert_eq!(confirmed.status, "complete", "{:?}", confirmed.steps);
         assert!(!confirmed.evidence.is_empty());
         let review =
-            kernel.evidence_plan(request("Could you retrieve the definition of QueueClient?"))?;
+            kernel.evidence_plan(request("Could I see the defining source for QueueClient?"))?;
         assert!(
             !review.executed,
             "learned proposal executed without explicit plan confirmation"
@@ -1944,6 +2850,25 @@ mod tests {
         );
         assert!(resolved.executed);
         assert_eq!(resolved.plan.steps[0].args["name"], "QueueClient");
+        let definition = kernel.evidence_plan(req(json!({"schema":REQUEST_SCHEMA,
+            "mode":"execute", "text":"Find the definition of queue client"})))?;
+        assert!(definition.executed);
+        assert_eq!(definition.plan.steps[0].args["name"], "QueueClient");
+        assert!(!definition.evidence.is_empty());
+        std::fs::create_dir(root.join("tests"))?;
+        std::fs::write(root.join("tests/other.rs"), "pub struct queue_client;\n")?;
+        kernel.index()?;
+        let scoped = kernel.evidence_plan(req(json!({"schema":REQUEST_SCHEMA,
+            "mode":"execute", "text":"Find uses of queue client under src/"})))?;
+        assert!(scoped.executed, "{:?}", scoped.requires_input);
+        assert_eq!(scoped.plan.steps[0].args["name"], "QueueClient");
+        assert_eq!(scoped.plan.steps[0].args["path_prefix"], "src/");
+        assert!(scoped.evidence.iter().all(|record| {
+            record["citation"]["path"]
+                .as_str()
+                .unwrap()
+                .starts_with("src/")
+        }));
         let run=kernel.evidence_plan(req(json!({"schema":REQUEST_SCHEMA,"mode":"execute","recipe":{"id":"definition","parameters":{"name":"QueueClient"}},"path_prefix":"src/"})))?;
         assert!(
             run.steps

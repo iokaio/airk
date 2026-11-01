@@ -75,6 +75,7 @@ Every public command and subcommand, exactly as `airk <command> --help` prints i
 - [`airk runtime rollback`](#airk-runtime-rollback)
 - [`airk runtime self-test`](#airk-runtime-self-test)
 - [`airk runtime snapshot`](#airk-runtime-snapshot)
+- [`airk runtime source-scope`](#airk-runtime-source-scope)
 - [`airk runtime stage`](#airk-runtime-stage)
 - [`airk runtime start`](#airk-runtime-start)
 - [`airk runtime uninstall`](#airk-runtime-uninstall)
@@ -177,16 +178,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -261,22 +262,22 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --project <PROJECT>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -294,10 +295,10 @@ Options:
           [default: .]
 
       --since <SINCE>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --selector <SELECTORS>
           Repeatable tagged JSON selector, e.g. {"kind":"path","path":"one.rs"}
@@ -312,16 +313,16 @@ Options:
           [default: ""]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --include-symbols
-          
+
 
       --include-documents
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
       --include-suggestions
           Bounded similarity/directory hints; never follow or promote identity
@@ -333,7 +334,7 @@ Options:
           [default: 8192]
 
       --cursor <CURSOR>
-          
+
 
   -h, --help
           Print help
@@ -349,7 +350,7 @@ Usage: airk code-facts [OPTIONS]
 Options:
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
-          
+
           [possible values: true, false]
 
       --root <ROOT>
@@ -359,7 +360,7 @@ Options:
           Continue the same revision-bound discovery with unchanged filters
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
@@ -368,19 +369,19 @@ Options:
           Durable symbol key from indexed continuity evidence; excludes textual filters
 
       --name <NAME>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --kind <KIND>
-          
+
 
       --language <LANGUAGE>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
       --path-prefix <PATH_PREFIX>
           [default: ""]
@@ -406,25 +407,25 @@ Usage: airk configure [OPTIONS]
 
 Options:
       --file <FILE>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --stdin
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -439,44 +440,44 @@ Usage: airk context [OPTIONS] <PATH> <LINE>
 
 Arguments:
   <PATH>
-          
+
 
   <LINE>
-          
+
 
 Options:
       --revision <REVISION>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --if-evidence <IF_EVIDENCE>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --follow-moves
-          
+
 
       --known-hash <KNOWN_HASH>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --artifact-id <ARTIFACT_ID>
-          
+
 
       --before <BEFORE>
           [default: 5]
 
       --service-project <SERVICE_PROJECT>
-          
+
 
       --after <AFTER>
           [default: 5]
@@ -514,16 +515,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -539,14 +540,14 @@ Usage: airk explorer draft-plan [OPTIONS] --output <OUTPUT>
 Options:
       --args <ARGS>
           Tool arguments as one JSON object, exactly as for the MCP tool of the same name
-          
+
           [default: {}]
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --output <OUTPUT>
           New file for the result (must not exist). Results are never sent to an Explorer Inbox
@@ -555,10 +556,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -574,14 +575,14 @@ Usage: airk explorer draft-search [OPTIONS] --output <OUTPUT>
 Options:
       --args <ARGS>
           Tool arguments as one JSON object, exactly as for the MCP tool of the same name
-          
+
           [default: {}]
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --output <OUTPUT>
           New file for the result (must not exist). Results are never sent to an Explorer Inbox
@@ -590,10 +591,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -609,14 +610,14 @@ Usage: airk explorer draft-strategy [OPTIONS] --output <OUTPUT>
 Options:
       --args <ARGS>
           Tool arguments as one JSON object, exactly as for the MCP tool of the same name
-          
+
           [default: {}]
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --output <OUTPUT>
           New file for the result (must not exist). Results are never sent to an Explorer Inbox
@@ -625,10 +626,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -651,10 +652,10 @@ Options:
           The ex-share-… token the user copied from Explorer
 
       --data-dir <DATA_DIR>
-          
+
 
       --explorer-descriptor <EXPLORER_DESCRIPTOR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
@@ -663,10 +664,10 @@ Options:
           New file for the result (must not exist)
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -682,14 +683,14 @@ Usage: airk explorer get-template [OPTIONS] --output <OUTPUT>
 Options:
       --args <ARGS>
           Tool arguments as one JSON object, exactly as for the MCP tool of the same name
-          
+
           [default: {}]
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --output <OUTPUT>
           New file for the result (must not exist). Results are never sent to an Explorer Inbox
@@ -698,10 +699,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -717,14 +718,14 @@ Usage: airk explorer list-templates [OPTIONS] --output <OUTPUT>
 Options:
       --args <ARGS>
           Tool arguments as one JSON object, exactly as for the MCP tool of the same name
-          
+
           [default: {}]
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --output <OUTPUT>
           New file for the result (must not exist). Results are never sent to an Explorer Inbox
@@ -733,10 +734,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -757,7 +758,7 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --output <OUTPUT>
           New file for the result (must not exist)
@@ -766,10 +767,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -785,14 +786,14 @@ Usage: airk explorer suggest-view [OPTIONS] --output <OUTPUT>
 Options:
       --args <ARGS>
           Tool arguments as one JSON object, exactly as for the MCP tool of the same name
-          
+
           [default: {}]
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --output <OUTPUT>
           New file for the result (must not exist). Results are never sent to an Explorer Inbox
@@ -801,10 +802,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -820,14 +821,14 @@ Usage: airk explorer validate-draft [OPTIONS] --output <OUTPUT>
 Options:
       --args <ARGS>
           Tool arguments as one JSON object, exactly as for the MCP tool of the same name
-          
+
           [default: {}]
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --output <OUTPUT>
           New file for the result (must not exist). Results are never sent to an Explorer Inbox
@@ -836,10 +837,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -859,7 +860,7 @@ Arguments:
 Options:
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
-          
+
           [possible values: true, false]
 
       --root <ROOT>
@@ -869,7 +870,7 @@ Options:
           Continue the same revision-bound discovery with unchanged filters
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
@@ -878,10 +879,10 @@ Options:
           Durable document key; excludes textual filters
 
       --name <NAME>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --kind <KIND>
           Exact document fact category, such as requirement, date, architecture or feature
@@ -890,7 +891,7 @@ Options:
           [default: 50]
 
       --service-project <SERVICE_PROJECT>
-          
+
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
@@ -918,7 +919,7 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --limit <LIMIT>
           [default: 10]
@@ -930,10 +931,10 @@ Options:
           [default: 8192]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -951,16 +952,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -980,7 +981,7 @@ Arguments:
 Options:
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
-          
+
           [possible values: true, false]
 
       --root <ROOT>
@@ -990,16 +991,16 @@ Options:
           Continue the same revision-bound discovery with unchanged filters
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1016,22 +1017,22 @@ Usage: airk index [OPTIONS]
 
 Options:
       --full
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1046,38 +1047,38 @@ Usage: airk info [OPTIONS] <PATH>
 
 Arguments:
   <PATH>
-          
+
 
 Options:
       --revision <REVISION>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --if-evidence <IF_EVIDENCE>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --follow-moves
-          
+
 
       --known-hash <KNOWN_HASH>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --artifact-id <ARTIFACT_ID>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1097,16 +1098,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1124,16 +1125,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1157,7 +1158,7 @@ Options:
           Additional explicitly configured project bindings in this same service
 
       --data-dir <DATA_DIR>
-          
+
 
       --additional-root <ADDITIONAL_ROOT>
           Additional source folders; registrations are resolved on each request
@@ -1169,13 +1170,13 @@ Options:
           Choose a collection only when this source has multiple active indexes
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --no-default-project
           Require a project argument for scoped tools in multi-root workspaces
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1193,16 +1194,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1217,7 +1218,7 @@ Usage: airk outline [OPTIONS] <PATH>
 
 Arguments:
   <PATH>
-          
+
 
 Options:
       --cursor <CURSOR>
@@ -1228,35 +1229,35 @@ Options:
 
       --compact [<COMPACT>]
           Return minimal names/kinds/lines/signatures with shared original file/provenance bindings
-          
+
           [possible values: true, false]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --revision <REVISION>
-          
+
 
       --if-evidence <IF_EVIDENCE>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --follow-moves
-          
+
 
       --known-hash <KNOWN_HASH>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
       --artifact-id <ARTIFACT_ID>
-          
+
 
       --limit <LIMIT>
           [default: 50]
@@ -1279,7 +1280,7 @@ Usage: airk parse [OPTIONS] [TEXT]
 
 Arguments:
   [TEXT]
-          
+
 
 Options:
       --project <PROJECT>
@@ -1289,10 +1290,10 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --execute
-          
+
 
       --collection <COLLECTION>
           [default: default]
@@ -1304,10 +1305,10 @@ Options:
           [default: ""]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1325,16 +1326,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1357,16 +1358,16 @@ Options:
           Control directory of a service started with `airk serve`
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1381,44 +1382,44 @@ Usage: airk read [OPTIONS] --start-line <START_LINE> --end-line <END_LINE> <PATH
 
 Arguments:
   <PATH>
-          
+
 
 Options:
       --revision <REVISION>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --if-evidence <IF_EVIDENCE>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --follow-moves
-          
+
 
       --known-hash <KNOWN_HASH>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --artifact-id <ARTIFACT_ID>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
       --start-line <START_LINE>
-          
+
 
       --end-line <END_LINE>
-          
+
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
@@ -1436,7 +1437,7 @@ Usage: airk refs [OPTIONS] <NAME>
 
 Arguments:
   <NAME>
-          
+
 
 Options:
       --path-prefix <PATH_PREFIX>
@@ -1446,16 +1447,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1470,7 +1471,7 @@ Usage: airk relationships [OPTIONS] <SYMBOL>
 
 Arguments:
   <SYMBOL>
-          
+
 
 Options:
       --direction <DIRECTION>
@@ -1480,10 +1481,10 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --kind <KIND>
-          
+
 
       --collection <COLLECTION>
           [default: default]
@@ -1495,7 +1496,7 @@ Options:
           [default: 1]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --limit <LIMIT>
           [default: 10]
@@ -1504,7 +1505,7 @@ Options:
           [default: 8192]
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1522,16 +1523,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1547,6 +1548,7 @@ The VS Code extension uses these; headless experiments can instead run `airk ser
 Usage: airk runtime [OPTIONS] <COMMAND>
 
 Commands:
+  source-scope           Read one exact saved source scope, without electing a service or opening an index
   container-host         Run one externally supervised Linux container service from an approved read-only image pair
   location               Resolve the native user's stable-channel install location; no workspace settings or writes
   login                  Optional login registration; never required by on-demand operation
@@ -1585,16 +1587,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1609,25 +1611,25 @@ Usage: airk runtime abandon-lifecycle [OPTIONS] --install-dir <INSTALL_DIR> --re
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --request-id <REQUEST_ID>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1642,28 +1644,28 @@ Usage: airk runtime abort-activation [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --expected-candidate <EXPECTED_CANDIDATE>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --expected-active <EXPECTED_ACTIVE>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1678,22 +1680,22 @@ Usage: airk runtime abort-launcher-repair [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1708,22 +1710,22 @@ Usage: airk runtime abort-layout [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1738,25 +1740,25 @@ Usage: airk runtime abort-stage [OPTIONS] --install-dir <INSTALL_DIR> --runtime-
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --runtime-sha256 <RUNTIME_SHA256>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1771,16 +1773,16 @@ Usage: airk runtime activate [OPTIONS] --install-dir <INSTALL_DIR> --runtime-sha
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --runtime-sha256 <RUNTIME_SHA256>
-          
+
 
       --collection <COLLECTION>
           [default: default]
@@ -1789,10 +1791,10 @@ Options:
           Refuse if the reviewed preceding selection changed; exact completed replay does not start a service
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1810,13 +1812,13 @@ Options:
           [default: .]
 
       --source <SOURCE>
-          
+
 
       --approved-sha256 <APPROVED_SHA256>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --channel <CHANNEL>
           [default: stable]
@@ -1826,10 +1828,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1844,22 +1846,22 @@ Usage: airk runtime diagnose [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1874,22 +1876,22 @@ Usage: airk runtime ensure [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1904,22 +1906,22 @@ Usage: airk runtime foreground [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1934,22 +1936,22 @@ Usage: airk runtime inspect [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1964,25 +1966,25 @@ Usage: airk runtime inspect-candidate [OPTIONS] --install-dir <INSTALL_DIR> --ru
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --runtime-sha256 <RUNTIME_SHA256>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -1997,22 +1999,22 @@ Usage: airk runtime inventory [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2027,26 +2029,26 @@ Usage: airk runtime launch [OPTIONS] --install-dir <INSTALL_DIR> -- <ARGS>...
 
 Arguments:
   <ARGS>...
-          
+
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2061,22 +2063,22 @@ Usage: airk runtime lifecycle [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2098,16 +2100,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2131,22 +2133,22 @@ Commands:
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2164,16 +2166,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2191,16 +2193,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2218,16 +2220,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2245,16 +2247,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2272,16 +2274,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2299,16 +2301,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2326,22 +2328,22 @@ Options:
           [default: .]
 
       --source <SOURCE>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --install-dir <INSTALL_DIR>
-          
+
 
       --approved-sha256 <APPROVED_SHA256>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --verification-basis <VERIFICATION_BASIS>
           [possible values: trusted-distribution, organization-digest]
@@ -2351,10 +2353,10 @@ Options:
           [possible values: external, user-on-demand]
 
       --service-project <SERVICE_PROJECT>
-          
+
 
       --state-dir <STATE_DIR>
-          
+
 
       --channel <CHANNEL>
           [default: stable]
@@ -2373,22 +2375,22 @@ Usage: airk runtime prepare-client [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2403,28 +2405,28 @@ Usage: airk runtime purge [OPTIONS] --install-dir <INSTALL_DIR> --select <SELECT
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --select <SELECT>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --confirm <CONFIRM>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2439,25 +2441,25 @@ Usage: airk runtime remove [OPTIONS] --install-dir <INSTALL_DIR> --runtime-sha25
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --runtime-sha256 <RUNTIME_SHA256>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2472,22 +2474,22 @@ Usage: airk runtime repair-launcher [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2502,19 +2504,19 @@ Usage: airk runtime repair-payload [OPTIONS] --install-dir <INSTALL_DIR> --sourc
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --source <SOURCE>
-          
+
 
       --approved-sha256 <APPROVED_SHA256>
-          
+
 
       --collection <COLLECTION>
           [default: default]
@@ -2523,10 +2525,10 @@ Options:
           Omit for read-only preview; supply the reviewed preview digest to apply
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2541,22 +2543,22 @@ Usage: airk runtime reset-startup [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2571,25 +2573,25 @@ Usage: airk runtime retire-previous [OPTIONS] --install-dir <INSTALL_DIR> --expe
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --expected-active <EXPECTED_ACTIVE>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2604,22 +2606,22 @@ Usage: airk runtime rollback [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2637,16 +2639,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2661,31 +2663,73 @@ Usage: airk runtime snapshot [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --after <AFTER>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --revision <REVISION>
-          
+
 
       --limit <LIMIT>
           [default: 16]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
+
+  -h, --help
+          Print help
+```
+
+## airk runtime source-scope
+
+```text
+Read one exact saved source scope, without electing a service or opening an index
+
+Usage: airk runtime source-scope [OPTIONS] --install-dir <INSTALL_DIR> --expected-control <EXPECTED_CONTROL> --expected-runtime <EXPECTED_RUNTIME> --source-root <SOURCE_ROOT>
+
+Options:
+      --install-dir <INSTALL_DIR>
+
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --expected-control <EXPECTED_CONTROL>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --expected-runtime <EXPECTED_RUNTIME>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --source-root <SOURCE_ROOT>
+
+
+      --index-collection <INDEX_COLLECTION>
+
+
+      --service-project <SERVICE_PROJECT>
+
 
   -h, --help
           Print help
@@ -2703,22 +2747,22 @@ Options:
           [default: .]
 
       --source <SOURCE>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --install-dir <INSTALL_DIR>
-          
+
 
       --approved-sha256 <APPROVED_SHA256>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --verification-basis <VERIFICATION_BASIS>
           [possible values: trusted-distribution, organization-digest]
@@ -2731,7 +2775,7 @@ Options:
           [possible values: stable, preview]
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2746,22 +2790,22 @@ Usage: airk runtime start [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2776,22 +2820,22 @@ Usage: airk runtime uninstall [OPTIONS] --install-dir <INSTALL_DIR>
 
 Options:
       --install-dir <INSTALL_DIR>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2808,7 +2852,7 @@ Usage: airk search [OPTIONS] <QUERY>
 
 Arguments:
   <QUERY>
-          
+
 
 Options:
       --mode <MODE>
@@ -2818,7 +2862,7 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --semantic
           Use the configured local embedding model and disk-backed vector graph
@@ -2827,19 +2871,19 @@ Options:
           [default: default]
 
       --path-prefix <PATH_PREFIX>
-          
+
 
       --limit <LIMIT>
           [default: 10]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2859,10 +2903,10 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --idle-exit-seconds <IDLE_EXIT_SECONDS>
           On-demand grace after all clients/workers and runnable jobs are gone
@@ -2871,10 +2915,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -2907,16 +2951,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2934,10 +2978,10 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --runtime-sha256 <RUNTIME_SHA256>
           Pin the approved complete payload identity supplied by the trusted launcher
@@ -2946,10 +2990,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -2967,19 +3011,19 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3009,16 +3053,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3036,19 +3080,19 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3066,22 +3110,22 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --approval <APPROVAL>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3099,22 +3143,22 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --approval <APPROVAL>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3132,19 +3176,19 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3159,22 +3203,22 @@ Usage: airk service legacy preview-derived [OPTIONS] --runtime-dir <RUNTIME_DIR>
 
 Options:
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --root <ROOT>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3189,25 +3233,25 @@ Usage: airk service legacy remove-derived [OPTIONS] --runtime-dir <RUNTIME_DIR> 
 
 Options:
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --root <ROOT>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --approval <APPROVAL>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3222,28 +3266,28 @@ Usage: airk service legacy remove-startup [OPTIONS] --runtime-dir <RUNTIME_DIR> 
 
 Options:
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --root <ROOT>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --executable <EXECUTABLE>
-          
+
 
       --approval <APPROVAL>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3258,25 +3302,25 @@ Usage: airk service legacy review [OPTIONS] --runtime-dir <RUNTIME_DIR> --root <
 
 Options:
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --root <ROOT>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --executable <EXECUTABLE>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3294,22 +3338,22 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --approval <APPROVAL>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3327,10 +3371,10 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --limit <LIMIT>
           [default: 32]
@@ -3345,7 +3389,7 @@ Options:
           Open the separate local raw job-error ring (may contain paths/error values)
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --output <OUTPUT>
           Capture raw retained diagnostics into a new local file without buffering stdout
@@ -3355,7 +3399,7 @@ Options:
           [possible values: json, text]
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3373,22 +3417,22 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --project <PROJECT>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3406,16 +3450,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3433,22 +3477,22 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --project <PROJECT>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3466,22 +3510,22 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --operation <OPERATION>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3499,19 +3543,19 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3537,19 +3581,19 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3564,23 +3608,23 @@ Usage: airk service requests --runtime-dir <RUNTIME_DIR> forget [OPTIONS] <NONCE
 
 Arguments:
   <NONCE>
-          
+
 
 Options:
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3598,16 +3642,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3622,13 +3666,13 @@ Usage: airk service requests --runtime-dir <RUNTIME_DIR> prepare [OPTIONS] --pro
 
 Options:
       --project <PROJECT>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --kind <KIND>
           [default: index]
@@ -3638,10 +3682,10 @@ Options:
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3656,25 +3700,25 @@ Usage: airk service requests --runtime-dir <RUNTIME_DIR> prepare-configuration [
 
 Options:
       --project <PROJECT>
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --file <FILE>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3689,23 +3733,23 @@ Usage: airk service requests --runtime-dir <RUNTIME_DIR> retry [OPTIONS] <NONCE>
 
 Arguments:
   <NONCE>
-          
+
 
 Options:
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3723,13 +3767,13 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --request-file <REQUEST_FILE>
-          
+
 
       --collection <COLLECTION>
           [default: default]
@@ -3738,10 +3782,10 @@ Options:
           Read bounded management JSON from stdin instead of a request file
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3759,19 +3803,19 @@ Options:
           [default: .]
 
       --runtime-dir <RUNTIME_DIR>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3795,19 +3839,19 @@ Options:
           [default: .]
 
       --validate-file <VALIDATE_FILE>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -3829,16 +3873,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3856,16 +3900,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3883,16 +3927,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3907,12 +3951,12 @@ Usage: airk symbol [OPTIONS] <NAME>
 
 Arguments:
   <NAME>
-          
+
 
 Options:
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
-          
+
           [possible values: true, false]
 
       --root <ROOT>
@@ -3922,22 +3966,22 @@ Options:
           Continue the same revision-bound discovery with unchanged filters
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --language <LANGUAGE>
-          
+
 
       --path-prefix <PATH_PREFIX>
           [default: ""]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -3953,7 +3997,7 @@ List, describe or call the read-only MCP tools from the terminal.
 Usage: airk tools [OPTIONS] <COMMAND>
 
 Commands:
-  list   List the same tools advertised to MCP clients; --json includes their schemas
+  list   List the 18 native prefixed tools; --json includes schemas. Unified MCP adds projects and nine Explorer Assistance tools
   help   Show a tool's description, input schema, defaults and argument template
   call   Invoke an MCP tool and print its unchanged result envelope as JSON
   shell  Open a collection-bound interactive console with help and examples
@@ -3963,16 +4007,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help (see a summary with '-h')
@@ -3987,7 +4031,7 @@ Usage: airk tools call [OPTIONS] <TOOL>
 
 Arguments:
   <TOOL>
-          
+
 
 Options:
       --args <ARGS>
@@ -4000,16 +4044,16 @@ Options:
           Read a UTF-8 JSON object from a regular file (maximum 64 KiB)
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4023,28 +4067,28 @@ Use 'airk tools help airk_search' for the JSON format. Tool errors exit nonzero.
 ## airk tools list
 
 ```text
-List the same tools advertised to MCP clients; --json includes their schemas
+List the 18 native prefixed tools; --json includes schemas. Unified MCP adds projects and nine Explorer Assistance tools
 
 Usage: airk tools list [OPTIONS]
 
 Options:
       --json
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4062,16 +4106,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4099,16 +4143,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4126,34 +4170,34 @@ Options:
           [default: .]
 
       --tokenizer <TOKENIZER>
-          
+
 
       --baseline <BASELINE>
-          
+
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --returned <RETURNED>
-          
+
 
       --generation <GENERATION>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --content-kind <CONTENT_KIND>
-          
+
 
       --record
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4171,16 +4215,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4201,16 +4245,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4225,7 +4269,7 @@ Usage: airk usage feedback [OPTIONS] --usefulness <USEFULNESS> <REQUEST_ID>
 
 Arguments:
   <REQUEST_ID>
-          
+
 
 Options:
       --root <ROOT>
@@ -4235,16 +4279,16 @@ Options:
           [possible values: useful, partly_useful, not_useful, partly-useful, not-useful]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4259,29 +4303,29 @@ Usage: airk usage import [OPTIONS] <FILE>
 
 Arguments:
   <FILE>
-          
+
 
 Options:
       --preview
-          
+
 
       --root <ROOT>
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --if-sha256 <IF_SHA256>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4299,16 +4343,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4329,7 +4373,7 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --format <FORMAT>
           [default: json]
@@ -4339,13 +4383,13 @@ Options:
           [default: default]
 
       --price-scenario <PRICE_SCENARIO>
-          
+
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help
@@ -4367,16 +4411,16 @@ Options:
           [default: .]
 
       --data-dir <DATA_DIR>
-          
+
 
       --collection <COLLECTION>
           [default: default]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
-          
+
 
       --service-project <SERVICE_PROJECT>
-          
+
 
   -h, --help
           Print help

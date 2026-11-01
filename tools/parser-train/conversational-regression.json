@@ -1,0 +1,436 @@
+[
+  {
+    "text": "I want to know about struct Owner.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the struct Owner.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the Owner struct.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about struct Owner.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about the Owner struct.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the class RillCache.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the RillCache class.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "I would like to know about enum ModeGate.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Show me the function quiet_meter.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about interface Client.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the trait EventSource.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about module net::Peer.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Give me information about method next_item.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "typed-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about Owner.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the Owner.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "I want to know about Client.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "What is RillCache?",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find QuietMeter.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Show me RillCache.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Give me information about ModeGate.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about net::Peer.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about quiet_meter.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the quiet_meter.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "plain-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about `owner`.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "quoted-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the \"owner\".",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "quoted-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "I want to know about \"quiet_meter\".",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "quoted-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Show me the struct `Owner`.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "quoted-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about \"Client\".",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "quoted-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the `net::Peer` struct.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "quoted-symbol",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "For implementation review, tell me about struct RillCache.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "role-prefix",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "While debugging, find the Owner struct.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "role-prefix",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "For my review, tell me about the class Client.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "role-prefix",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "In this project, show me the enum ModeGate.",
+    "intent": "find_definition",
+    "role": "developer",
+    "group": "role-prefix",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about retry budgets.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "I want to know about error handling.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the cancellation policy.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the worker ownership rules.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Show me request cancellation.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "I need information about source isolation.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "What is cache eviction?",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about the indexing pipeline.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the docs about semantic readiness.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Give me information about graceful shutdown.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "I would like to know about storage quota.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "For documentation review, tell me about error handling.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the code for retry admission.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about ownership.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the cancellation.",
+    "intent": "search",
+    "role": "developer",
+    "group": "topic",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me why struct Owner fails.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about struct Owner and delete it.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the Owner struct and rewrite it.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "I want to know about Owner and then run its tests.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me whether class RillCache is correct.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Explain how struct Owner works.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about retry budgets and change the defaults.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the worker ownership rules and publish them.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me what Owner does.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Generate a tutorial about Client.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find the Owner struct then execute it.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about struct Owner or class Client.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Find it for me.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  },
+  {
+    "text": "Tell me about.",
+    "intent": "unsupported",
+    "role": "developer",
+    "group": "paired-unsupported",
+    "label_provenance": "Agent-authored known conversational regression; human review pending; not a blind evaluation."
+  }
+]

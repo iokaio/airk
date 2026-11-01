@@ -61,10 +61,11 @@ impl Kernel {
                 facts: snapshot.imported_facts.clone(),
                 relationships: snapshot.imported_relationships.clone(),
             };
-            Some(
-                self.store
-                    .retain_current_resource(&analysis.canonical_bytes()?, reservation)?,
-            )
+            Some(self.store.retain_current_resource_owned(
+                writer,
+                &analysis.canonical_bytes()?,
+                reservation,
+            )?)
         } else {
             None
         };

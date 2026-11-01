@@ -45,7 +45,7 @@ async function main(){
     await fs.mkdir(path.join(profile,'User'),{recursive:true});await fs.mkdir(extensions);await fs.mkdir(workspace);
     const storage=path.join(profile,'User/globalStorage/iokaio.airk'),install=path.join(run,'native-service');
     await fs.writeFile(path.join(profile,'User/settings.json'),JSON.stringify({'airk.service.installDir':install,'airk.storage.path':path.join(run,'data'),
-        'workbench.startupEditor':'none','extensions.autoUpdate':false,'extensions.autoCheckUpdates':false,'telemetry.telemetryLevel':'off','update.mode':'none'}));
+        'workbench.startupEditor':'none','window.dialogStyle':'custom','extensions.autoUpdate':false,'extensions.autoCheckUpdates':false,'telemetry.telemetryLevel':'off','update.mode':'none'}));
     await fs.writeFile(path.join(workspace,'fixture.ts'),'export const InstallerEvidence = 42;\n');
     const canonical=await fs.realpath(workspace);
     const collection='project-'+crypto.createHash('sha256').update(process.platform==='win32'?canonical.toLowerCase():canonical).digest('hex').slice(0,24);
@@ -56,6 +56,7 @@ async function main(){
     await fs.writeFile(files[0],`[mcp_servers.${name}]\ncommand = ${JSON.stringify(legacy.command)}\nargs = ${JSON.stringify(legacy.args)}\nenabled = false\n[mcp_servers.${name}.env]\nAIRK_CLIENT = "fixture"\n`);
     await fs.writeFile(files[1],JSON.stringify({mcpServers:{[name]:legacy,other:{command:'preserve-other'}}}));
     await fs.writeFile(files[2],JSON.stringify({servers:{[name]:{...legacy,type:'stdio'},other:{command:'preserve-other'}},inputs:[]}));
+    const initialAgentFiles=await Promise.all(files.map(file=>fs.readFile(file,'utf8')));
     const editorRoot=path.dirname(editor),candidates=[editorRoot,...(await fs.readdir(editorRoot,{withFileTypes:true})).filter(value=>value.isDirectory()).map(value=>path.join(editorRoot,value.name))];
     const cliPaths=[];for(const candidate of candidates){const file=path.join(candidate,'resources/app/out/cli.js');if(await fs.access(file).then(()=>true,()=>false))cliPaths.push(file);}
     if(cliPaths.length!==1)throw new Error('Expected one installed VS Code CLI entry point.');
@@ -67,8 +68,10 @@ async function main(){
     await fs.writeFile(path.join(driver,'package.json'),JSON.stringify({name:'airk-installer-driver',publisher:'local-test',version:'0.0.1',engines:{vscode:'^1.140.0'},main:'driver.js',activationEvents:['onStartupFinished']}));
     await fs.writeFile(path.join(driver,'driver.js'),`const vscode=require('vscode'),fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict');
 exports.activate=()=>{let reloading=false;void (async()=>{
- const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);assert.ok(extension.extensionPath.startsWith(${JSON.stringify(extensions)}));
- const api=await extension.activate();let definitions=await api.getServerDefinitions();
+ const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);
+ const fixtureExtensions=${JSON.stringify(extensions)},extensionRelative=path.relative(process.platform==='win32'?path.toNamespacedPath(fixtureExtensions):fixtureExtensions,process.platform==='win32'?path.toNamespacedPath(extension.extensionPath):extension.extensionPath);assert.ok(extensionRelative&&!extensionRelative.startsWith('..')&&!path.isAbsolute(extensionRelative));
+ const api=await extension.activate();await fs.writeFile(${JSON.stringify(path.join(run,'activation-ready.json'))},'{}');
+ let definitions=await api.getServerDefinitions();await fs.writeFile(${JSON.stringify(path.join(run,'definitions-ready.json'))},'{}');
  const files=${JSON.stringify(files)},name=${JSON.stringify(name)};
  const manual=JSON.parse(await fs.readFile(files[2],'utf8')).servers;
  const definition=manual.airk??definitions[0];assert.ok(definition);
@@ -78,6 +81,7 @@ exports.activate=()=>{let reloading=false;void (async()=>{
  const {RuntimeHost}=require(path.join(extension.extensionPath,'out/serviceBootstrap.js'));
  const runtime=new RuntimeHost(extension.extensionPath,extension.packageJSON.version,{channel:'stable',installDir:${JSON.stringify(install)}});
  const installation=await runtime.discover(),binding=runtime.binding(installation.inspection,installation.installDir),client=runtime.client(binding);
+ await fs.writeFile(${JSON.stringify(path.join(run,'observed-binding.json'))},JSON.stringify({controlDir:binding.controlDir}));
  let registration;
  try{const page=await client.projects(null,null,32,false);assert.equal(page.after,null);const matches=page.projects.map(row=>row.project.registration).filter(value=>same(value.root,${JSON.stringify(canonical)})&&value.collection===${JSON.stringify(collection)});assert.equal(matches.length,1);registration=matches[0];}finally{client.dispose();}
  const spec={command:definition.command,root:registration.root,dataDir:registration.data_root,collection:registration.collection,name:'fixture',service:{installDir:binding.installDir,project:registration.binding,universal:!definition.args.includes('launch')}};
@@ -117,7 +121,9 @@ exports.activate=()=>{let reloading=false;void (async()=>{
  const observed=await diagnostics();
  for(const actual of [observed.runtime.mcp_frontend.process.version,observed.runtime.index_worker.process.version,observed.runtime.service.version])assert.equal(actual,${JSON.stringify(version)});
  assert.equal(observed.runtime.service.payload_sha256,${JSON.stringify(candidate.payload['native/runtime/airk-install.json'])});
- await fs.writeFile(${JSON.stringify(path.join(run,'result.json'))},JSON.stringify({passed:true,installed:true,version:extension.packageJSON.version,extensionPath:extension.extensionPath,files,command:definition.command,args:definition.args,controlDir:binding.controlDir,tools:probe.tools,status:probe.status,diagnostics:observed,policyPreserved:true,repairIdempotent:true,quietCompletionVerified:true,managementTabsVerified:true,installProgressVerified:await fs.access(${JSON.stringify(path.join(run,'progress-verified.json'))}).then(()=>true,()=>false)},null,2));
+ const setupDeadline=Date.now()+45000;
+ while(!await fs.access(${JSON.stringify(path.join(run,'setup-review.json'))}).then(()=>true,()=>false)){if(Date.now()>setupDeadline)throw new Error('Setup review receipt was not retained');await new Promise(resolve=>setTimeout(resolve,100));}
+ await fs.writeFile(${JSON.stringify(path.join(run,'result.json'))},JSON.stringify({passed:true,installed:true,version:extension.packageJSON.version,extensionPath:extension.extensionPath,files,command:definition.command,args:definition.args,controlDir:binding.controlDir,tools:probe.tools,status:probe.status,diagnostics:observed,policyPreserved:true,repairIdempotent:true,quietCompletionVerified:true,managementTabsVerified:true,setupReview:JSON.parse(await fs.readFile(${JSON.stringify(path.join(run,'setup-review.json'))},'utf8')),installProgressVerified:await fs.access(${JSON.stringify(path.join(run,'progress-verified.json'))}).then(()=>true,()=>false)},null,2));
  })().catch(error=>{if(reloading&&String(error)==='Canceled: Canceled')return;return fs.writeFile(${JSON.stringify(path.join(run,'error.json'))},JSON.stringify({error:String(error),stack:error.stack}));}).finally(()=>{if(!reloading)return vscode.commands.executeCommand('workbench.action.quit');});};`);
     const log=await fs.open(path.join(run,'editor.log'),'w');
     const child=spawn(editor,[workspace,'--new-window','--user-data-dir',profile,'--extensions-dir',extensions,'--shared-data-dir',path.join(run,'shared'),
@@ -131,6 +137,40 @@ exports.activate=()=>{let reloading=false;void (async()=>{
             child.on('error',error=>{clearTimeout(timer);reject(error);});child.on('exit',code=>{clearTimeout(timer);code===0?resolve():reject(new Error('Editor exited '+code));});
         });
         const notification=(async()=>{
+            // Drive the actual first-use dialog before waiting on definitions:
+            // readiness intentionally waits for the user's setup decision.
+            const onboarding=await editorUi(port);
+            try{
+                await until(async()=>{
+                    const error=await fs.readFile(path.join(run,'error.json'),'utf8').catch(()=>undefined);if(error)throw new Error(error);
+                    return fs.access(path.join(run,'activation-ready.json')).then(()=>true,()=>false);
+                },'installed extension activated',90000);
+                const review=await until(async()=>{
+                    const error=await fs.readFile(path.join(run,'error.json'),'utf8').catch(()=>undefined);if(error)throw new Error(error);
+                    const page=await onboarding.workbench(`(()=>{const dialogs=[...document.querySelectorAll('.monaco-dialog-box')].filter(node=>node.getBoundingClientRect().height);return dialogs.length===1&&dialogs[0].innerText.includes('Set up AIRK on this computer?')?dialogs[0].innerText:undefined;})()`);
+                    if(page?.value)return page;
+                    if(await fs.access(path.join(run,'definitions-ready.json')).then(()=>true,()=>false))return {ready:true};
+                },'first-use setup review or previous-version readiness',90000);
+                if(review.ready){
+                    assert.ok(previousVsix,'A fresh install must show its first-use review before becoming ready');
+                    await fs.writeFile(path.join(run,'setup-review.json'),JSON.stringify({accepted:false,previousVersionReady:true}));
+                }else{
+                    const normalize=value=>process.platform==='win32'?value.toLowerCase():value;
+                    for(const required of [`AIRK ${previousVersion||version} runtime`,path.join(run,'data'),workspace,
+                        'Indexing continues after editor windows close','Existing recognized AIRK agent entries',
+                        process.platform==='win32'?'Adds the airk command directory to the front of your user PATH.':'Adds a marked PATH block',
+                        'Hidden files can be indexed'])assert.ok(normalize(review.value).includes(normalize(required)),required);
+                    assert.equal(await fs.access(install).then(()=>true,()=>false),false,'No native installation before review');
+                    assert.equal(await fs.access(path.join(run,'data')).then(()=>true,()=>false),false,'No source index before review');
+                    assert.deepEqual(await Promise.all(files.map(file=>fs.readFile(file,'utf8'))),initialAgentFiles,'No migration before review');
+                    await fs.writeFile(path.join(run,'setup-review.txt'),review.value);
+                    const screenshot=await review.client.call('Page.captureScreenshot',{format:'png'});
+                    await fs.writeFile(path.join(run,'setup-review.png'),Buffer.from(screenshot.data,'base64'));
+                    await onboarding.confirm('Set up',[review.value]);
+                    await fs.writeFile(path.join(run,'setup-review.json'),JSON.stringify({accepted:true,version:previousVersion||version,
+                        source:workspace,storage:path.join(run,'data'),beforeReview:{nativeInstalled:false,indexCreated:false,agentFilesUnchanged:true}}));
+                }
+            }finally{onboarding.close();}
             if(previousVsix){
                 await until(()=>fs.access(path.join(run,'baseline.json')).then(()=>true,()=>false),'running baseline installation',120000);
                 const baseline=JSON.parse(await fs.readFile(path.join(run,'baseline.json'),'utf8'));
@@ -202,11 +242,16 @@ exports.activate=()=>{let reloading=false;void (async()=>{
         await log.close();
         const launcher=path.join(install,process.platform==='win32'?'airk-launcher.exe':'airk-launcher');
         try{
-            const saved=await fs.readFile(path.join(run,'result.json'),'utf8').catch(()=>fs.readFile(path.join(run,'baseline.json'),'utf8'));
-            const control=JSON.parse(saved).controlDir;assert.ok(typeof control==='string'&&path.isAbsolute(control),'No observed fixture control directory');
-            await execute(launcher,['service','shutdown','--runtime-dir',control],{windowsHide:true,env,timeout:30000});
+            const saved=await fs.readFile(path.join(run,'observed-binding.json'),'utf8').catch(()=>undefined);
+            if(saved){
+                const control=JSON.parse(saved).controlDir;assert.ok(typeof control==='string'&&path.isAbsolute(control),'No observed fixture control directory');
+                const relative=path.relative(process.platform==='win32'?path.toNamespacedPath(install):install,process.platform==='win32'?path.toNamespacedPath(control):control);
+                assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative),'Control directory must belong to the fixture install');
+                const stopped=await execute(launcher,['service','shutdown','--runtime-dir',control],{windowsHide:true,env,timeout:30000});
+                await fs.writeFile(path.join(run,'shutdown.json'),JSON.stringify({requested:true,stdout:stopped.stdout,stderr:stopped.stderr}));
+            }else await fs.writeFile(path.join(run,'shutdown.json'),JSON.stringify({requested:false,reason:'No native binding was observed; shutdown was not attempted.'}));
         }
-        catch(error){await fs.writeFile(path.join(run,'shutdown-error.json'),JSON.stringify({error:String(error)}));}
+        catch(error){await fs.writeFile(path.join(run,'shutdown-error.json'),JSON.stringify({error:String(error)}));failure??=error;}
         try{await removeFixtureTerminalPath(storage);}
         catch(error){failure??=error;}
     }

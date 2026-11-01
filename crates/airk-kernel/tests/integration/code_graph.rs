@@ -271,6 +271,8 @@ fn scip_requires_binding_and_invalidates_on_source_and_unindexed_build_changes()
             .imported_facts,
         2
     );
+    let projection_store = FileStore::new(state.path().join("collections-1.2/default"));
+    super::current_inspection::assert_import_projection_parity(&projection_store)?;
     let imported = kernel.code_facts(&fact_query(Some("run"), Some("definition")))?;
     assert!(imported.facts.iter().any(|f| {
         f.code
@@ -328,6 +330,7 @@ fn scip_requires_binding_and_invalidates_on_source_and_unindexed_build_changes()
         "unindexed build change invalidates whole provider domain"
     );
     assert!(kernel.status()?.generation > generation);
+    super::current_inspection::assert_import_projection_parity(&projection_store)?;
     assert!(
         kernel.import_scip(&index_path, &manifest_path).is_err(),
         "changed build rejected"

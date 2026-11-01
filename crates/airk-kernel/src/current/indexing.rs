@@ -178,7 +178,7 @@ impl ProgressiveBase<'_> {
         let mut next_scan_work = self.scan_work.clone();
         next_scan_work.advanced(self.processed, self.committed + self.batch.len() as u64)?;
         let mut resources = vec![
-            next_scan_work.resource_change(&self.kernel.store, &reservation)?,
+            next_scan_work.resource_change(&self.kernel.store, self.writer, &reservation)?,
             airk_store::current::resources::ResourceChange {
                 key: "analysis".into(),
                 reference: None,
@@ -187,7 +187,7 @@ impl ProgressiveBase<'_> {
         resources.push(
             selected
                 .as_ref()
-                .map(|work| work.resource_change(&self.kernel.store, &reservation))
+                .map(|work| work.resource_change(&self.kernel.store, self.writer, &reservation))
                 .transpose()?
                 .unwrap_or(airk_store::current::resources::ResourceChange {
                     key: "semantic-work".into(),
@@ -298,7 +298,7 @@ impl ProgressiveBase<'_> {
             None,
             &[self
                 .scan_work
-                .resource_change(&self.kernel.store, reservation)?],
+                .resource_change(&self.kernel.store, self.writer, reservation)?],
         )?;
         Ok(())
     }
@@ -808,7 +808,7 @@ impl Kernel {
                 .apply_with_resources(
                     &[],
                     None,
-                    &[scan_work.resource_change(&self.store, &publication)?],
+                    &[scan_work.resource_change(&self.store, &writer, &publication)?],
                 )
                 .context("publish progressive scan start")?;
             }
@@ -939,7 +939,8 @@ impl Kernel {
                 {
                     artifact.clone()
                 } else {
-                    self.store.retain_payload_encoded(
+                    self.store.retain_payload_encoded_owned(
+                        &writer,
                         artifact,
                         payload.context("fresh extraction payload missing")?,
                         profile,
@@ -1098,7 +1099,7 @@ impl Kernel {
         {
             let semantic_resource = semantic_work
                 .as_ref()
-                .map(|work| work.resource_change(&self.store, &reservation))
+                .map(|work| work.resource_change(&self.store, &writer, &reservation))
                 .transpose()?;
             let semantic = model
                 .as_ref()
@@ -1140,7 +1141,7 @@ impl Kernel {
                 }),
             ];
             if let Some(work) = &final_scan_work {
-                resources.push(work.resource_change(&self.store, &reservation)?);
+                resources.push(work.resource_change(&self.store, &writer, &reservation)?);
             }
             let result = CurrentUpdater {
                 store: &self.store,

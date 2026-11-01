@@ -156,7 +156,6 @@ fn answer_with_catalog(
             text.push('\n');
         }
         text.push_str(line);
-        result["content"] = json!(text);
         result["end_line"] = json!(end + 1);
         result["next_line"] = if end + 1 < lines.len() {
             json!(end + 2)
@@ -164,13 +163,10 @@ fn answer_with_catalog(
             Value::Null
         };
         result["truncated"] = json!(end + 1 < lines.len());
-        if serde_json::to_vec(&result)
-            .map_err(|_| "help_serialization_failed")?
-            .len()
+        if candidate_bytes(&result, &text).map_err(|_| "help_serialization_failed")?
             > args.max_bytes
         {
             text.truncate(previous);
-            result["content"] = json!(text);
             result["end_line"] = json!(end);
             result["next_line"] = json!(end + 1);
             result["truncated"] = json!(true);
@@ -181,7 +177,47 @@ fn answer_with_catalog(
     if end < args.start_line {
         return Err("help_line_exceeds_budget");
     }
+    result["content"] = Value::String(text);
     Ok(result)
+}
+
+/// Serialize the exact prospective object without cloning content or retaining wire bytes.
+fn candidate_bytes(base: &Value, content: &str) -> Result<usize, serde_json::Error> {
+    struct Candidate<'a> {
+        base: &'a Value,
+        content: &'a str,
+    }
+    impl Serialize for Candidate<'_> {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeMap;
+            let fields = self.base.as_object().expect("help reply object");
+            let mut map = serializer.serialize_map(Some(fields.len()))?;
+            for (key, value) in fields {
+                if key == "content" {
+                    map.serialize_entry(key, self.content)?;
+                } else {
+                    map.serialize_entry(key, value)?;
+                }
+            }
+            map.end()
+        }
+    }
+    struct Counter(usize);
+    impl std::io::Write for Counter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0 = self
+                .0
+                .checked_add(bytes.len())
+                .ok_or_else(|| std::io::Error::other("help size overflow"))?;
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut counter = Counter(0);
+    serde_json::to_writer(&mut counter, &Candidate { base, content })?;
+    Ok(counter.0)
 }
 
 pub fn reply(args: HelpArgs) -> CallToolResult {
@@ -218,6 +254,63 @@ mod tests {
     fn args(value: Value) -> HelpArgs {
         serde_json::from_value(value).unwrap()
     }
+    #[test]
+    fn supplied_tool_catalog_remains_request_local_and_unknown_names_still_fail() {
+        let mut supplied = crate::local::tools().remove(0);
+        supplied.name = "request_local_fixture".into();
+        supplied.description = Some("Original caller-specific description".into());
+        std::sync::Arc::make_mut(&mut supplied.input_schema)
+            .insert("fixture_root".into(), json!("fictional-root"));
+        let expected = serde_json::to_string_pretty(&supplied).unwrap();
+        let result = answer_with_catalog(
+            args(json!({"tool":"request_local_fixture","max_bytes":32768})),
+            Some(vec![supplied]),
+        )
+        .unwrap();
+        assert_eq!(result["content"], expected);
+        assert_eq!(
+            answer(args(json!({"tool":"request_local_fixture"}))).unwrap_err(),
+            "unknown_mcp_tool"
+        );
+    }
+
+    #[test]
+    fn candidate_size_matches_complete_reply_serialization_at_escape_and_digit_boundaries() {
+        let texts = [
+            "",
+            "plain",
+            r#"quotes" and slash\"#,
+            "é中😀",
+            "line\nnext\tcolumn",
+        ];
+        for end in [1usize, 9, 10, 99, 100, 999, 1000] {
+            for next in [Value::Null, json!(end + 1)] {
+                let base = json!({"content":"", "end_line":end, "next_line":next,
+                    "truncated":!next.is_null(), "title":"é中", "start_line":1,
+                    "command":null,"tool":"airk_status","topics":[{"id":"fixture"}]});
+                for text in texts {
+                    let mut actual = base.clone();
+                    actual["content"] = Value::String(text.into());
+                    assert_eq!(
+                        candidate_bytes(&base, text).unwrap(),
+                        serde_json::to_vec(&actual).unwrap().len()
+                    );
+                    assert_eq!(
+                        base["content"], "",
+                        "sizing cannot mutate the candidate template"
+                    );
+                }
+                let controls: String = (0u8..=31).map(char::from).collect();
+                let mut actual = base.clone();
+                actual["content"] = Value::String(controls.clone());
+                assert_eq!(
+                    candidate_bytes(&base, &controls).unwrap(),
+                    serde_json::to_vec(&actual).unwrap().len()
+                );
+            }
+        }
+    }
+
     #[test]
     fn every_topic_is_bounded_and_can_be_read_without_a_collection() {
         assert!(topics::TOPICS.len() >= 25);

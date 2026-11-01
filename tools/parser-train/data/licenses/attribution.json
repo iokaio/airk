@@ -1,0 +1,283 @@
+{
+  "schema": 1,
+  "sources": [
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 1092,
+          "declared_license": "MIT",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-actions--runner-110142c2c501-0.txt",
+          "sha256": "6b4b86a3bacca473f2a838371bc806da4d47654ee2a7a64412711bb33ca203c8"
+        }
+      ],
+      "repository": "actions/runner",
+      "revision": "110142c2c501c6ae9373d553efa826bedbaab5f7",
+      "url": "https://github.com/actions/runner/tree/110142c2c501c6ae9373d553efa826bedbaab5f7",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 11045,
+          "declared_license": "Apache-2.0",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-backstage--backstage-f60f04cc4e31-0.txt",
+          "sha256": "4310dfbe4acee499cd591f78974b87816958605edef21e7bf395e7fab88d62a7"
+        }
+      ],
+      "repository": "backstage/backstage",
+      "revision": "f60f04cc4e31534b18fbfed2e7e64b4e90580de9",
+      "url": "https://github.com/backstage/backstage/tree/f60f04cc4e31534b18fbfed2e7e64b4e90580de9",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 1139,
+          "declared_license": "MIT",
+          "original_path": "LICENSE.TXT",
+          "path": "tools/parser-train/data/licenses/repository-dotnet--runtime-9857961ed100-0.txt",
+          "sha256": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b"
+        }
+      ],
+      "repository": "dotnet/runtime",
+      "revision": "9857961ed10086d04cf981039d12799520577055",
+      "url": "https://github.com/dotnet/runtime/tree/9857961ed10086d04cf981039d12799520577055",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 11549,
+          "declared_license": "Apache-2.0",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-etcd-io--etcd-1573d59416ef-0.txt",
+          "sha256": "fd4337568f4759b58b38b581fe2dfe36f1404683e6e80d22141579a8c5427fbe"
+        }
+      ],
+      "repository": "etcd-io/etcd",
+      "revision": "1573d59416efa220421c451f5266b24a5d8374ef",
+      "url": "https://github.com/etcd-io/etcd/tree/1573d59416efa220421c451f5266b24a5d8374ef",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 1107,
+          "declared_license": "MIT",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-fastapi--fastapi-79cab5bed28b-0.txt",
+          "sha256": "2853a942962e3bb755239b5fecb736503be392554c1d90f97cea7f29f4465d34"
+        }
+      ],
+      "repository": "fastapi/fastapi",
+      "revision": "79cab5bed28b24d92c185d236feb33f5783dfeb3",
+      "url": "https://github.com/fastapi/fastapi/tree/79cab5bed28b24d92c185d236feb33f5783dfeb3",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 11558,
+          "declared_license": "Apache-2.0",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-kubernetes--enhancements-a904b50283fe-0.txt",
+          "sha256": "e03ba41d7fab20700769fe4118bab50d800cb74f990353a05d2f5fff1c228363"
+        }
+      ],
+      "repository": "kubernetes/enhancements",
+      "revision": "a904b50283fe82d0d4f46988d0fd9d1a35a86c25",
+      "url": "https://github.com/kubernetes/enhancements/tree/a904b50283fe82d0d4f46988d0fd9d1a35a86c25",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 11558,
+          "declared_license": "Apache-2.0",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-nats-io--nats-architecture-and-design-dc0b1c7200f0-0.txt",
+          "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+        }
+      ],
+      "repository": "nats-io/nats-architecture-and-design",
+      "revision": "dc0b1c7200f0d716fdee9de1428759594538ed7d",
+      "url": "https://github.com/nats-io/nats-architecture-and-design/tree/dc0b1c7200f0d716fdee9de1428759594538ed7d",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 11558,
+          "declared_license": "Apache-2.0",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-nats-io--nats-server-4e28758e1abb-0.txt",
+          "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+        }
+      ],
+      "repository": "nats-io/nats-server",
+      "revision": "4e28758e1abbf2968c9438f311b37c13d3c403fa",
+      "url": "https://github.com/nats-io/nats-server/tree/4e28758e1abbf2968c9438f311b37c13d3c403fa",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 11357,
+          "declared_license": "Apache-2.0",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-open-telemetry--opentelemetry-specification-36ccfcfb33ac-0.txt",
+          "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+        }
+      ],
+      "repository": "open-telemetry/opentelemetry-specification",
+      "revision": "36ccfcfb33aca1e9c70a2cfd26e031ed9180949a",
+      "url": "https://github.com/open-telemetry/opentelemetry-specification/tree/36ccfcfb33aca1e9c70a2cfd26e031ed9180949a",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 1764,
+          "declared_license": "BSD-3-Clause",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-protocolbuffers--protobuf-478ccb8c1874-0.txt",
+          "sha256": "f4df8b2457697851385d9ebb93267832c1dfa24e0e61881952f6b0c452663dc9"
+        }
+      ],
+      "repository": "protocolbuffers/protobuf",
+      "revision": "478ccb8c1874495997adefe6aca81f15546867c4",
+      "url": "https://github.com/protocolbuffers/protobuf/tree/478ccb8c1874495997adefe6aca81f15546867c4",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 9723,
+          "declared_license": "Apache-2.0",
+          "original_path": "LICENSE-APACHE",
+          "path": "tools/parser-train/data/licenses/repository-rust-lang--rust-analyzer-c59cdaa4c26f-0.txt",
+          "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+        },
+        {
+          "bytes": 1023,
+          "declared_license": "MIT",
+          "original_path": "LICENSE-MIT",
+          "path": "tools/parser-train/data/licenses/repository-rust-lang--rust-analyzer-c59cdaa4c26f-1.txt",
+          "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+        }
+      ],
+      "repository": "rust-lang/rust-analyzer",
+      "revision": "c59cdaa4c26ffe036a3403e4948f1681995d4125",
+      "url": "https://github.com/rust-lang/rust-analyzer/tree/c59cdaa4c26ffe036a3403e4948f1681995d4125",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 11560,
+          "declared_license": "Apache-2.0",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-simpleiot--simpleiot-a4c5538bc1b3-0.txt",
+          "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+        }
+      ],
+      "repository": "simpleiot/simpleiot",
+      "revision": "a4c5538bc1b3db1aad49a80911e0e7dd5061b254",
+      "url": "https://github.com/simpleiot/simpleiot/tree/a4c5538bc1b3db1aad49a80911e0e7dd5061b254",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "kind": "public-vocabulary-source",
+      "licenses": [
+        {
+          "bytes": 1091,
+          "declared_license": "MIT",
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/repository-tokio-rs--tokio-6470b5e4b8e9-0.txt",
+          "sha256": "794038fa5d69932673a14840d0ea11f754becd0ad659ea38aad94f58d0ed2f4f"
+        }
+      ],
+      "repository": "tokio-rs/tokio",
+      "revision": "6470b5e4b8e943ad014383a5bf6a93ba415678a3",
+      "url": "https://github.com/tokio-rs/tokio/tree/6470b5e4b8e943ad014383a5bf6a93ba415678a3",
+      "use": "Original templates contain extracted public identifier/path/heading vocabulary, not source file bodies."
+    },
+    {
+      "attribution": "Larson et al. (2019), An Evaluation Dataset for Intent Classification and Out-of-Scope Prediction, EMNLP-IJCNLP.",
+      "declared_license": "CC-BY-3.0",
+      "id": "clinc150",
+      "kind": "public-query-source",
+      "licenses": [
+        {
+          "bytes": 19467,
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/online-clinc150-828f8093932c-LICENSE.txt",
+          "sha256": "e6bc9e9c474700b708f568bac9e5a8a9bcb2b1dad53442f5ba449fcb848b8e76",
+          "url": "https://raw.githubusercontent.com/clinc/oos-eval/828f8093932c8fe6ca7936c3d2e52903b1c523de/LICENSE"
+        },
+        {
+          "bytes": 1227,
+          "encoding": "gzip",
+          "original_path": "README.md",
+          "path": "tools/parser-train/data/licenses/online-clinc150-828f8093932c-README-md.txt.gz",
+          "raw_bytes": 2668,
+          "raw_sha256": "8a8df26c4de3d25b6c4cff385ca23602c30e4e56828b015206cbc202f6db363a",
+          "sha256": "04cb6d564b3bafe7e25a99e1a944b69c3d4e0051bdea97d96c10b1bcaade180f",
+          "url": "https://raw.githubusercontent.com/clinc/oos-eval/828f8093932c8fe6ca7936c3d2e52903b1c523de/README.md"
+        }
+      ],
+      "repository": "clinc/oos-eval",
+      "revision": "828f8093932c8fe6ca7936c3d2e52903b1c523de",
+      "use": "AIRK-generated CodeSearchNet wrappers or CLINC requests relabeled as unsupported; original source license applies."
+    },
+    {
+      "attribution": "Husain, Wu, Gazit, Allamanis and Brockschmidt (2019), CodeSearchNet Challenge; GitHub.",
+      "declared_license": "MIT",
+      "id": "codesearchnet-queries",
+      "kind": "public-query-source",
+      "licenses": [
+        {
+          "bytes": 1063,
+          "original_path": "LICENSE",
+          "path": "tools/parser-train/data/licenses/online-codesearchnet-queries-106e827405c9-LICENSE.txt",
+          "sha256": "5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22",
+          "url": "https://raw.githubusercontent.com/github/CodeSearchNet/106e827405c968597da938f6b373d30183918869/LICENSE"
+        },
+        {
+          "bytes": 7348,
+          "encoding": "gzip",
+          "original_path": "README.md",
+          "path": "tools/parser-train/data/licenses/online-codesearchnet-queries-106e827405c9-README-md.txt.gz",
+          "raw_bytes": 20988,
+          "raw_sha256": "1d4794ab520121b37c903bfa890a7c73ad2387a2f6b57a96372f74882faca5c6",
+          "sha256": "cda0f20d536b744ef740a603401a63f886fd518afb3fb04cc90798ca1b511c30",
+          "url": "https://raw.githubusercontent.com/github/CodeSearchNet/106e827405c968597da938f6b373d30183918869/README.md"
+        }
+      ],
+      "repository": "github/CodeSearchNet",
+      "revision": "106e827405c968597da938f6b373d30183918869",
+      "use": "AIRK-generated CodeSearchNet wrappers or CLINC requests relabeled as unsupported; original source license applies."
+    },
+    {
+      "declared_license": "Apache-2.0",
+      "kind": "original-AIRK-templates",
+      "path": "tools/parser-train/data/licenses/airk-Apache-2.0.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "use": "Original templates, role inventories and generated fictional phrasing; labels remain open to human review."
+    }
+  ]
+}

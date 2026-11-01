@@ -50,13 +50,14 @@ pub fn run() -> Result<()> {
     let Some(Command::Activate {
         identity: accepted,
         pool,
+        pool_pending,
         ..
     }) = service_ipc::read_frame(&mut std::io::stdin().lock())?
     else {
         anyhow::bail!("cleanup worker was not activated")
     };
     ensure!(
-        accepted == identity && pool.is_none(),
+        accepted == identity && pool.is_none() && !pool_pending,
         "cleanup activation identity or role differs"
     );
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
@@ -70,6 +71,7 @@ pub fn run() -> Result<()> {
     let status = Arc::new(Mutex::new(protocol::WorkObservation {
         waiting_for: None,
         failure: None,
+        integrity_observation_failure: None,
         active: None,
         finished: None,
         maintenance: None,
@@ -252,6 +254,7 @@ pub fn run() -> Result<()> {
             Command::ConfigurePool {
                 identity: expected,
                 pool: None,
+                pool_pending: false,
             } if expected == identity => Reply::PoolConfigured,
             Command::Stop => break,
             _ => Reply::Failed,

@@ -17,6 +17,38 @@ pub enum RootResolution {
     Removed,
     Ambiguous,
 }
+pub(crate) struct RootObservation {
+    pub resolution: RootResolution,
+    pub fence: Option<crate::project_client::SourceFence>,
+    pub stamp: Option<airk_store::service::registry::SavedScopeStamp>,
+    pub observed_unix_ms: Option<u64>,
+    root: PathBuf,
+    collection: Option<String>,
+    captured: std::time::Instant,
+}
+impl RootObservation {
+    pub(crate) fn age_ms(&self) -> u64 {
+        std::time::Instant::now()
+            .saturating_duration_since(self.captured)
+            .as_millis()
+            .try_into()
+            .unwrap_or(u64::MAX)
+    }
+    pub(crate) fn expires_at(&self) -> std::time::Instant {
+        self.captured + std::time::Duration::from_secs(5)
+    }
+    pub(crate) fn fresh_at(&self, now: std::time::Instant) -> bool {
+        now.saturating_duration_since(self.captured) < std::time::Duration::from_secs(5)
+    }
+}
+fn scope_observed_unix_ms() -> Option<u64> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis()
+        .try_into()
+        .ok()
+}
 impl RootScope {
     pub fn new(root: &Path, collection: Option<String>) -> Result<Self> {
         if let Some(value) = &collection {
@@ -47,62 +79,186 @@ impl RootScope {
         })
     }
     pub fn resolve(&self, control: &Path) -> Result<RootResolution> {
+        Ok(self.observe(control)?.resolution)
+    }
+    pub(crate) fn observe(&self, control: &Path) -> Result<RootObservation> {
+        self.observe_uncached(control, None)
+    }
+    fn observe_uncached(
+        &self,
+        control: &Path,
+        deadline: Option<std::time::Instant>,
+    ) -> Result<RootObservation> {
+        let captured = std::time::Instant::now();
+        let observed_unix_ms = scope_observed_unix_ms();
         if !control.join("service-1.4.sqlite3").try_exists()? {
-            return Ok(RootResolution::Missing);
+            return Ok(RootObservation {
+                resolution: RootResolution::Missing,
+                fence: None,
+                stamp: None,
+                observed_unix_ms,
+                root: self.root.clone(),
+                collection: self.collection.clone(),
+                captured,
+            });
         }
-        let mut registry = airk_store::service::registry::ServiceRegistry::open_saved(control)?;
-        let mut matching = Vec::new();
-        let mut seen = 0;
-        let mut revision = None;
-        for inactive in [false, true] {
-            let mut after = None;
-            loop {
-                let page = if inactive {
-                    registry.list_inactive(after, revision, 32)?
-                } else {
-                    registry.list(after, revision, 32)?
+        #[cfg(test)]
+        record_scope_work(|work| work.saved_open_calls += 1);
+        let mut registry =
+            airk_store::service::registry::ServiceRegistry::open_saved_before(control, deadline)?;
+        self.observe_registry(&mut registry, deadline, captured, observed_unix_ms)
+    }
+    pub(crate) fn observe_cached(
+        &self,
+        control: &Path,
+        cached: Option<std::sync::Arc<RootObservation>>,
+        deadline: std::time::Instant,
+    ) -> Result<std::sync::Arc<RootObservation>> {
+        #[cfg(test)]
+        record_scope_work(|work| work.lookups += 1);
+        if std::time::Instant::now() >= deadline {
+            return Err(airk_store::service::registry::SavedScopeExpired.into());
+        }
+        let captured = std::time::Instant::now();
+        let observed_unix_ms = scope_observed_unix_ms();
+        if !control.join("service-1.4.sqlite3").try_exists()? {
+            if std::time::Instant::now() >= deadline {
+                return Err(airk_store::service::registry::SavedScopeExpired.into());
+            }
+            #[cfg(test)]
+            record_scope_work(|work| work.misses += 1);
+            return Ok(std::sync::Arc::new(RootObservation {
+                resolution: RootResolution::Missing,
+                fence: None,
+                stamp: None,
+                observed_unix_ms,
+                root: self.root.clone(),
+                collection: self.collection.clone(),
+                captured,
+            }));
+        }
+        #[cfg(test)]
+        record_scope_work(|work| work.saved_open_calls += 1);
+        let mut registry = airk_store::service::registry::ServiceRegistry::open_saved_before(
+            control,
+            Some(deadline),
+        )?;
+        #[cfg(test)]
+        record_scope_work(|work| work.stamp_calls += 1);
+        let stamp = registry.source_scope_stamp(Some(deadline))?;
+        if let Some(cached) = cached
+            && cached.root == self.root
+            && cached.collection == self.collection
+            && cached.stamp == Some(stamp)
+            && cached.fresh_at(std::time::Instant::now())
+        {
+            if std::time::Instant::now() >= deadline {
+                return Err(airk_store::service::registry::SavedScopeExpired.into());
+            }
+            #[cfg(test)]
+            record_scope_work(|work| work.hits += 1);
+            return Ok(cached); // no project row decoded; original observation age retained.
+        }
+        #[cfg(test)]
+        record_scope_work(|work| work.misses += 1);
+        Ok(std::sync::Arc::new(self.observe_registry(
+            &mut registry,
+            Some(deadline),
+            captured,
+            observed_unix_ms,
+        )?))
+    }
+    fn observe_registry(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        deadline: Option<std::time::Instant>,
+        captured: std::time::Instant,
+        observed_unix_ms: Option<u64>,
+    ) -> Result<RootObservation> {
+        #[cfg(test)]
+        record_scope_work(|work| work.full_observation_calls += 1);
+        let observed = registry.observe_source_scope_before(
+            &self.root,
+            self.collection.as_deref(),
+            deadline,
+        )?;
+        let stamp = Some(airk_store::service::registry::SavedScopeStamp {
+            namespace: observed.namespace,
+            revision: observed.revision,
+        });
+        use airk_store::service::registry::SavedScopeResolution;
+        let (resolution, fence) = match observed.resolution {
+            SavedScopeResolution::Registered(project) => {
+                let fence = crate::project_client::SourceFence {
+                    namespace: observed.namespace,
+                    revision: observed.revision,
+                    project: project.registration.binding,
+                    fencing_generation: project.fencing_generation,
                 };
-                revision = Some(page.revision);
-                for item in page.projects {
-                    seen += 1;
-                    anyhow::ensure!(
-                        seen <= 1024,
-                        "configured source lookup exceeds registry bound"
-                    );
-                    let registration = item.registration;
-                    if Path::new(&registration.root) == self.root
-                        && self
-                            .collection
-                            .as_ref()
-                            .is_none_or(|name| *name == registration.collection)
-                    {
-                        matching.push(registration);
-                    }
-                }
-                after = page.after;
-                if after.is_none() {
-                    break;
-                }
+                (
+                    RootResolution::Registered(project.registration),
+                    Some(fence),
+                )
             }
-            if !matching.is_empty() {
-                return Ok(if inactive {
-                    RootResolution::Removed
-                } else if matching.len() == 1 {
-                    RootResolution::Registered(matching.remove(0))
-                } else {
-                    RootResolution::Ambiguous
-                });
-            }
+            SavedScopeResolution::Missing => (RootResolution::Missing, None),
+            SavedScopeResolution::Removed => (RootResolution::Removed, None),
+            SavedScopeResolution::Ambiguous => (RootResolution::Ambiguous, None),
+        };
+        Ok(RootObservation {
+            resolution,
+            fence,
+            stamp,
+            observed_unix_ms,
+            root: self.root.clone(),
+            collection: self.collection.clone(),
+            captured,
+        })
+    }
+}
+
+/// Exact saved-scope metadata. Not a connection grant or execution proof.
+#[derive(serde::Serialize)]
+pub(crate) struct SourceScopeMetadata {
+    schema: u32,
+    root: PathBuf,
+    collection: Option<String>,
+    namespace: Option<airk_core::identity::Incarnation>,
+    revision: Option<u64>,
+    observed_unix_ms: Option<u64>,
+    outcome: &'static str,
+    registration: Option<ProjectRegistration>,
+    fencing_generation: Option<u64>,
+}
+impl RootScope {
+    pub(crate) fn metadata_before(
+        &self,
+        control: &Path,
+        deadline: std::time::Instant,
+    ) -> Result<SourceScopeMetadata> {
+        if std::time::Instant::now() >= deadline {
+            return Err(airk_store::service::registry::SavedScopeExpired.into());
         }
-        Ok(
-            if registry
-                .source_was_removed(self.root.to_str().context("non-UTF-8 configured source")?)?
-            {
-                RootResolution::Removed
-            } else {
-                RootResolution::Missing
-            },
-        )
+        let observed = self.observe_uncached(control, Some(deadline))?;
+        if std::time::Instant::now() >= deadline {
+            return Err(airk_store::service::registry::SavedScopeExpired.into());
+        }
+        let (outcome, registration) = match observed.resolution {
+            RootResolution::Registered(project) => ("registered", Some(project)),
+            RootResolution::Missing => ("missing", None),
+            RootResolution::Removed => ("removed", None),
+            RootResolution::Ambiguous => ("ambiguous", None),
+        };
+        Ok(SourceScopeMetadata {
+            schema: 1,
+            root: self.root.clone(),
+            collection: self.collection.clone(),
+            namespace: observed.stamp.map(|stamp| stamp.namespace),
+            revision: observed.stamp.map(|stamp| stamp.revision),
+            observed_unix_ms: observed.observed_unix_ms,
+            outcome,
+            registration,
+            fencing_generation: observed.fence.map(|fence| fence.fencing_generation),
+        })
     }
 }
 
@@ -383,6 +539,355 @@ mod tests {
                 "fixture"
             )
             .is_err()
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod root_resolution_cache_tests {
+    use super::*;
+    use airk_core::{identity::Incarnation, service::ProjectRegistration};
+    use airk_store::service::registry::ServiceRegistry;
+    use std::{
+        fs,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+    fn fixture() -> Result<(tempfile::TempDir, PathBuf, RootScope, ProjectRegistration)> {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let source = base.join("source");
+        let data = base.join("data");
+        let control = base.join("control");
+        for path in [&source, &data, &control] {
+            fs::create_dir(path)?;
+        }
+        let project = ProjectRegistration::new(
+            source.to_str().unwrap().into(),
+            data.to_str().unwrap().into(),
+            "fixture".into(),
+        )?;
+        Ok((owner, control, RootScope::new(&source, None)?, project))
+    }
+    #[test]
+    fn unchanged_authenticated_stamp_reuses_owned_scope_and_registration_invalidates_missing()
+    -> Result<()> {
+        let (_owner, control, scope, project) = fixture()?;
+        let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([71; 16]))?;
+        let first =
+            scope.observe_cached(&control, None, Instant::now() + Duration::from_secs(2))?;
+        assert!(matches!(first.resolution, RootResolution::Missing));
+        let hit = scope.observe_cached(
+            &control,
+            Some(first.clone()),
+            Instant::now() + Duration::from_secs(2),
+        )?;
+        assert!(
+            Arc::ptr_eq(&first, &hit),
+            "hit must reuse the owned observation without full row decode"
+        );
+        assert_eq!(
+            first.captured, hit.captured,
+            "stamp polling must not rejuvenate the original observation"
+        );
+        assert_eq!(first.observed_unix_ms, hit.observed_unix_ms);
+        registry.register(&project)?;
+        let registered = scope.observe_cached(
+            &control,
+            Some(first),
+            Instant::now() + Duration::from_secs(2),
+        )?;
+        assert!(matches!(
+            registered.resolution,
+            RootResolution::Registered(_)
+        ));
+        let before = registered.stamp;
+        registry.pause(project.binding, true)?;
+        let paused = scope.observe_cached(
+            &control,
+            Some(registered),
+            Instant::now() + Duration::from_secs(2),
+        )?;
+        assert_ne!(paused.stamp, before);
+        Ok(())
+    }
+    #[test]
+    fn same_revision_replacement_namespace_never_reuses_old_scope() -> Result<()> {
+        let (owner, control, scope, project) = fixture()?;
+        let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([72; 16]))?;
+        registry.register(&project)?;
+        let first =
+            scope.observe_cached(&control, None, Instant::now() + Duration::from_secs(2))?;
+        drop(registry);
+        fs::rename(&control, owner.path().join("old-control"))?;
+        fs::create_dir(&control)?;
+        let mut replacement = ServiceRegistry::open(&control, Incarnation::from_bytes([73; 16]))?;
+        replacement.register(&project)?;
+        let second = scope.observe_cached(
+            &control,
+            Some(first.clone()),
+            Instant::now() + Duration::from_secs(2),
+        )?;
+        assert_eq!(
+            first.stamp.unwrap().revision,
+            second.stamp.unwrap().revision
+        );
+        assert_ne!(
+            first.stamp.unwrap().namespace,
+            second.stamp.unwrap().namespace
+        );
+        assert!(!Arc::ptr_eq(&first, &second));
+        Ok(())
+    }
+    #[test]
+    fn cheap_stamp_is_not_a_fresh_row_audit_and_expiry_forces_validation() -> Result<()> {
+        let (_owner, control, scope, project) = fixture()?;
+        let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([74; 16]))?;
+        registry.register(&project)?;
+        let mut first =
+            scope.observe_cached(&control, None, Instant::now() + Duration::from_secs(2))?;
+        let db = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
+        db.execute(
+            "UPDATE projects SET payload=x'7b7d' WHERE binding=?1",
+            [project.binding.to_string()],
+        )?;
+        let hit = scope.observe_cached(
+            &control,
+            Some(first.clone()),
+            Instant::now() + Duration::from_secs(2),
+        )?;
+        assert!(
+            Arc::ptr_eq(&first, &hit),
+            "same stamp fast path performs no full project decode"
+        );
+        drop(hit);
+        Arc::get_mut(&mut first)
+            .context("observation unexpectedly shared")?
+            .captured = Instant::now() - Duration::from_secs(5);
+        assert!(
+            scope
+                .observe_cached(
+                    &control,
+                    Some(first),
+                    Instant::now() + Duration::from_secs(2)
+                )
+                .is_err(),
+            "expired snapshot must detect out-of-band malformed row instead of resetting its age"
+        );
+        Ok(())
+    }
+    #[test]
+    fn expired_admission_is_known_unsubmitted_and_creates_no_registry() -> Result<()> {
+        let (_owner, control, scope, _project) = fixture()?;
+        let error = scope
+            .observe_cached(&control, None, Instant::now())
+            .err()
+            .context("expired scope admitted")?;
+        assert!(
+            error
+                .downcast_ref::<airk_store::service::registry::SavedScopeExpired>()
+                .is_some()
+        );
+        assert!(fs::read_dir(control)?.next().is_none());
+        Ok(())
+    }
+    #[test]
+    fn contended_stamp_refuses_instead_of_serving_cached_scope_and_recovers() -> Result<()> {
+        let (_owner, control, scope, project) = fixture()?;
+        let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([75; 16]))?;
+        registry.register(&project)?;
+        let first =
+            scope.observe_cached(&control, None, Instant::now() + Duration::from_secs(2))?;
+        let db = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
+        db.execute_batch("BEGIN EXCLUSIVE")?;
+        let blocked = scope.observe_cached(
+            &control,
+            Some(first.clone()),
+            Instant::now() + Duration::from_millis(20),
+        );
+        db.execute_batch("ROLLBACK")?;
+        assert!(
+            blocked.is_err(),
+            "contended authentication must not substitute cached authority"
+        );
+        let recovered = scope.observe_cached(
+            &control,
+            Some(first.clone()),
+            Instant::now() + Duration::from_secs(2),
+        )?;
+        assert!(Arc::ptr_eq(&first, &recovered));
+        assert_eq!(first.captured, recovered.captured);
+        Ok(())
+    }
+}
+
+// Counts actual RootScope calls, not physical I/O or store-internal decoding.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ScopeWork {
+    lookups: usize,
+    saved_open_calls: usize,
+    stamp_calls: usize,
+    full_observation_calls: usize,
+    hits: usize,
+    misses: usize,
+}
+#[cfg(test)]
+std::thread_local! { static SCOPE_WORK:std::cell::Cell<ScopeWork> = const { std::cell::Cell::new(ScopeWork { lookups:0,saved_open_calls:0,stamp_calls:0,full_observation_calls:0,hits:0,misses:0 }) }; }
+#[cfg(test)]
+fn record_scope_work(update: impl FnOnce(&mut ScopeWork)) {
+    SCOPE_WORK.with(|cell| {
+        let mut work = cell.get();
+        update(&mut work);
+        cell.set(work);
+    });
+}
+#[cfg(test)]
+fn take_scope_work() -> ScopeWork {
+    SCOPE_WORK.with(|cell| cell.replace(ScopeWork::default()))
+}
+#[cfg(test)]
+mod actual_scope_work_tests {
+    use super::*;
+    #[test]
+    fn cached_hit_still_authenticates_one_open_and_stamp_without_full_observation() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let source = base.join("source");
+        let data = base.join("data");
+        let control = base.join("control");
+        for path in [&source, &data, &control] {
+            std::fs::create_dir(path)?;
+        }
+        let scope = RootScope::new(&source, None)?;
+        let mut registry = airk_store::service::registry::ServiceRegistry::open(
+            &control,
+            airk_core::identity::Incarnation::from_bytes([92; 16]),
+        )?;
+        let project = ProjectRegistration::new(
+            source.to_string_lossy().into_owned(),
+            data.to_string_lossy().into_owned(),
+            "work-count".into(),
+        )?;
+        registry.register(&project)?;
+        let deadline = || std::time::Instant::now() + std::time::Duration::from_secs(2);
+        take_scope_work();
+        let first = scope.observe_cached(&control, None, deadline())?;
+        let miss = take_scope_work();
+        assert_eq!(
+            miss,
+            ScopeWork {
+                lookups: 1,
+                saved_open_calls: 1,
+                stamp_calls: 1,
+                full_observation_calls: 1,
+                hits: 0,
+                misses: 1
+            }
+        );
+        let hit = scope.observe_cached(&control, Some(first.clone()), deadline())?;
+        assert!(std::sync::Arc::ptr_eq(&first, &hit));
+        let work = take_scope_work();
+        assert_eq!(
+            work,
+            ScopeWork {
+                lookups: 1,
+                saved_open_calls: 1,
+                stamp_calls: 1,
+                full_observation_calls: 0,
+                hits: 1,
+                misses: 0
+            }
+        );
+        assert_eq!(first.captured, hit.captured);
+        eprintln!("actual root miss work: {miss:?}; hit work: {work:?}");
+        registry.pause(project.binding, true)?;
+        let changed = scope.observe_cached(&control, Some(hit), deadline())?;
+        assert!(!std::sync::Arc::ptr_eq(&first, &changed));
+        assert_eq!(take_scope_work(), miss);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod exact_scope_metadata_tests {
+    use super::*;
+    use airk_core::identity::Incarnation;
+    use airk_store::service::registry::ServiceRegistry;
+    fn observe(scope: &RootScope, control: &Path) -> Result<serde_json::Value> {
+        Ok(serde_json::to_value(scope.metadata_before(
+            control,
+            std::time::Instant::now() + std::time::Duration::from_secs(2),
+        )?)?)
+    }
+    #[test]
+    fn actual_registry_scope_metadata_tracks_removed_reregistered_ambiguity_and_namespace()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let source = base.join("source");
+        let control = base.join("control");
+        let data = base.join("data");
+        for path in [&source, &control, &data] {
+            std::fs::create_dir(path)?;
+        }
+        let scope = RootScope::new(&source, None)?;
+        let absent = observe(&scope, &control)?;
+        assert_eq!(absent["outcome"], "missing");
+        assert!(absent["namespace"].is_null());
+        assert!(!control.join("service-1.4.sqlite3").exists());
+        let mut registry = ServiceRegistry::open(&control, Incarnation::from_bytes([81; 16]))?;
+        let first = ProjectRegistration::new(
+            source.to_str().unwrap().into(),
+            data.to_str().unwrap().into(),
+            "first".into(),
+        )?;
+        registry.register(&first)?;
+        let registered = observe(&scope, &control)?;
+        assert_eq!(registered["outcome"], "registered");
+        assert_eq!(registered["registration"], serde_json::to_value(&first)?);
+        assert_eq!(
+            registered["namespace"],
+            serde_json::to_value(registry.incarnation()?)?
+        );
+        assert_eq!(
+            registered["fencing_generation"],
+            registry.get(first.binding)?.fencing_generation
+        );
+        std::fs::rename(&source, base.join("offline"))?;
+        let epoch = registry.get(first.binding)?.fencing_generation;
+        assert!(registry.retire_missing_source(first.binding, epoch, 0)?);
+        assert_eq!(observe(&scope, &control)?["outcome"], "removed");
+        assert!(registry.purge_removed_project_turn(first.binding)?);
+        assert_eq!(observe(&scope, &control)?["outcome"], "removed");
+        registry.register(&first)?;
+        assert_eq!(observe(&scope, &control)?["outcome"], "registered");
+        let second =
+            ProjectRegistration::new(first.root.clone(), first.data_root.clone(), "second".into())?;
+        registry.register(&second)?;
+        assert_eq!(observe(&scope, &control)?["outcome"], "ambiguous");
+        let chosen = RootScope::new(&source, Some("second".into()))?;
+        assert_eq!(
+            observe(&chosen, &control)?["registration"],
+            serde_json::to_value(&second)?
+        );
+        let old = observe(&chosen, &control)?;
+        drop(registry);
+        std::fs::rename(&control, base.join("old-control"))?;
+        std::fs::create_dir(&control)?;
+        let mut replacement = ServiceRegistry::open(&control, Incarnation::from_bytes([82; 16]))?;
+        replacement.register(&second)?;
+        let new = observe(&chosen, &control)?;
+        assert_ne!(old["namespace"], new["namespace"]);
+        assert_eq!(new["registration"], serde_json::to_value(&second)?);
+        assert!(
+            chosen
+                .metadata_before(
+                    &control,
+                    std::time::Instant::now() - std::time::Duration::from_secs(1)
+                )
+                .is_err()
         );
         Ok(())
     }

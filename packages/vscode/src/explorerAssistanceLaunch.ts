@@ -5,7 +5,7 @@
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { writePrivate } from './explorerAssistanceHost';
+import { preparePrivateDirectory, writePrivate } from './explorerAssistanceHost';
 
 export const LAUNCH_SCHEMA = 'airk-explorer-assistance-launch/1';
 export const SERVER_FILE = path.join('out', 'explorerAssistance.js');
@@ -27,7 +27,8 @@ export function serverInvocation(extensionRoot: string, storage: string, runtime
  * Rewrite the launch descriptor atomically when anything it names changed. Called on
  * every trusted activation, so extension or editor updates take effect on the next start.
  */
-export function writeLaunchDescriptor(storage: string, extensionRoot: string, version: string, runtime = editorRuntime()): boolean {
+export async function writeLaunchDescriptor(storage: string, extensionRoot: string, version: string, runtime = editorRuntime(),valid:()=>boolean=()=>true):Promise<boolean>{
+    await preparePrivateDirectory(assistanceDirectory(storage),valid);
     const server = path.join(extensionRoot, SERVER_FILE);
     const fields = { schema: LAUNCH_SCHEMA, extension_version: version, extension_root: extensionRoot, server,
         server_sha256: createHash('sha256').update(fs.readFileSync(server)).digest('hex'), runtime: { path: runtime.path, electron: runtime.electron } };
@@ -36,6 +37,6 @@ export function writeLaunchDescriptor(storage: string, extensionRoot: string, ve
         const { written_unix_ms: _, ...existing } = JSON.parse(fs.readFileSync(file, 'utf8'));
         if (JSON.stringify(existing) === JSON.stringify(fields)) { return false; }
     } catch { /* missing or unreadable: rewrite */ }
-    writePrivate(file, JSON.stringify({ ...fields, written_unix_ms: Date.now() }));
+    await writePrivate(file,JSON.stringify({...fields,written_unix_ms:Date.now()}),valid);
     return true;
 }

@@ -13,6 +13,28 @@ use anyhow::{Context, Result, ensure};
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
+/// Proven authentication or structural failure of retained private evidence.
+/// Ordinary I/O, admission, and invalid caller arguments must not carry this marker.
+#[derive(Clone, Copy, Debug)]
+pub struct PrivateIntegrityFailure;
+impl std::fmt::Display for PrivateIntegrityFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("private retained evidence failed authentication")
+    }
+}
+impl std::error::Error for PrivateIntegrityFailure {}
+
+/// Request-snapshot expiry refuses this response without invalidating the
+/// native owner or treating a caller's elapsed deadline as retained damage.
+#[derive(Clone, Copy, Debug)]
+pub struct CurrentRequestExpired;
+impl std::fmt::Display for CurrentRequestExpired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("current request snapshot expired; repeat against the current revision")
+    }
+}
+impl std::error::Error for CurrentRequestExpired {}
+
 /// Only a read-only SQLite operation returning BUSY/LOCKED carries this marker.
 /// Corruption, expired revisions, permissions and other I/O errors never do.
 #[derive(Clone, Copy, Debug)]
@@ -38,6 +60,10 @@ fn read_error(error: anyhow::Error) -> anyhow::Error {
 pub struct CurrentRead {
     connection: Mutex<Connection>,
     head: CurrentHead,
+    query_projection_version: Option<u32>,
+    pub(crate) private_query: std::sync::OnceLock<
+        std::sync::Arc<crate::service::collection::integrity::native_owner::PrivateQueryAuthority>,
+    >,
     pub(super) lexical_path: std::path::PathBuf,
     pub(super) lexical_verified: std::sync::OnceLock<()>,
     deadline: Option<std::time::Instant>,
@@ -46,6 +72,44 @@ pub struct CurrentRead {
 }
 
 impl CurrentRead {
+    /// Ordinary public readers have no capability and remain strict. A native
+    /// owner installs the sealed capability before exposing its request reader.
+    pub fn private_query_eligible(&self) -> Result<bool> {
+        self.live()?;
+        if let Some(authority) = self.private_query.get() {
+            authority.recheck(self)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Authentication failures revoke the entire live owner before returning.
+    /// Busy, permission, quota and input errors do not fabricate damage evidence.
+    pub fn observe_private_integrity<T>(&self, result: Result<T>) -> Result<T> {
+        match result {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                if let Some(authority) = self.private_query.get()
+                    && let Err(persistence) = authority.observe_failure(self, &error)
+                {
+                    return Err(error.context(format!(
+                        "private integrity failure persistence: {persistence:#}"
+                    )));
+                }
+                Err(error)
+            }
+        }
+    }
+
+    pub(crate) fn native_directory(&self) -> &std::path::Path {
+        self.lexical_path.parent().expect("database has parent")
+    }
+
+    pub fn query_projection_version(&self) -> Result<Option<u32>> {
+        self.live()?;
+        Ok(self.query_projection_version)
+    }
     pub(super) fn reclaim_exclusive(&mut self) -> Result<bool> {
         self._gate.try_exclusive()
     }
@@ -53,6 +117,11 @@ impl CurrentRead {
     #[cfg(test)]
     pub(super) fn elapse_for_test(&mut self, elapsed: std::time::Duration) {
         self.deadline = self.deadline.map(|deadline| deadline - elapsed);
+    }
+
+    #[cfg(all(test, windows))]
+    pub(crate) fn expire_request_for_test(&mut self) {
+        self.deadline = Some(std::time::Instant::now());
     }
 
     /// Re-resolve the authenticated pointer under this read gate before loading
@@ -252,6 +321,15 @@ impl CurrentRead {
     }
     pub fn token(&self) -> Result<CurrentToken> {
         self.live()?;
+        if let Some(authority) = self.private_query.get() {
+            authority.recheck(self)?;
+        }
+        self.head.token()
+    }
+    /// Damage publication must remain possible after the relaxed capability is
+    /// revoked. This is not query authority; ordinary snapshot liveness remains.
+    pub(crate) fn integrity_observation_token(&self) -> Result<CurrentToken> {
+        self.live()?;
         self.head.token()
     }
     pub fn require_token(&self, token: &CurrentToken) -> Result<()> {
@@ -267,7 +345,7 @@ impl CurrentRead {
             .connection
             .lock()
             .map_err(|_| anyhow::anyhow!("current reader connection poisoned"))?;
-        let result = f(&connection).map_err(read_error)?;
+        let result = self.observe_private_integrity(f(&connection).map_err(read_error))?;
         self.live()?;
         Ok(result)
     }
@@ -278,11 +356,12 @@ impl CurrentRead {
                 .is_none_or(|active| active.load(std::sync::atomic::Ordering::Acquire)),
             "current build snapshot writer has been released"
         );
-        ensure!(
-            self.deadline
-                .is_none_or(|deadline| std::time::Instant::now() < deadline),
-            "current request snapshot expired; repeat against the current revision"
-        );
+        if self
+            .deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        {
+            return Err(anyhow::Error::new(CurrentRequestExpired));
+        }
         Ok(())
     }
 }
@@ -334,7 +413,8 @@ impl FileStore {
             .then(|| std::time::Instant::now() + std::time::Duration::from_secs(120));
         database::reject_legacy_collection(self.directory())?;
         self.ensure_index_ready()?;
-        let capacity = database::check_owner(self.directory(), scope)?;
+        let (capacity, query_projection_version) =
+            database::check_owner_with_projection(self.directory(), scope)?;
         let mut legacy_budget = false;
         if super::wal::enabled(self.directory()) {
             let allowance = crate::quota::Quota::for_store(self)?.verify_current_allowance(
@@ -381,6 +461,8 @@ impl FileStore {
         Ok(Arc::new(CurrentRead {
             connection: Mutex::new(connection),
             head,
+            query_projection_version,
+            private_query: std::sync::OnceLock::new(),
             lexical_path: self.directory().join("current.sqlite3"),
             lexical_verified: std::sync::OnceLock::new(),
             deadline,

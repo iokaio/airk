@@ -1978,6 +1978,55 @@ mod tests {
         );
         assert!(Cli::try_parse_from(["airk", "--service-project", "bad", "mcp"]).is_err());
     }
+
+    #[test]
+    fn exact_source_scope_options_do_not_collide_with_global_legacy_selectors() {
+        let digest = "ab".repeat(32);
+        let cli = Cli::try_parse_from([
+            "airk",
+            "--root",
+            "/legacy-root",
+            "--collection",
+            "legacy",
+            "runtime",
+            "source-scope",
+            "--install-dir",
+            "/install",
+            "--expected-control",
+            "/state/control",
+            "--expected-runtime",
+            &digest,
+            "--source-root",
+            "/actual-root",
+            "--index-collection",
+            "actual",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Runtime {
+                action:
+                    airk_cli::runtime_install::RuntimeCommand::SourceScope {
+                        source_root,
+                        index_collection,
+                        ..
+                    },
+            } => {
+                assert_eq!(source_root, PathBuf::from("/actual-root"));
+                assert_eq!(index_collection.as_deref(), Some("actual"));
+            }
+            _ => panic!("source-scope must remain a dedicated runtime command"),
+        }
+        assert!(
+            Cli::try_parse_from([
+                "airk",
+                "runtime",
+                "source-scope",
+                "--install-dir",
+                "/install"
+            ])
+            .is_err()
+        );
+    }
 }
 
 /// docs/cli-reference.md is generated from the parser, so every public command is
@@ -2015,7 +2064,13 @@ mod cli_reference_tests {
                 help.trim_end()
             ));
         }
-        text
+        // Clap emits indentation-only lines for flags without descriptions.
+        // Keep generated Markdown exact and free of trailing whitespace.
+        text.lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n"
     }
 
     #[test]

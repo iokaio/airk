@@ -281,6 +281,18 @@ fn plan(registry: &ServiceRegistry, source: &Path, destination: &Path) -> Result
         );
         source_isolation::validate(&registry.connection, &registry.root, &next, &[])?;
         replacements.insert(existing.binding.to_string(), next.binding.to_string());
+        replacements.insert(
+            format!("integrity:{}", existing.binding),
+            format!("integrity:{}", next.binding),
+        );
+        replacements.insert(
+            format!("owner_session:{}", existing.binding),
+            format!("owner_session:{}", next.binding),
+        );
+        replacements.insert(
+            format!("integrity_damage:{}", existing.binding),
+            format!("integrity_damage:{}", next.binding),
+        );
     }
     for (relative, before, after) in collection::relocation_owners(source, destination)? {
         edits.push(Edit {

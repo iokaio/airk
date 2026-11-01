@@ -87,6 +87,8 @@ export interface StatusSummary {
     readonly workPhase?: string;
     readonly workPaused?: boolean;
     readonly observedAt: number;
+    /** Independent time for retained runtime/configuration details; not scalar cache age. */
+    readonly detailsObservedAt?: number;
 }
 
 export interface ConnectionCheck {

@@ -102,6 +102,35 @@ impl Gate {
             }
         }
     }
+    pub(crate) fn shared_existing(store: &FileStore) -> Result<Self> {
+        crate::managed_collection::validate_ancestors(store.directory())?;
+        let managed = store.managed_path()?;
+        ensure!(
+            managed.namespace == "collections-1.4",
+            "existing native gate requires service layout"
+        );
+        let lifecycle = Arc::new(crate::quota::existing_service_lifecycle_lease(
+            managed.root,
+        )?);
+        let parent = if managed.slot.is_some() {
+            managed.logical
+        } else {
+            managed.logical.parent().context("gate parent missing")?
+        };
+        let locks = parent.join(".current-gates");
+        let md = fs::symlink_metadata(&locks)?;
+        ensure!(
+            md.is_dir() && !md.file_type().is_symlink(),
+            "linked current gate directory"
+        );
+        let name = managed.slot.unwrap_or(managed.collection);
+        let file = crate::service::open_existing_ownership_file(&locks, name)?;
+        acquired(file.try_lock_shared(), CurrentGateContention::Applying)?;
+        Ok(Self {
+            file,
+            _lifecycle: Some(lifecycle),
+        })
+    }
     pub(crate) fn shared(store: &FileStore) -> Result<Self> {
         let lifecycle = store.lifecycle(false)?;
         let file = open(store)?;

@@ -40,5 +40,5 @@ test-group = "storage-heavy"
 max-threads = 1
 
 [[profile.ci.overrides]]
-filter = 'package(airk-cli) & (binary(native_read_retry) | binary(legacy_native) | binary(pdf_worker) | binary(unix_guardian))'
+filter = 'package(airk-cli) & (binary(native_read_retry) | binary(legacy_native) | binary(pdf_worker) | binary(unix_guardian) | binary(native_worker_storage))'
 test-group = "native-service"

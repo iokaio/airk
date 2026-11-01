@@ -246,10 +246,28 @@ impl CapturedInput {
         Ok(bytes)
     }
     pub(super) fn verify(&self, store: &FileStore) -> Result<()> {
+        self.verify_owned(store).map(|_| ())
+    }
+    fn verify_owned(&self, store: &FileStore) -> Result<(Artifact, usize)> {
         self.bytes()?;
-        store.load_retrieval_artifact(&self.artifact)?;
-        store.read_retained_source(&self.artifact)?;
-        Ok(())
+        let artifact = store.load_projection_artifact(&self.artifact)?;
+        let profile = artifact
+            .retained
+            .as_ref()
+            .and_then(|retained| retained.profile.as_ref())
+            .context("captured profile missing")?;
+        let lines = if profile.contract_version == 2 && artifact.extraction_method == "utf8" {
+            store.verify_retained_source_utf8_lines(&self.artifact)?
+        } else {
+            store.verify_retained_source_deep(&self.artifact)?;
+            artifact
+                .chunks
+                .iter()
+                .map(|chunk| chunk.end_line)
+                .max()
+                .unwrap_or(0)
+        };
+        Ok((artifact, lines))
     }
 }
 
@@ -629,6 +647,8 @@ pub struct CurrentWriter<'a> {
     lexical_base:
         std::cell::RefCell<Option<(Sha256Digest, std::sync::Arc<super::lexical::Snapshot>)>>,
     lexical_committed: bool,
+    preparation_grant: Option<crate::quota::CurrentGrant>,
+    optional_reservations: Vec<crate::quota::Reservation>,
 }
 
 impl Drop for CurrentWriter<'_> {
@@ -680,6 +700,7 @@ impl FileStore {
         scope.validate()?;
         database::validate_capacity(database_capacity_bytes)?;
         crate::maintenance::check_writer(self, writer, quota)?;
+        writer.invalidate_census_before_mutation()?;
         ensure!(
             self.collection_id()? == scope.collection,
             "foreign current writer collection"
@@ -711,6 +732,7 @@ impl FileStore {
                 database::check_owner(self.directory(), scope)? == database_capacity_bytes,
                 "current writer capacity differs from captured owner"
             );
+            database::admit_query_projections(self.directory(), scope)?;
             let recovery = self
                 .directory()
                 .join("current.sqlite3-journal")
@@ -767,6 +789,8 @@ impl FileStore {
             _gate: gate,
             lexical_base: std::cell::RefCell::new(None),
             lexical_committed: false,
+            preparation_grant: None,
+            optional_reservations: Vec::new(),
         };
         if let Some(bootstrap) = pending_bootstrap {
             ensure!(
@@ -786,6 +810,17 @@ impl FileStore {
 impl CurrentWriter<'_> {
     pub fn database_capacity_bytes(&self) -> u64 {
         self.capacity
+    }
+
+    /// Observation of this writer's current SQL growth and recovery requirement.
+    /// This does not reserve capacity or authorize a later transaction.
+    pub fn required_publication_allowance(&mut self) -> Result<u64> {
+        database::allowance(
+            self.connection
+                .as_mut()
+                .context("current database missing")?,
+            self.capacity,
+        )
     }
 
     /// Grow the admitted SQLite limit while Ready, before preparing a transaction.
@@ -1445,6 +1480,7 @@ impl CurrentWriter<'_> {
             metadata,
             resources,
             None,
+            &[],
         )
     }
 
@@ -1459,6 +1495,30 @@ impl CurrentWriter<'_> {
         metadata: &[super::metadata::FileMetadataRef],
         resources: &[super::resources::ResourceChange],
     ) -> Result<(PendingTransaction, super::lexical::LexicalWork)> {
+        self.prepare_artifacts_with_optional_projections(
+            expected,
+            target,
+            graph_delta,
+            update,
+            model,
+            metadata,
+            resources,
+            &[],
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_artifacts_with_optional_projections(
+        &mut self,
+        expected: &CurrentToken,
+        target: CurrentHead,
+        graph_delta: &dyn PreparedGraphDelta,
+        update: ArtifactVectorChanges<'_>,
+        model: Option<ModelObjectSet>,
+        metadata: &[super::metadata::FileMetadataRef],
+        resources: &[super::resources::ResourceChange],
+        optional: &[super::native_projection::PreparedNativeProjection],
+    ) -> Result<(PendingTransaction, super::lexical::LexicalWork)> {
         let prepared = self.prepare_fts(expected, update.artifacts)?;
         let pending = self.prepare_artifacts_inner(
             expected,
@@ -1470,6 +1530,7 @@ impl CurrentWriter<'_> {
             metadata,
             resources,
             Some(&prepared.updates),
+            optional,
         )?;
         Ok((pending, prepared.work))
     }
@@ -1486,6 +1547,7 @@ impl CurrentWriter<'_> {
         metadata: &[super::metadata::FileMetadataRef],
         resources: &[super::resources::ResourceChange],
         fts_updates: Option<&fts::Updates>,
+        optional: &[super::native_projection::PreparedNativeProjection],
     ) -> Result<PendingTransaction> {
         let changes = update.artifacts;
         let vector_inputs = update.vector_inputs;
@@ -1684,13 +1746,69 @@ impl CurrentWriter<'_> {
                 occurrences,
             )?);
         }
+        // Imported accelerators select one exact authoritative component. Any
+        // source change without a new producer snapshot invalidates them.
+        ensure!(
+            !resources
+                .iter()
+                .any(|resource| resource.key == "analysis-projection"),
+            "analysis projection is owned by the current producer"
+        );
+        let analysis_change = resources.iter().find(|resource| resource.key == "analysis");
+        let mut imported = None;
+        if analysis_change.is_some() || !changes.is_empty() {
+            if plan
+                .get(map::key(
+                    &self.scope,
+                    map::MapDomain::Metadata,
+                    b"analysis-projection",
+                )?)?
+                .is_some()
+            {
+                map_changes.extend(super::resources::prepare(
+                    &self.store,
+                    &self.scope,
+                    &mut plan,
+                    &[super::resources::ResourceChange {
+                        key: "analysis-projection".into(),
+                        reference: None,
+                    }],
+                )?);
+            }
+            if let Some(analysis) = analysis_change.and_then(|change| change.reference.as_ref()) {
+                let (evidence, languages) =
+                    self.store
+                        .analysis_for_projection(&plan, &self.scope, analysis)?;
+                let mode = self.store.compression_mode(&self.scope.root)?;
+                match self
+                    .store
+                    .prepare_import_projection(&evidence, analysis, &languages, mode)
+                {
+                    Ok(prepared) => {
+                        let native_memory =
+                            optional.iter().try_fold(0usize, |sum, projection| {
+                                sum.checked_add(projection.memory_bytes())
+                                    .context("projection batch memory overflow")
+                            })?;
+                        if native_memory.saturating_add(prepared.memory_bytes())
+                            <= super::native_projection::MAX_PREPARED_NATIVE_BYTES
+                        {
+                            imported = Some((prepared, evidence, languages, analysis.clone()));
+                        }
+                    }
+                    Err(error)
+                        if error.is::<super::native_projection::ProjectionPreparationLimit>() => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
         // A replaced path may retire and reattach one exact key. Replay only
         // its final afterimage, not both intermediate map changes.
         let mut final_changes = BTreeMap::new();
         for change in map_changes {
             final_changes.insert(change.key(), change);
         }
-        let map_changes = final_changes.into_values().collect::<Vec<_>>();
+        let mut map_changes = final_changes.into_values().collect::<Vec<_>>();
         ensure!(
             map_changes
                 .windows(2)
@@ -1729,6 +1847,122 @@ impl CurrentWriter<'_> {
                     .checked_next_power_of_two()
                     .context("current capacity overflow")?,
             )?;
+        }
+        // Optional references use already admitted SQL slack. Acceleration may
+        // not force otherwise unnecessary database growth.
+        let optional_count = optional.len() + usize::from(imported.is_some());
+        let optional_growth = (optional_count as u64)
+            .checked_mul(4096 * 8)
+            .and_then(|extra| needed.checked_add(extra))
+            .context("projection map bound overflow")?;
+        if optional_count > 0 && optional_growth <= self.capacity {
+            ensure!(
+                optional.is_empty() || optional.len() == metadata.len(),
+                "optional metadata batch mismatch"
+            );
+            self.release_orphan_grants()?;
+            let allowance = self.required_publication_allowance()?;
+            self.preparation_grant = Some(self.quota.reserve_current(
+                self.writer,
+                self.grant_scope(transaction_id(
+                    expected,
+                    &target,
+                    graph_delta.descriptor(),
+                    &model,
+                )?),
+                allowance,
+            )?);
+            let mut projected = None;
+            if !optional.is_empty() {
+                let admitted = self.store.stage_optional_native_projections(
+                    self.writer,
+                    &self.quota,
+                    optional,
+                )?;
+                self.optional_reservations.extend(admitted.reservation);
+                if let Some(roots) = admitted.roots {
+                    ensure!(
+                        admitted.edge_roots.len() == roots.len()
+                            && admitted.line_roots.len() == roots.len()
+                            && admitted.text_roots.len() == roots.len(),
+                        "native edge batch mismatch"
+                    );
+                    let mut references = metadata.to_vec();
+                    for ((((reference, root), edges), lines), text) in references
+                        .iter_mut()
+                        .zip(roots)
+                        .zip(admitted.edge_roots)
+                        .zip(admitted.line_roots)
+                        .zip(admitted.text_roots)
+                    {
+                        reference.native_facts = Some(root);
+                        reference.native_edges_empty = edges.is_none();
+                        reference.native_edges = edges;
+                        reference.native_lines = lines;
+                        reference.text_ranges = text;
+                        reference.native_facts_omission = None;
+                    }
+                    projected = Some(references);
+                }
+            }
+            let mut import_root = None;
+            if let Some((prepared, evidence, languages, analysis)) = imported
+                && let Some((root, reservation)) =
+                    self.store
+                        .stage_query_projection(self.writer, &self.quota, &prepared)?
+            {
+                self.store
+                    .verify_import_projection(&root, &evidence, &analysis, &languages)?;
+                self.optional_reservations.extend(reservation);
+                import_root = Some(root);
+            }
+            if projected.is_some() || import_root.is_some() {
+                let mut plan =
+                    map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
+                for change in &map_changes {
+                    plan.put(change.key(), change.value())?;
+                }
+                let mut additions = Vec::new();
+                if let Some(projected) = projected {
+                    additions.extend(super::metadata::prepare(
+                        &self.store,
+                        &self.scope,
+                        &mut plan,
+                        changes,
+                        &projected,
+                        target.sequence,
+                    )?);
+                }
+                if let Some(reference) = import_root {
+                    additions.extend(super::resources::prepare(
+                        &self.store,
+                        &self.scope,
+                        &mut plan,
+                        &[super::resources::ResourceChange {
+                            key: "analysis-projection".into(),
+                            reference: Some(reference),
+                        }],
+                    )?);
+                }
+                target.artifact_root = plan.root()?;
+                drop(plan);
+                let mut final_changes = map_changes
+                    .into_iter()
+                    .map(|change| (change.key(), change))
+                    .collect::<BTreeMap<_, _>>();
+                for change in additions {
+                    final_changes.insert(change.key(), change);
+                }
+                map_changes = final_changes.into_values().collect();
+                let projected_bytes = map_changes.iter().try_fold(0u64, |sum, change| {
+                    sum.checked_add(change.value().map_or(0, |v| v.len()) as u64 + 128)
+                        .context("projected map bound overflow")
+                })?;
+                ensure!(
+                    projected_bytes <= map_bytes + optional_count as u64 * 4096,
+                    "projected metadata exceeds admitted map bound"
+                );
+            }
         }
         self.prepare_components(
             expected,
@@ -1924,15 +2158,22 @@ impl CurrentWriter<'_> {
         // A failed pre-Prepared SQL transaction preserves its durable allowance.
         // This writer has verified Ready with no pending journal, so retire
         // those allowances before reserving this exact transaction again.
-        self.release_orphan_grants()?;
+        if self.preparation_grant.is_none() {
+            self.release_orphan_grants()?;
+        }
         let connection = self
             .connection
             .as_mut()
             .context("current database missing")?;
         let allowance = database::allowance(connection, self.capacity)?;
-        let _grant = self
-            .quota
-            .reserve_current(self.writer, grant_scope, allowance)?;
+        let _grant = if let Some(grant) = self.preparation_grant.take() {
+            let mut grant = grant.rebind(self.writer, grant_scope)?;
+            grant.resize(self.writer, allowance)?;
+            grant
+        } else {
+            self.quota
+                .reserve_current(self.writer, grant_scope, allowance)?
+        };
         crate::capacity::require_growth(self.quota.root(), allowance)?;
         let transaction = connection.transaction()?;
         let staged_graph = graph::stage(&transaction, graph_delta, id)?;
@@ -2036,7 +2277,7 @@ impl CurrentWriter<'_> {
                 "captured input metadata binding mismatch"
             );
             digest.add(&input, &bytes)?;
-            input.verify(&self.store)?;
+            let (verified, indexed_lines) = input.verify_owned(&self.store)?;
             visitor(&input)?;
             let key = map::key(&self.scope, map::MapDomain::FileMetadata, path.as_bytes())?;
             let reference: Option<Vec<u8>> = connection.query_row(
@@ -2047,6 +2288,14 @@ impl CurrentWriter<'_> {
                 ensure!(reference.path == path, "pending metadata path mismatch");
                 let file = self.store.read_current_metadata(&reference)?;
                 super::metadata::verify(&input.artifact, &file, transaction.target.sequence)?;
+                super::metadata::verify_projected_metadata(
+                    &self.store,
+                    &reference,
+                    &file,
+                    &verified,
+                    indexed_lines,
+                    transaction.target.sequence,
+                )?;
             }
             after = path;
         }
@@ -2066,6 +2315,49 @@ impl CurrentWriter<'_> {
                 self.store
                     .read_current_resource(&super::resources::decode(&bytes)?)?;
             }
+        }
+        let mut plan =
+            map::MapPlan::new(self.connection()?, &self.scope, self.head()?.artifact_root)?;
+        let projection_key = map::key(
+            &self.scope,
+            map::MapDomain::Metadata,
+            b"analysis-projection",
+        )?;
+        let staged: Option<Option<Vec<u8>>> = self
+            .connection()?
+            .query_row(
+                "SELECT value FROM current_pending_map WHERE key=?1",
+                [projection_key.as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let projection = match staged {
+            Some(value) => value,
+            None => plan.get(projection_key)?,
+        };
+        if let Some(bytes) = projection {
+            visit_pending_map(self.connection()?, transaction, &mut |key, value| {
+                plan.put(key, value)
+            })?;
+            ensure!(
+                plan.root()? == transaction.target.artifact_root,
+                "pending projection map root mismatch"
+            );
+            let projection = super::resources::decode(&bytes)?;
+            let analysis = super::resources::decode(
+                &plan
+                    .get(map::key(
+                        &self.scope,
+                        map::MapDomain::Metadata,
+                        b"analysis",
+                    )?)?
+                    .context("projected analysis missing")?,
+            )?;
+            let (evidence, languages) =
+                self.store
+                    .analysis_for_projection(&plan, &self.scope, &analysis)?;
+            self.store
+                .verify_import_projection(&projection, &evidence, &analysis, &languages)?;
         }
         verify_model(&self.store, &transaction.model)
     }
@@ -2259,5 +2551,71 @@ impl CurrentWriter<'_> {
             released += 1;
         }
         Ok(released)
+    }
+}
+
+impl super::CurrentRead {
+    /// Authenticated journal state in THIS read snapshot, not object integrity
+    /// or a restart capability. An owner must open a fresh read while holding
+    /// the actual logical writer before using it for native-owner enrollment.
+    /// A retained pre-mutation read cannot establish current settled state.
+    pub fn settled_native_head(&self) -> Result<Option<CurrentHead>> {
+        self.with_connection(|connection| {
+            let (phase, head) = state(connection, &self.head().scope)?;
+            ensure!(head == *self.head(), "native owner read snapshot changed");
+            let pending = pending(connection, &head.scope)?;
+            if phase == TransactionPhase::Ready && pending.is_none() {
+                Ok(Some(head))
+            } else {
+                Ok(None)
+            }
+        })
+    }
+}
+
+impl FileStore {
+    /// Bounded native-owner metadata only. Caller retains actual advisory and
+    /// manifest selection exclusion; no object/source/lexical decode occurs.
+    pub(crate) fn existing_settled_head(
+        &self,
+        guard: &crate::ExistingWriterExclusion,
+    ) -> Result<CurrentHead> {
+        ensure!(
+            guard.directory == self.directory().canonicalize()?,
+            "foreign resume exclusion"
+        );
+        let scope = super::database::owned_scope(self.directory())?;
+        let capacity = super::database::check_owner(self.directory(), &scope)?;
+        let path = self.directory().join("current.sqlite3");
+        crate::managed_collection::reject_file_aliases(&path, &std::fs::symlink_metadata(&path)?)?;
+        ensure!(
+            std::fs::metadata(&path)?.len() <= capacity,
+            "current database exceeds captured capacity"
+        );
+        let mut legacy_budget = false;
+        if super::wal::enabled(self.directory()) {
+            let allowance = Quota::verify_existing_current_allowance(
+                self,
+                &crate::quota::CurrentGrantScope {
+                    collection: scope.collection.clone(),
+                    incarnation: scope.incarnation,
+                    transaction: super::wal::id(&scope),
+                },
+                super::wal::legacy_total(capacity)?,
+            )?;
+            legacy_budget = allowance < super::wal::total(capacity)?;
+            if legacy_budget {
+                super::wal::validate_legacy_files(self.directory(), capacity)?;
+            }
+        }
+        // Existing admitted WAL/SHM bookkeeping is allowed. The standard reader
+        // already enforces sidecar aliases/type/size; never use immutable mode.
+        let connection = super::database::open_reader_budget(&path, legacy_budget)?;
+        let (phase, head) = state(&connection, &scope)?;
+        ensure!(
+            phase == TransactionPhase::Ready && pending(&connection, &scope)?.is_none(),
+            "native publication requires explicit owning recovery"
+        );
+        Ok(head)
     }
 }

@@ -362,6 +362,49 @@ impl FileStore {
     ) -> Result<()> {
         sqlite::publish_catalog(&self.directory, snapshot, revision, reservation)
     }
+    /// Native direct-settings adapter: validate the actual writer before its first effect.
+    pub fn invalidate_owned_state_before_mutation(&self, writer: &WriterLock) -> Result<()> {
+        crate::current::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()
+    }
+    /// Existing persistent advisory only: no transient writer marker creation/removal.
+    pub(crate) fn existing_writer_exclusion(&self) -> Result<ExistingWriterExclusion> {
+        let managed = self.managed_path()?;
+        ensure!(
+            managed.namespace == "collections-1.4",
+            "native resume requires service layout"
+        );
+        managed_collection::validate_ancestors(&self.directory)?;
+        let lifecycle = quota::existing_service_lifecycle_lease(managed.root)?;
+        let logical = managed.logical;
+        let parent = logical
+            .parent()
+            .context("logical collection parent missing")?;
+        let locks = parent.join(".writer-locks");
+        ensure!(
+            fs::symlink_metadata(&locks)?.is_dir()
+                && !fs::symlink_metadata(&locks)?.file_type().is_symlink(),
+            "redirected writer lock directory"
+        );
+        let name = logical
+            .file_name()
+            .context("logical collection name missing")?
+            .to_str()
+            .context("non-UTF8 collection name")?;
+        let advisory = crate::service::acquire_existing_file(&locks, name)?;
+        // Healthy writers remove their transient marker. Never require it, and
+        // never repair a stale/legacy marker while observing a saved owner.
+        match fs::symlink_metadata(self.directory.join("writer.lock")) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e.into()),
+            Ok(_) => anyhow::bail!("writer marker requires explicit owning recovery"),
+        }
+        Ok(ExistingWriterExclusion {
+            _advisory: advisory,
+            _lifecycle: lifecycle,
+            directory: self.directory.canonicalize()?,
+        })
+    }
     /// OS-backed exclusivity releases after process death. Legacy lock markers
     /// still fail closed until an operator establishes that their writer exited.
     pub fn lock(&self) -> Result<WriterLock> {
@@ -440,6 +483,7 @@ impl FileStore {
         file.persist_noclobber(&path)
             .context("write collection writer marker; another writer may be active")?;
         let guard = WriterLock {
+            census_mutations: std::sync::atomic::AtomicU64::new(0),
             path,
             _file: advisory,
             _lifecycle: lifecycle,
@@ -448,6 +492,13 @@ impl FileStore {
         };
         Ok(guard)
     }
+}
+
+/// Bounded-observation exclusion, deliberately not a mutation WriterLock.
+pub(crate) struct ExistingWriterExclusion {
+    _advisory: crate::service::OwnershipFile,
+    _lifecycle: File,
+    pub(crate) directory: PathBuf,
 }
 
 impl SnapshotStore for FileStore {
@@ -489,6 +540,7 @@ impl SnapshotStore for FileStore {
 }
 
 pub struct WriterLock {
+    census_mutations: std::sync::atomic::AtomicU64,
     path: PathBuf,
     _file: File,
     _lifecycle: Option<Arc<File>>,
@@ -505,6 +557,21 @@ pub struct ObjectCaptureGuard<'a> {
 }
 
 impl WriterLock {
+    pub(crate) fn census_mutation_epoch(&self) -> u64 {
+        self.census_mutations
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+    pub(crate) fn invalidate_census_before_mutation(&self) -> Result<()> {
+        self.census_mutations
+            .fetch_update(
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+                |epoch| epoch.checked_add(1),
+            )
+            .map_err(|_| anyhow::anyhow!("census mutation generation exhausted"))?;
+        Ok(())
+    }
+
     pub fn capture_objects(&self) -> ObjectCaptureGuard<'_> {
         self.object_captures
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
@@ -754,3 +821,9 @@ impl SnapshotStore for MemoryStore {
         Ok(())
     }
 }
+
+#[allow(dead_code)] // Unwired foundation APIs; no read-cutover claim.
+mod private_storage;
+#[cfg(windows)]
+#[allow(dead_code)] // Native walker qualification is a separately scheduled gate.
+mod service_census_windows;

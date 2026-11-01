@@ -110,7 +110,7 @@ export class ServiceConsole implements vscode.Disposable {
         clearTimeout(this.timer);if(!this.observed())return;
         this.failures=this.controller.state.connected?0:Math.min(this.failures+1,5);
         this.timer=setTimeout(()=>{
-            void this.controller.refresh().finally(()=>this.schedule());
+            void this.controller.refresh(true).finally(()=>this.schedule());
         },this.failures?Math.min(30000,1000*2**this.failures):2000);
     }
     /**

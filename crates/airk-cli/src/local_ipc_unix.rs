@@ -21,6 +21,11 @@ pub fn prepare_root(root: &Path) -> Result<()> {
             .mode(0o700)
             .create(root)?;
     }
+    require_existing_root(root)
+}
+
+/// Validate existing owned runtime state without creating missing directories.
+pub(crate) fn require_existing_root(root: &Path) -> Result<()> {
     ensure!(
         !fs::symlink_metadata(root)?.file_type().is_symlink(),
         "redirected native runtime directory"

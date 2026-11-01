@@ -234,66 +234,160 @@ fn group_events(
 }
 
 impl CurrentRead {
-    pub fn recent_changes(&self, now_unix_seconds: u64) -> Result<RecentChanges> {
-        let token = self.token()?;
+    /// Admission for the complete retained recent component, independent of age.
+    /// Expired stored groups still consume bytes until publication retires them.
+    pub(crate) fn recent_audit_bytes(&self) -> Result<u64> {
         let Some(bytes) = self.map_get(map::MapDomain::RecentChanges, HEADER)? else {
-            return Ok(RecentChanges {
-                coverage: coverage(token.sequence, CoverageReason::Unsupported),
-                parents: vec![],
-                events: vec![],
-                view_digest: framed_digest(b"recent-change-view/1", &[b"absent"]),
-            });
+            return Ok(0);
         };
-        let mut value = manifest(&bytes, &self.head().scope, token.sequence)?;
-        if value.generation != token.sequence {
-            return Ok(RecentChanges {
-                coverage: coverage(token.sequence, CoverageReason::Omitted),
-                parents: vec![],
-                events: vec![],
-                view_digest: framed_digest(b"recent-change-view/1", &[&bytes, b"publication-gap"]),
-            });
-        }
-        let expired_through = value
-            .groups
-            .iter()
-            .filter(|g| now_unix_seconds.saturating_sub(g.observed_unix_seconds) >= AGE_SECONDS)
-            .map(|g| g.generation)
-            .max();
-        let mut parents = Vec::new();
-        let mut events = Vec::new();
-        let mut first = token.sequence;
-        for group in &value.groups {
-            if expired_through.is_some_and(|last| group.generation <= last) {
-                expire(
-                    &mut value.coverage,
-                    group.generation,
-                    CoverageReason::Expired,
-                );
-                continue;
-            }
-            if parents.is_empty() {
-                first = group.parent.generation;
-            }
-            parents.push(group.parent);
-            events.extend(group_events(group, &mut |key| {
-                self.map_get(map::MapDomain::RecentChanges, key)
-            })?);
-        }
-        let view_digest = framed_digest(
-            b"recent-change-view/1",
-            &[
-                &bytes,
-                &first.to_be_bytes(),
-                &serde_json::to_vec(&value.coverage)?,
-            ],
-        );
-        Ok(RecentChanges {
-            coverage: value.coverage,
-            parents,
-            events,
-            view_digest,
-        })
+        let value = manifest(&bytes, &self.head().scope, self.token()?.sequence)?;
+        Ok(bytes.len() as u64
+            + value
+                .groups
+                .iter()
+                .map(|group| group.bytes as u64)
+                .sum::<u64>())
     }
+    /// Physical maintenance covers every retained group, including groups a
+    /// selected query or wall-clock expiry would omit. Call only after admission.
+    pub(crate) fn audit_recent_changes(&self) -> Result<()> {
+        let Some(bytes) = self.map_get(map::MapDomain::RecentChanges, HEADER)? else {
+            return Ok(());
+        };
+        let value = manifest(&bytes, &self.head().scope, self.token()?.sequence)?;
+        for group in &value.groups {
+            group_events(group, &mut |key| {
+                self.map_get(map::MapDomain::RecentChanges, key)
+            })?;
+        }
+        self.token()?;
+        Ok(())
+    }
+    /// Select only groups after an actually verified baseline. The sealed owner
+    /// profile requires complete recent maintenance; header/age identity remains
+    /// complete and unchanged even when no event pages need materialization.
+    pub fn recent_changes_since(
+        &self,
+        now_unix_seconds: u64,
+        baseline: Option<RevisionToken>,
+    ) -> Result<RecentChanges> {
+        if !self.private_query_eligible()? {
+            return self.recent_changes(now_unix_seconds);
+        }
+        let token = self.token()?;
+        let current = revision(token);
+        let result = read_recent(
+            &self.head().scope,
+            token,
+            now_unix_seconds,
+            |view| {
+                baseline
+                    .filter(|baseline| *baseline != current && view.verifies(*baseline))
+                    .map(|baseline| baseline.generation)
+            },
+            &mut |key| self.map_get(map::MapDomain::RecentChanges, key),
+        );
+        let result = result.map_err(|error| {
+            if error.downcast_ref::<InvalidRecentChanges>().is_some() {
+                error.context(super::PrivateIntegrityFailure)
+            } else {
+                error
+            }
+        });
+        let view = self.observe_private_integrity(result)?;
+        self.token()?;
+        Ok(view)
+    }
+    pub fn recent_changes(&self, now_unix_seconds: u64) -> Result<RecentChanges> {
+        // Ordinary queries/diagnostics retain full unexpired-group verification.
+        // Selection is private preparation, not a caller-granted read authority.
+        read_recent(
+            &self.head().scope,
+            self.token()?,
+            now_unix_seconds,
+            |_| Some(0),
+            &mut |key| self.map_get(map::MapDomain::RecentChanges, key),
+        )
+    }
+}
+
+/// Internal preparation engine. The public reader ALWAYS selects all groups.
+/// A sealed native owner binds the exact enabled recent-component
+/// policy/maintenance contract before exposing selected materialization. This
+/// crate-internal closure is not a public bypass or a serialized capability.
+pub(super) fn read_recent(
+    scope: &CurrentScope,
+    token: CurrentToken,
+    now_unix_seconds: u64,
+    select_after: impl FnOnce(&RecentChanges) -> Option<u64>,
+    get: &mut impl FnMut(&[u8]) -> Result<Option<Vec<u8>>>,
+) -> Result<RecentChanges> {
+    let Some(bytes) = get(HEADER)? else {
+        return Ok(RecentChanges {
+            coverage: coverage(token.sequence, CoverageReason::Unsupported),
+            parents: vec![],
+            events: vec![],
+            view_digest: framed_digest(b"recent-change-view/1", &[b"absent"]),
+        });
+    };
+    let mut value = manifest(&bytes, scope, token.sequence)?;
+    if value.generation != token.sequence {
+        return Ok(RecentChanges {
+            coverage: coverage(token.sequence, CoverageReason::Omitted),
+            parents: vec![],
+            events: vec![],
+            view_digest: framed_digest(b"recent-change-view/1", &[&bytes, b"publication-gap"]),
+        });
+    }
+    let expired_through = value
+        .groups
+        .iter()
+        .filter(|g| now_unix_seconds.saturating_sub(g.observed_unix_seconds) >= AGE_SECONDS)
+        .map(|g| g.generation)
+        .max();
+    let mut parents = Vec::new();
+    let mut first = token.sequence;
+    for group in &value.groups {
+        if expired_through.is_some_and(|last| group.generation <= last) {
+            expire(
+                &mut value.coverage,
+                group.generation,
+                CoverageReason::Expired,
+            );
+            continue;
+        }
+        if parents.is_empty() {
+            first = group.parent.generation;
+        }
+        parents.push(group.parent);
+    }
+    let view_digest = framed_digest(
+        b"recent-change-view/1",
+        &[
+            &bytes,
+            &first.to_be_bytes(),
+            &serde_json::to_vec(&value.coverage)?,
+        ],
+    );
+    let mut view = RecentChanges {
+        coverage: value.coverage,
+        parents,
+        events: vec![],
+        view_digest,
+    };
+    // Header identity, full independent coverage floors and age are established
+    // BEFORE deciding whether a verified baseline needs event materialization.
+    // Never compute a selected-only view digest or cache the wall-clock result.
+    if let Some(after) = select_after(&view) {
+        for group in &value.groups {
+            if !expired_through.is_some_and(|last| group.generation <= last)
+                && group.generation > after
+            {
+                view.events.extend(group_events(group, get)?);
+            }
+        }
+    }
+    Ok(view)
 }
 
 /// All keys/values enter the same bounded journal and SQL publication as the

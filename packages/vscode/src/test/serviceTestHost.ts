@@ -7,13 +7,13 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { RuntimeHost } from '../serviceBootstrap';
+import { RuntimeHost, type RuntimeBinding } from '../serviceBootstrap';
 import { ServiceClient, ServiceError, record } from '../serviceClient';
 import { ServiceWorkspace } from '../serviceWorkspace';
 import * as native from '../native';
 import * as cliInstall from '../cliInstall';
 
-export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean;nativeExecution?:boolean;fresh?:boolean;codeFile?:boolean}={}){
+export async function serviceTestHost(test:TestContext,options:{trusted?:boolean;roots?:number;registered?:boolean;automatic?:boolean;upgrade?:boolean;assistance?:boolean;installedVersion?:string;runtimeVersion?:string;bundledVersion?:string;discoveryGate?:Promise<void>;deferStartup?:boolean;nativeExecution?:boolean;fresh?:boolean;codeFile?:boolean;nativeSourceScope?:{binding:RuntimeBinding;source:string;collection:string}}={}){
     const bundledVersion=options.bundledVersion??(options.upgrade?'1.4.1':'1.4.0');
     // The fixture must honor the production receipt guard's canonical directory
     // identity, including macOS's /var -> /private/var temporary-path alias.
@@ -23,12 +23,16 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     // Explorer Assistance listens on a real endpoint; only tests that exercise it turn it on.
     settings.set('explorer.assistance.enabled',options.assistance??false);
     const storage={keys:()=>[...values.keys()],get:<T>(key:string,fallback?:T)=>(values.has(key)?values.get(key):fallback) as T|undefined,update:async(key:string,value:unknown)=>{if(value===undefined)values.delete(key);else values.set(key,structuredClone(value));}};
-    const install=path.join(root,'installation'),control=path.join(install,'control'),data=path.join(root,'data');await fs.mkdir(data);
-    const binding={installDir:install,controlDir:control,executable:path.join(install,'main'),launcher:path.join(install,'airk-launcher'),
+    const install=options.nativeSourceScope?.binding.installDir??path.join(root,'installation'),control=options.nativeSourceScope?.binding.controlDir??path.join(install,'control'),data=path.join(root,'data');await fs.mkdir(data);
+    const candidateBinding=options.nativeSourceScope?.binding??{installDir:install,controlDir:control,executable:path.join(install,'main'),launcher:path.join(install,'airk-launcher'),
         runtimeSha256:'ab'.repeat(32),version:options.runtimeVersion??'1.4.0',lifecycle:'on-demand' as const,verificationBasis:'trusted_distribution'};
+    assert.ok(candidateBinding.launcher,'service fixture requires its installed stable launcher');
+    const binding={...candidateBinding,launcher:candidateBinding.launcher};
     const registrations=new Map<string,any>(),inactiveRegistrations=new Map<string,any>(),jobs=new Map<string,any>(),plans=new Map<string,any>();
     const folders:any[]=[];for(let i=0;i<(options.roots??1);i++){
-        const source=path.join(root,`source-${i}`);await fs.mkdir(source);folders.push({name:`Source ${i}`,uri:{scheme:'file',fsPath:await fs.realpath(source)}});
+        const external=i===0?options.nativeSourceScope:undefined;
+        const source=external?.source??path.join(root,`source-${i}`);if(!external)await fs.mkdir(source);
+        folders.push({name:external?.collection??`Source ${i}`,uri:{scheme:'file',fsPath:await fs.realpath(source)}});
     }
     settings.set('service.installDir',install);settings.set('storage.path',data);
     settings.set('cli.autoInstall',options.automatic??false);
@@ -114,10 +118,25 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         // A fresh machine has no installed runtime until the first ensure.
         const fresh=options.fresh&&state.ensured===0;
         return {bundle:{main:path.join(root,'bundle-main'),helper:path.join(root,'bundle-helper'),source:root,digest:binding.runtimeSha256,version:bundledVersion,platform:'fixture'},
-            installDir:install,installed:!fresh,location:{user_paths:{data,launcher:path.join(root,'launcher'),state:path.join(root,'native-state')}},inspection:fresh?undefined:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:'trusted_distribution'},
+            installDir:install,installed:!fresh,location:{user_paths:{data,launcher:path.join(root,'launcher'),state:path.join(root,'native-state')}},inspection:fresh?undefined:{selection:{active:binding.runtimeSha256},approval:{manifest_sha256:binding.runtimeSha256,version:binding.version,verification_basis:binding.verificationBasis},
             executable:binding.executable,launcher:binding.launcher,control_dir:control,registry_namespace:'34'.repeat(16),lifecycle:{explicitly_stopped:state.stopped}}};
     });
     test.mock.method(RuntimeHost.prototype,'ensure',async(explicit?:boolean)=>{state.ensured++;assert.notEqual(explicit,true);if(state.stopped)throw new ServiceError('service_explicitly_stopped');if(state.down)throw new ServiceError('service_unavailable');if(binding.version!==bundledVersion)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');return binding;});
+    // This fixture owns native discovery at its existing boundary. Exact-scope
+    // responses still pass the production parser and private provenance brand.
+    test.mock.method(RuntimeHost.prototype,'discoverForConnection',function(this:RuntimeHost){return this.discover();});
+    // Real-source qualification leaves invoke/NativeRunner entirely production.
+    if(!options.nativeSourceScope)test.mock.method(RuntimeHost.prototype as any,'invoke',async(_command:string,args:string[])=>{
+        assert.deepEqual(args.slice(0,2),['runtime','source-scope']);
+        const source=args[args.indexOf('--source-root')+1];
+        const collection=args.includes('--index-collection')?args[args.indexOf('--index-collection')+1]:null;
+        const matches=[...registrations.values()].filter(row=>row.root===source&&(collection===null||row.collection===collection));
+        const removed=[...inactiveRegistrations.values()].some(row=>row.root===source&&(collection===null||row.collection===collection));
+        const outcome=matches.length>1?'ambiguous':matches.length===1?'registered':removed?'removed':'missing';
+        return {install_dir:binding.installDir,control_dir:binding.controlDir,runtime_sha256:binding.runtimeSha256,
+            scope:{schema:1,root:source,collection,namespace:'34'.repeat(16),revision:1,observed_unix_ms:1,outcome,
+                registration:outcome==='registered'?matches[0]:null,fencing_generation:outcome==='registered'?1:null}};
+    });
     test.mock.method(RuntimeHost.prototype,'client',()=>new ServiceClient(transport));
     test.mock.method(RuntimeHost.prototype,'retirePrevious',async()=>{calls.push('previous-runtime-retired');});
     test.mock.method(RuntimeHost.prototype,'reviewTransition',async(current:typeof binding,action:'upgrade'|'rollback'|'resume')=>{

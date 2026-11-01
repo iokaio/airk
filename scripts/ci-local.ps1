@@ -18,7 +18,8 @@ param(
     [ValidateRange(1, 100)][int]$Repeat = 5,
     [ValidateSet('smoke', 'clients', 'install')][string[]]$Suites = @('smoke', 'clients', 'install'),
     [ValidateRange(0, 64)][int]$Load = 0,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string]$RuntimeDir
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -or [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64') {
@@ -28,6 +29,10 @@ if ($Cores -gt [Environment]::ProcessorCount) { throw "Only $([Environment]::Pro
 $airkRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $airkTarget = 'x86_64-pc-windows-msvc'
 $airkRuntime = Join-Path $airkRoot "artifacts/runtime/$airkTarget"
+if ($RuntimeDir) {
+    if (-not $SkipBuild) { throw '-RuntimeDir requires -SkipBuild; stage a fresh approved pair before selecting it.' }
+    $airkRuntime = [IO.Path]::GetFullPath($RuntimeDir, $airkRoot)
+}
 $airkRun = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8)
 $airkOutput = Join-Path $airkRoot "artifacts/ci-local/$airkRun"
 New-Item -ItemType Directory -Path $airkOutput | Out-Null

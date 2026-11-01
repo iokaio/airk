@@ -32,6 +32,13 @@ struct DurableRecord {
     version: u32,
     scope: CurrentGrantScope,
     bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    allocation: Option<CurrentGrantScope>,
+}
+impl DurableRecord {
+    fn filename(&self) -> String {
+        self.allocation.as_ref().unwrap_or(&self.scope).filename()
+    }
 }
 
 /// Dropping a handle intentionally preserves its allowance. Only the owning
@@ -78,9 +85,43 @@ impl CurrentGrant {
         let _lock = self.quota.lock()?;
         self.require_current()?;
         let directory = self.quota.control_path().join("current-grants");
-        fs::remove_file(directory.join(self.record.scope.filename()))?;
+        fs::remove_file(directory.join(self.record.filename()))?;
         crate::maintenance::sync_parent(&directory)?;
         Ok(())
+    }
+
+    /// Atomically bind an admitted preparation allocation to its exact final
+    /// transaction. Its physical allocation name remains stable for recovery;
+    /// no release gap or duplicate reserved capacity is introduced.
+    pub(crate) fn rebind(
+        mut self,
+        writer: &crate::WriterLock,
+        scope: CurrentGrantScope,
+    ) -> Result<Self> {
+        validate_writer(&self.quota, writer, &scope.collection)?;
+        ensure!(
+            scope.collection == self.record.scope.collection
+                && scope.incarnation == self.record.scope.incarnation,
+            "current grant scope changed"
+        );
+        if scope == self.record.scope {
+            return Ok(self);
+        }
+        let _lock = self.quota.lock()?;
+        self.require_current()?;
+        ensure!(
+            !read_records(&self.quota, false, None)?
+                .iter()
+                .any(|record| record.scope == scope),
+            "replacement current grant exists"
+        );
+        let mut next = self.record.clone();
+        next.version = 2;
+        next.allocation.get_or_insert_with(|| next.scope.clone());
+        next.scope = scope;
+        persist(&self.quota, &next, false)?;
+        self.record = next;
+        Ok(self)
     }
 
     fn require_current(&self) -> Result<()> {
@@ -88,7 +129,7 @@ impl CurrentGrant {
             .quota
             .control_path()
             .join("current-grants")
-            .join(self.record.scope.filename());
+            .join(self.record.filename());
         let current = read_record(&path)?;
         ensure!(
             current == self.record,
@@ -99,6 +140,36 @@ impl CurrentGrant {
 }
 
 impl Quota {
+    /// Same durable allowance validation as ordinary CurrentRead, without
+    /// creating/repairing quota ownership files or sweeping policy state.
+    pub(crate) fn verify_existing_current_allowance(
+        store: &crate::FileStore,
+        scope: &CurrentGrantScope,
+        minimum: u64,
+    ) -> Result<u64> {
+        let managed = store.managed_path()?;
+        ensure!(
+            managed.namespace == "collections-1.4",
+            "existing WAL allowance requires service namespace"
+        );
+        ensure_current_root(managed.root)?;
+        let quota = Self {
+            root: managed.root.canonicalize()?,
+            namespace: Namespace::Service,
+        };
+        let _lifecycle = super::existing_service_lifecycle_lease(&quota.root)?;
+        let control = quota.control_path();
+        ensure!(control.is_dir(), "existing quota control directory missing");
+        unlinked(&control)?;
+        let _ledger = crate::service::acquire_existing_file(&control, "ledger.lock")?;
+        let record = read_record(&control.join("current-grants").join(scope.filename()))?;
+        ensure!(
+            record.scope == *scope && record.bytes >= minimum,
+            "missing or insufficient service WAL recovery allowance"
+        );
+        Ok(record.bytes)
+    }
+
     pub(crate) fn verify_current_allowance(
         &self,
         scope: &CurrentGrantScope,
@@ -141,6 +212,7 @@ impl Quota {
             version: 1,
             scope,
             bytes,
+            allocation: None,
         };
         persist(self, &record, true)?;
         Ok(CurrentGrant {
@@ -160,10 +232,32 @@ impl Quota {
             .control_path()
             .join("current-grants")
             .join(scope.filename());
-        if !path.try_exists()? {
-            return Ok(None);
-        }
-        let record = read_record(&path)?;
+        let record = if path.try_exists()? {
+            let record = read_record(&path)?;
+            if &record.scope == scope {
+                Some(record)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let record = match record {
+            Some(record) => record,
+            None => {
+                let mut matching = read_records(self, false, None)?
+                    .into_iter()
+                    .filter(|record| &record.scope == scope);
+                let Some(record) = matching.next() else {
+                    return Ok(None);
+                };
+                ensure!(
+                    matching.next().is_none(),
+                    "duplicate current quota grant scope"
+                );
+                record
+            }
+        };
         ensure!(&record.scope == scope, "current quota grant scope mismatch");
         Ok(Some(CurrentGrant {
             quota: self.clone(),
@@ -259,10 +353,17 @@ fn read_record(path: &Path) -> Result<DurableRecord> {
     let record: DurableRecord = json_read(path, RECORD_MAX)?;
     crate::validate_collection(&record.scope.collection)?;
     ensure!(
-        record.version == 1
+        ((record.version == 1 && record.allocation.is_none())
+            || (record.version == 2
+                && record
+                    .allocation
+                    .as_ref()
+                    .is_some_and(
+                        |allocation| allocation.collection == record.scope.collection
+                            && allocation.incarnation == record.scope.incarnation
+                    )))
             && record.bytes > 0
-            && path.file_name().and_then(|name| name.to_str())
-                == Some(record.scope.filename().as_str()),
+            && path.file_name().and_then(|name| name.to_str()) == Some(record.filename().as_str()),
         "invalid durable current quota grant"
     );
     Ok(record)
@@ -338,7 +439,7 @@ fn persist(quota: &Quota, record: &DurableRecord, create: bool) -> Result<()> {
     fs::create_dir_all(&directory)?;
     unlinked(&directory)?;
     crate::maintenance::sync_parent(&quota.control_path())?;
-    let path = directory.join(record.scope.filename());
+    let path = directory.join(record.filename());
     if create {
         ensure!(!path.try_exists()?, "current quota grant already exists");
     } else {
@@ -370,6 +471,29 @@ mod tests {
             incarnation: Incarnation::from_bytes([1; 16]),
             transaction: Sha256Digest::from_bytes([2; 32]),
         }
+    }
+
+    #[test]
+    fn preparation_rebind_preserves_accounting_and_exact_recovery_identity() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let quota = Quota::open(root.path())?;
+        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
+        let writer = store.lock()?;
+        let original = scope();
+        let grant = quota.reserve_current(&writer, original.clone(), 65536)?;
+        let mut final_scope = original.clone();
+        final_scope.transaction = Sha256Digest::from_bytes([7; 32]);
+        let grant = grant.rebind(&writer, final_scope.clone())?;
+        assert_eq!(quota.status()?.reserved_bytes, 65536);
+        assert!(quota.current_grant(&writer, &original)?.is_none());
+        drop(grant);
+        let grant = quota
+            .current_grant(&writer, &final_scope)?
+            .context("durable rebind missing")?;
+        assert_eq!(grant.capacity(), 65536);
+        grant.release(&writer)?;
+        assert_eq!(quota.status()?.reserved_bytes, 0);
+        Ok(())
     }
 
     #[test]
@@ -456,25 +580,35 @@ mod tests {
 
     #[test]
     fn process_exit_retains_grant_until_the_collection_writer_retires_it() -> Result<()> {
-        let root = tempfile::tempdir()?;
-        let status = std::process::Command::new(std::env::current_exe()?)
-            .args([
-                "--exact",
-                "quota::current::tests::durable_grant_child",
-                "--nocapture",
-            ])
-            .env("AIRK_CURRENT_GRANT_TEST_ROOT", root.path())
-            .status()?;
-        ensure!(status.success(), "grant child failed");
-        let quota = Quota::open(root.path())?;
-        assert_eq!(quota.status()?.reserved_bytes, 64 * 1024);
-        let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
-        let writer = store.lock()?;
-        quota
-            .current_grant(&writer, &scope())?
-            .context("lost crash recovery allowance")?
-            .release(&writer)?;
-        assert_eq!(quota.status()?.reserved_bytes, 0);
+        for rebound in [false, true] {
+            let root = tempfile::tempdir()?;
+            let status = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "quota::current::tests::durable_grant_child",
+                    "--nocapture",
+                ])
+                .env("AIRK_CURRENT_GRANT_TEST_ROOT", root.path())
+                .env(
+                    "AIRK_CURRENT_GRANT_TEST_REBIND",
+                    if rebound { "1" } else { "0" },
+                )
+                .status()?;
+            ensure!(status.success(), "grant child failed");
+            let quota = Quota::open(root.path())?;
+            assert_eq!(quota.status()?.reserved_bytes, 64 * 1024);
+            let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
+            let writer = store.lock()?;
+            let mut expected = scope();
+            if rebound {
+                expected.transaction = Sha256Digest::from_bytes([7; 32]);
+            }
+            quota
+                .current_grant(&writer, &expected)?
+                .context("lost crash recovery allowance")?
+                .release(&writer)?;
+            assert_eq!(quota.status()?.reserved_bytes, 0);
+        }
         Ok(())
     }
 
@@ -486,7 +620,14 @@ mod tests {
         let quota = Quota::open(Path::new(&root))?;
         let store = FileStore::new(quota.root.join("collections-1.2/fixture"));
         let writer = store.lock()?;
-        let _grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
+        let grant = quota.reserve_current(&writer, scope(), 64 * 1024)?;
+        let _grant = if std::env::var("AIRK_CURRENT_GRANT_TEST_REBIND").as_deref() == Ok("1") {
+            let mut target = scope();
+            target.transaction = Sha256Digest::from_bytes([7; 32]);
+            grant.rebind(&writer, target)?
+        } else {
+            grant
+        };
         std::process::exit(0);
     }
 }

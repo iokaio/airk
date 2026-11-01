@@ -10,7 +10,7 @@ use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Condvar, Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -91,8 +91,20 @@ async fn exchange(
     );
     Ok(result.response)
 }
+fn admission_remaining(deadline: Instant) -> Result<Duration> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .context("embedding admission deadline expired before inference submission")
+        .map_err(|error| error.context(HelperUnavailable))
+}
 impl Client {
+    #[cfg(test)]
     fn new(access: protocol::Access) -> Result<Self> {
+        Self::new_before(access, Instant::now() + Duration::from_secs(10))
+    }
+    fn new_before(access: protocol::Access, deadline: Instant) -> Result<Self> {
+        admission_remaining(deadline)?;
         ensure!(
             access.role == protocol::role(access.grant.pool),
             "invalid embedding pool role"
@@ -108,9 +120,9 @@ impl Client {
                 let runtime=tokio::runtime::Builder::new_current_thread().enable_all().build()?;
                 runtime.block_on(async {
                     let address=local_ipc::endpoint(&access.runtime,&access.role)?;
-                    let mut stream=tokio::time::timeout(Duration::from_secs(5),local_ipc::connect(&address)).await??;
-                    local_ipc::write_message(&mut stream,&access.grant,Duration::from_secs(5)).await?;
-                    let observation:protocol::Observation=local_ipc::read_message(&mut stream,Duration::from_secs(5)).await?.context("embedding pool rejected capability")?;
+                    let mut stream=tokio::time::timeout(admission_remaining(deadline)?.min(Duration::from_secs(5)),local_ipc::connect(&address)).await??;
+                    local_ipc::write_message(&mut stream,&access.grant,admission_remaining(deadline)?.min(Duration::from_secs(5))).await?;
+                    let observation:protocol::Observation=local_ipc::read_message(&mut stream,admission_remaining(deadline)?.min(Duration::from_secs(5))).await?.context("embedding pool rejected capability")?;
                     ensure!(matches!(observation,protocol::Observation::Ready{pool,role} if pool==access.grant.pool&&role==access.role),"embedding pool identity mismatch");
                     let _=ready.send(Ok(()));
                     while let Ok(work)=receiver.recv() {
@@ -133,7 +145,7 @@ impl Client {
             exchange_failed.store(true,Ordering::Release);
         })?;
         initialized
-            .recv_timeout(Duration::from_secs(10))
+            .recv_timeout(admission_remaining(deadline)?)
             .map_err(|_| HelperUnavailable)??;
         Ok(Self {
             sender,
@@ -248,12 +260,17 @@ struct HubState {
     attempts: u32,
     retry_at: Instant,
     generation: u64,
+    pending: bool,
+    closed: bool,
+    connecting: bool,
 }
 struct Hub {
     runtime: PathBuf,
     identity: airk_core::service::WorkerIdentity,
     state: Mutex<HubState>,
-    connecting: Mutex<()>,
+    changed: Condvar,
+    #[cfg(test)]
+    waiting: Mutex<Option<mpsc::Sender<()>>>,
 }
 impl Hub {
     fn new(runtime: &Path, identity: airk_core::service::WorkerIdentity) -> Result<Self> {
@@ -266,11 +283,23 @@ impl Hub {
                 attempts: 0,
                 retry_at: Instant::now(),
                 generation: 0,
+                pending: false,
+                closed: false,
+                connecting: false,
             }),
-            connecting: Mutex::new(()),
+            changed: Condvar::new(),
+            #[cfg(test)]
+            waiting: Mutex::new(None),
         })
     }
     fn update(&self, access: Option<protocol::Access>) -> Result<()> {
+        self.update_pending(access, false)
+    }
+    fn update_pending(&self, access: Option<protocol::Access>, pending: bool) -> Result<()> {
+        ensure!(
+            !(pending && access.is_some()),
+            "ready helper cannot also be pending"
+        );
         if let Some(access) = &access {
             access.grant.project.validate()?;
             ensure!(
@@ -286,6 +315,7 @@ impl Hub {
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
+        ensure!(!state.closed, "embedding authority owner closed");
         // A duplicate control acknowledgment must not reset a failed connection's retry budget.
         let unchanged = match (&state.access, &access) {
             (Some(old), Some(new)) => {
@@ -294,52 +324,105 @@ impl Hub {
             (None, None) => true,
             _ => false,
         };
-        if !unchanged {
+        if !unchanged || state.pending != pending {
             state.generation = state
                 .generation
                 .checked_add(1)
                 .context("pool authority generation exhausted")?;
             state.access = access;
+            state.pending = pending;
             state.client = None;
             state.attempts = 0;
             state.retry_at = Instant::now();
         }
+        self.changed.notify_all();
         Ok(())
     }
+    fn close(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.closed = true;
+        state.pending = false;
+        state.access = None;
+        state.client = None;
+        state.generation = state.generation.saturating_add(1);
+        self.changed.notify_all();
+    }
     fn client(&self) -> Result<Arc<Client>> {
+        self.client_before(Instant::now() + Duration::from_secs(10))
+    }
+    fn client_before(&self, deadline: Instant) -> Result<Arc<Client>> {
         let (access, generation) = {
             let mut state = self
                 .state
                 .lock()
                 .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
-            if let Some(client) = &state.client
-                && !client.failed.load(Ordering::Acquire)
-            {
-                return Ok(client.clone());
+            loop {
+                admission_remaining(deadline)?;
+                if state.closed {
+                    return Err(anyhow::anyhow!("embedding authority owner closed")
+                        .context(HelperUnavailable));
+                }
+                if let Some(client) = &state.client
+                    && !client.failed.load(Ordering::Acquire)
+                {
+                    return Ok(client.clone());
+                }
+                if state.access.is_none() && !state.pending {
+                    return Err(
+                        anyhow::anyhow!("embedding authority unavailable or revoked")
+                            .context(HelperUnavailable),
+                    );
+                }
+                if state.access.is_some() && !state.connecting {
+                    break;
+                }
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err(anyhow::anyhow!(
+                        "embedding authority admission deadline expired; no inference submitted"
+                    )
+                    .context(HelperUnavailable));
+                }
+                #[cfg(test)]
+                if let Some(waiting) = self.waiting.lock().unwrap().as_ref() {
+                    let _ = waiting.send(());
+                }
+                let (next, _) = self
+                    .changed
+                    .wait_timeout(state, deadline.saturating_duration_since(now))
+                    .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
+                state = next;
             }
-            let access = state.access.clone().ok_or(HelperUnavailable)?;
             ensure!(
                 state.attempts < 3 && Instant::now() >= state.retry_at,
                 HelperUnavailable
             );
-            // Only one inference caller establishes a connection. Authority updates remain independent.
-            let guard = self
-                .connecting
-                .try_lock()
-                .map_err(|_| anyhow::anyhow!("embedding reconnect busy"))?;
+            state.connecting = true;
             state.attempts += 1;
             state.retry_at = Instant::now() + Duration::from_secs(1 << state.attempts);
-            (access, (state.generation, guard))
+            (
+                state
+                    .access
+                    .clone()
+                    .context("ready helper authority missing")?,
+                state.generation,
+            )
         };
-        let client = Arc::new(Client::new(access)?);
+        // Handshake is outside the authority mutex. Updates/close wake pending
+        // callers and fence this result; no request is replayed here.
+        let connected = Client::new_before(access, deadline).map(Arc::new);
         let mut state = self
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("pool authority unavailable"))?;
+        state.connecting = false;
+        self.changed.notify_all();
         ensure!(
-            state.generation == generation.0,
+            !state.closed && state.generation == generation,
             "embedding authority changed during connection"
         );
+        let client = connected?;
+        admission_remaining(deadline)?;
         state.client = Some(client.clone());
         Ok(client)
     }
@@ -411,9 +494,10 @@ pub fn install(
     runtime: &Path,
     identity: airk_core::service::WorkerIdentity,
     access: Option<protocol::Access>,
+    pending: bool,
 ) -> Result<()> {
     let hub = Arc::new(Hub::new(runtime, identity)?);
-    hub.update(access)?;
+    hub.update_pending(access, pending)?;
     ensure!(
         HUB.set(hub.clone()).is_ok(),
         "pool connector already installed"
@@ -426,9 +510,55 @@ pub fn update(access: Option<protocol::Access>) -> Result<()> {
         .update(access)
 }
 
+pub fn update_pending(access: Option<protocol::Access>, pending: bool) -> Result<()> {
+    HUB.get()
+        .context("pool connector not installed")?
+        .update_pending(access, pending)
+}
+pub fn close() {
+    if let Some(hub) = HUB.get() {
+        hub.close();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn frame_deadlines_keep_helper_kind_and_protocol_errors_stay_permanent() -> Result<()> {
+        use tokio::io::AsyncWriteExt;
+
+        let (_sender, mut receiver) = tokio::io::duplex(32);
+        let error = local_ipc::read_message::<_, serde_json::Value>(&mut receiver, Duration::ZERO)
+            .await
+            .expect_err("silent peer must expire");
+        assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+        let error = transient_helper_error(error);
+        assert!(error.is::<HelperUnavailable>(), "{error:#}");
+        assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+
+        let (mut sender, _receiver) = tokio::io::duplex(1);
+        let error = local_ipc::write_message(&mut sender, &vec![1u8; 32], Duration::ZERO)
+            .await
+            .expect_err("undrained peer must expire");
+        assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+        let error = transient_helper_error(error);
+        assert!(error.is::<HelperUnavailable>(), "{error:#}");
+        assert!(error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+
+        let (mut sender, mut receiver) = tokio::io::duplex(8);
+        sender.write_all(&0u32.to_be_bytes()).await?;
+        let error =
+            local_ipc::read_message::<_, serde_json::Value>(&mut receiver, Duration::from_secs(1))
+                .await
+                .expect_err("invalid frame must be refused");
+        let error = transient_helper_error(error);
+        assert!(!error.is::<HelperUnavailable>(), "{error:#}");
+        assert!(!error.is::<tokio::time::error::Elapsed>(), "{error:#}");
+        assert!(error.to_string().contains("invalid native frame length"));
+        Ok(())
+    }
+
     fn fixture_access(runtime: &Path) -> Result<protocol::Access> {
         let instance = airk_kernel::service_broker::new_instance_id()?;
         Ok(protocol::Access {
@@ -488,6 +618,238 @@ mod tests {
         assert!(hub.client().is_err()); // Duplicate grants cannot reset exhaustion.
         hub.update(None)?;
         assert!(hub.state.lock().unwrap().access.is_none());
+        Ok(())
+    }
+    #[test]
+    fn authority_deadline_does_not_spend_connection_retry_budget() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let access = fixture_access(directory.path())?;
+        let hub = fixture_hub(&access)?;
+        hub.update_pending(None, true)?;
+        let error = hub
+            .client_before(Instant::now())
+            .err()
+            .context("pending wait unexpectedly succeeded")?;
+        assert!(error.is::<HelperUnavailable>());
+        assert!(format!("{error:#}").contains("before inference submission"));
+        let state = hub.state.lock().unwrap();
+        assert_eq!(state.attempts, 0);
+        assert!(!state.connecting);
+        Ok(())
+    }
+    #[test]
+    fn pending_authority_wait_expires_at_its_original_deadline_without_connecting() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let access = fixture_access(directory.path())?;
+        let hub = fixture_hub(&access)?;
+        hub.update_pending(None, true)?;
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(100);
+        let error = hub
+            .client_before(deadline)
+            .err()
+            .context("unpublished authority became a client")?;
+        assert!(error.is::<HelperUnavailable>());
+        assert!(
+            Instant::now() >= deadline,
+            "pending authority must actually wait until the original deadline"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        let state = hub.state.lock().unwrap();
+        assert_eq!(state.attempts, 0);
+        assert!(!state.connecting);
+        assert!(state.client.is_none());
+        Ok(())
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn held_ready_uses_original_admission_deadline_and_sends_no_operation() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("runtime");
+        local_ipc::prepare_root(&root)?;
+        let access = fixture_access(&root)?;
+        let mut listener =
+            local_ipc::Listener::bind(&local_ipc::endpoint(&access.runtime, &access.role)?)?;
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let peer = tokio::spawn(async move {
+            let mut stream = listener.accept().await?;
+            let _: protocol::Grant = local_ipc::read_message(&mut stream, Duration::from_secs(5))
+                .await?
+                .context("missing grant")?;
+            let _ = entered.send(());
+            // Withhold Ready. The actual client transport must close when its
+            // original allowance expires, rather than waiting another five seconds.
+            let operation: Option<protocol::Envelope> =
+                local_ipc::read_message(&mut stream, Duration::from_secs(3)).await?;
+            ensure!(operation.is_none(), "unadmitted helper sent an operation");
+            Ok::<_, anyhow::Error>(())
+        });
+        let hub = fixture_hub(&access)?;
+        hub.update(Some(access))?;
+        let deadline = Instant::now() + Duration::from_secs(1);
+        let joining = hub.clone();
+        let call = tokio::task::spawn_blocking(move || joining.client_before(deadline));
+        tokio::time::timeout(Duration::from_secs(5), started).await??;
+        let error = call
+            .await?
+            .err()
+            .context("unready helper became a client")?;
+        assert!(error.is::<HelperUnavailable>(), "{error:#}");
+        assert!(Instant::now() >= deadline);
+        {
+            let state = hub.state.lock().unwrap();
+            assert_eq!(state.attempts, 1);
+            assert!(!state.connecting);
+            assert!(state.client.is_none());
+        }
+        peer.await??;
+        hub.close();
+        Ok(())
+    }
+    #[test]
+    fn pending_wait_wakes_on_suppression_and_close_without_submission() -> Result<()> {
+        for close in [false, true] {
+            let directory = tempfile::tempdir()?;
+            let access = fixture_access(directory.path())?;
+            let hub = fixture_hub(&access)?;
+            hub.update_pending(None, true)?;
+            let (waiting, observed) = mpsc::channel();
+            *hub.waiting.lock().unwrap() = Some(waiting);
+            let other = hub.clone();
+            let call = std::thread::spawn(move || other.client());
+            observed.recv_timeout(Duration::from_secs(5))?;
+            if close {
+                hub.close();
+            } else {
+                hub.update(None)?;
+            }
+            let error = call
+                .join()
+                .map_err(|_| anyhow::anyhow!("waiter panic"))?
+                .err()
+                .context("terminal state became a client")?;
+            assert!(error.is::<HelperUnavailable>());
+            assert!(format!("{error:#}").contains(if close {
+                "owner closed"
+            } else {
+                "unavailable or revoked"
+            }));
+            assert_eq!(hub.state.lock().unwrap().attempts, 0);
+            if close {
+                assert!(hub.update(Some(access)).is_err());
+            }
+        }
+        Ok(())
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn delayed_authority_coalesces_four_first_connections_without_inference() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("runtime");
+        local_ipc::prepare_root(&root)?;
+        let access = fixture_access(&root)?;
+        let peer = fixture_pool(access.clone(), 0).await?;
+        let hub = fixture_hub(&access)?;
+        hub.update_pending(None, true)?;
+        let (waiting, observed) = mpsc::channel();
+        *hub.waiting.lock().unwrap() = Some(waiting);
+        let mut calls = Vec::new();
+        for _ in 0..4 {
+            let hub = hub.clone();
+            calls.push(tokio::task::spawn_blocking(move || hub.client()));
+        }
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            for _ in 0..4 {
+                observed.recv_timeout(Duration::from_secs(5))?;
+            }
+            Ok(())
+        })
+        .await??;
+        assert_eq!(hub.state.lock().unwrap().attempts, 0);
+        hub.update(Some(access))?;
+        let mut clients = Vec::new();
+        for call in calls {
+            clients.push(call.await??);
+        }
+        assert!(
+            clients
+                .iter()
+                .all(|client| Arc::ptr_eq(client, &clients[0]))
+        );
+        assert_eq!(hub.state.lock().unwrap().attempts, 1);
+        assert!(
+            hub.client_before(Instant::now()).is_err(),
+            "cached connection cannot renew an expired admission"
+        );
+        assert_eq!(hub.state.lock().unwrap().attempts, 1);
+        hub.close();
+        drop(clients);
+        drop(hub);
+        assert!(peer.await??.is_empty());
+        Ok(())
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replacement_during_handshake_cannot_publish_or_submit_old_authority() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let root = directory.path().join("runtime");
+        local_ipc::prepare_root(&root)?;
+        let old = fixture_access(&root)?;
+        let mut replacement = old.clone();
+        replacement.grant.pool = airk_kernel::service_broker::new_instance_id()?;
+        replacement.grant.token = airk_core::identity::Sha256Digest::from_bytes([72; 32]);
+        replacement.role = protocol::role(replacement.grant.pool);
+        let next_peer = fixture_pool(replacement.clone(), 0).await?;
+        let mut listener =
+            local_ipc::Listener::bind(&local_ipc::endpoint(&old.runtime, &old.role)?)?;
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let old_access = old.clone();
+        let old_peer = tokio::spawn(async move {
+            let mut stream = listener.accept().await?;
+            let _: protocol::Grant = local_ipc::read_message(&mut stream, Duration::from_secs(5))
+                .await?
+                .context("missing old grant")?;
+            let _ = entered.send(());
+            wait.await?;
+            local_ipc::write_message(
+                &mut stream,
+                &protocol::Observation::Ready {
+                    pool: old_access.grant.pool,
+                    role: old_access.role,
+                },
+                Duration::from_secs(5),
+            )
+            .await?;
+            let operation: Option<protocol::Envelope> =
+                local_ipc::read_message(&mut stream, Duration::from_secs(5)).await?;
+            ensure!(
+                operation.is_none(),
+                "retired handshake submitted an operation"
+            );
+            Ok::<_, anyhow::Error>(())
+        });
+        let hub = fixture_hub(&old)?;
+        hub.update(Some(old))?;
+        let joining = hub.clone();
+        let first = tokio::task::spawn_blocking(move || joining.client());
+        started.await?;
+        hub.update_pending(None, true)?;
+        hub.update(Some(replacement))?;
+        release
+            .send(())
+            .map_err(|_| anyhow::anyhow!("old peer disappeared"))?;
+        let error = first
+            .await?
+            .err()
+            .context("retired connection became current")?;
+        assert!(format!("{error:#}").contains("authority changed"));
+        assert!(hub.state.lock().unwrap().client.is_none());
+        assert_eq!(hub.state.lock().unwrap().attempts, 0);
+        let joining = hub.clone();
+        let current = tokio::task::spawn_blocking(move || joining.client()).await??;
+        hub.close();
+        drop(current);
+        drop(hub);
+        old_peer.await??;
+        assert!(next_peer.await??.is_empty());
         Ok(())
     }
     async fn fixture_pool(

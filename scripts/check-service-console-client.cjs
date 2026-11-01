@@ -7,6 +7,14 @@ const crypto=require('node:crypto');
 const {RuntimeHost,nativeRunner}=require('../packages/vscode/out/serviceBootstrap.js');
 const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleController.js');
 
+// Acceptance is informational; the correlated terminal receipt assertions below
+// still decide completion. No other action/message is treated as success.
+const acceptanceMessages={
+    index:/^Source indexing accepted: (?:pending|running|succeeded|failed|canceled|queued) \(job [0-9a-f]{12}\)\. Acceptance does not mean completion\. Recent activity records the outcome; work can wait behind an existing job or project pause\.$/,
+    configureProject:/^Settings request (?:(?:pending|running|succeeded|failed|canceled|queued)\. AIRK will check and apply your choice, then update the index\. This continues when VS Code closes\.|accepted: (?:pending|running|succeeded|failed|canceled|queued)\. Acceptance is separate from applying settings and published coverage\. Existing work runs first; semantic setup is followed by source publication and vector processing\. Recent activity shows its saved outcome\.)$/,
+    approvePlan:/^Repair accepted\. Follow Indexing for current work; acceptance does not mean the repair has finished\.$/,
+};
+
 (async()=>{
     assert.equal(process.argv[2],'--runtime','Supply --runtime <host-native pair>');
     const payload=await fs.realpath(process.argv[3]);
@@ -30,7 +38,8 @@ const {ServiceConsoleController}=require('../packages/vscode/out/serviceConsoleC
         lifecycle:(selected,intent,force)=>runtime.lifecycle(selected,intent,force),abandonLifecycle:(selected,intent,id)=>runtime.abandonLifecycle(selected,intent,id)});
     const action=async(name,extra={})=>{
         await controller.action({type:'service',revision:controller.state.revision,action:name,...extra});
-        if(controller.state.message&&!controller.state.message.startsWith('Repair preview changed')&&!controller.state.message.startsWith('Runtime payload repaired;'))throw new Error(controller.state.message);
+        if(controller.state.message&&!controller.state.message.startsWith('Repair preview changed')&&!controller.state.message.startsWith('Runtime payload repaired;')
+            &&!acceptanceMessages[name]?.test(controller.state.message))throw new Error(controller.state.message);
     };
     const wait=async(predicate,label)=>{
         const deadline=Date.now()+90000;

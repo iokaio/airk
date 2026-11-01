@@ -266,3 +266,324 @@ fn recent_parent_tokens_are_exact_bounded_and_expire_without_source_history() ->
     assert_eq!(read.token()?, token);
     Ok(())
 }
+
+// Selected preparation is exercised through the actual retained-map reader.
+// Public recent_changes still selects ALL unexpired groups; no query cutover.
+fn selected_view(
+    read: &CurrentRead,
+    now: u64,
+    since: Option<RevisionToken>,
+) -> Result<(recent::RecentChanges, usize, usize)> {
+    let current = revision(read.token()?);
+    let mut chunks = 0usize;
+    let mut bytes = 0usize;
+    let view = recent::read_recent(
+        &read.head().scope,
+        read.token()?,
+        now,
+        |header| {
+            since
+                .filter(|baseline| *baseline != current && header.verifies(*baseline))
+                .map(|baseline| baseline.generation)
+        },
+        &mut |key| {
+            let value = read.map_get(map::MapDomain::RecentChanges, key)?;
+            if key.starts_with(b"events/") {
+                chunks += 1;
+            }
+            bytes += value.as_ref().map_or(0, Vec::len);
+            Ok(value)
+        },
+    )?;
+    Ok((view, chunks, bytes))
+}
+#[test]
+fn recent_header_selection_reads_only_verified_tail_but_preserves_full_view_identity() -> Result<()>
+{
+    let fixture = Fixture::new()?;
+    let mut tokens = vec![revision(fixture.head.token()?)];
+    for generation in 1..=6 {
+        tokens.push(revision(append(
+            &fixture,
+            recent::Observation {
+                events: vec![event(generation); 2],
+                ..recent::Observation::empty()
+            },
+            1000 + generation,
+        )?));
+    }
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let full = read.recent_changes(1010)?;
+    let (selected, chunks, bytes) = selected_view(&read, 1010, Some(tokens[5]))?;
+    assert_eq!(
+        chunks, 1,
+        "one actual128KiB group chunk is selected from six"
+    );
+    assert_eq!(selected.parents, full.parents);
+    assert_eq!(
+        serde_json::to_value(&selected.coverage)?,
+        serde_json::to_value(&full.coverage)?
+    );
+    assert_eq!(selected.view_digest, full.view_digest);
+    let expected: Vec<_> = full
+        .events
+        .iter()
+        .filter(|event| event.generation > tokens[5].generation)
+        .collect();
+    assert_eq!(
+        serde_json::to_value(&selected.events)?,
+        serde_json::to_value(expected)?
+    );
+    let (_, all_chunks, all_bytes) = selected_view(&read, 1010, Some(tokens[0]))?;
+    assert_eq!(all_chunks, 6);
+    assert!(bytes < all_bytes);
+    // Exact existing preimage: ALL manifest bytes, first live parent and ALL
+    // independent coverage floors; selecting a tail must not narrow the digest.
+    let manifest = read
+        .map_get(map::MapDomain::RecentChanges, b"manifest")?
+        .context("manifest")?;
+    let expected = airk_core::identity::framed_digest(
+        b"recent-change-view/1",
+        &[
+            &manifest,
+            &tokens[0].generation.to_be_bytes(),
+            &serde_json::to_vec(&full.coverage)?,
+        ],
+    );
+    assert_eq!(selected.view_digest, expected);
+    Ok(())
+}
+#[test]
+fn recent_no_baseline_same_head_and_foreign_baseline_need_headers_but_no_event_chunks() -> Result<()>
+{
+    let fixture = Fixture::new()?;
+    let current = revision(append(
+        &fixture,
+        recent::Observation {
+            events: vec![event(1)],
+            ..recent::Observation::empty()
+        },
+        1000,
+    )?);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let full = read.recent_changes(1000)?;
+    let mut invented = full.parents[0];
+    invented.revision = Sha256Digest::from_bytes([91; 32]);
+    let foreign = RevisionToken {
+        incarnation: airk_core::identity::Incarnation::from_bytes([92; 16]),
+        ..current
+    };
+    for baseline in [None, Some(current), Some(invented), Some(foreign)] {
+        let (selected, chunks, bytes) = selected_view(&read, 1000, baseline)?;
+        assert_eq!(chunks, 0);
+        assert!(bytes > 0, "authenticated bounded header is still read");
+        assert!(selected.events.is_empty());
+        assert_eq!(selected.parents, full.parents);
+        assert_eq!(selected.view_digest, full.view_digest);
+        assert_eq!(
+            serde_json::to_value(&selected.coverage)?,
+            serde_json::to_value(&full.coverage)?
+        );
+    }
+    Ok(())
+}
+#[test]
+fn recent_selection_recomputes_expiry_and_independent_floors_without_new_publication() -> Result<()>
+{
+    let fixture = Fixture::new()?;
+    let zero = revision(fixture.head.token()?);
+    let one = append(
+        &fixture,
+        recent::Observation {
+            events: vec![event(1)],
+            code_gap: Some(CoverageReason::Omitted),
+            ..recent::Observation::empty()
+        },
+        1000,
+    )?;
+    let two = append(
+        &fixture,
+        recent::Observation {
+            events: vec![event(2)],
+            document_gap: Some(CoverageReason::Unsupported),
+            ..recent::Observation::empty()
+        },
+        1001,
+    )?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let (before, _, _) = selected_view(&read, 1000 + recent::AGE_SECONDS - 1, Some(zero))?;
+    let (after, chunks, _) = selected_view(&read, 1000 + recent::AGE_SECONDS, Some(revision(one)))?;
+    let full = read.recent_changes(1000 + recent::AGE_SECONDS)?;
+    assert_eq!(chunks, 1);
+    assert_ne!(before.view_digest, after.view_digest);
+    assert_eq!(after.view_digest, full.view_digest);
+    assert_eq!(
+        serde_json::to_value(&after.coverage)?,
+        serde_json::to_value(&full.coverage)?
+    );
+    assert_eq!(after.coverage.files.reason, Some(CoverageReason::Expired));
+    assert_eq!(
+        after.coverage.documents.reason,
+        Some(CoverageReason::Unsupported)
+    );
+    assert_eq!(
+        read.token()?,
+        two,
+        "age check did not publish or rewrite anything"
+    );
+    let (unavailable, chunks, _) = selected_view(&read, 1000 + recent::AGE_SECONDS, Some(zero))?;
+    assert_eq!(chunks, 0);
+    assert!(unavailable.events.is_empty());
+    assert!(!unavailable.verifies(zero));
+    Ok(())
+}
+#[test]
+fn recent_selected_materialization_skips_unselected_read_fault_but_strict_engine_and_selected_fault_refuse()
+-> Result<()> {
+    let fixture = Fixture::new()?;
+    let one = append(
+        &fixture,
+        recent::Observation {
+            events: vec![event(1)],
+            ..recent::Observation::empty()
+        },
+        1000,
+    )?;
+    append(
+        &fixture,
+        recent::Observation {
+            events: vec![event(2)],
+            ..recent::Observation::empty()
+        },
+        1001,
+    )?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    // Faulting read port backed by actual retained map data. This is NOT an
+    // on-disk corruption qualification or permission to skip strict checks.
+    for (after, fault, success) in [
+        (0, b"events/1/".as_slice(), false),
+        (one.sequence, b"events/1/".as_slice(), true),
+        (one.sequence, b"events/2/".as_slice(), false),
+    ] {
+        let outcome = recent::read_recent(
+            &read.head().scope,
+            read.token()?,
+            1002,
+            |_| Some(after),
+            &mut |key| {
+                let mut value = read.map_get(map::MapDomain::RecentChanges, key)?;
+                if key.starts_with(fault)
+                    && let Some(bytes) = value.as_mut()
+                {
+                    bytes[0] ^= 1;
+                }
+                Ok(value)
+            },
+        );
+        if success {
+            assert_eq!(outcome?.events.len(), 1);
+        } else {
+            let error = match outcome {
+                Ok(_) => anyhow::bail!("corrupt selected/strict group accepted"),
+                Err(error) => error,
+            };
+            assert!(
+                error
+                    .downcast_ref::<recent::InvalidRecentChanges>()
+                    .is_some()
+            );
+        }
+    }
+    assert_eq!(
+        read.recent_changes(1002)?.events.len(),
+        2,
+        "public strict path still materializes all actual stored groups"
+    );
+    Ok(())
+}
+
+#[test]
+fn recent_physical_admission_counts_every_partial_group_and_audits_expired_bytes() -> Result<()> {
+    let fixture = Fixture::new()?;
+    append(
+        &fixture,
+        recent::Observation {
+            events: vec![event(1)],
+            ..recent::Observation::empty()
+        },
+        1000,
+    )?;
+    append(
+        &fixture,
+        recent::Observation {
+            events: vec![event(2)],
+            ..recent::Observation::empty()
+        },
+        1001,
+    )?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let bytes = read
+        .map_get(map::MapDomain::RecentChanges, b"manifest")?
+        .context("manifest absent")?;
+    let manifest: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let declared = manifest["groups"]
+        .as_array()
+        .context("groups absent")?
+        .iter()
+        .map(|group| group["bytes"].as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(read.recent_audit_bytes()?, bytes.len() as u64 + declared);
+    let mut actual = bytes.len() as u64;
+    for generation in 1..=2 {
+        let group = read
+            .map_get(
+                map::MapDomain::RecentChanges,
+                format!("events/{generation}/0").as_bytes(),
+            )?
+            .context("event chunk absent")?;
+        actual += group.len() as u64;
+    }
+    assert_eq!(
+        read.recent_audit_bytes()?,
+        actual,
+        "each partial group is separately charged"
+    );
+    read.audit_recent_changes()?;
+    drop(read);
+    let key = map::key(&fixture.scope, map::MapDomain::RecentChanges, b"events/1/0")?;
+    let prefix = i64::from(u16::from_be_bytes(key.as_bytes()[..2].try_into()?));
+    for identity in [b"manifest".as_slice(), b"events/2/0".as_slice()] {
+        let key = map::key(&fixture.scope, map::MapDomain::RecentChanges, identity)?;
+        assert_ne!(
+            prefix,
+            i64::from(u16::from_be_bytes(key.as_bytes()[..2].try_into()?)),
+            "fixture unrelated bucket collision"
+        );
+    }
+    let connection = database::open_writer(
+        &fixture.store.directory().join("current.sqlite3"),
+        CAPACITY,
+        false,
+    )?;
+    assert_eq!(
+        connection.execute(
+            "UPDATE current_map_buckets SET content=zeroblob(length(content)) WHERE prefix=?1",
+            [prefix]
+        )?,
+        1
+    );
+    drop(connection);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(
+        read.recent_changes(1000 + recent::AGE_SECONDS)?
+            .events
+            .len(),
+        1,
+        "expired first group should not be read by ordinary recent view"
+    );
+    assert!(
+        read.audit_recent_changes().is_err(),
+        "physical maintenance omitted expired retained corruption"
+    );
+    Ok(())
+}

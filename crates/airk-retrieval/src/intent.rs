@@ -23,7 +23,12 @@ const BUCKETS: usize = 65536;
 const HEADER: usize = 96;
 const ASSET: &[u8] = include_bytes!("../assets/intent-v1.bin");
 
+/// Historical feature-v1 extraction; prediction uses the validated asset version.
 pub fn features(text: &str) -> Vec<usize> {
+    features_for(text, 1)
+}
+
+fn features_for(text: &str, specification: u32) -> Vec<usize> {
     let lower = text.to_lowercase();
     let words: Vec<_> = lower
         .split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -59,6 +64,42 @@ pub fn features(text: &str) -> Vec<usize> {
             features.insert(hash(flag));
         }
     }
+    if specification == 2 {
+        let original_words: Vec<_> = text
+            .split(|c: char| !c.is_alphanumeric() && c != '_')
+            .filter(|word| !word.is_empty())
+            .collect();
+        for (present, flag) in [
+            (
+                original_words.iter().enumerate().any(|(index, word)| {
+                    index > 0
+                        && word.chars().count() > 1
+                        && word.chars().next().is_some_and(char::is_uppercase)
+                        && word.chars().any(char::is_lowercase)
+                }),
+                "shape:capitalized",
+            ),
+            (
+                original_words.iter().any(|word| {
+                    word.chars().skip(1).any(char::is_uppercase)
+                        && word.chars().any(char::is_lowercase)
+                }),
+                "shape:camel",
+            ),
+            (
+                original_words
+                    .iter()
+                    .any(|word| word.contains('_') && word.chars().any(char::is_alphanumeric)),
+                "shape:snake",
+            ),
+            (text.contains("::"), "shape:qualified"),
+            (text.contains('`'), "shape:backtick"),
+        ] {
+            if present {
+                features.insert(hash(flag));
+            }
+        }
+    }
     features.into_iter().collect()
 }
 fn validate() -> Result<()> {
@@ -68,7 +109,7 @@ fn validate() -> Result<()> {
     );
     let u32_at = |offset| u32::from_le_bytes(ASSET[offset..offset + 4].try_into().unwrap());
     ensure!(
-        u32_at(8) == 1 && u32_at(12) == 65536 && u32_at(16) == 13 && u32_at(20) == 1,
+        u32_at(8) == 1 && u32_at(12) == 65536 && u32_at(16) == 13 && matches!(u32_at(20), 1 | 2),
         "unsupported intent feature specification"
     );
     ensure!(
@@ -94,7 +135,8 @@ pub fn predict(text: &str) -> Result<Prediction> {
         "intent asset validation failed"
     );
     ensure!(text.len() <= 4096, "intent input too large");
-    let indices = features(text);
+    let specification = u32::from_le_bytes(ASSET[20..24].try_into().unwrap());
+    let indices = features_for(text, specification);
     let mut scores = [0i32; 13];
     for (label, score) in scores.iter_mut().enumerate() {
         let at = HEADER + BUCKETS * 13 + label * 4;
@@ -129,6 +171,22 @@ mod tests {
             let actual = features(row["text"].as_str().unwrap());
             assert_eq!(serde_json::to_value(actual)?, row["features"]);
         }
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../../tools/parser-train/fixtures-v2.json"))?;
+        for row in fixture.as_array().unwrap() {
+            assert_eq!(
+                serde_json::to_value(features_for(row["text"].as_str().unwrap(), 2))?,
+                row["features"]
+            );
+        }
+        assert_eq!(
+            features("tell me about Owner"),
+            features("tell me about owner")
+        );
+        assert_ne!(
+            features_for("tell me about Owner", 2),
+            features_for("tell me about owner", 2)
+        );
         Ok(())
     }
     #[test]

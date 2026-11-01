@@ -59,7 +59,7 @@ export class NativeServiceFixture {
     client?:ServiceClient;
     control='';launcher='';
     private constructor(readonly binary:string,readonly owner:string,readonly install:string){}
-    static async create(binary:string):Promise<NativeServiceFixture>{
+    static async create(binary:string,mode:'managed'|'owned'='managed'):Promise<NativeServiceFixture>{
         const owner=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-native-')));
         const fixture=new NativeServiceFixture(path.resolve(binary),owner,path.join(owner,'i'));
         try{
@@ -67,12 +67,19 @@ export class NativeServiceFixture {
             const manifest=JSON.parse(bytes.toString());
             const extension=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8'));
             assert.equal(manifest.version,extension.version);
-            await fixture.run(['runtime','managed','--source',source,'--install-dir',fixture.install,
-                '--state-dir',path.join(owner,'s'),'--approved-sha256',createHash('sha256').update(bytes).digest('hex'),
+            const approved=createHash('sha256').update(bytes).digest('hex');
+            if(mode==='owned'){
+                // Explicit qualification only: stage copies the approved payload
+                // into this fixture's temp install; no user install/default state.
+                await fixture.run(['runtime','stage','--source',source,'--install-dir',fixture.install,
+                    '--state-dir',path.join(owner,'s'),'--approved-sha256',approved,'--verification-basis','organization-digest'],180000);
+                await fixture.run(['runtime','activate','--install-dir',fixture.install,'--runtime-sha256',approved],180000);
+            }else await fixture.run(['runtime','managed','--source',source,'--install-dir',fixture.install,
+                '--state-dir',path.join(owner,'s'),'--approved-sha256',approved,
                 '--verification-basis','organization-digest','--lifecycle','user-on-demand'],180000);
             const prepared=await fixture.run(['runtime','prepare-client','--install-dir',fixture.install],180000);
             const inspected=await fixture.run(['runtime','inspect','--install-dir',fixture.install]);
-            assert.equal(inspected.launcher,prepared.launcher);assert.equal(record(inspected.managed_policy).lifecycle,'user_on_demand');
+            assert.equal(inspected.launcher,prepared.launcher);if(mode==='managed')assert.equal(record(inspected.managed_policy).lifecycle,'user_on_demand');else assert.equal(inspected.managed_policy,null);
             fixture.control=String(inspected.control_dir);fixture.launcher=String(prepared.launcher);
             fixture.client=new ServiceClient(new NativeControlTransport(fixture.binary,['service','console','--runtime-dir',fixture.control],60000));
             return fixture;
@@ -204,7 +211,7 @@ export class NativeServiceFixture {
     async dispose():Promise<void>{
         this.client?.transport.dispose();this.client=undefined;
         // Native uninstall authenticates and drains only this fixture's approved
-        // user-on-demand owner. A failed drain preserves the directory for diagnosis.
+        // fixture owner. A failed drain preserves the directory for diagnosis.
         if(await fs.stat(this.install).then(()=>true,()=>false))await this.run(['runtime','uninstall','--install-dir',this.install],180000);
         const resolved=await fs.realpath(this.owner),temporary=await fs.realpath(os.tmpdir());
         assert.equal(path.dirname(resolved),temporary);assert.ok(path.basename(resolved).startsWith('airk-native-'));

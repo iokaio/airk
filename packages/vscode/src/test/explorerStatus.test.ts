@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { headline, indexContents, semanticExplanation, sourceWorkExplanation, statusSummary, workProgressDisplay } from '../explorerStatus';
+import { scalarWithRetainedDetails, headline, indexContents, semanticExplanation, sourceWorkExplanation, statusSummary, workProgressDisplay } from '../explorerStatus';
 import type { ProjectSummary, ProjectWorkView } from '../explorerContracts';
 
 test('airk_status maps to separate readiness, freshness and semantic observations', () => {
@@ -97,4 +97,24 @@ test('published contents remain distinct from a newer attempt or partial console
     assert.equal(statusSummary({indexed_vectors:null}).vectors,undefined);
     assert.match(sourceWorkExplanation(saved.freshness),/waiting/);
     assert.match(sourceWorkExplanation('idle'),/does not verify/);
+});
+
+
+test('scalar observations retain scoped details with independent ages without inheriting old readiness', () => {
+    const details = statusSummary({index_state:'available',publication:{token:'same'},files:99,
+        vectors_enabled:true,local_model_ready:true,runtime:{versions_match:false},
+        work:{project_paused:true,progress:{phase:'embedding'}}}, 100);
+    const scalar = statusSummary({index_state:'available',publication:{token:'same'},files:101,
+        semantic_readiness:{state:'partial'},freshness:{state:'running'}}, 200);
+    const merged = scalarWithRetainedDetails(scalar, details);
+    assert.equal(merged.files,101);assert.equal(merged.semantic,'partial');assert.equal(merged.freshness,'running');
+    assert.equal(merged.vectorsEnabled,true);assert.equal(merged.localModelReady,true);
+    assert.equal(merged.versionsMatch,false);assert.equal(merged.workPaused,true);assert.equal(merged.observedAt,200);assert.equal(merged.detailsObservedAt,100);
+    const unavailable = scalarWithRetainedDetails(statusSummary({index_state:'unknown',publication:null},300),details);
+    assert.equal(unavailable.indexState,'unknown');assert.equal(unavailable.publication,undefined);
+    assert.equal(unavailable.files,undefined);assert.equal(unavailable.vectorsEnabled,undefined);
+    assert.equal(unavailable.workPaused,undefined);assert.equal(unavailable.versionsMatch,false);
+    assert.equal(unavailable.observedAt,300);assert.equal(unavailable.detailsObservedAt,100);
+    assert.equal(scalarWithRetainedDetails(scalar),scalar);
+    assert.equal(details.files,99);assert.equal(details.observedAt,100);
 });

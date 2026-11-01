@@ -9,6 +9,76 @@ import { managementView } from '../explorerManagement';
 const shown = (state: ServiceConsoleState): string => JSON.stringify(managementView(state));
 import { RecordValue, ServiceClient, ServiceError } from '../serviceClient';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+test('automatic polls reuse only recent successful optional observations with their original dates',async context=>{
+    context.mock.timers.enable({apis:['Date']});
+    const f=fixture(),base=f.host.runtime.client({} as any),calls:string[]=[];
+    let currentInstance=instance,resourceFailure=false;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];calls.push(name);
+        if(name==='health')return {status:'health',observation:{instance:currentInstance}};
+        if(name==='logs')return {status:'logs',page:{schema:1,records:[]}};
+        if(name==='resources'&&resourceFailure)throw new ServiceError('resource_fixture_busy');
+        return base.transport.request(method);
+    }});
+    const optional=['resources','embedding_status','source_status','logs'];
+    const counts=()=>optional.map(name=>calls.filter(value=>value===name).length);
+    try{
+        await f.controller.refresh();const checkedAt=f.controller.state.resources.checkedAt;
+        assert.deepEqual(counts(),[1,1,1,1]);
+        context.mock.timers.tick(2000);await f.controller.refresh(true);
+        assert.deepEqual(counts(),[1,1,1,1]);assert.equal(f.controller.state.resources.state,'cached');
+        assert.equal(f.controller.state.resources.checkedAt,checkedAt);
+        assert.equal(calls.filter(name=>name==='health').length,2);
+        assert.equal(calls.filter(name=>name==='events').length,2);
+        assert.equal(calls.filter(name=>name==='console').length,2);
+        context.mock.timers.tick(3000);await f.controller.refresh(true);
+        assert.deepEqual(counts(),[2,2,2,2]);
+        await f.controller.refresh();assert.deepEqual(counts(),[3,3,3,3],'explicit refresh samples immediately');
+        resourceFailure=true;await f.controller.refresh();assert.equal(f.controller.state.resources.state,'failed');
+        resourceFailure=false;await f.controller.refresh(true);
+        assert.deepEqual(counts(),[5,4,4,4],'a failed observation retries independently');
+        currentInstance='bc'.repeat(16);await f.controller.refresh(true);
+        assert.deepEqual(counts(),[6,5,5,5],'a service replacement cannot reuse old observations');
+        f.controller.state.resources.checkedAt=Date.now()+1000;await f.controller.refresh(true);
+        assert.deepEqual(counts(),[7,5,5,5],'a backward clock observation requires a fresh sample');
+    }finally{f.controller.dispose();}
+});
+
+test('routine console observations obtain namespace from Events and reserve request epochs for actions',async()=>{
+    const f=fixture();
+    try{
+        await f.controller.refresh();await f.controller.refresh();
+        assert.equal(f.sent.filter(method=>method==='request_epoch').length,0);
+        const methods=f.sent.map(method=>typeof method==='string'?method:Object.keys(method as object)[0]);
+        assert.ok(methods.indexOf('events')<methods.indexOf('console'));
+        await f.action('index',{project});
+        assert.ok(f.sent.includes('request_epoch'),'explicit actions still acquire durable request keys');
+    }finally{f.controller.dispose();}
+});
+
+test('registry namespace replacement discards old event cursors before publishing new project rows',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),replacement='ab'.repeat(16);
+    let changed=false,refused=false,newPage=false;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        if(changed&&typeof method==='object'&&method!==null&&'events' in method){
+            const args=(method as {events:{cursor:unknown}}).events;
+            if(args.cursor!==null){refused=true;throw new ServiceError('event_scope_changed');}
+            return {status:'events',page:{namespace:replacement,events:[{sequence:1,kind:'new_registry'}],retained_prefix_lost:false,next:null,tail:{namespace:replacement,project:null,after:1,through:null}}};
+        }
+        if(changed&&typeof method==='object'&&method!==null&&'console' in method){newPage=true;}
+        return base.transport.request(method);
+    }});
+    try{
+        await f.controller.refresh();f.controller.state.events=[{sequence:9,kind:'old_registry'}];
+        changed=true;await f.controller.refresh();
+        assert.equal(refused,true);assert.equal(newPage,false);
+        assert.equal(f.controller.state.page,undefined);assert.deepEqual(f.controller.state.events,[]);
+        await f.controller.refresh();
+        assert.equal(newPage,true);assert.deepEqual(f.controller.state.events,[{sequence:1,kind:'new_registry'}]);
+        assert.equal(f.sent.includes('request_epoch'),false);
+    }finally{f.controller.dispose();}
+});
+
 test('raw log actions use the trusted local host and never enter summary reports',async()=>{
     const f=fixture(),calls:boolean[]=[];
     f.host.rawLogs=async save=>{calls.push(save);};
@@ -611,4 +681,99 @@ test('removed-project browsing refreshes active Explorer choices without changin
         assert.deepEqual(f.controller.state.activePage!.projects,[],'actual removal must clear the active choices');
         assert.equal(f.controller.state.inactiveProjects,true);
     }finally{f.controller.dispose();}
+});
+
+
+// Run the actual controller and ServiceClient path; defer only transport replies.
+test('verified health is published before every optional console probe finishes',async()=>{
+    for(const blockedMethod of ['resources','embedding_status','source_status','logs','console','workers','events']){
+        const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
+        let release!:()=>void,entered!:()=>void;
+        const gate=new Promise<void>(resolve=>{release=resolve;});
+        const blocked=new Promise<void>(resolve=>{entered=resolve;});
+        // Capture values at publication time. Holding mutable state references would
+        // incorrectly turn an old disconnected observation into a later healthy one.
+        f.host.changed=state=>snapshots.push(structuredClone(state));
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            const name=typeof method==='string'?method:Object.keys(method as object)[0];
+            if(name===blockedMethod){entered();await gate;}
+            return base.transport.request(method);
+        }});
+        const poll=f.controller.refresh();
+        try{
+            await blocked;
+            const early=snapshots.find(state=>state.connected&&state.health.state==='live'&&state.busy);
+            assert.ok(early,`health must publish before ${blockedMethod}`);
+            assert.equal(early!.health.value?.status,'health');
+            assert.equal(f.controller.state.busy,true);
+            const immutable=structuredClone(early);
+            release();await poll;
+            assert.equal(f.controller.state.connected,true);
+            assert.equal(f.controller.state.busy,false);
+            assert.deepEqual(early,immutable,'later optional observations cannot rewrite captured publications');
+        }finally{release();await poll;f.controller.dispose();}
+    }
+});
+
+test('early verified health does not manufacture health after a native refusal',async()=>{
+    const f=fixture(),snapshots:ServiceConsoleState[]=[],methods:string[]=[];
+    f.host.changed=state=>snapshots.push(structuredClone(state));
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];methods.push(name);
+        if(name==='health')throw new ServiceError('service_explicitly_stopped');
+        throw new Error('Optional probes must not run after failed health');
+    }});
+    try{
+        await f.controller.refresh();
+        assert.deepEqual(methods,['health']);
+        assert.ok(!snapshots.some(state=>state.connected));
+        assert.equal(f.controller.state.connected,false);
+        assert.equal(f.controller.state.health.state,'failed');
+        assert.equal(f.controller.state.health.code,'service_explicitly_stopped');
+    }finally{f.controller.dispose();}
+});
+
+test('trust revocation and disposal reject a delayed health reply before early publication',async()=>{
+    for(const cancel of ['trust','dispose'] as const){
+        const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
+        let release!:()=>void,entered!:()=>void;
+        const gate=new Promise<void>(resolve=>{release=resolve;});
+        const blocked=new Promise<void>(resolve=>{entered=resolve;});
+        f.host.changed=state=>snapshots.push(structuredClone(state));
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            if(method==='health'){entered();await gate;}
+            return base.transport.request(method);
+        }});
+        const poll=f.controller.refresh();
+        try{
+            await blocked;
+            if(cancel==='trust')f.setTrusted(false);else f.controller.dispose();
+            const before=snapshots.length;release();await poll;
+            assert.ok(!snapshots.some(state=>state.connected));
+            if(cancel==='dispose')assert.equal(snapshots.length,before,'disposed controller cannot publish late health');
+            else assert.equal(snapshots.at(-1)!.trusted,false);
+        }finally{release();await poll;f.controller.dispose();}
+    }
+});
+
+test('optional failure retains genuine early health and records the failed observation',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),snapshots:ServiceConsoleState[]=[];
+    let release!:()=>void,entered!:()=>void;
+    const gate=new Promise<void>(resolve=>{release=resolve;});
+    const blocked=new Promise<void>(resolve=>{entered=resolve;});
+    f.host.changed=state=>snapshots.push(structuredClone(state));
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        if(method==='resources'){entered();await gate;throw new ServiceError('resource_observation_failed');}
+        return base.transport.request(method);
+    }});
+    const poll=f.controller.refresh();
+    try{
+        await blocked;const early=snapshots.find(state=>state.connected&&state.busy)!;
+        assert.ok(early);assert.equal(early.resources.state,'unavailable');
+        release();await poll;
+        assert.equal(early.resources.state,'unavailable','captured early snapshot stays immutable');
+        assert.equal(f.controller.state.resources.state,'failed');
+        assert.equal(f.controller.state.resources.code,'resource_observation_failed');
+        assert.equal(f.controller.state.connected,true);
+    }finally{release();await poll;f.controller.dispose();}
 });

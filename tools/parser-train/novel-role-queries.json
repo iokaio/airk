@@ -1,0 +1,492 @@
+{
+  "schema": "airk.parse.novel-role-holdout/1",
+  "scope": "Original fictional finite-retrieval role requests. Reserved from training, calibration and implementation tuning until the first frozen-candidate measurement; later results must identify it as public regression evidence.",
+  "queries": [
+    {
+      "text": "The type {s} is unfamiliar to me; could I see its declaration site?",
+      "intent": "find_definition",
+      "role": "developer",
+      "expected_tools": [
+        "symbols"
+      ],
+      "family": "dev-declaration-origin",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "I need indexed passages on {s} before touching the implementation.",
+      "intent": "search",
+      "role": "developer",
+      "expected_tools": [
+        "search"
+      ],
+      "family": "dev-evidence-fragment",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Could I see every indexed place where the identifier {s} is written?",
+      "intent": "references",
+      "role": "developer",
+      "expected_tools": [
+        "references"
+      ],
+      "family": "dev-identifier-written",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Retrieve the documented requirement statements concerning {s}.",
+      "intent": "facts",
+      "role": "developer",
+      "expected_tools": [
+        "document_facts"
+      ],
+      "family": "dev-written-preconditions",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Bring up indexed lines 6 through 14 from {p}.",
+      "intent": "read_file",
+      "role": "developer",
+      "expected_tools": [
+        "read_file"
+      ],
+      "family": "dev-bounded-file-view",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "Which extraction profile produced the indexed representation of {p}?",
+      "intent": "file_info",
+      "role": "developer",
+      "expected_tools": [
+        "file_info"
+      ],
+      "family": "dev-extraction-record",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "Before I investigate, is this collection ready for retrieval?",
+      "intent": "status",
+      "role": "developer",
+      "expected_tools": [
+        "status"
+      ],
+      "family": "dev-readiness-before-investigation",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Let me inspect written import declarations involving {s}.",
+      "intent": "imports",
+      "role": "developer",
+      "expected_tools": [
+        "imports"
+      ],
+      "family": "dev-import-spelling",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "A heading and declaration outline for {p} would help me navigate.",
+      "intent": "outline",
+      "role": "developer",
+      "expected_tools": [
+        "outline"
+      ],
+      "family": "dev-structural-navigation",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "Can you check that part for me?",
+      "intent": "unsupported",
+      "role": "developer",
+      "expected_tools": [],
+      "family": "dev-referent-missing",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Find the declaration of {s} and replace its implementation.",
+      "intent": "unsupported",
+      "role": "developer",
+      "expected_tools": [],
+      "family": "dev-edit-after-lookup",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Prove that {s} cannot race with any other code.",
+      "intent": "unsupported",
+      "role": "developer",
+      "expected_tools": [],
+      "family": "dev-proof-request",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "For the API reference, point me to the indexed declaration named {s}.",
+      "intent": "find_definition",
+      "role": "writer",
+      "expected_tools": [
+        "symbols"
+      ],
+      "family": "writer-api-declaration-source",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "I am looking for existing repository wording on {s}, with source locations.",
+      "intent": "search",
+      "role": "writer",
+      "expected_tools": [
+        "search"
+      ],
+      "family": "writer-existing-wording-source",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Please collect textual occurrences of the exact identifier {s} for my terminology check.",
+      "intent": "references",
+      "role": "writer",
+      "expected_tools": [
+        "references"
+      ],
+      "family": "writer-exact-term-concordance",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "What acceptance-criterion statements have been indexed concerning {s}?",
+      "intent": "facts",
+      "role": "writer",
+      "expected_tools": [
+        "document_facts"
+      ],
+      "family": "writer-written-acceptance",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Let me read the indexed excerpt at lines 3 to 11 of {p}.",
+      "intent": "read_file",
+      "role": "writer",
+      "expected_tools": [
+        "read_file"
+      ],
+      "family": "writer-source-excerpt-window",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "I need the extraction metadata associated with {p}, rather than its text.",
+      "intent": "file_info",
+      "role": "writer",
+      "expected_tools": [
+        "file_info"
+      ],
+      "family": "writer-extraction-coordinate-provenance",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "Is there a published index available for looking up documentation?",
+      "intent": "status",
+      "role": "writer",
+      "expected_tools": [
+        "status"
+      ],
+      "family": "writer-index-availability",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Which indexed filenames can I browse beneath {scope}?",
+      "intent": "list_files",
+      "role": "writer",
+      "expected_tools": [
+        "list_files"
+      ],
+      "family": "writer-folder-inventory",
+      "split": "novel-holdout",
+      "target": "{scope}"
+    },
+    {
+      "text": "Where can I read guidance on the AIRK read-only commands?",
+      "intent": "help",
+      "role": "writer",
+      "expected_tools": [
+        "help"
+      ],
+      "family": "writer-command-discovery",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Write a polished introduction explaining {s} for new users.",
+      "intent": "unsupported",
+      "role": "writer",
+      "expected_tools": [],
+      "family": "writer-generation-request",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Open the guide I was thinking about.",
+      "intent": "unsupported",
+      "role": "writer",
+      "expected_tools": [],
+      "family": "writer-document-unspecified",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Find the documentation about {s} and publish an updated copy.",
+      "intent": "unsupported",
+      "role": "writer",
+      "expected_tools": [],
+      "family": "writer-publish-after-finding",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "To inspect this contract, take me to the definition of interface {s}.",
+      "intent": "find_definition",
+      "role": "architect",
+      "expected_tools": [
+        "symbols"
+      ],
+      "family": "architect-contract-declaration",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "I want the existing passages recording the motivation for {s}.",
+      "intent": "search",
+      "role": "architect",
+      "expected_tools": [
+        "search"
+      ],
+      "family": "architect-recorded-motivation",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Collect indexed identifier occurrences for {s} so I can inspect its boundary mentions.",
+      "intent": "references",
+      "role": "architect",
+      "expected_tools": [
+        "references"
+      ],
+      "family": "architect-boundary-name-mentions",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Which recorded architecture statements concern {s}?",
+      "intent": "facts",
+      "role": "architect",
+      "expected_tools": [
+        "document_facts"
+      ],
+      "family": "architect-recorded-design-statements",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Could you bring back indexed lines 9 through 21 of {p}?",
+      "intent": "read_file",
+      "role": "architect",
+      "expected_tools": [
+        "read_file"
+      ],
+      "family": "architect-decision-excerpt",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "Give me the indexed language and extraction profile for {p}.",
+      "intent": "file_info",
+      "role": "architect",
+      "expected_tools": [
+        "file_info"
+      ],
+      "family": "architect-indexed-profile",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "What is the current published index generation?",
+      "intent": "status",
+      "role": "architect",
+      "expected_tools": [
+        "status"
+      ],
+      "family": "architect-publication-observation",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Bring up written imports that name {s}; I want to inspect the declared dependencies.",
+      "intent": "imports",
+      "role": "architect",
+      "expected_tools": [
+        "imports"
+      ],
+      "family": "architect-declared-dependency-evidence",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "I need detailed observations of native workers, queued jobs and the source watcher.",
+      "intent": "diagnostics",
+      "role": "architect",
+      "expected_tools": [
+        "diagnostics"
+      ],
+      "family": "architect-runtime-observations",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Invent a replacement architecture for {s} and justify the tradeoffs.",
+      "intent": "unsupported",
+      "role": "architect",
+      "expected_tools": [],
+      "family": "architect-design-generation",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Which of those components should own it?",
+      "intent": "unsupported",
+      "role": "architect",
+      "expected_tools": [],
+      "family": "architect-ambiguous-choice",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Locate the storage layer and migrate it to another database.",
+      "intent": "unsupported",
+      "role": "architect",
+      "expected_tools": [],
+      "family": "architect-migration-after-discovery",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Before reproducing this case, show the defining declaration of function {s}.",
+      "intent": "find_definition",
+      "role": "tester",
+      "expected_tools": [
+        "symbols"
+      ],
+      "family": "tester-target-declaration",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Find existing indexed examples discussing {s}; I will decide which tests matter.",
+      "intent": "search",
+      "role": "tester",
+      "expected_tools": [
+        "search"
+      ],
+      "family": "tester-existing-fixture-evidence",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Where does the exact identifier {s} occur in indexed text?",
+      "intent": "references",
+      "role": "tester",
+      "expected_tools": [
+        "references"
+      ],
+      "family": "tester-test-name-occurrences",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Bring me the written acceptance criteria mentioning {s}.",
+      "intent": "facts",
+      "role": "tester",
+      "expected_tools": [
+        "document_facts"
+      ],
+      "family": "tester-written-test-criteria",
+      "split": "novel-holdout",
+      "target": "{s}"
+    },
+    {
+      "text": "Retrieve the indexed source window from line 5 through line 17 in {p}.",
+      "intent": "read_file",
+      "role": "tester",
+      "expected_tools": [
+        "read_file"
+      ],
+      "family": "tester-bounded-fixture-inspection",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "Show the indexed content hash and extraction metadata for {p}.",
+      "intent": "file_info",
+      "role": "tester",
+      "expected_tools": [
+        "file_info"
+      ],
+      "family": "tester-indexed-source-identity",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "Are lexical and semantic retrieval ready in this collection?",
+      "intent": "status",
+      "role": "tester",
+      "expected_tools": [
+        "status"
+      ],
+      "family": "tester-semantic-availability",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "List the observed indexed evidence changes relative to baseline {baseline}.",
+      "intent": "changes",
+      "role": "tester",
+      "expected_tools": [
+        "changes"
+      ],
+      "family": "tester-retained-change-observation",
+      "split": "novel-holdout",
+      "target": "{baseline}"
+    },
+    {
+      "text": "Which structural navigation entries were indexed for {p}?",
+      "intent": "outline",
+      "role": "tester",
+      "expected_tools": [
+        "outline"
+      ],
+      "family": "tester-fixture-navigation",
+      "split": "novel-holdout",
+      "target": "{p}"
+    },
+    {
+      "text": "Run all tests associated with {s} and report whether they passed.",
+      "intent": "unsupported",
+      "role": "tester",
+      "expected_tools": [],
+      "family": "tester-execute-suite",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Guarantee that every behavior of {s} is covered by tests.",
+      "intent": "unsupported",
+      "role": "tester",
+      "expected_tools": [],
+      "family": "tester-coverage-proof",
+      "split": "novel-holdout"
+    },
+    {
+      "text": "Show the changes since the version I checked yesterday.",
+      "intent": "unsupported",
+      "role": "tester",
+      "expected_tools": [],
+      "family": "tester-baseline-unspecified",
+      "split": "novel-holdout"
+    }
+  ]
+}

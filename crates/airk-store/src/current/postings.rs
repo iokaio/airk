@@ -30,7 +30,7 @@ pub enum Lookup<'a> {
 }
 
 impl Lookup<'_> {
-    fn identity(self) -> Sha256Digest {
+    pub(crate) fn identity(self) -> Sha256Digest {
         let (kind, value) = match self {
             Self::Files => (b"files".as_slice(), ""),
             Self::FactName(value) => (b"fact-name".as_slice(), value),
@@ -100,6 +100,7 @@ fn selectors(
     version: u32,
 ) -> Result<BTreeSet<Sha256Digest>> {
     let artifact = store.load_retained(compact)?;
+
     let mut selectors = BTreeSet::from([
         Lookup::Files.identity(),
         Lookup::Language(&artifact.language).identity(),

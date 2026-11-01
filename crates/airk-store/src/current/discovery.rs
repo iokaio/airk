@@ -32,6 +32,18 @@ pub struct CurrentFactPage {
     pub evidence_scope: &'static str,
 }
 
+pub(crate) fn require_integrity(
+    read: &CurrentRead,
+    condition: bool,
+    message: &'static str,
+) -> Result<()> {
+    read.observe_private_integrity(if condition {
+        Ok(())
+    } else {
+        Err(anyhow::Error::new(super::PrivateIntegrityFailure).context(message))
+    })
+}
+
 fn matches(artifact: &Artifact, fact: &Fact, q: &FactQuery, code_only: bool) -> bool {
     (!code_only || fact.code.is_some())
         && (!q.document_only
@@ -55,10 +67,9 @@ fn matches(artifact: &Artifact, fact: &Fact, q: &FactQuery, code_only: bool) -> 
         })
 }
 
-fn order_key(artifact: &Artifact, ordinal: usize) -> DiscoveryKey {
-    let fact = &artifact.facts[ordinal];
+fn row_key(path: &str, ordinal: usize, fact: &Fact) -> DiscoveryKey {
     DiscoveryKey {
-        path: artifact.path.clone(),
+        path: path.into(),
         line: fact.start_line,
         kind: fact.kind.clone(),
         name: fact.name.clone(),
@@ -89,6 +100,57 @@ pub(crate) fn fact_hit(artifact: &Artifact, fact: &Fact) -> FactHit {
     }
 }
 
+/// Merge canonical native pages with imported rows without decoding later native
+/// pages after the response budget has been reached. Original ordinals remain
+/// the cursor identity even though pages are stored in canonical display order.
+struct ProjectedFacts<'a, 'b> {
+    read: &'a CurrentRead,
+    projection: &'a super::native_projection::NativeFactRead<'b>,
+    page: usize,
+    rows: std::vec::IntoIter<super::native_projection::NativeFactRow>,
+    native: Option<super::native_projection::NativeFactRow>,
+    imported: std::iter::Peekable<std::vec::IntoIter<super::native_projection::NativeFactRow>>,
+}
+impl Iterator for ProjectedFacts<'_, '_> {
+    type Item = Result<super::native_projection::NativeFactRow>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.native.is_none() {
+            loop {
+                if let Some(row) = self.rows.next() {
+                    self.native = Some(row);
+                    break;
+                }
+                if self.page == self.projection.header().pages.len() {
+                    break;
+                }
+                match self
+                    .read
+                    .observe_private_integrity(self.projection.page(self.page))
+                {
+                    Ok(page) => {
+                        self.page += 1;
+                        self.rows = page.rows.into_iter();
+                    }
+                    Err(error) => return Some(Err(error)),
+                }
+            }
+        }
+        let imported_first = match (&self.native, self.imported.peek()) {
+            (Some(native), Some(imported)) => {
+                row_key("", imported.ordinal, &imported.fact)
+                    < row_key("", native.ordinal, &native.fact)
+            }
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if imported_first {
+            self.imported.next().map(Ok)
+        } else {
+            self.native.take().map(Ok)
+        }
+    }
+}
+
 impl CurrentRead {
     /// Native fact discovery retains the request gate through candidate selection,
     /// verified extraction/source reads and cursor construction. Each page caps
@@ -116,7 +178,17 @@ impl CurrentRead {
                     .is_none_or(|language| language.len() <= 128),
             "invalid current fact filters or compact representation"
         );
-        let imported = self.analysis(store)?;
+        let private = self.private_query_eligible()?;
+        let projected_import = if private {
+            self.observe_private_integrity(self.imported_projection(store))?
+        } else {
+            None
+        };
+        let imported = if projected_import.is_none() {
+            self.analysis(store)?
+        } else {
+            None
+        };
         let mut imported_facts = imported
             .as_ref()
             .map(|a| a.native_facts())
@@ -156,6 +228,44 @@ impl CurrentRead {
         } else {
             Lookup::Files
         };
+        // Keep legacy imported candidate-path accounting, but select only one
+        // bounded page after this cursor instead of walking the full roster.
+        let mut imported_paths = projected_import
+            .as_ref()
+            .map(|projection| {
+                self.observe_private_integrity(projection.lookup_paths(
+                    Lookup::Files,
+                    &query.path_prefix,
+                    if query.path_exact {
+                        None
+                    } else {
+                        after.as_ref().map(|key| key.path.as_str())
+                    },
+                    if query.path_exact {
+                        1
+                    } else {
+                        MAX_FILES_PER_PAGE + 1
+                    },
+                ))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        if let Some(after) = after.as_ref().filter(|key| key.ordinal != FILE_END)
+            && !query.path_exact
+            && let Some(projection) = &projected_import
+        {
+            let resumed = self.observe_private_integrity(projection.lookup_paths(
+                Lookup::Files,
+                &after.path,
+                None,
+                1,
+            ))?;
+            imported_paths.extend(
+                resumed
+                    .into_iter()
+                    .filter(|selected| selected.path == after.path),
+            );
+        }
         let (mut paths, mut more_paths) = if query.path_exact {
             (
                 self.artifact(&query.path_prefix)?
@@ -182,6 +292,12 @@ impl CurrentRead {
                     })
                     .cloned(),
             );
+            paths.extend(
+                imported_paths
+                    .iter()
+                    .filter(|selected| after.as_ref().is_none_or(|key| selected.path > key.path))
+                    .map(|selected| selected.path.clone()),
+            );
             paths.sort();
             paths.dedup();
             if paths.len() > MAX_FILES_PER_PAGE {
@@ -206,7 +322,7 @@ impl CurrentRead {
                 ..Default::default()
             },
             truncated: more_paths,
-            evidence_scope: if imported.is_some() {
+            evidence_scope: if imported.is_some() || projected_import.is_some() {
                 "native-and-imported-assertions"
             } else {
                 "native"
@@ -243,51 +359,157 @@ impl CurrentRead {
                 break;
             }
             work += bytes;
-            let mut artifact =
-                store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
-            store.verify_retained_source(&compact)?;
+            let projection = if private {
+                self.observe_private_integrity(self.native_fact_projection(store, &path))?
+            } else {
+                None
+            };
+            let mut artifact = if projection.is_some() {
+                compact.clone()
+            } else {
+                let result = (|| {
+                    let artifact =
+                        store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
+                    store.verify_retained_source(&compact)?;
+                    Ok(artifact)
+                })();
+                if private {
+                    self.observe_private_integrity(result)?
+                } else {
+                    result?
+                }
+            };
+            let native_count = projection
+                .as_ref()
+                .map_or(artifact.facts.len(), |projection| projection.header().facts);
+            if let Some(projection) = &projected_import
+                && let Some(selected) = imported_paths.iter().find(|selected| selected.path == path)
+            {
+                require_integrity(
+                    self,
+                    selected.source.to_string() == compact.content_hash,
+                    "current analysis source expired",
+                )?;
+                let mut rows = std::collections::BTreeMap::new();
+                for page in &selected.pages {
+                    for row in self
+                        .observe_private_integrity(projection.query_page(*page))?
+                        .iter()
+                    {
+                        if let super::query_projection::ProjectionRow::Fact {
+                            path_ordinal,
+                            hit,
+                            ..
+                        } = row
+                            && hit.citation.path == path
+                        {
+                            require_integrity(
+                                self,
+                                hit.citation.content_hash == compact.content_hash,
+                                "current analysis source expired",
+                            )?;
+                            rows.insert(
+                                *path_ordinal,
+                                Fact {
+                                    name: hit.name.clone(),
+                                    kind: hit.kind.clone(),
+                                    syntax_kind: hit.syntax_kind.clone(),
+                                    start_line: hit.citation.start_line,
+                                    end_line: hit.citation.end_line,
+                                    location: hit.citation.location.clone(),
+                                    document: hit.document.clone(),
+                                    code: hit.code.clone(),
+                                },
+                            );
+                        }
+                    }
+                }
+                for (expected, (ordinal, fact)) in rows.into_iter().enumerate() {
+                    require_integrity(
+                        self,
+                        expected == ordinal,
+                        "imported fact path ordinal missing",
+                    )?;
+                    artifact.facts.push(fact);
+                }
+            }
             if let Some(facts) = imported_facts.remove(&path) {
                 self.verify_analysis_path(imported.as_ref().expect("imported facts"), &path)?;
                 artifact.facts.extend(facts);
             }
-            let file_metadata = self.file_metadata(store, &path)?;
+            let file_metadata = self.observe_private_integrity(self.file_metadata(store, &path))?;
             let keys = airk_core::continuity::FactKeyIndex::new(
                 file_metadata
                     .as_ref()
                     .map_or(&[], |file| file.continuity.as_slice()),
             );
+            let mut rows = std::mem::take(&mut artifact.facts)
+                .into_iter()
+                .enumerate()
+                .map(|(ordinal, fact)| {
+                    let ordinal = if projection.is_some() {
+                        native_count + ordinal
+                    } else {
+                        ordinal
+                    };
+                    let continuity_key = keys.key(ordinal, &fact);
+                    super::native_projection::NativeFactRow {
+                        ordinal,
+                        fact,
+                        continuity_key,
+                    }
+                })
+                .collect::<Vec<_>>();
+            rows.sort_by_key(|row| row_key(&path, row.ordinal, &row.fact));
+            let mut first_page = 0;
             let restored = after
                 .as_ref()
                 .filter(|key| key.path == path)
-                .map(|key| {
+                .map(|key| -> Result<DiscoveryKey> {
                     let ordinal = usize::try_from(key.ordinal)?;
-                    ensure!(
-                        ordinal < artifact.facts.len(),
-                        "current fact cursor position unavailable"
-                    );
-                    Ok::<_, anyhow::Error>(order_key(&artifact, ordinal))
+                    if let Some(projection) = &projection
+                        && ordinal < native_count
+                    {
+                        first_page = projection.page_for_ordinal(ordinal)?;
+                        let page = self.observe_private_integrity(projection.page(first_page))?;
+                        let row = page
+                            .rows
+                            .iter()
+                            .find(|row| row.ordinal == ordinal)
+                            .context("current fact cursor position unavailable")?;
+                        return Ok(row_key(&path, ordinal, &row.fact));
+                    }
+                    let row = rows
+                        .iter()
+                        .find(|row| row.ordinal == ordinal)
+                        .context("current fact cursor position unavailable")?;
+                    Ok(row_key(&path, ordinal, &row.fact))
                 })
                 .transpose()?;
-            let mut ordinals = (0..artifact.facts.len()).collect::<Vec<_>>();
-            ordinals.sort_by(|a, b| {
-                let a_fact = &artifact.facts[*a];
-                let b_fact = &artifact.facts[*b];
-                (a_fact.start_line, &a_fact.kind, &a_fact.name, a).cmp(&(
-                    b_fact.start_line,
-                    &b_fact.kind,
-                    &b_fact.name,
-                    b,
-                ))
-            });
-            for ordinal in ordinals {
-                let key = order_key(&artifact, ordinal);
+            let rows: Box<
+                dyn Iterator<Item = Result<super::native_projection::NativeFactRow>> + '_,
+            > = if let Some(projection) = &projection {
+                Box::new(ProjectedFacts {
+                    read: self,
+                    projection,
+                    page: first_page,
+                    rows: Vec::new().into_iter(),
+                    native: None,
+                    imported: rows.into_iter().peekable(),
+                })
+            } else {
+                Box::new(rows.into_iter().map(Ok))
+            };
+            for row in rows {
+                let row = row?;
+                let key = row_key(&path, row.ordinal, &row.fact);
                 if restored.as_ref().is_some_and(|after| key <= *after) {
                     continue;
                 }
-                let fact = &artifact.facts[ordinal];
+                let fact = &row.fact;
                 if matches(&artifact, fact, query, code_only) {
                     let mut hit = fact_hit(&artifact, fact);
-                    hit.continuity_key = keys.key(ordinal, fact);
+                    hit.continuity_key = row.continuity_key;
                     if let Some(minimal) = response.minimal.as_mut() {
                         let Some(candidate) =
                             minimal.candidate(&hit, &artifact, query.path_exact)?
@@ -353,6 +575,7 @@ impl CurrentRead {
                 .map(|key| discovery::encode(&binding, key))
                 .transpose()?;
         }
+        self.token()?;
         Ok(response)
     }
 }

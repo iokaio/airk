@@ -1,0 +1,1921 @@
+{
+  "attribution": {
+    "path": "tools/parser-train/data/licenses/attribution.json",
+    "sha256": "9b39e9e68e318b596ed702f77c893340016494f7ef6cc6cd20c001dbb0c0e4d3"
+  },
+  "compression": {
+    "embedded_filename": "",
+    "format": "gzip",
+    "implementation": "CPython",
+    "level": 9,
+    "mtime": 0,
+    "python": "3.13.7",
+    "zlib": "1.3.1"
+  },
+  "current_model": {
+    "asset_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+    "dataset_roles": {
+      "calibration": "target/parser-train/data/broader-calibration-975a1b224f8843fa.jsonl",
+      "fitted_train": "target/parser-train/data/broader-fitted-v5-696b34a3fb904217.jsonl",
+      "public-test": "target/parser-train/data/broader-public-test-378a1e3191ff42b5.jsonl",
+      "train": "target/parser-train/data/broader-train-ed896726fbc99279.jsonl",
+      "validation": "target/parser-train/data/broader-validation-67d4880c1b359075.jsonl"
+    },
+    "model_version": "intent-broader/5",
+    "note": "Training pool and exact fitted subset are distinct when selection is recorded; history totals are not the current model training size.",
+    "qualification_report": "tools/parser-train/qualification-broader-v5.json",
+    "qualification_report_sha256": "15a2eb2edbda2f7d7d7e69ce1063b970378589df76e7acb12c77dc5510addd41",
+    "selected_training": {
+      "path": "target/parser-train/data/broader-fitted-v5-696b34a3fb904217.jsonl",
+      "rows": 48000,
+      "sha256": "696b34a3fb904217bdd658eef3021758c058167b6efe026f5b253077a886150d"
+    },
+    "training_pool": {
+      "path": "target/parser-train/data/broader-train-ed896726fbc99279.jsonl",
+      "rows": 96000,
+      "sha256": "ed896726fbc992791c0a80c2ba78ee4cd936aa55beda1af857acda3dffaf5e72"
+    }
+  },
+  "datasets": [
+    {
+      "gzip_bytes": 164724,
+      "gzip_sha256": "059a80fa82c7b87dc9b139f454b08f562ef34b74de649e9c1c83519b36a7fa7e",
+      "intents": {
+        "changes": 307,
+        "diagnostics": 307,
+        "facts": 308,
+        "file_info": 308,
+        "find_definition": 308,
+        "help": 307,
+        "imports": 308,
+        "list_files": 308,
+        "outline": 308,
+        "read_file": 308,
+        "references": 308,
+        "search": 308,
+        "status": 307,
+        "unsupported": 1000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-calibration-326011763dd2074e.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 400,
+        "codesearchnet-query-in-explicit-retrieval-request": 73,
+        "original-phrase-family": 4527
+      },
+      "path": "tools/parser-train/data/broader-calibration-326011763dd2074e.jsonl.gz",
+      "raw_bytes": 2115359,
+      "raw_sha256": "326011763dd2074e55d251527ab86b85e0fb877fae71c154760348e426b6f7cb",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "b18106b34110313fb9d1cd24c9a22d1ad300ffab7b4def80a381cbc0ac0a7c5d",
+          "model_version": null,
+          "protocol": "broader-phrasing/2",
+          "record": "tools/parser-train/qualification-broader-v2.json",
+          "seed": 84181,
+          "split": "calibration"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "22a6d133c4ce30de8f658995c6e35ccb0894ff8e31691f783e441fda06b4524e",
+          "model_version": null,
+          "protocol": "broader-phrasing/1",
+          "record": "tools/parser-train/qualification-broader.json",
+          "seed": 84181,
+          "split": "calibration"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 468,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 448,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 473,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 471,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 429,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 502,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 430,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 456,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 480,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 443
+      },
+      "roles": {
+        "architect": 1150,
+        "developer": 1150,
+        "public-assistant-task": 400,
+        "tester": 1150,
+        "writer": 1150
+      },
+      "rows": 5000,
+      "splits": {
+        "calibration": 5000
+      }
+    },
+    {
+      "gzip_bytes": 168285,
+      "gzip_sha256": "15866ae705f2509dda5e097eb53078e8e27086fce987cc20dc762b54ac083621",
+      "intents": {
+        "changes": 307,
+        "diagnostics": 307,
+        "facts": 308,
+        "file_info": 308,
+        "find_definition": 308,
+        "help": 307,
+        "imports": 308,
+        "list_files": 308,
+        "outline": 308,
+        "read_file": 308,
+        "references": 308,
+        "search": 308,
+        "status": 307,
+        "unsupported": 1000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-calibration-4662a34d9d52afa4.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 400,
+        "codesearchnet-query-in-explicit-retrieval-request": 94,
+        "original-conversational-family": 536,
+        "original-phrase-family": 3970
+      },
+      "path": "tools/parser-train/data/broader-calibration-4662a34d9d52afa4.jsonl.gz",
+      "raw_bytes": 2123242,
+      "raw_sha256": "4662a34d9d52afa4f75ce5ab3af3f18d4c74a2bc843a6c8602e2901f30a9f011",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "8263e2656180e4b87684208cdeb487b34edc31990f3939ff1caf24abd8b25d5d",
+          "model_version": null,
+          "protocol": "broader-phrasing/3",
+          "record": "tools/parser-train/qualification-broader-v3.json",
+          "seed": 84181,
+          "split": "calibration"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 465,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 486,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 467,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 435,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 447,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 446,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 461,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 444,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 466,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 483
+      },
+      "roles": {
+        "architect": 1150,
+        "developer": 1150,
+        "public-assistant-task": 400,
+        "tester": 1150,
+        "writer": 1150
+      },
+      "rows": 5000,
+      "splits": {
+        "calibration": 5000
+      }
+    },
+    {
+      "gzip_bytes": 972156,
+      "gzip_sha256": "6506340fd8021a37403d88b04133f4451096cdee1e589a6689cee468cf95f66c",
+      "intents": {
+        "changes": 615,
+        "diagnostics": 615,
+        "facts": 615,
+        "file_info": 615,
+        "find_definition": 616,
+        "help": 615,
+        "imports": 615,
+        "list_files": 615,
+        "outline": 616,
+        "read_file": 616,
+        "references": 616,
+        "search": 616,
+        "status": 615,
+        "unsupported": 2000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-calibration-975a1b224f8843fa.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 800,
+        "original-baseline-family": 5900,
+        "original-role-inventory": 3300
+      },
+      "path": "tools/parser-train/data/broader-calibration-975a1b224f8843fa.jsonl.gz",
+      "raw_bytes": 10228407,
+      "raw_sha256": "975a1b224f8843faa68f6a34341d52b6dd1a4bf5dd6daaf175d54a336f1ffd87",
+      "references": [
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": "intent-broader/5",
+          "protocol": null,
+          "record": "tools/parser-train/manifest.json",
+          "seed": 84183,
+          "split": "calibration"
+        },
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": null,
+          "protocol": "broader-phrasing/5",
+          "record": "tools/parser-train/qualification-broader-v5.json",
+          "seed": 84183,
+          "split": "calibration"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 923,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 915,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 922,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 1012,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 876,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 895,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 939,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 883,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 902,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 933
+      },
+      "roles": {
+        "architect": 2300,
+        "developer": 2300,
+        "public-assistant-task": 800,
+        "tester": 2300,
+        "writer": 2300
+      },
+      "rows": 10000,
+      "splits": {
+        "calibration": 10000
+      }
+    },
+    {
+      "gzip_bytes": 168095,
+      "gzip_sha256": "3d3e62e44a5240742a5ebe1c7b5836b8c15a8ae1a6bda6735d4e9595d72541ab",
+      "intents": {
+        "changes": 307,
+        "diagnostics": 307,
+        "facts": 308,
+        "file_info": 308,
+        "find_definition": 308,
+        "help": 307,
+        "imports": 308,
+        "list_files": 308,
+        "outline": 308,
+        "read_file": 308,
+        "references": 308,
+        "search": 308,
+        "status": 307,
+        "unsupported": 1000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-calibration-d4ad7f4ad75263f0.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 400,
+        "codesearchnet-query-in-explicit-retrieval-request": 74,
+        "original-conversational-family": 567,
+        "original-phrase-family": 3959
+      },
+      "path": "tools/parser-train/data/broader-calibration-d4ad7f4ad75263f0.jsonl.gz",
+      "raw_bytes": 2119463,
+      "raw_sha256": "d4ad7f4ad75263f0ff03e80e57f364f4a5d919fef59663073b0d7fdf10b7efb0",
+      "references": [
+        {
+          "feature_spec": 2,
+          "model_sha256": "10780b4d1c04f408e2a9ed996f0f853ad4eb55aa9c166e471ba78bee0845dab0",
+          "model_version": null,
+          "protocol": "broader-phrasing/4",
+          "record": "tools/parser-train/qualification-broader-v4.json",
+          "seed": 84181,
+          "split": "calibration"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 425,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 463,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 479,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 434,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 443,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 461,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 480,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 430,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 477,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 508
+      },
+      "roles": {
+        "architect": 1150,
+        "developer": 1150,
+        "public-assistant-task": 400,
+        "tester": 1150,
+        "writer": 1150
+      },
+      "rows": 5000,
+      "splits": {
+        "calibration": 5000
+      }
+    },
+    {
+      "gzip_bytes": 5154511,
+      "gzip_sha256": "29244a9566ce93fcc2f5a1bd6f8e3e4fe8758138ea3ad337933e4e23b56e553d",
+      "intents": {
+        "changes": 3077,
+        "diagnostics": 3077,
+        "facts": 3077,
+        "file_info": 3077,
+        "find_definition": 3077,
+        "help": 3076,
+        "imports": 3077,
+        "list_files": 3077,
+        "outline": 3077,
+        "read_file": 3077,
+        "references": 3077,
+        "search": 3077,
+        "status": 3077,
+        "unsupported": 8000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-fitted-v5-696b34a3fb904217.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 2000,
+        "original-baseline-family": 14070,
+        "original-role-inventory": 31930
+      },
+      "path": "tools/parser-train/data/broader-fitted-v5-696b34a3fb904217.jsonl.gz",
+      "raw_bytes": 50282157,
+      "raw_sha256": "696b34a3fb904217bdd658eef3021758c058167b6efe026f5b253077a886150d",
+      "references": [
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": "intent-broader/5",
+          "protocol": null,
+          "record": "tools/parser-train/manifest.json",
+          "seed": 84183,
+          "split": "fitted_train"
+        },
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": null,
+          "protocol": "broader-phrasing/5",
+          "record": "tools/parser-train/qualification-broader-v5.json",
+          "seed": 84183,
+          "split": "fitted_train"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 4645,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 4566,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 4550,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 4639,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 4381,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 4576,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 4686,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 4613,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 4641,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 4703
+      },
+      "roles": {
+        "architect": 11500,
+        "developer": 11500,
+        "public-assistant-task": 2000,
+        "tester": 11500,
+        "writer": 11500
+      },
+      "rows": 48000,
+      "splits": {
+        "train": 48000
+      }
+    },
+    {
+      "gzip_bytes": 66008,
+      "gzip_sha256": "2f987e17f0289319c551c6f281020af0e56a3801cae27b81c7321ce37c13419b",
+      "intents": {
+        "unsupported": 1000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-public-test-378a1e3191ff42b5.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 1000
+      },
+      "path": "tools/parser-train/data/broader-public-test-378a1e3191ff42b5.jsonl.gz",
+      "raw_bytes": 307964,
+      "raw_sha256": "378a1e3191ff42b55eb41c86173163f5435b959e34154216ef52d2c9362a79c0",
+      "references": [
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": "intent-broader/5",
+          "protocol": null,
+          "record": "tools/parser-train/manifest.json",
+          "seed": 84183,
+          "split": "public-test"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "b18106b34110313fb9d1cd24c9a22d1ad300ffab7b4def80a381cbc0ac0a7c5d",
+          "model_version": null,
+          "protocol": "broader-phrasing/2",
+          "record": "tools/parser-train/qualification-broader-v2.json",
+          "seed": 84181,
+          "split": "public-test"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "8263e2656180e4b87684208cdeb487b34edc31990f3939ff1caf24abd8b25d5d",
+          "model_version": null,
+          "protocol": "broader-phrasing/3",
+          "record": "tools/parser-train/qualification-broader-v3.json",
+          "seed": 84181,
+          "split": "public-test"
+        },
+        {
+          "feature_spec": 2,
+          "model_sha256": "10780b4d1c04f408e2a9ed996f0f853ad4eb55aa9c166e471ba78bee0845dab0",
+          "model_version": null,
+          "protocol": "broader-phrasing/4",
+          "record": "tools/parser-train/qualification-broader-v4.json",
+          "seed": 84181,
+          "split": "public-test"
+        },
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": null,
+          "protocol": "broader-phrasing/5",
+          "record": "tools/parser-train/qualification-broader-v5.json",
+          "seed": 84183,
+          "split": "public-test"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "22a6d133c4ce30de8f658995c6e35ccb0894ff8e31691f783e441fda06b4524e",
+          "model_version": null,
+          "protocol": "broader-phrasing/1",
+          "record": "tools/parser-train/qualification-broader.json",
+          "seed": 84181,
+          "split": "public-test"
+        }
+      ],
+      "repositories": {},
+      "roles": {
+        "public-assistant-task": 1000
+      },
+      "rows": 1000,
+      "splits": {
+        "test": 1000
+      }
+    },
+    {
+      "gzip_bytes": 1831361,
+      "gzip_sha256": "40658a72e66815e3ecc8cff5ec989e966d889fd5af52730ff2758d33387b23f1",
+      "intents": {
+        "changes": 3077,
+        "diagnostics": 3077,
+        "facts": 3077,
+        "file_info": 3077,
+        "find_definition": 3077,
+        "help": 3076,
+        "imports": 3077,
+        "list_files": 3077,
+        "outline": 3077,
+        "read_file": 3077,
+        "references": 3077,
+        "search": 3077,
+        "status": 3077,
+        "unsupported": 8000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-train-04f09348bb7f1170.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 2000,
+        "codesearchnet-query-in-explicit-retrieval-request": 909,
+        "original-phrase-family": 45091
+      },
+      "path": "tools/parser-train/data/broader-train-04f09348bb7f1170.jsonl.gz",
+      "raw_bytes": 19776358,
+      "raw_sha256": "04f09348bb7f1170cbf124bf1f3676d0b3109344f86bbf6cf20378e51b81e73f",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "22a6d133c4ce30de8f658995c6e35ccb0894ff8e31691f783e441fda06b4524e",
+          "model_version": null,
+          "protocol": "broader-phrasing/1",
+          "record": "tools/parser-train/qualification-broader.json",
+          "seed": 84181,
+          "split": "train"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 4704,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 4623,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 4646,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 4543,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 4470,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 4629,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 4566,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 4571,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 4603,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 4645
+      },
+      "roles": {
+        "architect": 11500,
+        "developer": 11500,
+        "public-assistant-task": 2000,
+        "tester": 11500,
+        "writer": 11500
+      },
+      "rows": 48000,
+      "splits": {
+        "train": 48000
+      }
+    },
+    {
+      "gzip_bytes": 1884251,
+      "gzip_sha256": "2514f2204f8882f482513ff0fa4dd3ad8df355837b3ccaaf762228bec4ba1322",
+      "intents": {
+        "changes": 3077,
+        "diagnostics": 3077,
+        "facts": 3077,
+        "file_info": 3077,
+        "find_definition": 3077,
+        "help": 3076,
+        "imports": 3077,
+        "list_files": 3077,
+        "outline": 3077,
+        "read_file": 3077,
+        "references": 3077,
+        "search": 3077,
+        "status": 3077,
+        "unsupported": 8000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-train-50e3c424d0e1fd6a.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 2000,
+        "codesearchnet-query-in-explicit-retrieval-request": 874,
+        "original-phrase-family": 45126
+      },
+      "path": "tools/parser-train/data/broader-train-50e3c424d0e1fd6a.jsonl.gz",
+      "raw_bytes": 19960319,
+      "raw_sha256": "50e3c424d0e1fd6a5eaa7cf22be608f29008e6fdbc2c93e35cbcb363393cac3e",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "b18106b34110313fb9d1cd24c9a22d1ad300ffab7b4def80a381cbc0ac0a7c5d",
+          "model_version": null,
+          "protocol": "broader-phrasing/2",
+          "record": "tools/parser-train/qualification-broader-v2.json",
+          "seed": 84181,
+          "split": "train"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 4675,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 4631,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 4540,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 4643,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 4522,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 4615,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 4544,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 4583,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 4655,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 4592
+      },
+      "roles": {
+        "architect": 11500,
+        "developer": 11500,
+        "public-assistant-task": 2000,
+        "tester": 11500,
+        "writer": 11500
+      },
+      "rows": 48000,
+      "splits": {
+        "train": 48000
+      }
+    },
+    {
+      "gzip_bytes": 1881744,
+      "gzip_sha256": "bc434dd50c954b34f069c823668f6342d5fbeccfc8cd24d1344339572b31d2ff",
+      "intents": {
+        "changes": 3077,
+        "diagnostics": 3077,
+        "facts": 3077,
+        "file_info": 3077,
+        "find_definition": 3077,
+        "help": 3076,
+        "imports": 3077,
+        "list_files": 3077,
+        "outline": 3077,
+        "read_file": 3077,
+        "references": 3077,
+        "search": 3077,
+        "status": 3077,
+        "unsupported": 8000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-train-a32a5098b4630017.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 2000,
+        "codesearchnet-query-in-explicit-retrieval-request": 957,
+        "original-conversational-family": 5197,
+        "original-phrase-family": 39846
+      },
+      "path": "tools/parser-train/data/broader-train-a32a5098b4630017.jsonl.gz",
+      "raw_bytes": 20043136,
+      "raw_sha256": "a32a5098b463001760b39665e3fb30ea08d3f0bc52401182b355a9258fd37ea0",
+      "references": [
+        {
+          "feature_spec": 2,
+          "model_sha256": "10780b4d1c04f408e2a9ed996f0f853ad4eb55aa9c166e471ba78bee0845dab0",
+          "model_version": null,
+          "protocol": "broader-phrasing/4",
+          "record": "tools/parser-train/qualification-broader-v4.json",
+          "seed": 84181,
+          "split": "train"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 4604,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 4736,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 4676,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 4450,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 4534,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 4675,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 4473,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 4628,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 4619,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 4605
+      },
+      "roles": {
+        "architect": 11500,
+        "developer": 11500,
+        "public-assistant-task": 2000,
+        "tester": 11500,
+        "writer": 11500
+      },
+      "rows": 48000,
+      "splits": {
+        "train": 48000
+      }
+    },
+    {
+      "gzip_bytes": 1889268,
+      "gzip_sha256": "dab79e942ace74ceebea106118531d09fe1a9163a1c13e852372be6fbb18634d",
+      "intents": {
+        "changes": 3077,
+        "diagnostics": 3077,
+        "facts": 3077,
+        "file_info": 3077,
+        "find_definition": 3077,
+        "help": 3076,
+        "imports": 3077,
+        "list_files": 3077,
+        "outline": 3077,
+        "read_file": 3077,
+        "references": 3077,
+        "search": 3077,
+        "status": 3077,
+        "unsupported": 8000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-train-c7d87596a757c861.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 2000,
+        "codesearchnet-query-in-explicit-retrieval-request": 1094,
+        "original-conversational-family": 4955,
+        "original-phrase-family": 39951
+      },
+      "path": "tools/parser-train/data/broader-train-c7d87596a757c861.jsonl.gz",
+      "raw_bytes": 20070150,
+      "raw_sha256": "c7d87596a757c86160457c46f1d89787058558c0881b70ce72ebf49a918ad19e",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "8263e2656180e4b87684208cdeb487b34edc31990f3939ff1caf24abd8b25d5d",
+          "model_version": null,
+          "protocol": "broader-phrasing/3",
+          "record": "tools/parser-train/qualification-broader-v3.json",
+          "seed": 84181,
+          "split": "train"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 4636,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 4706,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 4669,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 4515,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 4582,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 4576,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 4416,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 4625,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 4619,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 4656
+      },
+      "roles": {
+        "architect": 11500,
+        "developer": 11500,
+        "public-assistant-task": 2000,
+        "tester": 11500,
+        "writer": 11500
+      },
+      "rows": 48000,
+      "splits": {
+        "train": 48000
+      }
+    },
+    {
+      "gzip_bytes": 10328278,
+      "gzip_sha256": "f2c703aab68ffb021e8ba855a78e9eb990176fb6b8dba89067b32da3ccc0bd47",
+      "intents": {
+        "changes": 6154,
+        "diagnostics": 6153,
+        "facts": 6154,
+        "file_info": 6154,
+        "find_definition": 6154,
+        "help": 6153,
+        "imports": 6154,
+        "list_files": 6154,
+        "outline": 6154,
+        "read_file": 6154,
+        "references": 6154,
+        "search": 6154,
+        "status": 6154,
+        "unsupported": 16000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-train-ed896726fbc99279.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 4000,
+        "original-baseline-family": 28532,
+        "original-role-inventory": 63468
+      },
+      "path": "tools/parser-train/data/broader-train-ed896726fbc99279.jsonl.gz",
+      "raw_bytes": 100626378,
+      "raw_sha256": "ed896726fbc992791c0a80c2ba78ee4cd936aa55beda1af857acda3dffaf5e72",
+      "references": [
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": "intent-broader/5",
+          "protocol": null,
+          "record": "tools/parser-train/manifest.json",
+          "seed": 84183,
+          "split": "train"
+        },
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": null,
+          "protocol": "broader-phrasing/5",
+          "record": "tools/parser-train/qualification-broader-v5.json",
+          "seed": 84183,
+          "split": "train"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 9384,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 9199,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 9235,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 9369,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 8697,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 9124,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 9325,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 9221,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 9250,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 9196
+      },
+      "roles": {
+        "architect": 23000,
+        "developer": 23000,
+        "public-assistant-task": 4000,
+        "tester": 23000,
+        "writer": 23000
+      },
+      "rows": 96000,
+      "splits": {
+        "train": 96000
+      }
+    },
+    {
+      "gzip_bytes": 954156,
+      "gzip_sha256": "5c21afa41f390ccaa2b1ae1585ff01ec5d271dcaef62d48e53ad10fc14a8fd0a",
+      "intents": {
+        "changes": 615,
+        "diagnostics": 615,
+        "facts": 615,
+        "file_info": 615,
+        "find_definition": 616,
+        "help": 615,
+        "imports": 615,
+        "list_files": 615,
+        "outline": 616,
+        "read_file": 616,
+        "references": 616,
+        "search": 616,
+        "status": 615,
+        "unsupported": 2000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-validation-67d4880c1b359075.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 800,
+        "original-baseline-family": 5773,
+        "original-role-inventory": 3427
+      },
+      "path": "tools/parser-train/data/broader-validation-67d4880c1b359075.jsonl.gz",
+      "raw_bytes": 10223413,
+      "raw_sha256": "67d4880c1b359075afbe807f90f6a8e1b96e04de9665dfcc227f56350cfe28f9",
+      "references": [
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": "intent-broader/5",
+          "protocol": null,
+          "record": "tools/parser-train/manifest.json",
+          "seed": 84183,
+          "split": "validation"
+        },
+        {
+          "feature_spec": 2,
+          "model_sha256": "3c6fee9de4093ca568c6c17725bcf50a5b9f75081c84672c7d783414dee07e4b",
+          "model_version": null,
+          "protocol": "broader-phrasing/5",
+          "record": "tools/parser-train/qualification-broader-v5.json",
+          "seed": 84183,
+          "split": "validation"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 924,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 865,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 953,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 858,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 900,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 934,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 1013,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 968,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 910,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 875
+      },
+      "roles": {
+        "architect": 2300,
+        "developer": 2300,
+        "public-assistant-task": 800,
+        "tester": 2300,
+        "writer": 2300
+      },
+      "rows": 10000,
+      "splits": {
+        "validation": 10000
+      }
+    },
+    {
+      "gzip_bytes": 167475,
+      "gzip_sha256": "10493a744d98c5f7d9c3e0d345152c84b15686494f2cfdd122662ba91a231580",
+      "intents": {
+        "changes": 307,
+        "diagnostics": 307,
+        "facts": 308,
+        "file_info": 308,
+        "find_definition": 308,
+        "help": 307,
+        "imports": 308,
+        "list_files": 308,
+        "outline": 308,
+        "read_file": 308,
+        "references": 308,
+        "search": 308,
+        "status": 307,
+        "unsupported": 1000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-validation-831422fee987e4d2.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 400,
+        "codesearchnet-query-in-explicit-retrieval-request": 91,
+        "original-conversational-family": 558,
+        "original-phrase-family": 3951
+      },
+      "path": "tools/parser-train/data/broader-validation-831422fee987e4d2.jsonl.gz",
+      "raw_bytes": 2093719,
+      "raw_sha256": "831422fee987e4d242ec6b8b3513baa2c65b753f42be105b7a8c4b4285db0db3",
+      "references": [
+        {
+          "feature_spec": 2,
+          "model_sha256": "10780b4d1c04f408e2a9ed996f0f853ad4eb55aa9c166e471ba78bee0845dab0",
+          "model_version": null,
+          "protocol": "broader-phrasing/4",
+          "record": "tools/parser-train/qualification-broader-v4.json",
+          "seed": 84181,
+          "split": "validation"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 424,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 450,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 504,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 447,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 463,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 467,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 485,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 462,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 443,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 455
+      },
+      "roles": {
+        "architect": 1150,
+        "developer": 1150,
+        "public-assistant-task": 400,
+        "tester": 1150,
+        "writer": 1150
+      },
+      "rows": 5000,
+      "splits": {
+        "validation": 5000
+      }
+    },
+    {
+      "gzip_bytes": 163843,
+      "gzip_sha256": "18359a09d79d945427a3a8711d917d49e8cbac1c4e2bf68926080750dcaee868",
+      "intents": {
+        "changes": 307,
+        "diagnostics": 307,
+        "facts": 308,
+        "file_info": 308,
+        "find_definition": 308,
+        "help": 307,
+        "imports": 308,
+        "list_files": 308,
+        "outline": 308,
+        "read_file": 308,
+        "references": 308,
+        "search": 308,
+        "status": 307,
+        "unsupported": 1000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-validation-90affb5d7a1a89db.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 400,
+        "codesearchnet-query-in-explicit-retrieval-request": 85,
+        "original-phrase-family": 4515
+      },
+      "path": "tools/parser-train/data/broader-validation-90affb5d7a1a89db.jsonl.gz",
+      "raw_bytes": 2083018,
+      "raw_sha256": "90affb5d7a1a89db078c3a91cc74f045cea9bfd2533ed528ff5a1a95f55d006f",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "b18106b34110313fb9d1cd24c9a22d1ad300ffab7b4def80a381cbc0ac0a7c5d",
+          "model_version": null,
+          "protocol": "broader-phrasing/2",
+          "record": "tools/parser-train/qualification-broader-v2.json",
+          "seed": 84181,
+          "split": "validation"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "22a6d133c4ce30de8f658995c6e35ccb0894ff8e31691f783e441fda06b4524e",
+          "model_version": null,
+          "protocol": "broader-phrasing/1",
+          "record": "tools/parser-train/qualification-broader.json",
+          "seed": 84181,
+          "split": "validation"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 499,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 494,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 479,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 432,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 415,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 435,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 439,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 486,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 475,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 446
+      },
+      "roles": {
+        "architect": 1150,
+        "developer": 1150,
+        "public-assistant-task": 400,
+        "tester": 1150,
+        "writer": 1150
+      },
+      "rows": 5000,
+      "splits": {
+        "validation": 5000
+      }
+    },
+    {
+      "gzip_bytes": 167664,
+      "gzip_sha256": "a8beb214c7bd484e00bff083ba21401a10a2636cccfa7c227f57d875eaae26b0",
+      "intents": {
+        "changes": 307,
+        "diagnostics": 307,
+        "facts": 308,
+        "file_info": 308,
+        "find_definition": 308,
+        "help": 307,
+        "imports": 308,
+        "list_files": 308,
+        "outline": 308,
+        "read_file": 308,
+        "references": 308,
+        "search": 308,
+        "status": 307,
+        "unsupported": 1000
+      },
+      "original_paths": [
+        "target/parser-train/data/broader-validation-df26141a04af60eb.jsonl"
+      ],
+      "origins": {
+        "clinc150-non-repository-task": 400,
+        "codesearchnet-query-in-explicit-retrieval-request": 91,
+        "original-conversational-family": 566,
+        "original-phrase-family": 3943
+      },
+      "path": "tools/parser-train/data/broader-validation-df26141a04af60eb.jsonl.gz",
+      "raw_bytes": 2095868,
+      "raw_sha256": "df26141a04af60ebf9029f530419e1a6bd559c8c57cffd41e7bf66dce74f6128",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "8263e2656180e4b87684208cdeb487b34edc31990f3939ff1caf24abd8b25d5d",
+          "model_version": null,
+          "protocol": "broader-phrasing/3",
+          "record": "tools/parser-train/qualification-broader-v3.json",
+          "seed": 84181,
+          "split": "validation"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 434,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 447,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 469,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 491,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 459,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 459,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 466,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 482,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 431,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 462
+      },
+      "roles": {
+        "architect": 1150,
+        "developer": 1150,
+        "public-assistant-task": 400,
+        "tester": 1150,
+        "writer": 1150
+      },
+      "rows": 5000,
+      "splits": {
+        "validation": 5000
+      }
+    },
+    {
+      "gzip_bytes": 109134,
+      "gzip_sha256": "a94f233175e614d1f330455f33938886c94606f5ed4da0b27a3a9e32ca21e537",
+      "intents": {
+        "changes": 307,
+        "diagnostics": 307,
+        "facts": 308,
+        "file_info": 308,
+        "find_definition": 308,
+        "help": 307,
+        "imports": 308,
+        "list_files": 308,
+        "outline": 308,
+        "read_file": 308,
+        "references": 308,
+        "search": 308,
+        "status": 307
+      },
+      "original_paths": [
+        "target/parser-train/data/calibration-7a7ee01a4de0366f.jsonl"
+      ],
+      "origins": {
+        "original-template-with-public-vocabulary": 4000
+      },
+      "path": "tools/parser-train/data/calibration-7a7ee01a4de0366f.jsonl.gz",
+      "raw_bytes": 1707250,
+      "raw_sha256": "7a7ee01a4de0366fe658e2f2e9eff25da640c1fc827eb5ef824e16285d40ea63",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "6af4c91e91ae491014e40309f1d6b5e8d1332846975c9a72b63f9d6f68cb0191",
+          "model_version": null,
+          "protocol": null,
+          "record": "tools/parser-train/qualification-initial.json",
+          "seed": 84173,
+          "split": "calibration"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "c92de155587bafa9e2d86086a62dd23ae38e91b31c45e5bcd6c0ba9f73bc6828",
+          "model_version": null,
+          "protocol": 4,
+          "record": "tools/parser-train/qualification.json",
+          "seed": 84173,
+          "split": "calibration"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 386,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 386,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 394,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 408,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 408,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 404,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 411,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 394,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 412,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 397
+      },
+      "roles": {
+        "architect": 1000,
+        "developer": 1000,
+        "tester": 1000,
+        "writer": 1000
+      },
+      "rows": 4000,
+      "splits": {
+        "calibration": 4000
+      }
+    },
+    {
+      "gzip_bytes": 57267,
+      "gzip_sha256": "fbeeab281b890517b5e122aba63bdb4dce3b2d2a8ee93699ad143abfc3f12b79",
+      "intents": {
+        "changes": 200,
+        "diagnostics": 200,
+        "facts": 200,
+        "file_info": 200,
+        "find_definition": 200,
+        "help": 200,
+        "imports": 200,
+        "list_files": 200,
+        "outline": 200,
+        "read_file": 200,
+        "references": 200,
+        "search": 200,
+        "status": 200
+      },
+      "original_paths": [
+        "target/parser-train/data/held-actions--runner-5a131a6066882d1f.jsonl"
+      ],
+      "origins": {
+        "original-template-with-public-vocabulary": 2600
+      },
+      "path": "tools/parser-train/data/held-actions--runner-5a131a6066882d1f.jsonl.gz",
+      "raw_bytes": 1101395,
+      "raw_sha256": "5a131a6066882d1f5515828ec9ccc094413c026863c2f756b7b89e2b2d82b622",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "6af4c91e91ae491014e40309f1d6b5e8d1332846975c9a72b63f9d6f68cb0191",
+          "model_version": null,
+          "protocol": null,
+          "record": "tools/parser-train/qualification-initial.json",
+          "seed": 84173,
+          "split": "actions/runner"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "c92de155587bafa9e2d86086a62dd23ae38e91b31c45e5bcd6c0ba9f73bc6828",
+          "model_version": null,
+          "protocol": 4,
+          "record": "tools/parser-train/qualification.json",
+          "seed": 84173,
+          "split": "actions/runner"
+        }
+      ],
+      "repositories": {
+        "actions/runner@110142c2c501c6ae9373d553efa826bedbaab5f7": 2600
+      },
+      "roles": {
+        "architect": 650,
+        "developer": 650,
+        "tester": 650,
+        "writer": 650
+      },
+      "rows": 2600,
+      "splits": {
+        "repository-evaluation": 2600
+      }
+    },
+    {
+      "gzip_bytes": 55637,
+      "gzip_sha256": "29e03da5a3da63493ed16217e96fbb361ae6674a5dec009494b7eb6e72136847",
+      "intents": {
+        "changes": 200,
+        "diagnostics": 200,
+        "facts": 200,
+        "file_info": 200,
+        "find_definition": 200,
+        "help": 200,
+        "imports": 200,
+        "list_files": 200,
+        "outline": 200,
+        "read_file": 200,
+        "references": 200,
+        "search": 200,
+        "status": 200
+      },
+      "original_paths": [
+        "target/parser-train/data/held-fastapi--fastapi-44bbd0b400b85bb4.jsonl"
+      ],
+      "origins": {
+        "original-template-with-public-vocabulary": 2600
+      },
+      "path": "tools/parser-train/data/held-fastapi--fastapi-44bbd0b400b85bb4.jsonl.gz",
+      "raw_bytes": 1120428,
+      "raw_sha256": "44bbd0b400b85bb498bae76c22e0a23f767d055b4bca542d23db7152ec4d208e",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "6af4c91e91ae491014e40309f1d6b5e8d1332846975c9a72b63f9d6f68cb0191",
+          "model_version": null,
+          "protocol": null,
+          "record": "tools/parser-train/qualification-initial.json",
+          "seed": 84173,
+          "split": "fastapi/fastapi"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "c92de155587bafa9e2d86086a62dd23ae38e91b31c45e5bcd6c0ba9f73bc6828",
+          "model_version": null,
+          "protocol": 4,
+          "record": "tools/parser-train/qualification.json",
+          "seed": 84173,
+          "split": "fastapi/fastapi"
+        }
+      ],
+      "repositories": {
+        "fastapi/fastapi@79cab5bed28b24d92c185d236feb33f5783dfeb3": 2600
+      },
+      "roles": {
+        "architect": 650,
+        "developer": 650,
+        "tester": 650,
+        "writer": 650
+      },
+      "rows": 2600,
+      "splits": {
+        "repository-evaluation": 2600
+      }
+    },
+    {
+      "gzip_bytes": 53054,
+      "gzip_sha256": "ee2b97bb4e991c29e83a1f48cccfbad512e9f548f85766695ed82148579c0369",
+      "intents": {
+        "changes": 200,
+        "diagnostics": 200,
+        "facts": 200,
+        "file_info": 200,
+        "find_definition": 200,
+        "help": 200,
+        "imports": 200,
+        "list_files": 200,
+        "outline": 200,
+        "read_file": 200,
+        "references": 200,
+        "search": 200,
+        "status": 200
+      },
+      "original_paths": [
+        "target/parser-train/data/held-simpleiot--simpleiot-713e05d17a8bbf7f.jsonl"
+      ],
+      "origins": {
+        "original-template-with-public-vocabulary": 2600
+      },
+      "path": "tools/parser-train/data/held-simpleiot--simpleiot-713e05d17a8bbf7f.jsonl.gz",
+      "raw_bytes": 1084588,
+      "raw_sha256": "713e05d17a8bbf7f3b73e026d989da7702b6bcfdf8c3aeb835060704be1d48c5",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "6af4c91e91ae491014e40309f1d6b5e8d1332846975c9a72b63f9d6f68cb0191",
+          "model_version": null,
+          "protocol": null,
+          "record": "tools/parser-train/qualification-initial.json",
+          "seed": 84173,
+          "split": "simpleiot/simpleiot"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "c92de155587bafa9e2d86086a62dd23ae38e91b31c45e5bcd6c0ba9f73bc6828",
+          "model_version": null,
+          "protocol": 4,
+          "record": "tools/parser-train/qualification.json",
+          "seed": 84173,
+          "split": "simpleiot/simpleiot"
+        }
+      ],
+      "repositories": {
+        "simpleiot/simpleiot@a4c5538bc1b3db1aad49a80911e0e7dd5061b254": 2600
+      },
+      "roles": {
+        "architect": 650,
+        "developer": 650,
+        "tester": 650,
+        "writer": 650
+      },
+      "rows": 2600,
+      "splits": {
+        "repository-evaluation": 2600
+      }
+    },
+    {
+      "gzip_bytes": 105620,
+      "gzip_sha256": "7a076642e7cb588d1859fbabae8cfddb6e6b74f89e007ed4872ff98e603efdd1",
+      "intents": {
+        "changes": 960,
+        "diagnostics": 960,
+        "facts": 960,
+        "file_info": 960,
+        "find_definition": 960,
+        "help": 960,
+        "imports": 960,
+        "list_files": 960,
+        "outline": 960,
+        "read_file": 960,
+        "references": 960,
+        "search": 960,
+        "status": 960
+      },
+      "original_paths": [
+        "target/parser-train/data/synthetic-72c125d2b8944a60.jsonl"
+      ],
+      "origins": {
+        "synthetic-template": 12480
+      },
+      "path": "tools/parser-train/data/synthetic-72c125d2b8944a60.jsonl.gz",
+      "raw_bytes": 1777986,
+      "raw_sha256": "72c125d2b8944a60049d562a64a71ab899dcc72a07e8f27e6d4045f80d137434",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "3ee9bd302614e565fe829dd50a305d77eababa053194fd8621f6a6df91b4ade6",
+          "model_version": null,
+          "protocol": null,
+          "record": "tools/parser-train/manifest-smoke.json",
+          "seed": 84173,
+          "split": "train"
+        }
+      ],
+      "repositories": {},
+      "roles": {
+        "fictional-template": 12480
+      },
+      "rows": 12480,
+      "splits": {
+        "train": 12480
+      }
+    },
+    {
+      "gzip_bytes": 1190049,
+      "gzip_sha256": "9770987a8d1b8565af96b34fe6c3f6141d8a94103a0669f7378c1b4ab769b7ef",
+      "intents": {
+        "changes": 3077,
+        "diagnostics": 3077,
+        "facts": 3077,
+        "file_info": 3077,
+        "find_definition": 3077,
+        "help": 3076,
+        "imports": 3077,
+        "list_files": 3077,
+        "outline": 3077,
+        "read_file": 3077,
+        "references": 3077,
+        "search": 3077,
+        "status": 3077
+      },
+      "original_paths": [
+        "target/parser-train/data/train-de5762b6dd98b4be.jsonl"
+      ],
+      "origins": {
+        "original-template-with-public-vocabulary": 40000
+      },
+      "path": "tools/parser-train/data/train-de5762b6dd98b4be.jsonl.gz",
+      "raw_bytes": 16684608,
+      "raw_sha256": "de5762b6dd98b4be342eaa3a6542ea6c5bd7b08f1dcac128c37e5b3120b3d7fe",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "6af4c91e91ae491014e40309f1d6b5e8d1332846975c9a72b63f9d6f68cb0191",
+          "model_version": null,
+          "protocol": null,
+          "record": "tools/parser-train/qualification-initial.json",
+          "seed": 84173,
+          "split": "train"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 4121,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 4004,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 4097,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 3975,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 3790,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 4034,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 3869,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 4113,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 3985,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 4012
+      },
+      "roles": {
+        "architect": 10000,
+        "developer": 10000,
+        "tester": 10000,
+        "writer": 10000
+      },
+      "rows": 40000,
+      "splits": {
+        "train": 40000
+      }
+    },
+    {
+      "gzip_bytes": 1361103,
+      "gzip_sha256": "d222c9d34b54e37532409a5aa7350f856dfd834cd053ea5c7c8caaa6a9d40324",
+      "intents": {
+        "changes": 3077,
+        "diagnostics": 3077,
+        "facts": 3077,
+        "file_info": 3077,
+        "find_definition": 3077,
+        "help": 3076,
+        "imports": 3077,
+        "list_files": 3077,
+        "outline": 3077,
+        "read_file": 3077,
+        "references": 3077,
+        "search": 3077,
+        "status": 3077
+      },
+      "original_paths": [
+        "target/parser-train/data/train-ea149bbdd266ff3b.jsonl"
+      ],
+      "origins": {
+        "original-template-with-public-vocabulary": 40000
+      },
+      "path": "tools/parser-train/data/train-ea149bbdd266ff3b.jsonl.gz",
+      "raw_bytes": 16991796,
+      "raw_sha256": "ea149bbdd266ff3b89e05b68183e8c911fa0ac3749bf4baa5ebf69a062002425",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "c92de155587bafa9e2d86086a62dd23ae38e91b31c45e5bcd6c0ba9f73bc6828",
+          "model_version": null,
+          "protocol": 4,
+          "record": "tools/parser-train/qualification.json",
+          "seed": 84173,
+          "split": "train"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 4065,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 4025,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 4012,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 4046,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 3996,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 3988,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 4019,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 3970,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 3908,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 3971
+      },
+      "roles": {
+        "architect": 10000,
+        "developer": 10000,
+        "tester": 10000,
+        "writer": 10000
+      },
+      "rows": 40000,
+      "splits": {
+        "train": 40000
+      }
+    },
+    {
+      "gzip_bytes": 108571,
+      "gzip_sha256": "a69ccecabbfb868ce62a62a82a726e71827d2c462a1652fd8fcd900dfeb7a5ab",
+      "intents": {
+        "changes": 307,
+        "diagnostics": 307,
+        "facts": 308,
+        "file_info": 308,
+        "find_definition": 308,
+        "help": 307,
+        "imports": 308,
+        "list_files": 308,
+        "outline": 308,
+        "read_file": 308,
+        "references": 308,
+        "search": 308,
+        "status": 307
+      },
+      "original_paths": [
+        "target/parser-train/data/validation-ae0a5c7cb28f45f2.jsonl"
+      ],
+      "origins": {
+        "original-template-with-public-vocabulary": 4000
+      },
+      "path": "tools/parser-train/data/validation-ae0a5c7cb28f45f2.jsonl.gz",
+      "raw_bytes": 1688975,
+      "raw_sha256": "ae0a5c7cb28f45f2f0518e658bb754097788b244ab76a615a35c468307bf5b62",
+      "references": [
+        {
+          "feature_spec": 1,
+          "model_sha256": "6af4c91e91ae491014e40309f1d6b5e8d1332846975c9a72b63f9d6f68cb0191",
+          "model_version": null,
+          "protocol": null,
+          "record": "tools/parser-train/qualification-initial.json",
+          "seed": 84173,
+          "split": "validation"
+        },
+        {
+          "feature_spec": 1,
+          "model_sha256": "c92de155587bafa9e2d86086a62dd23ae38e91b31c45e5bcd6c0ba9f73bc6828",
+          "model_version": null,
+          "protocol": 4,
+          "record": "tools/parser-train/qualification.json",
+          "seed": 84173,
+          "split": "validation"
+        }
+      ],
+      "repositories": {
+        "backstage/backstage@f60f04cc4e31534b18fbfed2e7e64b4e90580de9": 403,
+        "dotnet/runtime@9857961ed10086d04cf981039d12799520577055": 398,
+        "etcd-io/etcd@1573d59416efa220421c451f5266b24a5d8374ef": 382,
+        "kubernetes/enhancements@a904b50283fe82d0d4f46988d0fd9d1a35a86c25": 389,
+        "nats-io/nats-architecture-and-design@dc0b1c7200f0d716fdee9de1428759594538ed7d": 405,
+        "nats-io/nats-server@4e28758e1abbf2968c9438f311b37c13d3c403fa": 404,
+        "open-telemetry/opentelemetry-specification@36ccfcfb33aca1e9c70a2cfd26e031ed9180949a": 421,
+        "protocolbuffers/protobuf@478ccb8c1874495997adefe6aca81f15546867c4": 380,
+        "rust-lang/rust-analyzer@c59cdaa4c26ffe036a3403e4948f1681995d4125": 427,
+        "tokio-rs/tokio@6470b5e4b8e943ad014383a5bf6a93ba415678a3": 391
+      },
+      "roles": {
+        "architect": 1000,
+        "developer": 1000,
+        "tester": 1000,
+        "writer": 1000
+      },
+      "rows": 4000,
+      "splits": {
+        "validation": 4000
+      }
+    }
+  ],
+  "license_files": [
+    {
+      "bytes": 11357,
+      "path": "tools/parser-train/data/licenses/airk-Apache-2.0.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "bytes": 13164,
+      "path": "tools/parser-train/data/licenses/attribution.json",
+      "sha256": "9b39e9e68e318b596ed702f77c893340016494f7ef6cc6cd20c001dbb0c0e4d3"
+    },
+    {
+      "bytes": 19467,
+      "path": "tools/parser-train/data/licenses/online-clinc150-828f8093932c-LICENSE.txt",
+      "sha256": "e6bc9e9c474700b708f568bac9e5a8a9bcb2b1dad53442f5ba449fcb848b8e76"
+    },
+    {
+      "bytes": 1227,
+      "encoding": "gzip",
+      "path": "tools/parser-train/data/licenses/online-clinc150-828f8093932c-README-md.txt.gz",
+      "raw_bytes": 2668,
+      "raw_sha256": "8a8df26c4de3d25b6c4cff385ca23602c30e4e56828b015206cbc202f6db363a",
+      "sha256": "04cb6d564b3bafe7e25a99e1a944b69c3d4e0051bdea97d96c10b1bcaade180f"
+    },
+    {
+      "bytes": 1063,
+      "path": "tools/parser-train/data/licenses/online-codesearchnet-queries-106e827405c9-LICENSE.txt",
+      "sha256": "5ba1fd8a344040f2698ed3234aeb8f4b3e85211aa54a37048021f3eb0043be22"
+    },
+    {
+      "bytes": 7348,
+      "encoding": "gzip",
+      "path": "tools/parser-train/data/licenses/online-codesearchnet-queries-106e827405c9-README-md.txt.gz",
+      "raw_bytes": 20988,
+      "raw_sha256": "1d4794ab520121b37c903bfa890a7c73ad2387a2f6b57a96372f74882faca5c6",
+      "sha256": "cda0f20d536b744ef740a603401a63f886fd518afb3fb04cc90798ca1b511c30"
+    },
+    {
+      "bytes": 1092,
+      "path": "tools/parser-train/data/licenses/repository-actions--runner-110142c2c501-0.txt",
+      "sha256": "6b4b86a3bacca473f2a838371bc806da4d47654ee2a7a64412711bb33ca203c8"
+    },
+    {
+      "bytes": 11045,
+      "path": "tools/parser-train/data/licenses/repository-backstage--backstage-f60f04cc4e31-0.txt",
+      "sha256": "4310dfbe4acee499cd591f78974b87816958605edef21e7bf395e7fab88d62a7"
+    },
+    {
+      "bytes": 1139,
+      "path": "tools/parser-train/data/licenses/repository-dotnet--runtime-9857961ed100-0.txt",
+      "sha256": "d7a68596ab69b06f51ca278a6545148e4269a9381c26d597c13df5d88e08cf5b"
+    },
+    {
+      "bytes": 11549,
+      "path": "tools/parser-train/data/licenses/repository-etcd-io--etcd-1573d59416ef-0.txt",
+      "sha256": "fd4337568f4759b58b38b581fe2dfe36f1404683e6e80d22141579a8c5427fbe"
+    },
+    {
+      "bytes": 1107,
+      "path": "tools/parser-train/data/licenses/repository-fastapi--fastapi-79cab5bed28b-0.txt",
+      "sha256": "2853a942962e3bb755239b5fecb736503be392554c1d90f97cea7f29f4465d34"
+    },
+    {
+      "bytes": 11558,
+      "path": "tools/parser-train/data/licenses/repository-kubernetes--enhancements-a904b50283fe-0.txt",
+      "sha256": "e03ba41d7fab20700769fe4118bab50d800cb74f990353a05d2f5fff1c228363"
+    },
+    {
+      "bytes": 11558,
+      "path": "tools/parser-train/data/licenses/repository-nats-io--nats-architecture-and-design-dc0b1c7200f0-0.txt",
+      "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+    },
+    {
+      "bytes": 11558,
+      "path": "tools/parser-train/data/licenses/repository-nats-io--nats-server-4e28758e1abb-0.txt",
+      "sha256": "1eb85fc97224598dad1852b5d6483bbcf0aa8608790dcc657a5a2a761ae9c8c6"
+    },
+    {
+      "bytes": 11357,
+      "path": "tools/parser-train/data/licenses/repository-open-telemetry--opentelemetry-specification-36ccfcfb33ac-0.txt",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "bytes": 1764,
+      "path": "tools/parser-train/data/licenses/repository-protocolbuffers--protobuf-478ccb8c1874-0.txt",
+      "sha256": "f4df8b2457697851385d9ebb93267832c1dfa24e0e61881952f6b0c452663dc9"
+    },
+    {
+      "bytes": 9723,
+      "path": "tools/parser-train/data/licenses/repository-rust-lang--rust-analyzer-c59cdaa4c26f-0.txt",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+    },
+    {
+      "bytes": 1023,
+      "path": "tools/parser-train/data/licenses/repository-rust-lang--rust-analyzer-c59cdaa4c26f-1.txt",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    },
+    {
+      "bytes": 11560,
+      "path": "tools/parser-train/data/licenses/repository-simpleiot--simpleiot-a4c5538bc1b3-0.txt",
+      "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+    },
+    {
+      "bytes": 1091,
+      "path": "tools/parser-train/data/licenses/repository-tokio-rs--tokio-6470b5e4b8e9-0.txt",
+      "sha256": "794038fa5d69932673a14840d0ea11f754becd0ad659ea38aad94f58d0ed2f4f"
+    }
+  ],
+  "schema": "airk.parser.datasets/1",
+  "scope": "Exact expanded public parser-training dataset history, not clones or native state.",
+  "source_files": [
+    {
+      "bytes": 378,
+      "path": "tools/parser-train/.gitattributes",
+      "sha256": "3ae5a40f4121c920c3e0ce65220e38cf26827200b66d5023e37b8692efb0d70a"
+    },
+    {
+      "bytes": 31323,
+      "path": "tools/parser-train/broaden.py",
+      "sha256": "08c68778252cd8348d9390a82eac11d4e9d8a16c60873c4b9a63264f2bf1c535"
+    },
+    {
+      "bytes": 16495,
+      "path": "tools/parser-train/conversational-regression-v4.json",
+      "sha256": "351f85200b3eda83a933bd6ad80c8148ca2dccc78a5c3ac6703746a4ff4826cb"
+    },
+    {
+      "bytes": 16585,
+      "path": "tools/parser-train/conversational-regression.json",
+      "sha256": "95e2eb327e5a46bc599584d66b315e5031fe5b00494dad9acebcd705fdade60d"
+    },
+    {
+      "bytes": 5010,
+      "path": "tools/parser-train/conversational.py",
+      "sha256": "679f784d8fb1e12305144ac71f9e927a79179da1dd9ecbd9aeb0806503614fcd"
+    },
+    {
+      "bytes": 3780,
+      "path": "tools/parser-train/conversational_v4.py",
+      "sha256": "d220281bebdeb86a97e3cc7daff09f0695b972b723f63b585d2e2f3cec47a32e"
+    },
+    {
+      "bytes": 32752,
+      "path": "tools/parser-train/evaluation.json",
+      "sha256": "8ce306e1d8a9ffbba89e146ec78e917c2f9fdc712026fa7eb84faba65b425e21"
+    },
+    {
+      "bytes": 39697,
+      "path": "tools/parser-train/export_datasets.py",
+      "sha256": "3d8605f673351cf20aec439e9db604d7274e22afc8f59aeee3bcb3ffb6d81431"
+    },
+    {
+      "bytes": 5683,
+      "path": "tools/parser-train/fit-saved.py",
+      "sha256": "4d6c0ba76d1372e67ef3108f7d5cd21ccbd4035a063a44a96e837752c7fb2d95"
+    },
+    {
+      "bytes": 8141,
+      "path": "tools/parser-train/fixtures-v2.json",
+      "sha256": "9fddeb9cbc1efcabb0ede8ee2575ad0a31011b3eefee0f5a11c6951155142e45"
+    },
+    {
+      "bytes": 3186,
+      "path": "tools/parser-train/fixtures.json",
+      "sha256": "312c3ffeb584d4c596654d1dfdfc7f197e6ad8c66c484f778a3aca068ac05fc6"
+    },
+    {
+      "bytes": 7570,
+      "path": "tools/parser-train/harvest.py",
+      "sha256": "395a7215b0aa720e6f5ebf059a6280b428baaac8082fca201a76413fa2a9e9a4"
+    },
+    {
+      "bytes": 1923,
+      "path": "tools/parser-train/inference.json",
+      "sha256": "aaa9ec0c225746341cf857a0cf0b16a17dbf584e3a51c152f8a5e16c3f39e106"
+    },
+    {
+      "bytes": 5852,
+      "path": "tools/parser-train/install_review.py",
+      "sha256": "c280e97de8b8959d3614ebbc172092ef4c0effd1a856a2d4e52f59cc8ecce2ad"
+    },
+    {
+      "bytes": 600,
+      "path": "tools/parser-train/manifest-smoke.json",
+      "sha256": "d5edb62d99dbcb4a3916d6314f7faf84f60fc65722c848d38d9a8810e266f119"
+    },
+    {
+      "bytes": 3308,
+      "path": "tools/parser-train/manifest.json",
+      "sha256": "0d6259f7c1c941aec62eae8f0d063dc21dc3add11183dbffea030221913eb481"
+    },
+    {
+      "bytes": 38315,
+      "path": "tools/parser-train/novel-role-plan-first.json",
+      "sha256": "86f23d5dd0a723b879ab3572322e2cb5c2fbc4ed9e001a8d6f8c750a9cf86fff"
+    },
+    {
+      "bytes": 36956,
+      "path": "tools/parser-train/novel-role-plan-regression.json",
+      "sha256": "2f02a046b387fd655a3dada23d2c8474b9d67d76a777261b5bf1440da93086fc"
+    },
+    {
+      "bytes": 14638,
+      "path": "tools/parser-train/novel-role-queries.json",
+      "sha256": "dff065ae71b1bb3c72751100d35edd8013c16df05ba657c14a555041a5c1fc9d"
+    },
+    {
+      "bytes": 3264,
+      "path": "tools/parser-train/online.lock.json",
+      "sha256": "32534ddbb1f26f3170cc5f4d8505e4b2485d7f75028b99fad0dccb97c158b64c"
+    },
+    {
+      "bytes": 3276,
+      "path": "tools/parser-train/online.py",
+      "sha256": "e50bc503c031552b19986968d341993a9c898ae67a6e65ce6bdabafea4052bff"
+    },
+    {
+      "bytes": 25486,
+      "path": "tools/parser-train/phrasing.py",
+      "sha256": "4a227f16895b5febdd2267041a533f07ec42b93ec1c2da23f6ec9608d530d46f"
+    },
+    {
+      "bytes": 9323,
+      "path": "tools/parser-train/qualification-broader-v2.json",
+      "sha256": "cae2e4e255cab4f522f7d0648cfe1f0009aa03402b00836ee15c9bec919d1de7"
+    },
+    {
+      "bytes": 37709,
+      "path": "tools/parser-train/qualification-broader-v3.json",
+      "sha256": "8d1138365e00d288aa8c79813c1498df1a69d94992f31b950106f79a409ece14"
+    },
+    {
+      "bytes": 37933,
+      "path": "tools/parser-train/qualification-broader-v4.json",
+      "sha256": "f1641dfda5fa87c70ad0c0a4cf628493dfdd90c889ea775b7b71e14fb13acbd2"
+    },
+    {
+      "bytes": 256034,
+      "path": "tools/parser-train/qualification-broader-v5.json",
+      "sha256": "15a2eb2edbda2f7d7d7e69ce1063b970378589df76e7acb12c77dc5510addd41"
+    },
+    {
+      "bytes": 9168,
+      "path": "tools/parser-train/qualification-broader.json",
+      "sha256": "0edf3e527c3c7d200618972391ef6ba69c63306979222883788f0fcf0c416304"
+    },
+    {
+      "bytes": 5364,
+      "path": "tools/parser-train/qualification-initial.json",
+      "sha256": "54b871fcdfccdbd472a782c304155f48609e6507a2e0b4aff9de386977c2c864"
+    },
+    {
+      "bytes": 5730,
+      "path": "tools/parser-train/qualification.json",
+      "sha256": "b9e91e087c5b1a15e97ba5d9ec0021e46cdfa03538b25aa3fb61b23e67e817cf"
+    },
+    {
+      "bytes": 16149,
+      "path": "tools/parser-train/qualify.py",
+      "sha256": "7438ed559ba52ffe3b1a249977dcc14668122ddb81deddf69146ea8366645efa"
+    },
+    {
+      "bytes": 1493,
+      "path": "tools/parser-train/replay-v5.json",
+      "sha256": "b7f7e6d545b5904f6245ca9c745a3f4f85cae91c5add53eabc8ffc2de1ae98ae"
+    },
+    {
+      "bytes": 1370,
+      "path": "tools/parser-train/repositories.json",
+      "sha256": "9c1ba3d562147faa0a4d9c43ebcce16fe6fb51f3a7b93a7c5b33e00a58836ba4"
+    },
+    {
+      "bytes": 6756,
+      "path": "tools/parser-train/repositories.lock.json",
+      "sha256": "a98bf12121d8b009c2f7dc116b461a79a0a4465f74c0625edefd5bd1e0e02e4a"
+    },
+    {
+      "bytes": 47,
+      "path": "tools/parser-train/requirements.txt",
+      "sha256": "55fda5f8cd590462d682f578f7e1f7a55a9615241360b6aa3976641e7bd5e2b9"
+    },
+    {
+      "bytes": 1795,
+      "path": "tools/parser-train/retention.py",
+      "sha256": "c33b9f937ea58b6eb0d965f7a774bfd316d9793ee0254c02676fe967711c7bf4"
+    },
+    {
+      "bytes": 117823,
+      "path": "tools/parser-train/role-phrase-splits-v5.json",
+      "sha256": "020e98728adab80b174b8b5d3e42632c96723e6311bd7a5e2910fcf958beb4dc"
+    },
+    {
+      "bytes": 332502,
+      "path": "tools/parser-train/role-plan-validation.json",
+      "sha256": "6645f08ba2961626689b89456c7d5cac81f2cc73f246df29cf436dac6c1ef2d6"
+    },
+    {
+      "bytes": 241799,
+      "path": "tools/parser-train/role-queries.json",
+      "sha256": "1c284f3b4db103476321d161cccdbb8fac97f08173762ba95a2715139a5e3401"
+    },
+    {
+      "bytes": 12932,
+      "path": "tools/parser-train/role_campaign.py",
+      "sha256": "702f117174ef591de2d47514a03f54c9b48773a326edb08c29a69ebb84b7c245"
+    },
+    {
+      "bytes": 3665,
+      "path": "tools/parser-train/safety.json",
+      "sha256": "8f6abf45aa6888975337704bf2e1ff28d47320cb4fd3bd2574b3aab61ed66bdb"
+    },
+    {
+      "bytes": 9029,
+      "path": "tools/parser-train/test_broaden.py",
+      "sha256": "efae327078bb823ff66e039d34199f064cd6e3a4612e7b923b4ca2d80c6d33d3"
+    },
+    {
+      "bytes": 16994,
+      "path": "tools/parser-train/test_export_datasets.py",
+      "sha256": "44e205d523e781bcd65f7d88c237a374b759037ef86b662ef141b1f91e626a0b"
+    },
+    {
+      "bytes": 1921,
+      "path": "tools/parser-train/test_fit_saved.py",
+      "sha256": "a9b98c8fe1277bc15c11a8340041f75e2d8700e074a9e550e268bc40aa210922"
+    },
+    {
+      "bytes": 8693,
+      "path": "tools/parser-train/train.py",
+      "sha256": "cab700f03d2577fabe68084fa0ab87ae4b36a05b43c8a72592f5567cb2704ff6"
+    }
+  ],
+  "totals": {
+    "files": 23,
+    "gzip_bytes": 29002254,
+    "raw_bytes": 306305977,
+    "rows": 495280
+  }
+}

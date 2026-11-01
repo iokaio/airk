@@ -45,6 +45,10 @@ export class SuggestionStore {
     private readonly keys = new Map<string, string>();
     private readonly recent: number[] = [];
     private readonly listeners = new Set<() => void>();
+    // Only admitted immutable fields: status, binding checks, expiry sweep and
+    // application revisions remain live on every request. Weak keys follow the
+    // existing item lifetime without adding fields to returned Suggestion objects.
+    private readonly receiptProjections = new WeakMap<Suggestion, Readonly<Pick<ProposalReceipt, 'destination' | 'received_at' | 'expires_at'>>>();
 
     constructor(private readonly context: StoreContext) {}
 
@@ -59,19 +63,31 @@ export class SuggestionStore {
         for (const item of this.items.values()) {
             if ((item.status === 'pending_review' || item.status === 'deferred') && item.expiresAt <= now) { item.status = 'expired'; changed = true; }
         }
-        const resolved = [...this.items.values()].filter(item => item.status !== 'pending_review' && item.status !== 'deferred').sort((a, b) => a.receivedAt - b.receivedAt);
-        while (this.items.size > SUGGESTION_LIMITS.retained && resolved.length) {
-            const oldest = resolved.shift()!;
-            this.items.delete(oldest.id); this.keys.delete(oldest.draft.idempotencyKey); changed = true;
+        if (this.items.size > SUGGESTION_LIMITS.retained) {
+            const resolved = [...this.items.values()].filter(item => item.status !== 'pending_review' && item.status !== 'deferred').sort((a, b) => a.receivedAt - b.receivedAt);
+            while (this.items.size > SUGGESTION_LIMITS.retained && resolved.length) {
+                const oldest = resolved.shift()!;
+                this.items.delete(oldest.id); this.keys.delete(oldest.draft.idempotencyKey); changed = true;
+            }
         }
         if (changed) { this.changed(); }
     }
 
+    private receiptProjection(item: Suggestion) {
+        let projection = this.receiptProjections.get(item);
+        if (!projection) {
+            projection = { destination: destinationOf(item.draft.body), received_at: new Date(item.receivedAt).toISOString(), expires_at: new Date(item.expiresAt).toISOString() };
+            this.receiptProjections.set(item, projection);
+        }
+        return projection;
+    }
+
     private receipt(item: Suggestion): ProposalReceipt {
-        return { schema_version: DRAFT_SCHEMA_VERSION, proposal_id: item.id, proposal_type: item.kind, status: item.status, destination: destinationOf(item.draft.body),
+        const projection = this.receiptProjection(item);
+        return { schema_version: DRAFT_SCHEMA_VERSION, proposal_id: item.id, proposal_type: item.kind, status: item.status, destination: projection.destination,
             workspace_binding: item.binding, ...(item.targetRevision !== undefined ? { target_draft_revision: item.targetRevision } : {}),
-            accepted: false, applied: item.status === 'applied', executed: false, received_at: new Date(item.receivedAt).toISOString(),
-            expires_at: new Date(item.expiresAt).toISOString(), warnings: item.warnings };
+            accepted: false, applied: item.status === 'applied', executed: false, received_at: projection.received_at,
+            expires_at: projection.expires_at, warnings: item.warnings };
     }
 
     /** Dry-run admission checks. No Inbox, idempotency, TTL or rate state is changed. */
@@ -138,13 +154,14 @@ export class SuggestionStore {
         this.sweep();
         const item = this.items.get(id);
         if (!item) { return undefined; }
+        const projection = this.receiptProjection(item);
         const stale = item.binding !== this.context.binding(), status = stale && ['pending_review', 'deferred'].includes(item.status) ? 'conflicted' : item.status;
         const current = this.targetRevision(item.kind);
-        return { proposal_id: item.id, status, destination: destinationOf(item.draft.body), applied: status === 'applied', executed: false,
+        return { proposal_id: item.id, status, destination: projection.destination, applied: status === 'applied', executed: false,
             reason: stale ? 'binding_changed' : item.reason ?? ({ pending_review: 'awaiting_user_review', deferred: 'deferred_by_user', applied: item.appliedRevision !== undefined ? 'applied_to_draft' : 'accepted_for_application', rejected: 'rejected_by_user', expired: 'ttl_expired', conflicted: 'target_changed' }[status]),
             ...(item.targetRevision !== undefined ? { target_draft_revision: item.targetRevision } : {}),
             ...(current !== undefined ? { current_target_revision: current } : {}), ...(item.appliedRevision !== undefined ? { applied_target_revision: item.appliedRevision } : {}),
-            expires_at: new Date(item.expiresAt).toISOString() };
+            expires_at: projection.expires_at };
     }
 
     acknowledge(id: string, revision: number): boolean {

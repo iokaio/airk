@@ -2,9 +2,11 @@
 
 The `airk` executable is the whole engine, not only a VS Code helper. This guide explains how the commands fit together. The [CLI reference](cli-reference.md) documents every public command and option exactly as `airk <command> --help` prints them; it is generated from the parser, and a test keeps it current. [Running AIRK headless](headless-cli.md) maps each VS Code feature to its command.
 
+For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. `airk tools list` exposes 18 native prefixed operations; unified MCP adds projects and nine Assistance operations. The terminal exposes those separately through `airk projects` and `airk explorer`, so 18 is not a count of all CLI capabilities.
+
 ## Conventions
 
-- Commands print one JSON document on stdout. Human-oriented exceptions are `airk --help`, `tools list` without `--json`, and `service logs --format text`.
+- Ordinary one-shot commands print JSON on stdout. Help, text/CSV/Markdown exports and interactive `tools shell` have their own output formats. MCP stdio and persistent service console are protocol streams; foreground service/host commands retain ownership until stopped.
 - A failure exits non-zero and writes a message to stderr. Set `AIRK_ERROR_FORMAT=json` to get a structured error instead. Query commands can return a typed busy or retry refusal while workers start; repeat the same call after the reported delay.
 - Source files are never modified. Commands that change AIRK state (registering, configuring, pausing, purging) say so in their help.
 - Agents can read the same help through MCP: `airk tools call airk_help --args '{"command":"search"}'`.

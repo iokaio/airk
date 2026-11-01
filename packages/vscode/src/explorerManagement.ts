@@ -39,7 +39,8 @@ export function panelDetails(view: ManagementView, section: string, version: str
             ['Requested semantic preference',entry.configuration.requestedVectors===undefined?'No pending change observed':entry.configuration.requestedVectors?'Enabled':'Disabled'],
             ['Published semantic state',status?.semantic??entry.summary.semantic??'Not observed'],
             ['Model configured in publication',status?.localModelReady===undefined?'Not observed':String(status.localModelReady)],
-            ['Publication',status?.publication??'Not observed'],['Observed',status?new Date(status.observedAt).toISOString():'Not observed']]);
+            ['Publication',status?.publication??'Not observed'],['Published status observed',status?new Date(status.observedAt).toISOString():'Not observed'],
+            ['Detailed observations',status?.detailsObservedAt===undefined?'Not observed':new Date(status.detailsObservedAt).toISOString()]]);
         facts('Requests',entry.requests);
     }
     if(section==='service'){

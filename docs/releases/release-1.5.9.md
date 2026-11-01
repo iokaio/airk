@@ -16,7 +16,7 @@ The state belongs to each stdio connection, not the project, process-global conf
 
 `suggest_view` advertises its alternatives inside the `draft` property, with a plain object at the tool schema root. This avoids the top-level composition form implicated in a [Claude Code tool omission report](https://github.com/anthropics/claude-code/issues/95504). The argument names and per-kind validation in the editor adapter are unchanged. The catalog test rejects root composition for all 26 tools. This is a compatibility precaution, separate from the locally reproduced handshake failure; it is not proof of that report's behavior on the affected machine.
 
-The 26 tool names, saved bindings, config files, index namespace, indexing/recovery policy and source data are unchanged. The launch descriptor is optional for native tools and its stable filename is not a session identifier. Tool discovery remains independent of service/model/index readiness. This correction does not establish the cause of Bookbuilder's separate `project_operation_failed` freshness failure or repair it by resetting retry limits.
+The 26 tool names, saved bindings, config files, index namespace, indexing/recovery policy and source data are unchanged. The launch descriptor is optional for native tools and its stable filename is not a session identifier. Tool discovery remains independent of service/model/index readiness. This correction does not establish the cause of BigDotNetProject's separate `project_operation_failed` freshness failure or repair it by resetting retry limits.
 
 ## Indexing diagnostics
 
@@ -24,7 +24,7 @@ The affected machine's complete retained ring contained process failures but no 
 
 Index preparation and discovery errors retain fixed stage codes, including snapshot selection, current-index recovery, retained inventory, model preparation and source scanning. Safe native SQLite/OS codes are found through nested error sources; known inventory/integrity failures and configured source-byte, extracted-byte and file-count limits have fixed codes. Raw paths, SQL, source content and arbitrary exception text are not copied into logs. Unknown causes remain explicitly unspecified within their observed stage. Existing typed recovery decisions and retry budgets are preserved.
 
-These diagnostics apply to new failures after activation. They cannot reconstruct the missing cause of an older failure, and discovery phase timing alone does not establish that a filesystem walk failed: index preparation occurs within that phase too. The Bookbuilder cause remains unconfirmed.
+These diagnostics apply to new failures after activation. They cannot reconstruct the missing cause of an older failure, and discovery phase timing alone does not establish that a filesystem walk failed: index preparation occurs within that phase too. The BigDotNetProject cause remains unconfirmed.
 
 Management's recent service events now show readable timestamps, job IDs and failure codes; Service's copied details retain them too. Previously this view omitted the job and code even when the native record contained them. Configured ingestion-limit failures explain which limit was reached and direct users to review it before retrying, while retaining the precise native code.
 
@@ -38,7 +38,7 @@ The final native campaign passed in 19.3 seconds with two isolated projects and 
 
 An intermediate full run found one capacity test expecting the original outer error message. The corrected test checks the full cause chain and specific safe limit code, retaining its assertions for the original size/path explanation, unchanged publication and unchanged source. The subsequent full run passed. The real-editor harness also removes only its own temporary Windows terminal PATH entry after each run, preserving other entries and the registry value type.
 
-An explicit review pass covered the combined lifecycle/metadata dispatch, project isolation, error-chain and retry contracts, retained-log identity, Management display/copy behavior, installation-test ownership and package provenance. The implementing agent performed this review; it was not an independent review. Bookbuilder, maximum-capacity indexing, macOS/Linux and live Claude Code/Codex/Copilot applications remain outside this local qualification.
+An explicit review pass covered the combined lifecycle/metadata dispatch, project isolation, error-chain and retry contracts, retained-log identity, Management display/copy behavior, installation-test ownership and package provenance. The implementing agent performed this review; it was not an independent review. BigDotNetProject, maximum-capacity indexing, macOS/Linux and live Claude Code/Codex/Copilot applications remain outside this local qualification.
 
 ## Local installer workflow
 

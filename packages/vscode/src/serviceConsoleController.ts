@@ -41,6 +41,12 @@ function objOutcomeUnknown(row:RecordValue):boolean{return record(record(row.con
 function code(error:unknown):string{return error instanceof ServiceError?error.code:'console_operation_failed';}
 export class ServiceConsoleController {
     readonly state:ServiceConsoleState;
+    private observationToken=randomUUID();
+    private observedInstance?:string;
+    private observationBinding?:string;
+    private registryObservationSuspended=false;
+    /** Internal host ownership fence; never serialized into a webview/native schema. */
+    get observationIdentity():string{return this.observationToken;}
     private binding?:RuntimeBinding;
     private bootstrap?:BootstrapObservation;
     private client?:ServiceClient;
@@ -109,6 +115,11 @@ export class ServiceConsoleController {
                 this.cachedSnapshot(this.bootstrap.inspection);return;
             }
             this.binding=this.host.runtime.binding(this.bootstrap.inspection,this.bootstrap.installDir);
+            const scope=JSON.stringify([this.binding.installDir,this.binding.controlDir,this.binding.executable,this.binding.runtimeSha256,this.binding.version,this.binding.lifecycle]);
+            if(this.observationBinding!==scope){
+                this.observationBinding=scope;this.observedInstance=undefined;
+                this.observationToken=randomUUID();this.clearRegistryObservation(true);
+            }
             if(this.binding.payloadVerified!==false&&this.binding.version===this.host.version)this.client=this.host.runtime.client(this.binding);
             this.state.lifecycle=this.binding.lifecycle;
             if(typeof this.bootstrap.inspection.registry_namespace==='string')this.restoreJournal(this.bootstrap.inspection.registry_namespace);
@@ -158,10 +169,10 @@ export class ServiceConsoleController {
             if(this.state[name].value)this.state[name]={...this.state[name],state:'cached'};
         }
     }
-    async refresh():Promise<void>{
+    async refresh(automatic=false):Promise<void>{
         if(this.disposed||this.state.busy)return;
         this.pollDeadline=Date.now()+15000;this.state.busy=true;this.publish();
-        try{this.authorized();if(!this.client)await this.discover();await this.observe();this.lastPollFailure=undefined;}
+        try{this.authorized();if(!this.client)await this.discover();await this.observe(automatic);this.lastPollFailure=undefined;}
         catch(error){
             if(this.lastPollFailure!==code(error)){
                 this.lastPollFailure=code(error);void this.host.diagnosticFailure?.('status_poll',error,this.bootstrap).catch(()=>{});
@@ -175,48 +186,91 @@ export class ServiceConsoleController {
         }
         finally{this.pollDeadline=undefined;this.state.busy=false;this.publish();this.releaseIdle();}
     }
-    private async observe():Promise<void>{
+    private async observe(automatic=false):Promise<void>{
         if(!this.client){await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);return;}
+        const wasConnected=this.state.connected;
+        let replaced=false;
         try{
             const value=await this.rpc('health','health');
+            const instance=identifier(record(value.observation).instance,16);
+            if(this.observedInstance!==instance){
+                replaced=true;
+                this.observedInstance=instance;this.observationToken=randomUUID();
+                // Health authenticates the service, not the registry/page from a
+                // previous incarnation. Hide those rows until Events authenticates
+                // the registry namespace and the project page is observed again.
+                this.clearRegistryObservation(true);
+            }
             this.state.health={state:'live',value,checkedAt:Date.now()};this.state.connected=true;
+            // Health is independently usable while optional observations continue.
+            // This reports the authenticated service, not index or inference readiness.
+            this.authorized();this.publish();
         }catch(error){
             this.state.health={...this.state.health,state:'failed',code:code(error),checkedAt:Date.now()};
             this.disconnected();this.client?.dispose();this.client=undefined;
             try{await this.savedSnapshot(this.pageStart.after,this.pageStart.revision);}catch{/* Retain the original health failure. */}
             throw error;
         }
+        const reusable=(sample:ConsoleObservation|undefined):boolean=>{
+            if(!automatic||!wasConnected||replaced||!sample?.value||sample.state==='failed')return false;
+            const age=Date.now()-sample.checkedAt;
+            return age>=0&&age<5000;
+        };
         for(const [name,method,expected] of [['resources','resources','resources'],['model','embedding_status','embedding_status'],['sources','source_status','source_status']] as const){
+            if(reusable(this.state[name])){this.state[name]={...this.state[name],state:'cached'};continue;}
             try{this.state[name]={state:'live',value:await this.rpc(method,expected),checkedAt:Date.now()};}
             catch(error){this.state[name]={...this.state[name],state:'failed',code:code(error),checkedAt:Date.now()};}
         }
-        try{
+        if(reusable(this.state.serviceEvents))this.state.serviceEvents={...this.state.serviceEvents!,state:'cached'};
+        else try{
             const page=record((await this.rpc({logs:{limit:32}},'logs')).page);
             if(page.schema!==1||!Array.isArray(page.records)||page.records.length>32)throw new ServiceError('invalid_process_log_page');
             this.state.serviceEvents={state:'cached',value:page,checkedAt:Date.now()};
         }catch(error){this.state.serviceEvents={...this.state.serviceEvents,state:'failed',code:code(error),checkedAt:Date.now()};}
-        const epoch=await this.rpc('request_epoch','request_epoch');
-        this.restoreJournal(identifier(epoch.namespace,16));
-        this.pending();
-        try{await this.page(false);}catch(error){this.state.message=code(error);}
         try{await this.events();}catch(error){
             this.state.message=code(error);
-            if(error instanceof ServiceError&&['event_cursor_expired','event_scope_changed'].includes(error.code)){
+            if(error instanceof ServiceError&&error.code==='event_scope_changed')this.clearRegistryObservation();
+            if(error instanceof ServiceError&&['event_cursor_expired','event_scope_changed','invalid_event_cursor'].includes(error.code)){
                 this.eventCursor=null;this.state.historyOmitted=true;
             }
+            // Do not publish project/receipt observations under an unconfirmed
+            // registry namespace. The next poll resumes with the reset cursor.
+            throw error;
         }
+        this.pending();
+        try{await this.page(false);}catch(error){this.state.message=code(error);}
         if(this.state.plan)await this.plan(false);
+    }
+    private clearRegistryObservation(retainedMetadata=false):void{
+        this.registryObservationSuspended=true;
+        this.state.page=undefined;this.state.activePage=undefined;this.state.workers=undefined;
+        this.state.selected.clear();
+        if(retainedMetadata){
+            this.state.serviceEvents=undefined;
+            for(const name of ['resources','model','sources'] as const){
+                if(this.state[name].value)this.state[name]={...this.state[name],state:'cached'};
+            }
+        }
+        this.state.events=[];this.eventCursor=null;this.state.historyOmitted=false;
+        this.state.plan=undefined;this.state.preview=undefined;this.state.configurationResults=undefined;
+        this.state.configurationResultsOmitted=false;this.state.pending=[];
+        this.legacyReview=undefined;this.state.legacyReview=undefined;this.state.legacyReceipts=undefined;this.state.legacyResult=undefined;
+        this.pageStart={after:null,revision:null};
     }
     private restoreJournal(namespace:string):void{
         const journal=new IntentJournal(this.host.storage,this.binding!.controlDir,identifier(namespace,16));
         if(this.journal?.scope!==journal.scope){
+            this.observationToken=randomUUID();this.clearRegistryObservation();
             this.journal=journal;this.state.selected.clear();this.eventCursor=null;this.state.events=[];this.state.page=undefined;this.state.activePage=undefined;
             this.legacyReview=undefined;this.state.legacyReview=undefined;this.state.legacyReceipts=undefined;
             this.state.preview=undefined;
             this.state.configurationResults=undefined;
             this.pageStart={after:null,revision:null};
+        }
+        if(this.registryObservationSuspended){
             const saved=this.host.storage.get<string>(`airk.service.plan.${journal.scope}`);
             this.state.plan=saved?{value:{id:identifier(saved,32)},items:[],after:null}:undefined;
+            this.registryObservationSuspended=false;
         }
         this.pending();
     }
@@ -275,6 +329,7 @@ export class ServiceConsoleController {
     private async events():Promise<void>{
         const page=record((await this.rpc({events:{project:null,cursor:this.eventCursor,limit:32}},'events')).page);
         if(!Array.isArray(page.events)||page.events.length>32)throw new ServiceError('invalid_event_page');
+        this.restoreJournal(identifier(page.namespace,16));
         const events=page.events.map(event=>record(event));
         const merged=new Map(this.state.events.map(event=>[event.sequence,event]));
         events.forEach(event=>{count(event.sequence);merged.set(event.sequence,event);});

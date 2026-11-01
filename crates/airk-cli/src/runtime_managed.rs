@@ -83,19 +83,47 @@ impl Managed {
     pub(super) fn saved_executable_sha256(&self) -> &str {
         &self.executable_sha256
     }
-    pub(super) fn verify(&self) -> Result<(PathBuf, Approval)> {
+    pub(super) fn metadata_approval(&self) -> Result<Approval> {
         ensure!(
             self.source.canonicalize()? == self.source,
             "managed payload was redirected"
         );
-        let (_, inventory) = manifest(&self.source, &self.approval.manifest_sha256)?;
+        let inventory = approved_inventory_metadata(&self.source, &self.approval)?;
         ensure!(
             inventory.version == self.approval.version
                 && inventory.files[main_name()] == self.executable_sha256,
             "managed payload version or executable identity changed"
         );
-        verify_topology(&self.source, &inventory, false)?;
-        Ok((self.source.join(main_name()), self.approval.clone()))
+        Ok(self.approval.clone())
+    }
+    pub(super) fn verify(&self) -> Result<(PathBuf, Approval)> {
+        let (main, approval, _) = self.verify_inventory()?;
+        Ok((main, approval))
+    }
+    pub(super) fn verify_inventory(&self) -> Result<(PathBuf, Approval, InstallManifest)> {
+        self.verify_inventory_checked(&|| Ok(()))
+    }
+    pub(super) fn verify_inventory_checked(
+        &self,
+        check: &dyn Fn() -> Result<()>,
+    ) -> Result<(PathBuf, Approval, InstallManifest)> {
+        check()?;
+        ensure!(
+            self.source.canonicalize()? == self.source,
+            "managed payload was redirected"
+        );
+        let (_, inventory) = manifest_checked(&self.source, &self.approval.manifest_sha256, check)?;
+        ensure!(
+            inventory.version == self.approval.version
+                && inventory.files[main_name()] == self.executable_sha256,
+            "managed payload version or executable identity changed"
+        );
+        verify_topology_checked(&self.source, &inventory, false, check)?;
+        Ok((
+            self.source.join(main_name()),
+            self.approval.clone(),
+            inventory,
+        ))
     }
 }
 
@@ -104,7 +132,17 @@ pub(super) fn verify_topology(
     inventory: &InstallManifest,
     installed: bool,
 ) -> Result<()> {
+    verify_topology_checked(source, inventory, installed, &|| Ok(()))
+}
+
+pub(super) fn verify_topology_checked(
+    source: &Path,
+    inventory: &InstallManifest,
+    installed: bool,
+    check: &dyn Fn() -> Result<()>,
+) -> Result<()> {
     use std::collections::BTreeSet;
+    check()?;
     let mut approved_files = inventory.files.clone();
     if installed {
         crate::process_roles::inventory(&mut approved_files);
@@ -125,7 +163,9 @@ pub(super) fn verify_topology(
     let mut pending = vec![source.to_path_buf()];
     let mut count = 0usize;
     while let Some(parent) = pending.pop() {
+        check()?;
         for entry in fs::read_dir(&parent)? {
+            check()?;
             count += 1;
             ensure!(count <= 4096, "managed payload topology exceeds bound");
             let path = entry?.path();
@@ -159,7 +199,7 @@ pub(super) fn verify_topology(
                     && let Some(expected) = approved_files.get(&name)
                 {
                     ensure!(
-                        runtime_pair::digest_file(&path)? == *expected,
+                        runtime_pair::digest_file_checked(&path, check)? == *expected,
                         "modified process alias refused"
                     );
                 }
@@ -267,9 +307,20 @@ pub(super) async fn configure(
 
 /// Caller holds the installation lock. Public selection commits only after exact native health.
 pub(super) async fn ensure(root: &Path) -> Result<ServiceHealth> {
+    ensure_checked(root, None).await
+}
+
+pub(super) async fn ensure_checked(
+    root: &Path,
+    cancel: Option<&setup::SetupCancellation>,
+) -> Result<ServiceHealth> {
+    if let Some(cancel) = cancel {
+        cancel.checkpoint()?;
+    }
     ensure!(!exists(&root.join(DETACH))?, "managed detach is pending");
     let policy = read(root)?.context("managed runtime policy missing")?;
-    let (main, approval) = policy.verify()?;
+    let check = || cancel.map_or(Ok(()), setup::SetupCancellation::checkpoint);
+    let (main, approval, _) = policy.verify_inventory_checked(&check)?;
     if exists(&root.join("selected.json"))? {
         let selection: Selection =
             serde_json::from_slice(&read_bounded(&root.join("selected.json"), 4096)?)?;
@@ -280,24 +331,92 @@ pub(super) async fn ensure(root: &Path) -> Result<ServiceHealth> {
             "managed selection differs from its approved pin"
         );
     }
-    let observation = match policy.lifecycle {
-        ManagedLifecycle::External => health(root, &approval, &policy.executable_sha256)
-            .await
-            .context(SupervisorUnavailable)?,
-        ManagedLifecycle::UserOnDemand => start(root, &approval, &main, true).await?,
+    let observation = async {
+        match policy.lifecycle {
+            ManagedLifecycle::External => health(root, &approval, &policy.executable_sha256)
+                .await
+                .context(SupervisorUnavailable),
+            ManagedLifecycle::UserOnDemand => {
+                start_with_digest_checked(root, &approval, &main, true, None, cancel).await
+            }
+        }
     };
+    publish_after_observation(root, &approval, cancel, observation).await
+}
+
+// Shared actual post-health publication boundary; no selection is published
+// from an observation completed after session admission has closed.
+async fn publish_after_observation<T>(
+    root: &Path,
+    approval: &Approval,
+    cancel: Option<&setup::SetupCancellation>,
+    observation: impl std::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    let observation = observation.await?;
     if !exists(&root.join("selected.json"))? {
-        replace_json(
-            root,
-            "selected.json",
-            &Selection {
-                schema: 1,
-                active: approval.manifest_sha256,
-                previous: None,
-            },
-        )?;
+        let publish = || {
+            replace_json(
+                root,
+                "selected.json",
+                &Selection {
+                    schema: 1,
+                    active: approval.manifest_sha256.clone(),
+                    previous: None,
+                },
+            )
+        };
+        if let Some(cancel) = cancel {
+            cancel.effect(publish)?;
+        } else {
+            publish()?;
+        }
     }
     Ok(observation)
+}
+
+#[cfg(test)]
+mod setup_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn external_health_completed_after_close_cannot_publish_selection() -> Result<()> {
+        let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
+        let (_, approval) = verify_runtime(&root, &identity)?;
+        let cancel = setup::SetupCancellation::default();
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        let mut observation = Box::pin(publish_after_observation(
+            &root,
+            &approval,
+            Some(&cancel),
+            async {
+                released.await?;
+                Ok(())
+            },
+        ));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(observation.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        cancel.close();
+        release.send(()).expect("external health waiter retained");
+        assert!(observation.await.is_err());
+        assert!(!root.join("selected.json").exists());
+        assert!(!root.join(format!("startup-{identity}.json")).exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn accepted_observation_publishes_exact_selection_without_starting() -> Result<()> {
+        let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
+        let (_, approval) = verify_runtime(&root, &identity)?;
+        let cancel = setup::SetupCancellation::default();
+        publish_after_observation(&root, &approval, Some(&cancel), async { Ok(()) }).await?;
+        assert_eq!(selection_record(&root)?.active, identity);
+        assert!(!root.join("bootstrap.json").exists());
+        assert!(!root.join(format!("startup-{identity}.json")).exists());
+        Ok(())
+    }
 }
 
 pub(super) async fn detach(root: &Path) -> Result<serde_json::Value> {

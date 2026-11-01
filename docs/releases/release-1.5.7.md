@@ -30,7 +30,7 @@ Trusted startup consolidates recognized project-local Codex, Claude Code, Copilo
 
 ## Large-project limits
 
-This branch improves durable work, progress and failure recovery; it does not introduce sharded databases or raise extraction ceilings. The automatic eligible-source budget remains machine-aware and capped at 4 GiB, with 100,000 extracted files by default. Reviewed scan policies support up to 64 GiB source/128 GiB extracted data and one million files. Individual source/text/parser limits, logical quotas and temporary-growth admission remain independent. These are admission ceilings, not qualified workload sizes. See [ingestion limits](../ingestion-limits.md) and [scale qualification](../scale-qualification.md). Bookbuilder's original remote failure and whole-project capacity still require confirmation on that machine.
+This branch improves durable work, progress and failure recovery; it does not introduce sharded databases or raise extraction ceilings. The automatic eligible-source budget remains machine-aware and capped at 4 GiB, with 100,000 extracted files by default. Reviewed scan policies support up to 64 GiB source/128 GiB extracted data and one million files. Individual source/text/parser limits, logical quotas and temporary-growth admission remain independent. These are admission ceilings, not qualified workload sizes. See [ingestion limits](../ingestion-limits.md) and [scale qualification](../scale-qualification.md). BigDotNetProject's original remote failure and whole-project capacity still require confirmation on that machine.
 
 ## Validation and candidate scope
 
@@ -47,7 +47,7 @@ This is uncommitted local development work. Review is performed by the implement
 
 ## Final Windows installer
 
-The exact final release pair passed the installed-runtime extension suite: 342 passed, zero failed, two platform-specific skips. It also passed real offline MiniLM inference, persistent DiskANN and default/vector/hybrid retrieval, model opt-out/re-enable, and the two-project native client campaign with 16 files per project. The latter verifies 16 native compatibility tools and all 26 public MCP tools, source preservation and resumption of the same accepted job after its source returns. These are bounded fixtures, not Bookbuilder or maximum-capacity qualification.
+The exact final release pair passed the installed-runtime extension suite: 342 passed, zero failed, two platform-specific skips. It also passed real offline MiniLM inference, persistent DiskANN and default/vector/hybrid retrieval, model opt-out/re-enable, and the two-project native client campaign with 16 files per project. The latter verifies 16 native compatibility tools and all 26 public MCP tools, source preservation and resumption of the same accepted job after its source returns. These are bounded fixtures, not BigDotNetProject or maximum-capacity qualification.
 
 Installer: `artifacts/local/management-1.5.7-unified-20261028/vscode/publish/airk-1.5.7-win32-x64.vsix`.
 

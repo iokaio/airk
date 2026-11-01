@@ -27,10 +27,14 @@ pub enum Command {
         identity: WorkerIdentity,
         allowance: QueryAllowance,
         pool: Option<Box<crate::embedding_pool_protocol::Access>>,
+        #[serde(default)]
+        pool_pending: bool,
     },
     ConfigurePool {
         identity: WorkerIdentity,
         pool: Option<Box<crate::embedding_pool_protocol::Access>>,
+        #[serde(default)]
+        pool_pending: bool,
     },
     RunJob {
         identity: WorkerIdentity,
@@ -101,6 +105,66 @@ pub fn role(worker: Incarnation) -> String {
     format!("q-{worker}")
 }
 
+#[cfg(test)]
+mod helper_admission_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_activation_and_pool_updates_never_invent_pending_authority() -> anyhow::Result<()> {
+        let identity = WorkerIdentity {
+            service: Incarnation::from_bytes([1; 16]),
+            worker: Incarnation::from_bytes([2; 16]),
+            project: ProjectBinding::from_bytes([3; 32]),
+            fencing_generation: 1,
+        };
+        for (kind, body) in [
+            (
+                "activate",
+                serde_json::json!({"identity":identity,"allowance":{"concurrent_queries":1,"response_bytes":airk_core::service::MAX_FRAME_BYTES},"pool":null}),
+            ),
+            (
+                "configure_pool",
+                serde_json::json!({"identity":identity,"pool":null}),
+            ),
+        ] {
+            let mut frame = serde_json::json!({});
+            frame[kind] = body;
+            let command: Command = serde_json::from_value(frame.clone())?;
+            assert!(matches!(
+                command,
+                Command::Activate {
+                    pool: None,
+                    pool_pending: false,
+                    ..
+                } | Command::ConfigurePool {
+                    pool: None,
+                    pool_pending: false,
+                    ..
+                }
+            ));
+            let mut pending = frame.clone();
+            pending[kind]["pool_pending"] = true.into();
+            let command: Command = serde_json::from_value(pending)?;
+            assert!(matches!(
+                command,
+                Command::Activate {
+                    pool: None,
+                    pool_pending: true,
+                    ..
+                } | Command::ConfigurePool {
+                    pool: None,
+                    pool_pending: true,
+                    ..
+                }
+            ));
+            let mut invalid = frame;
+            invalid[kind]["pool_pending"] = "true".into();
+            assert!(serde_json::from_value::<Command>(invalid).is_err());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkControl {
@@ -120,4 +184,6 @@ pub struct WorkObservation {
     pub waiting_for: Option<airk_core::service_resources::WaitReason>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) failure: Option<crate::service_logs::JobFailure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) integrity_observation_failure: Option<String>,
 }

@@ -72,8 +72,43 @@ struct Scope {
     namespace: Incarnation,
 }
 #[derive(Clone)]
-pub struct BoundDataRoot(Scope);
+pub struct BoundDataRoot(Scope, LiveIntegrity);
+#[derive(Clone, Debug)]
+pub(crate) struct LiveIntegrity(std::sync::Arc<std::sync::atomic::AtomicBool>);
+impl LiveIntegrity {
+    pub(crate) fn revoked(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire)
+    }
+}
 impl BoundDataRoot {
+    pub(crate) fn native_integrity_revoked(&self) -> bool {
+        self.1.revoked()
+    }
+    pub(crate) fn native_control_root(&self) -> &Path {
+        &self.0.control
+    }
+
+    pub(crate) fn live_integrity(&self) -> LiveIntegrity {
+        self.1.clone()
+    }
+    pub(crate) fn revoke_native_integrity(&self) {
+        self.1.0.store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(crate) fn require_identity(
+        &self,
+        data: &Path,
+        control: &Path,
+        namespace: Incarnation,
+    ) -> Result<()> {
+        self.check()?;
+        ensure!(
+            self.0.data == data && self.0.control == control && self.0.namespace == namespace,
+            "foreign integrity data root"
+        );
+        Ok(())
+    }
+
     /// Recheck the saved authority before every native query or job.
     pub fn check(&self) -> Result<()> {
         ensure!(
@@ -222,7 +257,7 @@ pub fn bind(data: &Path, control: &Path, namespace: Incarnation) -> Result<Bound
     let scope = expected(data, control, namespace)?;
     check(&scope.data, &scope.control, namespace)?;
     if exists(&scope.data.join(OWNER))? {
-        return Ok(BoundDataRoot(scope));
+        return Ok(BoundDataRoot(scope, LiveIntegrity(Default::default())));
     }
     fresh_namespace(&scope.data)?;
     // A missing root is created owner-only; an existing root keeps its permissions.
@@ -243,7 +278,7 @@ pub fn bind(data: &Path, control: &Path, namespace: Incarnation) -> Result<Bound
     let _lock = super::acquire_file(&scope.data, LOCK)?;
     check(&scope.data, &scope.control, namespace)?;
     if exists(&scope.data.join(OWNER))? {
-        return Ok(BoundDataRoot(scope));
+        return Ok(BoundDataRoot(scope, LiveIntegrity(Default::default())));
     }
     fresh_namespace(&scope.data)?;
     let bytes = serde_json::to_vec(&scope)?;
@@ -280,7 +315,7 @@ pub fn bind(data: &Path, control: &Path, namespace: Incarnation) -> Result<Bound
     drop(file);
     fs::rename(partial, scope.data.join(OWNER))?;
     crate::maintenance::sync_parent(&scope.data)?;
-    Ok(BoundDataRoot(scope))
+    Ok(BoundDataRoot(scope, LiveIntegrity(Default::default())))
 }
 
 #[cfg(test)]

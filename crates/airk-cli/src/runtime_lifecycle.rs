@@ -87,6 +87,29 @@ pub(super) fn abandon(root: &Path, identity: Sha256Digest) -> Result<LifecycleRe
     registry.advance_lifecycle(&record, LifecyclePhase::Abandoned)
 }
 
+/// Only installed_control's held-lock connection route uses this witness.
+/// Direct ensure_running keeps saved-identity STOP settlement in its old order.
+pub(super) enum ConnectionSettlement {
+    NoEffects,
+    EffectsRequired,
+}
+pub(super) fn connection_settlement(root: &Path) -> Result<ConnectionSettlement> {
+    let state = match inspect(root) {
+        Ok(state) => state,
+        // An unreadable/older/migration-required observation is NOT a no-op.
+        // Drop the proof before the existing authoritative settlement path.
+        Err(_) => return Ok(ConnectionSettlement::EffectsRequired),
+    };
+    if !state["pending"].is_null() {
+        return Ok(ConnectionSettlement::EffectsRequired);
+    }
+    ensure!(
+        state["explicitly_stopped"] == false,
+        "service_explicitly_stopped"
+    );
+    Ok(ConnectionSettlement::NoEffects)
+}
+
 /// Installation lock is held by the caller. A stopped service stays stopped
 /// across automatic bridge reconnects and extension reloads.
 pub(super) async fn settle(root: &Path) -> Result<()> {

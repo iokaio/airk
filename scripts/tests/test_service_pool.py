@@ -57,5 +57,46 @@ class PoolTransportTests(unittest.TestCase):
         bridge.readiness.assert_called_once()
 
 
+class SemanticRecoveryTests(unittest.TestCase):
+    def job(self, state="pending", attempts=1, outcome=None):
+        return {"id": "exact-job", "kind": "vectors", "state": state,
+                "attempts": attempts, "outcome": outcome}
+
+    def waiting(self, **changes):
+        return dict({"job": "exact-job", "reason": "helper_unavailable", "state": "waiting",
+                     "attempts": 1, "limit": 3}, **changes)
+
+    def test_exact_deferred_receipt_requires_matching_helper_wait(self):
+        receipt = self.job()
+        self.assertEqual(pool.semantic_recovery_mode(receipt, [self.waiting()]), "waiting")
+        self.assertEqual(receipt, self.job(), "classification must preserve the accepted receipt")
+        for observation in [self.waiting(job=None), self.waiting(job="foreign"),
+                            self.waiting(reason="source_unavailable"), self.waiting(state="stopped"),
+                            self.waiting(attempts=2), self.waiting(limit=0)]:
+            with self.subTest(observation=observation):
+                self.assertIsNone(pool.semantic_recovery_mode(receipt, [observation]))
+
+    def test_queued_or_running_work_is_not_inferred_as_deferred(self):
+        self.assertIsNone(pool.semantic_recovery_mode(self.job(attempts=0), [self.waiting(attempts=0)]))
+        self.assertIsNone(pool.semantic_recovery_mode(self.job(state="running"), [self.waiting()]))
+        self.assertIsNone(pool.semantic_recovery_mode(self.job(outcome={"state": "failed"}), [self.waiting()]))
+
+    def test_terminal_failure_keeps_real_outcome_for_explicit_retry(self):
+        receipt = self.job(state="failed", attempts=3, outcome={"state": "failed", "code": "helper_unavailable"})
+        self.assertEqual(pool.semantic_recovery_mode(receipt, []), "failed")
+        self.assertEqual(receipt["outcome"], {"state": "failed", "code": "helper_unavailable"})
+        with self.assertRaisesRegex(RuntimeError, "original failure outcome"):
+            pool.semantic_recovery_mode(self.job(state="failed"), [])
+        unrelated = self.job(state="failed", outcome={"state": "failed", "code": "retained_object_missing"})
+        with self.assertRaisesRegex(RuntimeError, "not caused by helper"):
+            pool.semantic_recovery_mode(unrelated, [])
+        self.assertEqual(unrelated["outcome"]["code"], "retained_object_missing")
+
+    def test_foreign_kind_never_authorizes_semantic_recovery(self):
+        receipt = dict(self.job(), kind="index")
+        with self.assertRaisesRegex(RuntimeError, "foreign job"):
+            pool.semantic_recovery_mode(receipt, [self.waiting()])
+
+
 if __name__ == "__main__":
     unittest.main()

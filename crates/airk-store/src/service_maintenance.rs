@@ -243,6 +243,30 @@ pub(super) fn job_claimed(connection: &Connection, job: Sha256Digest) -> Result<
     }
     Ok(())
 }
+/// Identify physical Verify through its actual immutable owned plan membership.
+/// Called inside claim/completion transactions; never infer it from editor intent.
+pub(super) fn job_is_physical_verify(
+    connection: &Connection,
+    job: Sha256Digest,
+    expected_project: ProjectBinding,
+) -> Result<bool> {
+    let owners = linked_items(connection, job)?;
+    ensure!(
+        owners.len() == 1,
+        "physical Repair job requires one native plan owner"
+    );
+    let (plan, project, step) = owners[0];
+    ensure!(
+        project == expected_project,
+        "foreign physical Repair project"
+    );
+    let member = item(connection, plan, project)?;
+    ensure!(
+        step == PlanStep::Action && member.action_job == Some(job),
+        "foreign physical Repair membership"
+    );
+    Ok(member.action == Some(airk_core::service_maintenance::RepairOperation::Verify))
+}
 pub(super) fn job_recovers_publication(connection: &Connection, job: Sha256Digest) -> Result<bool> {
     for (plan, project, step) in linked_items(connection, job)? {
         if step == PlanStep::Action

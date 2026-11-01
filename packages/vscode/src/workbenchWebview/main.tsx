@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
-import { object, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { applyWorkbenchUpdate, object, parseWorkbenchMessage, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
 import { canonical, markdown } from '../workbenchRender';
 import './style.css';
 declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):void };
@@ -17,11 +17,27 @@ function ToolForm({state,scope}:{state:WorkbenchState;scope:string}){
         <button disabled={state.busy} type="submit">Prepare form</button><button disabled={state.busy} type="button" onClick={e=>{if(e.currentTarget.form?.reportValidity()){submit(true);}}}>Run form</button>
     </form></details>;
 }
+function SelectAll({count,checked,mixed,onChange}:{count:number;checked:boolean;mixed:boolean;onChange:(checked:boolean)=>void}){
+    const input=useRef<HTMLInputElement>(null);
+    useLayoutEffect(()=>{if(input.current){input.current.indeterminate=mixed;}},[mixed]);
+    return <label class="select-all" title="Select all matching results in this response"><input ref={input} type="checkbox" checked={checked} aria-checked={mixed?'mixed':checked} disabled={count===0} onChange={e=>onChange(e.currentTarget.checked)}/>Select all {count}</label>;
+}
 function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
     const [format,setFormat]=useState<'structured'|'json'|'markdown'>(turn.format),[show,setShow]=useState(20),[filter,setFilter]=useState(''),[selected,setSelected]=useState<string[]>([]),[edit,setEdit]=useState(false),[draft,setDraft]=useState(''),[issue,setIssue]=useState(''),[group,setGroup]=useState(false);
     const envelope=turn.envelope??{},plan=object(envelope.plan),cards=state.cards[turn.id]??[];
-    const rows=cards.filter(c=>`${c.path} ${c.text}`.toLowerCase().includes(filter.toLowerCase()));
-    if(group){rows.sort((a,b)=>a.path.localeCompare(b.path)||a.start-b.start);}
+    const rows=useMemo(()=>{const matching=cards.filter(c=>`${c.path} ${c.text}`.toLowerCase().includes(filter.toLowerCase()));if(group)matching.sort((a,b)=>a.path.localeCompare(b.path)||a.start-b.start);return matching;},[cards,filter,group]);
+    const matchingIds=new Set(rows.map(card=>card.id)),selectedMatches=rows.filter(card=>selected.includes(card.id)).length;
+    const allSelected=rows.length>0&&selectedMatches===rows.length,mixedSelection=selectedMatches>0&&!allSelected;
+    const selectMatching=(checked:boolean)=>setSelected(previous=>checked?[...new Set([...previous,...matchingIds])]:previous.filter(id=>!matchingIds.has(id)));
+    const copyFormat=format==='json'?'json':'markdown',copySelection:WorkbenchMessage={type:'copy',turn:turn.id,format:copyFormat,cards:selected};
+    const copySelectionAllowed=selected.length>0&&!!parseWorkbenchMessage(copySelection);
+    const selectionTooLarge=selected.length>0&&!copySelectionAllowed;
+    const copySelectionLabel=`Copy ${selected.length} selected results as ${copyFormat==='json'?'JSON':'Markdown'}`;
+    const copySelectionTitle=selectionTooLarge?'Select fewer results or use Save export':copySelectionLabel;
+    const selectionUi=format==='structured'&&cards.length>0;
+    const selectionRow=()=><div class="selection-toolbar"><SelectAll count={rows.length} checked={allSelected} mixed={mixedSelection} onChange={selectMatching}/><button title={copySelectionTitle} aria-label={copySelectionLabel} disabled={!copySelectionAllowed} onClick={()=>send(copySelection)}>Copy selected ({selected.length})</button></div>;
+    const planText=useMemo(()=>canonical(plan),[turn.envelope]);
+    const formatted=useMemo(()=>format==='json'?canonical(envelope):format==='markdown'?markdown(turn):'', [format,turn]);
     const publication=object(state.status?.publication).token,old=typeof publication==='string'&&typeof envelope.publication==='string'&&publication!==envelope.publication;
     const runPlan=(prepare:boolean)=>{try{const parsed=JSON.parse(draft);if(prepare){parsed.digest='';}send({type:'run',input:turn.input,prepare,plan:parsed});setIssue('');}catch{setIssue('Enter a valid JSON plan.');}};
     return <article class="turn">
@@ -31,31 +47,34 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
         {turn.trimmed&&<p class="warning">Saved result trimmed. Re-run to collect current evidence.</p>}
 
         {!!turn.envelope&&<>
-            <details><summary>Plan and evidence details</summary><button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button><pre>{canonical(plan)}</pre><button onClick={()=>{setEdit(!edit);setDraft(canonical(plan));}}>Edit plan</button><button onClick={()=>send({type:'remember',turn:turn.id})}>Remember accepted inputs</button><button onClick={()=>send({type:'saveStrategy',turn:turn.id})}>Save compatible inputs to Strategies…</button></details>
-            {Array.isArray(plan.steps)&&plan.steps.length>0&&['prepared','needs_input'].includes(String(envelope.status))&&<button disabled={state.busy} onClick={()=>{setEdit(true);setDraft(canonical(plan));}}>Review proposed plan</button>}
+            <details><summary>Plan and evidence details</summary><button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button><pre>{planText}</pre><button onClick={()=>{setEdit(!edit);setDraft(planText);}}>Edit plan</button><button onClick={()=>send({type:'remember',turn:turn.id})}>Remember accepted inputs</button><button onClick={()=>send({type:'saveStrategy',turn:turn.id})}>Save compatible inputs to Strategies…</button></details>
+            {Array.isArray(plan.steps)&&plan.steps.length>0&&['prepared','needs_input'].includes(String(envelope.status))&&<button disabled={state.busy} onClick={()=>{setEdit(true);setDraft(planText);}}>Review proposed plan</button>}
             {edit&&<div class="editor"><label>Plan JSON<textarea value={draft} onInput={e=>setDraft(e.currentTarget.value)} spellcheck={false}/></label><button onClick={()=>runPlan(true)}>Prepare edited plan</button><button disabled={state.busy} onClick={()=>runPlan(false)}>Run plan</button>{issue&&<p role="alert">{issue}</p>}</div>}
-            {Array.isArray(envelope.requires_input)&&envelope.requires_input.length>0&&<div class="warning"><p>{envelope.requires_input.map(r=>String(object(r).reason??r)).join(' · ')}</p>{envelope.requires_input.flatMap(raw=>{const requirement=object(raw);return Array.isArray(requirement.choices)&&['name','path'].includes(String(requirement.field))?requirement.choices.map(choice=><button disabled={state.busy} onClick={()=>{const revised=JSON.parse(canonical(plan));revised.digest='';const target=revised.steps.find((s:any)=>s.id===requirement.step);if(target){if(requirement.field==='path'){const source=revised.steps.find((s:any)=>s.id===target.bind?.[0]?.from);if(source){source.args.path=choice;}}else{target.args.name=choice;}send({type:'run',input:turn.input,prepare:false,plan:revised});}}}>Use {String(choice)}</button>):[];})}<button disabled={state.busy} onClick={()=>send({type:'run',input:`/search ${JSON.stringify(turn.input)}`,prepare:true})}>Prepare text search</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/status',prepare:false})}>Index status</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/diagnostics',prepare:false})}>Diagnostics</button></div>}
+            {Array.isArray(envelope.requires_input)&&envelope.requires_input.length>0&&<div class="warning"><p>{envelope.requires_input.map(r=>String(object(r).reason??r)).join(' · ')}</p>{envelope.requires_input.flatMap(raw=>{const requirement=object(raw);return Array.isArray(requirement.choices)&&['name','path'].includes(String(requirement.field))?requirement.choices.map(choice=><button disabled={state.busy} onClick={()=>{const revised=JSON.parse(planText);revised.digest='';const target=revised.steps.find((s:any)=>s.id===requirement.step);if(target){if(requirement.field==='path'){const source=revised.steps.find((s:any)=>s.id===target.bind?.[0]?.from);if(source){source.args.path=choice;}}else{target.args.name=choice;}send({type:'run',input:turn.input,prepare:false,plan:revised});}}}>Use {String(choice)}</button>):[];})}<button disabled={state.busy} onClick={()=>send({type:'run',input:`/search ${JSON.stringify(turn.input)}`,prepare:true})}>Prepare text search</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/status',prepare:false})}>Index status</button><button disabled={state.busy} onClick={()=>send({type:'run',input:'/diagnostics',prepare:false})}>Diagnostics</button></div>}
             <section class="result"><header><span>{String(envelope.status)} · {cards.length} retained records</span><div role="group" aria-label="Output format">{(['structured','json','markdown'] as const).map(f=><button aria-pressed={format===f} onClick={()=>setFormat(f)}>{f}</button>)}</div></header>
                 {Array.isArray(envelope.warnings)&&envelope.warnings.map(w=><p class="note">{String(w)}</p>)}
                 {Array.isArray(envelope.completeness)&&envelope.completeness.length>0&&<p class="warning">Incomplete: {envelope.completeness.map(String).join('; ')}</p>}
                 {format==='structured'?<>
                     {cards.length>0&&<details class="result-tools"><summary>Filter and group evidence{filter?` · ${rows.length} matches`:''}</summary><label class="filter">Filter retained evidence<input value={filter} onInput={e=>setFilter(e.currentTarget.value)}/></label><button aria-pressed={group} onClick={()=>setGroup(!group)}>Group by file</button><p class="counts">Showing {Math.min(show,rows.length)} of {rows.length} matching retained records.</p></details>}
                     {envelope.truncated===true&&<p class="warning">Upstream or output omissions reported.</p>}
+                    {cards.length>0&&selectionRow()}
+                    {cards.length>0&&selectionTooLarge&&<p class="note" role="status">Too many selected results to copy together. Select fewer results or use Save export.</p>}
                     {rows.slice(0,show).map(card=><div class="card" key={card.id}>
-                        <div class="card-title"><input type="checkbox" aria-label={`Select ${card.path}:${card.start}`} checked={selected.includes(card.id)} onChange={e=>setSelected(e.currentTarget.checked?[...selected,card.id]:selected.filter(id=>id!==card.id))}/><button class="source" onClick={()=>send({type:'open',turn:turn.id,card:card.id})}>{card.path}:{card.start}–{card.end}</button></div>
+                        <div class="card-title"><input type="checkbox" aria-label={`Select ${card.path}:${card.start}`} checked={selected.includes(card.id)} onChange={e=>{const checked=e.currentTarget.checked;setSelected(previous=>checked?[...new Set([...previous,card.id])]:previous.filter(id=>id!==card.id));}}/><button class="source" onClick={()=>send({type:'open',turn:turn.id,card:card.id})}>{card.path}:{card.start}–{card.end}</button></div>
                         <pre>{card.text}</pre><details class="source-details"><summary>Source details</summary><small>Step: {card.step}</small><pre>{canonical({location:card.location,sourceHash:card.hash,publication:card.publication})}</pre></details><button disabled={state.busy} onClick={()=>send({type:'context',turn:turn.id,card:card.id})}>Expand context</button>
                     </div>)}
+                    {cards.length>0&&selectionRow()}
                     {rows.length>show&&<button onClick={()=>setShow(show+20)}>Show 20 more retained records</button>}
                     {(state.continuations?.[turn.id]??[]).map(page=><button disabled={state.busy} onClick={()=>send({type:'continue',turn:turn.id,step:page.id})}>Fetch next {page.tool} page · {page.callsRemaining} calls remain</button>)}
                     {!cards.length&&<pre>{canonical(envelope.steps??envelope)}</pre>}
-                </>:<pre>{format==='json'?canonical(envelope):markdown(turn)}</pre>}
-                <footer><button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown'})}>Copy {format==='json'?'JSON':'Markdown'}</button>
-                    {selected.length>0&&<button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown',cards:selected})}>Copy selected ({selected.length})</button>}
+                </>:<pre>{formatted}</pre>}
+                <footer>{!selectionUi&&<button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown'})}>Copy {format==='json'?'JSON':'Markdown'}</button>}
+                    {!selectionUi&&selected.length>0&&<button title={copySelectionTitle} disabled={!copySelectionAllowed} onClick={()=>send(copySelection)}>Copy selected ({selected.length})</button>}
                     <button onClick={()=>send({type:'export',turn:turn.id,format:format==='json'?'json':'markdown'})}>Save export…</button>
                 </footer>
             </section>
         </>}
-        {!turn.envelope&&<button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button>}
+        {!turn.envelope&&(state.busy&&state.session?.turns.at(-1)?.id===turn.id?<p role="status">Collecting evidence…</p>:<button disabled={state.busy} onClick={()=>send({type:'rerun',turn:turn.id})}>Re-run with current evidence</button>)}
     </article>;
 }
 type Menu = 'history' | 'settings' | 'add';
@@ -65,10 +84,20 @@ function Icon({name}:{name:'plus'|'history'|'settings'|'new'|'send'|'stop'}){
 }
 function App(){
     const [state,setState]=useState<WorkbenchState>({projects:[],recent:[],cards:{},busy:false,save:'',persistence:true}),[input,setInput]=useState(''),[recipe,setRecipe]=useState(''),[menu,setMenu]=useState<Menu>(),[history,setHistory]=useState(-1),[scope,setScope]=useState(''),[title,setTitle]=useState('');
-    const composer=useRef<HTMLTextAreaElement>(null),menuTrigger=useRef<string>(),openMenu=useRef<Menu>();
+    const composer=useRef<HTMLTextAreaElement>(null),transcript=useRef<HTMLDivElement>(null),menuTrigger=useRef<string>(),openMenu=useRef<Menu>();
+    const latest=state.session?.turns.at(-1);
+    // Reveal each new request from its query, including when results arrive.
+    // Keep the question above its timestamp, plan and evidence. Status/save refreshes,
+    // output controls and tab switches must leave the reader's position alone.
+    useLayoutEffect(()=>{
+        const container=transcript.current,turn=container?.lastElementChild;
+        if(!container||!latest||!turn){return;}
+        const target=turn.querySelector('.input')??turn;
+        container.scrollTop+=target.getBoundingClientRect().top-container.getBoundingClientRect().top;
+    },[state.session?.id,latest?.id,!!latest?.envelope,latest?.error]);
     openMenu.current=menu;
     const toggle=(next:Menu,event:Event)=>{menuTrigger.current=(event.currentTarget as HTMLElement).getAttribute('aria-controls')??undefined;setMenu(menu===next?undefined:next);setTitle(state.session?.title??'');};
-    useEffect(()=>{const listener=(event:MessageEvent)=>{if(event.data?.type==='state'){setState(event.data.state);}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
+    useEffect(()=>{const listener=(event:MessageEvent)=>{if(['state','status','saved'].includes(event.data?.type)){setState(previous=>applyWorkbenchUpdate(previous,event.data));}else if(event.data?.type==='prefill'&&typeof event.data.input==='string'){setInput(event.data.input);composer.current?.focus();}};window.addEventListener('message',listener);send({type:'ready'});return()=>window.removeEventListener('message',listener);},[]);
     useEffect(()=>{const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'&&openMenu.current){setMenu(undefined);requestAnimationFrame(()=>{document.querySelector<HTMLButtonElement>(`button[aria-controls="${menuTrigger.current}"]`)?.focus();});}},outside=(event:PointerEvent)=>{if(!(event.target as Element).closest('.menu-anchor'))setMenu(undefined);};document.addEventListener('keydown',escape);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',escape);document.removeEventListener('pointerdown',outside);};},[]);
     const run=(prepare=false)=>{if(!state.busy&&(input.trim()||recipe)){send({type:'run',input,prepare,pathPrefix:scope,...(recipe?{recipe}:{})});setInput('');setHistory(-1);setMenu(undefined);}};
     const action=(message:WorkbenchMessage)=>{send(message);setMenu(undefined);};
@@ -84,7 +113,7 @@ function App(){
             <button class="icon-button" title="New session" aria-label="New session" onClick={()=>{action({type:'new'});setInput('');composer.current?.focus();}}><Icon name="new"/></button>
         </header>
         {state.notice&&<p class="notice" role="status">{state.notice}</p>}
-        <div class="transcript">{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>Open a trusted workspace to get started. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
+        <div class="transcript" ref={transcript}>{!state.session?.turns.length?<section class="welcome"><h1>Explore your project</h1><p>Search indexed files and collect cited evidence.</p><div class="suggestions">{['/search retry --mode lexical','/symbols EvidenceClient','/files'].map(example=><button onClick={()=>{setInput(example);composer.current?.focus();}}>{example}</button>)}</div>{!state.projects.length&&<p>Open a trusted workspace to get started. <button onClick={()=>action({type:'manage'})}>Open Management</button></p>}</section>:state.session.turns.map(turn=><Turn key={turn.id} turn={turn} state={state}/>)}</div>
         <div class="composer">
             {(scope||recipe)&&<div class="compose-context">{scope&&<button title="Clear scope" onClick={()=>setScope('')}>{scope} ×</button>}{recipe&&<button title="Clear recipe" onClick={()=>setRecipe('')}>{RECIPES.find(([id])=>id===recipe)?.[1]} ×</button>}</div>}
             {input.startsWith('/')&&!input.includes(' ')&&<div class="commands" aria-label="Commands">{COMMANDS.filter(c=>c.startsWith(input)).map(c=><button onClick={()=>{setInput(`${c} `);composer.current?.focus();}}>{c}</button>)}</div>}

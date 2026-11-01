@@ -60,6 +60,9 @@ impl Collection {
                 matches!(
                     name,
                     "service-owner.json"
+                        | "integrity-observation.json"
+                        | "integrity-recovery.json"
+                        | "integrity-projection.json"
                         | "active.json"
                         | "replacement.json"
                         | "initial-slot.json"

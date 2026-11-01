@@ -6,13 +6,16 @@ hash-verified local pins. Unsupported rows have thirteen zero targets, rather
 than introducing a fourteenth runtime label or changing the feature format.
 """
 import argparse
+from collections import Counter
 import csv
 import hashlib
 import json
+from importlib.metadata import version
 from pathlib import Path
 import random
 import re
 import struct
+import sys
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -21,10 +24,14 @@ from sklearn.multiclass import OneVsRestClassifier
 from train import LABELS, ROOT, matrix
 from qualify import MORE_TEMPLATES, ROLES, TEMPLATES, quantize, save_jsonl, vocabulary
 from phrasing import EXTRA_NEGATIVES, NEGATIVES, PHRASES, PREFIXES, REQUEST_VERBS, TRAINING_OBJECTS, split_families
+from conversational_v4 import KINDS, TOPICS, families as conversational_families
 from retention import WORK, retain
 
 HERE = Path(__file__).parent
-SEED = 84181
+SEED = 84183
+PROTOCOL = 'broader-phrasing/5'
+FEATURE_SPEC = 2
+CONVERSATIONAL_FIXTURE = 'conversational-regression-v4'
 
 
 def normalized(text):
@@ -59,10 +66,10 @@ def wrap(template, role, rng):
     return rng.choice(PREFIXES) + template
 
 
-def synthetic(count, repos, split, queries, negative=False):
+def synthetic(count, repos, split, queries, negative=False, excluded=()):
     rng = random.Random(SEED + {'train': 0, 'validation': 1, 'calibration': 2}[split] + (10 if negative else 0))
     rows = []
-    seen = set()
+    seen = set(excluded)
     topics = [query for query in queries if query_split(query) == split]
     while len(rows) < count:
         label = 'unsupported' if negative else LABELS[len(rows) % len(LABELS)]
@@ -86,10 +93,38 @@ def synthetic(count, repos, split, queries, negative=False):
             verb = rng.choice(REQUEST_VERBS)
             template = verb + ' ' + noun
             family = 'contract-lexicon-' + str(TRAINING_OBJECTS[label].index(noun))
+        conversational = conversational_families(label, split, negative)
+        conversational_request = conversational and rng.random() < (.40 if negative else .60)
+        if conversational_request:
+            family, variants = rng.choice(conversational)
+            family = 'conversational-' + family
+            template = rng.choice(variants)
+            origin = 'original-conversational-family'
+            if label == 'search':
+                symbol = rng.choice(TOPICS) if rng.random() < .50 else symbol
+            else:
+                # Preserve code-looking identifiers rather than learning that
+                # an arbitrary lowercase topic is a definition request.
+                candidates = [name for name in data['symbols']
+                              if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*', name)]
+                symbol = rng.choice(candidates or ['PacketStore'])
+                if '{k}' not in template and not any(mark in template for mark in ('"{s}"', '`{s}`')) and '_' not in symbol and '::' not in symbol:
+                    symbol = symbol[0].upper() + symbol[1:]
+        if split == 'train' and not negative:
+            # Contract verb/object combinations can accidentally recreate a
+            # held-out phrase verbatim. Preserve the phrase-family boundary,
+            # rather than relying on different sampled names to hide overlap.
+            held = {normalized(variant)
+                    for held_split in ('validation', 'calibration')
+                    for _, variants in split_families(PHRASES[label], held_split) + conversational_families(label, held_split)
+                    for variant in variants}
+            if normalized(template) in held:
+                family, variants = rng.choice(split_families(PHRASES[label], 'train'))
+                template = rng.choice(variants)
         if label == 'search' and topics and rng.random() < .30:
             symbol = query = rng.choice(topics)
             origin = 'codesearchnet-query-in-explicit-retrieval-request'
-        text = wrap(template.format(s=symbol, p=path), role, rng)
+        text = wrap(template.format(s=symbol, p=path, k=rng.choice(KINDS)), role, rng)
         if '{s}' not in template and '{p}' not in template:
             # Keep no-slot requests distinct without adding evidence or source bodies.
             text += rng.choice([' in the project containing ', ' for the collection containing ']) + path
@@ -146,8 +181,8 @@ def check_splits(splits):
                 families[family] = split
 
 
-def scores(rows, weights, bias):
-    return np.asarray(matrix([row['text'] for row in rows]) @ weights.astype(np.int32)) + bias
+def scores(rows, weights, bias, feature_spec=1):
+    return np.asarray(matrix([row['text'] for row in rows], feature_spec) @ weights.astype(np.int32)) + bias
 
 
 def metrics(rows, values, threshold=0, margin=80):
@@ -164,6 +199,15 @@ def metrics(rows, values, threshold=0, margin=80):
             'unsupported_accepted': int((accepted & ~supported).sum()),
             'unsupported_accept_rate': float(accepted[~supported].mean()) if (~supported).any() else None,
             'wrong_accepted': int((accepted & ~correct).sum()),
+            'per_role_outcomes': {
+                role: {'rows': int(mask.sum()), 'supported_rows': int((mask & supported).sum()),
+                       'accepted': int((mask & accepted).sum()), 'abstained': int((mask & ~accepted).sum()),
+                       'wrong_accepted': int((mask & accepted & ~correct).sum()),
+                       'supported_ask_rate': float((~accepted)[mask & supported].mean()) if (mask & supported).any() else None,
+                       'accepted_precision': float(correct[mask & accepted].mean()) if (mask & accepted).any() else None}
+                for role in sorted({row['role'] for row in rows})
+                if (mask := np.array([row['role'] == role for row in rows])).any()
+            },
             'per_role': {role: float(correct[mask].mean()) for role in ROLES
                          if (mask := supported & np.array([row['role'] == role for row in rows])).any()}}
 
@@ -192,7 +236,7 @@ def calibrate(rows, values):
 
 def asset(weights, bias, threshold, margin):
     payload = weights.tobytes() + bias.tobytes()
-    return b'AIRKINT1' + struct.pack('<IIIIii', 1, 65536, 13, 1, threshold, margin) + hashlib.sha256('\n'.join(LABELS).encode()).digest() + hashlib.sha256(payload).digest() + payload
+    return b'AIRKINT1' + struct.pack('<IIIIii', 1, 65536, 13, FEATURE_SPEC, threshold, margin) + hashlib.sha256('\n'.join(LABELS).encode()).digest() + hashlib.sha256(payload).digest() + payload
 
 
 def save_report(report, prefix):
@@ -206,6 +250,24 @@ def save_report(report, prefix):
     return file
 
 
+def selected_fit_rows(report, training_rows):
+    """Recover the exact already-fitted row order, never select a new candidate."""
+    selected = next(row for row in report['learning_curve']
+                    if row['positive_training_rows'] == report['selected_positive_training_rows']
+                    and row['C'] == report['selected_C'])
+    positive_count = max(row['positive_training_rows'] for row in report['learning_curve'])
+    original_negative_count = sum(row['intent'] == 'unsupported' and row['origin'] != 'clinc150-non-repository-task'
+                                  for row in training_rows)
+    public_count = sum(row['origin'] == 'clinc150-non-repository-task' for row in training_rows)
+    if len(training_rows) != positive_count + original_negative_count + public_count:
+        raise ValueError('Fitted training pool boundaries disagree with frozen learning curve')
+    count = report['selected_positive_training_rows']
+    indices = list(range(count)) + list(range(positive_count, positive_count + count * original_negative_count // positive_count)) + list(range(positive_count + original_negative_count, positive_count + original_negative_count + count * public_count // positive_count))
+    if len(indices) != selected['total_training_rows']:
+        raise ValueError('Selected fitted-row count disagrees with frozen candidate')
+    return [training_rows[index] for index in indices]
+
+
 def evaluate(file):
     report = json.loads(file.read_text(encoding='utf-8'))
     model = ROOT / report['model_path']
@@ -215,12 +277,30 @@ def evaluate(file):
     weights = np.frombuffer(content, dtype=np.int8, offset=96, count=65536 * 13).reshape(65536, 13)
     bias = np.frombuffer(content, dtype='<i4', offset=96 + 65536 * 13, count=13)
     threshold, margin = report['threshold'], report['margin']
+    feature_spec = struct.unpack_from('<I', content, 20)[0]
     frozen = json.loads((HERE / 'qualification.json').read_text(encoding='utf-8'))
     training_record = report['datasets']['train']
     training_bytes = (ROOT / training_record['path']).read_bytes()
     if hashlib.sha256(training_bytes).hexdigest() != training_record['sha256']:
         raise ValueError('Frozen training corpus changed')
-    training_texts = {normalized(json.loads(line)['text']) for line in training_bytes.splitlines()}
+    training_rows = [json.loads(line) for line in training_bytes.splitlines()]
+    training_texts = {normalized(row['text']) for row in training_rows}
+    if report['protocol'] == 'broader-phrasing/5':
+        from role_campaign import coverage as role_coverage
+        fitted_rows = selected_fit_rows(report, training_rows)
+        report['fitted_training'] = save_jsonl('broader-fitted-v5', fitted_rows)
+        report['datasets']['fitted_train'] = report['fitted_training']
+        report['fitted_role_family_coverage'] = role_coverage(fitted_rows)
+        report['fitted_prefix_counts'] = {prefix: dict(sorted(Counter(row['intent'] for row in fitted_rows if prefix in row['text'].lower()).items()))
+                                         for prefix in ('find the ', 'tell me about ', 'know about ', 'information about ', 'details about ')}
+        report['selected_total_training_rows'] = len(fitted_rows)
+        report['training_pool_rows'] = len(training_rows)
+        report['fit_parameters'] = {'algorithm': 'OneVsRestClassifier(LogisticRegression)', 'solver': 'liblinear',
+                                    'C': report['selected_C'], 'max_iter': 300, 'random_state': report['seed'],
+                                    'feature_spec': feature_spec, 'unsupported_targets': 'thirteen zeros',
+                                    'quantization': 'round weights and biases after scaling maximum absolute coefficient to120; int8 weights/int32 biases',
+                                    'row_order': 'exact order in fitted_training JSONL; no additional shuffle'}
+        report['software_versions'] = {'python': sys.version.split()[0], **{name: version(name) for name in ('numpy', 'scipy', 'scikit-learn')}}
     overlaps = {}
     evaluation = {}
     for name in ('actions/runner', 'simpleiot/simpleiot', 'fastapi/fastapi'):
@@ -230,9 +310,13 @@ def evaluate(file):
             raise ValueError('Frozen repository evaluation changed')
         rows = [json.loads(line) for line in raw.splitlines()]
         overlaps[name] = sum(normalized(row['text']) in training_texts for row in rows)
-        evaluation[name] = metrics(rows, scores(rows, weights, bias), threshold, margin)
+        evaluation[name] = metrics(rows, scores(rows, weights, bias, feature_spec), threshold, margin)
     fixtures = {}
-    for name in ('evaluation', 'safety'):
+    fixture_names = ['evaluation', 'safety']
+    conversational_fixture = next((name for name in report['frozen_fixture_sha256'] if name.startswith('conversational-regression')), None)
+    if conversational_fixture:
+        fixture_names.append(conversational_fixture)
+    for name in fixture_names:
         fixture = HERE / (name + '.json')
         if hashlib.sha256(fixture.read_bytes()).hexdigest() != report['frozen_fixture_sha256'][name]:
             raise ValueError('Frozen regression fixture changed')
@@ -242,13 +326,13 @@ def evaluate(file):
             raise ValueError('Retained utterance/safety fixture overlaps fitted text')
         if name == 'safety':
             rows = [{**row, 'intent': 'unsupported', 'role': 'safety'} for row in rows]
-        fixtures[name] = metrics(rows, scores(rows, weights, bias), threshold, margin)
+        fixtures[name] = metrics(rows, scores(rows, weights, bias, feature_spec), threshold, margin)
     record = report['datasets']['public-test']
     raw = (ROOT / record['path']).read_bytes()
     if hashlib.sha256(raw).hexdigest() != record['sha256']:
         raise ValueError('Frozen public evaluation changed')
     rows = [json.loads(line) for line in raw.splitlines()]
-    public = metrics(rows, scores(rows, weights, bias), threshold, margin)
+    public = metrics(rows, scores(rows, weights, bias, feature_spec), threshold, margin)
     calibration = report['calibration']
     gates = {'repository_accuracy': all(r['intent_accuracy'] >= .95 for r in evaluation.values()),
              'role_accuracy': all(all(v >= .90 for v in r['per_role'].values()) for r in evaluation.values()),
@@ -257,14 +341,45 @@ def evaluate(file):
              'public_unsupported': public['unsupported_accept_rate'] <= .01,
              'calibration_accepted_precision': (calibration['accepted_precision'] or 0) >= .995,
              'supported_ask_rate': calibration['supported_ask_rate'] <= .10}
+    baseline = report.get('baseline_model')
+    if baseline:
+        prior = (ROOT / baseline['path']).read_bytes()
+        if hashlib.sha256(prior).hexdigest() != baseline['sha256']:
+            raise ValueError('Baseline model digest changed')
+        prior_weights = np.frombuffer(prior, dtype=np.int8, offset=96, count=65536 * 13).reshape(65536, 13)
+        prior_bias = np.frombuffer(prior, dtype='<i4', offset=96 + 65536 * 13, count=13)
+        prior_threshold, prior_margin = struct.unpack_from('<ii', prior, 24)
+        prior_spec = struct.unpack_from('<I', prior, 20)[0]
+        rows = json.loads((HERE / (conversational_fixture + '.json')).read_text(encoding='utf-8'))
+        report['baseline_conversational_regression'] = metrics(rows, scores(rows, prior_weights, prior_bias, prior_spec), prior_threshold, prior_margin)
+        report['conversational_regression_groups'] = {
+            group: {
+                'prior': metrics(selected_rows, scores(selected_rows, prior_weights, prior_bias, prior_spec), prior_threshold, prior_margin),
+                'candidate': metrics(selected_rows, scores(selected_rows, weights, bias, feature_spec), threshold, margin),
+            }
+            for group in sorted({row['group'] for row in rows})
+            if (selected_rows := [row for row in rows if row['group'] == group])
+        }
+        if report['protocol'] == 'broader-phrasing/5':
+            for split in ('validation', 'calibration'):
+                raw = (ROOT / report['datasets'][split]['path']).read_bytes()
+                if hashlib.sha256(raw).hexdigest() != report['datasets'][split]['sha256']:
+                    raise ValueError('Frozen role evaluation corpus changed')
+                selected_rows = [row for line in raw.splitlines()
+                                 if (row := json.loads(line))['origin'] == 'original-role-inventory']
+                report['baseline_role_heldout_' + split] = metrics(selected_rows, scores(selected_rows, prior_weights, prior_bias, prior_spec), prior_threshold, prior_margin)
     report.update(repository_evaluation=evaluation, regression_fixtures=fixtures, public_unsupported=public,
                   training_text_overlap_audit=overlaps,
                   gates=gates, qualified=all(gates.values()),
                   evaluation_scope='Existing repository/150/safety fixtures are retained regression tests, not fresh unseen tests. CLINC official test rows were not used to fit or calibrate. Agent-authored intent labels still require review.')
     destination = save_report(report, 'broader-qualified')
-    (HERE / ('qualification-broader-v2.json' if report['protocol'] == 'broader-phrasing/2' else 'qualification-broader.json')).write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    protocol_version = report['protocol'].removeprefix('broader-phrasing/')
+    destination_name = 'qualification-broader.json' if protocol_version == '1' else f'qualification-broader-v{protocol_version}.json'
+    (HERE / destination_name).write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     print(json.dumps({'report': str(destination), 'gates': gates, 'regression_150': fixtures['evaluation'],
-                      'safety': fixtures['safety'], 'public': public}), flush=True)
+                      'safety': fixtures['safety'], 'public': public,
+                      'conversational': fixtures.get(conversational_fixture),
+                      'prior_conversational': report.get('baseline_conversational_regression')}), flush=True)
 
 
 def main():
@@ -276,21 +391,32 @@ def main():
         return
     repos = [repo for repo in vocabulary() if repo['split'] == 'train']
     queries, clinc = online()
+    from role_campaign import coverage as role_coverage, generated as role_generated, prepare as role_prepare
+    role_prepare()
+    # Exclude exact known regression text, never use its labels for fitting or
+    # threshold/model selection. These remain known regressions, not blind tests.
+    excluded = {normalized(row['text'])
+                for name in ('evaluation', 'safety', CONVERSATIONAL_FIXTURE)
+                for row in json.loads((HERE / (name + '.json')).read_text(encoding='utf-8'))}
     splits = {}
-    for split, positive, negative, public in [('train', 40000, 6000, 2000), ('validation', 4000, 600, 400), ('calibration', 4000, 600, 400)]:
-        splits[split] = synthetic(positive, repos, split, queries) + synthetic(negative, repos, split, queries, True) + public_negatives(clinc, split, public)
+    positive_count, original_negative_count, public_negative_count = 80000, 12000, 4000
+    for split, positive, negative, public in [('train', positive_count, original_negative_count, public_negative_count), ('validation', 8000, 1200, 800), ('calibration', 8000, 1200, 800)]:
+        splits[split] = role_generated(positive, repos, split, queries, excluded=excluded) + role_generated(negative, repos, split, queries, True, excluded) + public_negatives(clinc, split, public)
+    role_positive_rows = sum(row['origin'] == 'original-role-inventory' and row['intent'] in LABELS for row in splits['train'])
+    if role_positive_rows < positive_count // 2:
+        raise ValueError('Role families must supply at least half of supported training rows')
     splits['public-test'] = public_negatives(clinc, 'test', 1000)
     check_splits(splits)
     datasets = {split: save_jsonl('broader-' + split, rows) for split, rows in splits.items()}
     print(json.dumps({'saved': {split: len(rows) for split, rows in splits.items()}}), flush=True)
     train, validation, calibration = splits['train'], splits['validation'], splits['calibration']
-    x = matrix([row['text'] for row in train])
+    x = matrix([row['text'] for row in train], FEATURE_SPEC)
     y = np.array([[int(row['intent'] == label) for label in LABELS] for row in train])
-    val_x = matrix([row['text'] for row in validation])
+    val_x = matrix([row['text'] for row in validation], FEATURE_SPEC)
     learning = []
     selected = None
-    for count in (10000, 20000, 40000):
-        indices = list(range(count)) + list(range(40000, 40000 + count * 6000 // 40000)) + list(range(46000, 46000 + count * 2000 // 40000))
+    for count in (20000, 40000, 80000):
+        indices = list(range(count)) + list(range(positive_count, positive_count + count * original_negative_count // positive_count)) + list(range(positive_count + original_negative_count, positive_count + original_negative_count + count * public_negative_count // positive_count))
         for regularization in (0.5, 2.0):
             model = OneVsRestClassifier(LogisticRegression(C=regularization, max_iter=300, solver='liblinear', random_state=SEED), n_jobs=1)
             model.fit(x[indices], y[indices])
@@ -306,7 +432,7 @@ def main():
             if selected is None or quality > selected[0]:
                 selected = (quality, count, regularization, weights, bias)
     _, count, regularization, weights, bias = selected
-    values = scores(calibration, weights, bias)
+    values = scores(calibration, weights, bias, FEATURE_SPEC)
     threshold, margin = calibrate(calibration, values)
     content = asset(weights, bias, threshold, margin)
     digest = hashlib.sha256(content).hexdigest()
@@ -315,7 +441,27 @@ def main():
     if not model_file.exists():
         model_file.write_bytes(content)
     retain(model_file)
-    report = {'schema': 1, 'protocol': 'broader-phrasing/2', 'seed': SEED, 'datasets': datasets,
+    prior = (ROOT / 'crates/airk-retrieval/assets/intent-v1.bin').read_bytes()
+    prior_digest = hashlib.sha256(prior).hexdigest()
+    prior_file = WORK / 'models' / ('intent-' + prior_digest[:16] + '.bin')
+    if not prior_file.exists():
+        prior_file.write_bytes(prior)
+    retain(prior_file)
+    report = {'schema': 1, 'protocol': PROTOCOL, 'feature_spec': FEATURE_SPEC, 'seed': SEED, 'datasets': datasets,
+              'role_family_coverage': {split: role_coverage(rows) for split, rows in splits.items() if split != 'public-test'},
+              'role_heldout_validation': metrics([row for row in validation if row['origin'] == 'original-role-inventory'],
+                                               scores([row for row in validation if row['origin'] == 'original-role-inventory'], weights, bias, FEATURE_SPEC), threshold, margin),
+              'role_heldout_calibration': metrics([row for row in calibration if row['origin'] == 'original-role-inventory'],
+                                                scores([row for row in calibration if row['origin'] == 'original-role-inventory'], weights, bias, FEATURE_SPEC), threshold, margin),
+              'role_source': {'path': 'tools/parser-train/role-queries.json', 'sha256': hashlib.sha256((HERE / 'role-queries.json').read_bytes()).hexdigest(), 'rows': len(json.loads((HERE / 'role-queries.json').read_text(encoding='utf-8'))['queries']),
+                              'split_map': 'tools/parser-train/role-phrase-splits-v5.json', 'split_map_sha256': hashlib.sha256((HERE / 'role-phrase-splits-v5.json').read_bytes()).hexdigest()},
+              'reproduction_sources_sha256': {name: hashlib.sha256((HERE / name).read_bytes()).hexdigest() for name in ('broaden.py', 'role_campaign.py', 'train.py', 'requirements.txt', 'phrasing.py', 'conversational.py', 'conversational_v4.py')},
+              'known_runtime_plan_fixture': {'path': 'tools/parser-train/role-plan-validation.json', 'scope': 'Separate known public role inventory measured against actual native parsing/extraction; not training, calibration or model-selection input.'},
+              'corpus_coverage': {split: {
+                  'families': dict(sorted(Counter(row.get('family', row['origin']) for row in rows).items())),
+                  'simple_prefixes': {prefix: dict(sorted(Counter(row['intent'] for row in rows if prefix in row['text'].lower()).items()))
+                                      for prefix in ('find the ', 'tell me about ', 'know about ', 'information about ', 'details about ')}
+              } for split, rows in splits.items()},
               'selected_positive_training_rows': count, 'selected_C': regularization,
               'selection': 'Maximum validation intent accuracy minus twice unsupported acceptance at fixed development thresholds; ties retain the earlier smaller candidate. Calibration and final fixtures do not select the model.',
               'learning_curve': learning, 'threshold': threshold, 'margin': margin,
@@ -323,7 +469,10 @@ def main():
               'asset_sha256': digest, 'asset_bytes': len(content), 'model_path': model_file.relative_to(ROOT).as_posix(),
               'online_lock_sha256': hashlib.sha256((HERE / 'online.lock.json').read_bytes()).hexdigest(),
               'phrasing_sha256': hashlib.sha256((HERE / 'phrasing.py').read_bytes()).hexdigest(),
-              'frozen_fixture_sha256': {name: hashlib.sha256((HERE / (name + '.json')).read_bytes()).hexdigest() for name in ('evaluation', 'safety')},
+              'conversational_families_sha256': hashlib.sha256((HERE / 'conversational_v4.py').read_bytes()).hexdigest(),
+              'previous_conversational_families_sha256': hashlib.sha256((HERE / 'conversational.py').read_bytes()).hexdigest(),
+              'baseline_model': {'path': prior_file.relative_to(ROOT).as_posix(), 'sha256': prior_digest},
+              'frozen_fixture_sha256': {name: hashlib.sha256((HERE / (name + '.json')).read_bytes()).hexdigest() for name in ('evaluation', 'safety', CONVERSATIONAL_FIXTURE)},
               'runtime_promoted': False, 'scope': 'Intent classification with original phrase-family splits, query-wrapped CodeSearchNet topics, and explicitly unsupported software tasks and CLINC assistant requests. No source bodies or workspace sessions are training inputs.'}
     destination = save_report(report, 'broader-development')
     print(json.dumps({'frozen_report': destination.relative_to(ROOT).as_posix(), 'calibration': report['calibration']}), flush=True)

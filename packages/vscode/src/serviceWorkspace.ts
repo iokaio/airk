@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { LaunchSpec } from './model';
-import { ProjectRegistrationReview, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
+import { exactScopeMatches, NativeSourceScope, ProjectRegistrationReview, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { identifier, record, ServiceError, type ConsolePage } from './serviceClient';
 import { IntentStorage } from './serviceIntents';
 
@@ -12,6 +12,9 @@ const PREFIX='airk.service.workspace.1.';
 const ACTIVE='airk.service.workspace.active.1.';
 interface SavedProject {schema:1;opened:string;registration:ProjectRegistrationReview}
 export interface WorkspaceRegistrations { active:ProjectRegistrationReview[]; inactive:ProjectRegistrationReview[] }
+export type SelectedRootObservation = (
+    {kind:'registered';spec:LaunchSpec;revision:number;namespace:string;fencing_generation:number}
+    |{kind:'removed'|'missing'|'ambiguous';revision:number|null;namespace:string|null}) & {root:string;collection:string|null};
 function absolute(value:unknown):string {
     if(typeof value!=='string'||value.length>4096||!path.isAbsolute(value)||/[\u0000-\u001f\u007f]/.test(value))throw new ServiceError('invalid_saved_workspace_path');
     return value;
@@ -50,6 +53,8 @@ export async function readWorkspaceRegistrations(binding:RuntimeBinding,
             after=page.after;
         }while(after!==null);
     }
+    for(const project of [...result.active,...result.inactive])Object.freeze(project);
+    Object.freeze(result.active);Object.freeze(result.inactive);Object.freeze(result);
     return result;
 }
 /** Workspace state remembers reviewed/native bindings; sources remain read-only. */
@@ -62,6 +67,27 @@ export class ServiceWorkspace {
         this.active();
         return this.saved().some(value=>same(value.opened,opened)&&same(value.registration.installDir,binding.installDir)
             &&same(value.registration.controlDir,binding.controlDir));
+    }
+    /** Early UI evidence only. Saved choices select among current native rows;
+     * they never turn absence, removal or ambiguity into a registration. */
+    async selectedObservation(binding:RuntimeBinding,opened:string,
+        read:(root:string,collection:string|null)=>Promise<NativeSourceScope>):Promise<SelectedRootObservation>{
+        this.active();
+        const saved=(await this.definitions(binding,[opened]))[0];this.active();
+        let root:string;
+        try{root=await fs.realpath(opened);}catch(error){
+            if(!saved||!['ENOENT','ENOTDIR','EACCES','EPERM'].includes((error as NodeJS.ErrnoException).code??''))throw error;
+            root=saved.root;
+        }
+        const collection=saved?.collection??null;
+        const observed=await read(root,collection);this.active();
+        if(!exactScopeMatches(observed,binding,root,collection))throw new ServiceError('workspace_observation_not_authoritative');
+        if(observed.outcome!=='registered')return {kind:observed.outcome,revision:observed.revision,namespace:observed.namespace,root:observed.root,collection};
+        const project=observed.registration!;
+        if(!binding.launcher)throw new ServiceError('stable_launcher_unavailable');
+        return {kind:'registered',revision:observed.revision!,namespace:observed.namespace!,fencing_generation:observed.fencing_generation!,root:observed.root,collection,
+            spec:{command:binding.universalLauncher??binding.launcher,root:project.root,dataDir:project.data_root,collection:project.collection,name:path.basename(opened),
+            service:{installDir:binding.installDir,project:project.binding,...(binding.universalLauncher?{universal:true}:{})}}};
     }
     /** Trusted startup may recreate a lost registration; native removal remains authoritative. */
     async reconcileStartup(binding:RuntimeBinding,opened:string,observed:WorkspaceRegistrations):Promise<'registered'|'removed'|'missing'>{

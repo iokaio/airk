@@ -114,6 +114,43 @@ struct WorkState {
     finished: Option<airk_core::identity::Incarnation>,
     maintenance: Option<airk_core::service::MaintenanceObservation>,
     failure: Option<crate::service_logs::JobFailure>,
+    integrity_observation_failure: Option<String>,
+}
+
+fn integrity_observation_code(error: &anyhow::Error) -> &'static str {
+    if error.is::<airk_store::service::collection::integrity::native_owner::NativeOwnerRecoveryRequired>() {
+        "native_owner_recovery_required"
+    } else {
+        "integrity_maintenance_observation_unavailable"
+    }
+}
+
+fn verify_turn_bytes(blocked_large: bool, working_memory_bytes: u64) -> u64 {
+    // Existing native work grants reserve at least 768 MiB. An indivisible
+    // component may use the existing 512-MiB audit ceiling only after refusal
+    // by the ordinary 64-MiB turn; smaller supplied grants retain that limit.
+    if blocked_large && working_memory_bytes >= 768 << 20 {
+        512 << 20
+    } else {
+        64 << 20
+    }
+}
+
+fn observe_native_integrity(
+    kernel: &Kernel,
+    registry: &mut ServiceRegistry,
+    lease: Arc<ProjectLease>,
+    bound: &airk_store::service::data_scope::BoundDataRoot,
+    identity: WorkerIdentity,
+    max_verify_bytes: Option<u64>,
+) -> Result<bool> {
+    match max_verify_bytes {
+        Some(max_bytes) => {
+            kernel.observe_service_audit_index_with_limit(registry, &lease, max_bytes)?
+        }
+        None => kernel.observe_service_audit_index(registry, &lease)?,
+    }
+    kernel.try_arm_native_owner(registry, lease, bound, identity)
 }
 fn record_watch_roots(kernel: &Kernel, registry: &mut ServiceRegistry, lease: &ProjectLease) {
     let roots = kernel
@@ -353,27 +390,7 @@ fn execute(
                 },
             });
         }
-        JobKind::Verify => {
-            let mut after = None;
-            let mut revision = None;
-            loop {
-                airk_kernel::service_execution::checkpoint()?;
-                let report = kernel.diagnose_current(revision, after.as_deref(), 32, 64 << 20)?;
-                ensure!(
-                    report.failed_objects == 0 && report.skipped_large == 0,
-                    "retained verification incomplete"
-                );
-                revision = Some(report.publication.token);
-                if report.complete {
-                    break;
-                }
-                after = Some(
-                    report
-                        .next_after
-                        .context("integrity continuation missing")?,
-                );
-            }
-        }
+        JobKind::Verify => unreachable!("service Verify owns its durable continuation"),
         JobKind::Recover
         | JobKind::Configure
         | JobKind::Maintain
@@ -448,6 +465,7 @@ pub async fn run() -> Result<()> {
         identity: accepted,
         allowance,
         pool,
+        pool_pending,
     }) = service_ipc::read_frame(&mut std::io::stdin().lock())?
     else {
         anyhow::bail!("project owner was not activated")
@@ -458,7 +476,12 @@ pub async fn run() -> Result<()> {
             && allowance.response_bytes == allowance.concurrent_queries * MAX_FRAME_BYTES,
         "project activation identity or allowance mismatch"
     );
-    crate::embedding_pool_client::install(&init.runtime, identity, pool.map(|access| *access))?;
+    crate::embedding_pool_client::install(
+        &init.runtime,
+        identity,
+        pool.map(|access| *access),
+        pool_pending,
+    )?;
     let storage = airk_store::service::data_scope::bind(
         Path::new(&registration.data_root),
         &init.runtime,
@@ -482,6 +505,18 @@ pub async fn run() -> Result<()> {
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = kernel.service_rebuild_receipt()?;
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
+    // Only an actually opened retained index can become an automatic audit
+    // candidate. A fresh/unprepared registration remains ordinary setup work.
+    let initial_integrity_failure = observe_native_integrity(
+        &kernel,
+        &mut registry,
+        lease.clone(),
+        &storage,
+        identity,
+        None,
+    )
+    .err()
+    .map(|error| integrity_observation_code(&error).to_owned());
     record_watch_roots(&kernel, &mut registry, &lease);
     let _ = reconcile_semantic_setup(&kernel, &mut registry, &lease, init.engine);
     // Recovery is durable desired work, admitted by the service rather than an
@@ -557,6 +592,7 @@ pub async fn run() -> Result<()> {
                     break;
                 }
             }
+            crate::embedding_pool_client::close();
             control_closing.store(true, Ordering::Release);
             control_activity.notify_one();
         })?;
@@ -566,10 +602,14 @@ pub async fn run() -> Result<()> {
     let job_lease = lease.clone();
     let (work_sender, work_receiver) =
         std::sync::mpsc::sync_channel::<airk_core::service_resources::WorkAllowance>(1);
-    let work_status = Arc::new(Mutex::new(WorkState::default()));
+    let work_status = Arc::new(Mutex::new(WorkState {
+        integrity_observation_failure: initial_integrity_failure.clone(),
+        ..Default::default()
+    }));
     let job_status = work_status.clone();
     let freshness_kernel = kernel.clone();
-    let jobs = tokio::task::spawn_blocking(move || -> Result<()> {
+    let jobs = tokio::task::spawn_blocking(move || -> Result<ServiceRegistry> {
+        let mut last_integrity_failure = initial_integrity_failure;
         while !job_closing.load(Ordering::Acquire) {
             let allowance = match work_receiver.recv_timeout(Duration::from_millis(200)) {
                 Ok(allowance) => allowance,
@@ -586,11 +626,21 @@ pub async fn run() -> Result<()> {
                 "cleanup requires a distinct inactive owner"
             );
             if let Some(job) = registry.claim_job_id(&job_lease, allowance.job)? {
+                let mut automatic_settled = false;
+                let mut verify_admission = None;
                 let mut completed_maintenance = None;
                 let mut failure_detail = None;
+                let mut audit_drain = None;
+                let mut audit_completion = None;
+                let mut query_completion = None;
                 use airk_store::service::registry::RecoveryCondition;
                 let mut recovery_condition = RecoveryCondition::Delay;
-                let outcome = if registry.cancellation_requested(job.id)? {
+                let mut outcome = if registry.cancellation_requested(job.id)? {
+                    if matches!(job.kind, JobKind::Verify | JobKind::Repair) {
+                        audit_drain = registry
+                            .drained_verify_before_execution(&job_lease, &job_storage, job.id)
+                            .ok();
+                    }
                     Ok(JobOutcome::Canceled)
                 } else {
                     airk_kernel::service_execution::run(allowance.clone(), || {
@@ -705,6 +755,140 @@ pub async fn run() -> Result<()> {
                                 revision: snapshot.publication,
                             });
                         }
+                        if kind == JobKind::Verify {
+                            verify_admission =
+                                Some(verify_turn_bytes(true, allowance.working_memory_bytes));
+                            airk_kernel::service_execution::progress_phase(
+                                airk_core::service_progress::WorkPhase::Verifying,
+                            );
+                            let recovery_epoch = if last_integrity_failure.as_deref()
+                                == Some("native_owner_recovery_required")
+                                || kernel.native_owner_requires_recovery()?
+                            {
+                                Some(kernel.begin_service_native_recovery(
+                                    &registry,
+                                    &job_lease,
+                                    &job_storage,
+                                    identity,
+                                    job.id,
+                                )?)
+                            } else {
+                                None
+                            };
+                            loop {
+                                airk_kernel::service_execution::checkpoint()?;
+                                let run_turn = |max_bytes| match recovery_epoch.as_ref() {
+                                    Some(epoch) => kernel.verify_native_recovery_service_turn(
+                                        &registry,
+                                        &job_lease,
+                                        &job_storage,
+                                        epoch,
+                                        max_bytes,
+                                    ),
+                                    None => kernel.verify_service_turn_with_limit(
+                                        &registry,
+                                        &job_lease,
+                                        &job_storage,
+                                        job.id,
+                                        max_bytes,
+                                    ),
+                                };
+                                let mut turn = run_turn(64 << 20)?;
+                                let expanded = verify_turn_bytes(
+                                    turn.blocked_large,
+                                    allowance.working_memory_bytes,
+                                );
+                                if expanded > 64 << 20 {
+                                    // A later sibling component may exceed the first
+                                    // blocked object's requirement. Admit the fixed
+                                    // exceptional profile once, so its no-progress
+                                    // witness describes the actual available ceiling.
+                                    turn = run_turn(expanded)?;
+                                }
+                                if registry.cancellation_requested(job.id)? {
+                                    audit_drain = turn.drained;
+                                    return Ok(JobOutcome::Canceled);
+                                }
+                                if let Some(proof) = turn.recovery_completed.as_ref() {
+                                    kernel.recover_service_native_owner(
+                                        &mut registry,
+                                        &job_lease,
+                                        &job_storage,
+                                        identity,
+                                        job.id,
+                                        proof,
+                                    )?;
+                                }
+                                if let Some(proof) = turn.retained_completed.as_ref() {
+                                    registry.record_retained_audit(&job_lease, proof)?;
+                                }
+                                if registry
+                                    .automatic_audit_context(&job_lease, job.id)?
+                                    .is_some_and(|context| !context.manual())
+                                    && !(turn.progress.requires_repair() && turn.work_complete())
+                                {
+                                    let now_ms = std::time::SystemTime::now()
+                                        .duration_since(std::time::UNIX_EPOCH)?
+                                        .as_millis()
+                                        .try_into()?;
+                                    let handoff = if let Some(proof) = turn.query_completed.as_ref()
+                                    {
+                                        registry.complete_automatic_audit(&job_lease, proof, now_ms)
+                                    } else {
+                                        let drained = turn
+                                            .drained
+                                            .as_ref()
+                                            .context("automatic audit turn lacks drain proof")?;
+                                        ensure!(
+                                            !turn.blocked_large || turn.blocked_input.is_some(),
+                                            "blocked automatic audit lacks retry witness"
+                                        );
+                                        registry.park_automatic_audit(
+                                            &job_lease,
+                                            job.id,
+                                            drained,
+                                            turn.blocked_input.as_ref(),
+                                            now_ms,
+                                        )
+                                    };
+                                    if let Err(error) = handoff {
+                                        return Err(match turn.drained {
+                                            Some(drained) => error.context(drained),
+                                            None => error,
+                                        });
+                                    }
+                                    automatic_settled = true;
+                                    // The accepted job has already completed or parked
+                                    // transactionally. This value never settles its guard.
+                                    return Ok(JobOutcome::Canceled);
+                                }
+                                if turn.blocked_large
+                                    || (turn.progress.requires_repair() && turn.work_complete())
+                                    || (turn.work_complete()
+                                        && !turn.projection_coverage_complete())
+                                {
+                                    query_completion = turn.query_completed;
+                                    audit_drain = turn.drained;
+                                    return Ok(JobOutcome::Failed {
+                                        code: "integrity_coverage_incomplete".into(),
+                                    });
+                                }
+                                if turn.work_complete() && turn.progress.complete() {
+                                    query_completion = turn.query_completed;
+                                    let complete = turn
+                                        .completed
+                                        .context("complete audit lacks physical proof")?;
+                                    let revision = complete.revision()?;
+                                    audit_completion = Some(complete);
+                                    return Ok(JobOutcome::Succeeded {
+                                        revision: Some(revision),
+                                    });
+                                }
+                                // Existing job admission/cancellation owns this work;
+                                // no parallel scheduler or query-time audit is added.
+                                std::thread::yield_now();
+                            }
+                        }
                         let outcome = execute(&kernel, kind, job.id)?;
                         // Successful changes refresh console metadata while this exact job
                         // still owns its fenced lease. Refreshing the UI must not require
@@ -769,6 +953,24 @@ pub async fn run() -> Result<()> {
                     })
                 }
                 .unwrap_or_else(|error| {
+                    audit_drain =
+                        airk_store::service::registry::AuditDrainProof::from_error(&error);
+                    if audit_drain.is_some()
+                        && registry.cancellation_requested(job.id).unwrap_or(false)
+                    {
+                        return JobOutcome::Canceled;
+                    }
+                    if audit_drain.is_none()
+                        && error.is::<airk_kernel::service_execution::Canceled>()
+                        && matches!(job.kind, JobKind::Verify | JobKind::Repair)
+                    {
+                        // This synchronous accepted job stack has fully unwound;
+                        // no read/turn task is detached. Revoked/failed persistence
+                        // cannot mint this exact-job safe-drain proof.
+                        audit_drain = registry
+                            .drained_verify_before_execution(&job_lease, &job_storage, job.id)
+                            .ok();
+                    }
                     failure_detail = Some(crate::service_logs::FailureDetail::capture(&error));
                     for cause in error.chain() {
                         if let Some(pressure) =
@@ -1006,8 +1208,8 @@ pub async fn run() -> Result<()> {
                 } else {
                     false
                 };
-                if !deferred {
-                    registry.complete_job_with_maintenance_at(
+                if !deferred && !automatic_settled {
+                    let completed = registry.complete_job_with_query_audit_at(
                         &job_lease,
                         job.id,
                         outcome.clone(),
@@ -1016,7 +1218,20 @@ pub async fn run() -> Result<()> {
                             .as_millis()
                             .try_into()?,
                         completed_maintenance.as_ref(),
+                        (
+                            if matches!(outcome, JobOutcome::Succeeded { .. }) {
+                                audit_completion
+                                    .as_ref()
+                                    .map(airk_store::service::registry::AuditEvidence::Complete)
+                            } else {
+                                audit_drain
+                                    .as_ref()
+                                    .map(airk_store::service::registry::AuditEvidence::Drained)
+                            },
+                            query_completion.as_ref(),
+                        ),
                     )?;
+                    outcome = completed.outcome.context("settled job outcome missing")?;
                     if job.kind == JobKind::Configure {
                         let _ = reconcile_semantic_setup(
                             &kernel,
@@ -1025,6 +1240,23 @@ pub async fn run() -> Result<()> {
                             init.engine,
                         );
                     }
+                }
+                let integrity_failure = observe_native_integrity(
+                    &kernel,
+                    &mut registry,
+                    job_lease.clone(),
+                    &job_storage,
+                    identity,
+                    verify_admission,
+                )
+                .err()
+                .map(|error| integrity_observation_code(&error).to_owned());
+                if integrity_failure != last_integrity_failure {
+                    job_status
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("work status unavailable"))?
+                        .integrity_observation_failure = integrity_failure.clone();
+                    last_integrity_failure = integrity_failure;
                 }
                 if matches!(outcome, JobOutcome::Succeeded { revision: Some(_) }) {
                     registry.reset_recovery_budget(&identity.project.to_string())?;
@@ -1058,7 +1290,7 @@ pub async fn run() -> Result<()> {
             job_busy.store(false, Ordering::Release);
             job_activity.notify_one();
         }
-        Ok(())
+        Ok(registry)
     });
     let permits = Arc::new(Semaphore::new(64));
     let mut connections = JoinSet::new();
@@ -1075,8 +1307,10 @@ pub async fn run() -> Result<()> {
                         let renewed=expected==identity&&airk_kernel::service_execution::renew(identity).is_ok()&&state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.renew(identity,Instant::now(),Duration::from_secs(300)).is_ok();
                         service_ipc::write_frame(&mut std::io::stdout().lock(),&if renewed{Reply::Renewed}else{Reply::Failed})?;
                     },
-                    Some(Command::ConfigurePool{identity:expected,pool})=>{
-                        let accepted=expected==identity && crate::embedding_pool_client::update(pool.map(|access| *access)).is_ok();
+                    Some(Command::ConfigurePool{identity:expected,pool,pool_pending})=>{
+                        let accepted=expected==identity && (if pool_pending{
+                            crate::embedding_pool_client::update_pending(pool.map(|access| *access),true)
+                        }else{crate::embedding_pool_client::update(pool.map(|access| *access))}).is_ok();
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted{Reply::PoolConfigured}else{Reply::Failed})?;
                     },
                     Some(Command::RunJob{identity:expected, allowance})=>{
@@ -1094,8 +1328,8 @@ pub async fn run() -> Result<()> {
                         if expected==identity {freshness_kernel.observe_service_freshness(identity, freshness.map(|sample| *sample))?;}
                         if expected==identity {maintenance_waiting.store(keep_for_maintenance,Ordering::Release);}
                         if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled)?;}
-                        let status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
-                        let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone(),failure:status.failure.clone(),progress:airk_kernel::service_execution::progress().map(Box::new),waiting_for:status.active.and_then(|_|airk_kernel::service_execution::waiting_for())}}}else{Reply::Failed};
+                        let mut status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
+                        let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone(),failure:status.failure.clone(),integrity_observation_failure:status.integrity_observation_failure.take(),progress:airk_kernel::service_execution::progress().map(Box::new),waiting_for:status.active.and_then(|_|airk_kernel::service_execution::waiting_for())}}}else{Reply::Failed};
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
                     },
                     Some(Command::Grant{caller})=>{
@@ -1128,6 +1362,7 @@ pub async fn run() -> Result<()> {
             }
         }
     }
+    crate::embedding_pool_client::close();
     closing.store(true, Ordering::Release);
     drop(work_sender);
     // Idle client reads must not hold an intentionally stopped owner open.
@@ -1135,16 +1370,27 @@ pub async fn run() -> Result<()> {
     // completion; process/job ownership is still held through the native drain.
     connections.abort_all();
     while connections.join_next().await.is_some() {}
-    jobs.await??;
+    let mut registry = jobs.await??;
     let mut state = Arc::try_unwrap(state)
         .map_err(|_| anyhow::anyhow!("project query handlers survived drain"))?;
     state.tools.close().await?;
+    // Only the explicit positive capability API arms a session. Strict owners
+    // take the no-op path; never clear based solely on child exit or socket EOF.
+    freshness_kernel.settle_native_owner_after_owned_drain(&mut registry)?;
     drop(lease);
     Ok(())
 }
 
 #[cfg(test)]
 mod admission_tests {
+    #[test]
+    fn verify_exceptional_admission_requires_actual_refusal_and_existing_full_work_grant() {
+        assert_eq!(super::verify_turn_bytes(false, 768 << 20), 64 << 20);
+        assert_eq!(super::verify_turn_bytes(true, (768 << 20) - 1), 64 << 20);
+        assert_eq!(super::verify_turn_bytes(true, 768 << 20), 512 << 20);
+        assert_eq!(super::verify_turn_bytes(true, 4 << 30), 512 << 20);
+    }
+
     #[test]
     fn semantic_retry_after_commit_only_repeats_observation() -> anyhow::Result<()> {
         let turns = std::cell::Cell::new(0);

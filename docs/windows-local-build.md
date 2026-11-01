@@ -134,6 +134,8 @@ On October 18, 2026, the final 1.1.3 candidate passed all five scenarios across 
 
 ## Troubleshooting
 
+The pinned quick-status native smoke emits content-free attempt timing/outcome observations separately from confirmed recovery, without a diagnostic warm-up. It retains the first 64 attempts, a separate final confirmation and a dropped count; errors and unrecognized states never become confirmed availability. Native stage/hash counts remain unmeasured. These test observations do not establish a production latency improvement or cold filesystem-cache conditions.
+
 - The script fails at the first unsuccessful tool/check; retain its build.log.
 - Missing C/C++ compiler: install the Visual Studio C++ build tools/Windows SDK.
 - Locked dependency restoration fails: check network/registry access; do not regenerate locks or enable dependency scripts just to suppress a failure.
@@ -145,7 +147,11 @@ Hosted equivalents and credentials are described in [CI and builds](ci-and-build
 
 ## Targeted local agent installer check
 
-Run `node scripts/check-agent-install.cjs <Code.exe> <new-vsix> <previous-vsix>` to test a running upgrade, or omit the previous VSIX to install the VSIX into an isolated editor profile with existing Codex, Claude Code and Copilot workspace entries. The check verifies automatic connection migration, preserved settings, repeat repair and a real MCP status handshake. It shuts down its private service and retains results under ignored `artifacts/editor-qualification/`. It does not change the normal editor profile or qualify replacement of already connected external agent processes.
+Run `node scripts/check-agent-install.cjs <Code.exe> <new-vsix> <previous-vsix>` to test a running upgrade, or omit the previous VSIX to install the VSIX into an isolated editor profile with existing Codex, Claude Code and Copilot workspace entries. The check verifies automatic connection migration, preserved settings, repeat repair and a real MCP status handshake.
+
+In a fresh profile it first drives the actual **Set up AIRK on this computer?** review before waiting for native/MCP readiness: readiness intentionally waits for that decision. It captures the real dialog text and screenshot, checks the displayed version/source/storage and persistent effects, and verifies that no native installation, source index or agent-file migration exists before clicking **Set up**. The retained `setup-review.json`, `setup-review.txt` and `setup-review.png` record that boundary. Do not preseed an accepted decision or bypass the review merely to make the readiness wait pass. A previously accepted installation may instead report previous-version readiness, which is recorded separately. Installing the VSIX alone does not qualify this first-use boundary.
+
+It shuts down its private service and retains results under ignored `artifacts/editor-qualification/`. On Windows, compare the observed control directory and owned installation root using the same namespaced-path normalization before the containment check; ordinary `D:\...` and `\\?\D:\...` spellings must not falsely reject the same fixture. Keep the ownership check and shutdown-result assertion: a product assertion receipt alone does not prove successful harness cleanup. It does not change the normal editor profile or qualify replacement of already connected external agent processes.
 
 ### Native previous-version upgrade fixture
 

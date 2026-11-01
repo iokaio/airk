@@ -37,35 +37,21 @@ fn acquire_file_for(
     name: &str,
     timeout: std::time::Duration,
 ) -> Result<OwnershipFile> {
+    acquire_file_mode(root, name, timeout, true)
+}
+
+pub(crate) fn acquire_existing_file(root: &Path, name: &str) -> Result<OwnershipFile> {
+    acquire_file_mode(root, name, std::time::Duration::ZERO, false)
+}
+
+fn acquire_file_mode(
+    root: &Path,
+    name: &str,
+    timeout: std::time::Duration,
+    create: bool,
+) -> Result<OwnershipFile> {
     let path = root.join(name);
-    if let Ok(metadata) = fs::symlink_metadata(&path) {
-        ensure!(
-            metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() == 0,
-            "invalid service ownership file"
-        );
-    }
-    let mut options = OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW).mode(0o600);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(0x00200000);
-    }
-    let file = options.open(&path)?;
-    crate::managed_collection::reject_file_aliases(&path, &file.metadata()?)?;
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        ensure!(
-            file.metadata()?.file_attributes() & 0x400 == 0,
-            "redirected service ownership file"
-        );
-    }
+    let file = open_ownership_file(root, name, create)?;
     let started = std::time::Instant::now();
     loop {
         match file.try_lock() {
@@ -84,6 +70,51 @@ fn acquire_file_for(
         }
     }
     Ok(OwnershipFile(file, AtomicBool::new(false)))
+}
+
+pub(crate) fn open_existing_ownership_file(root: &Path, name: &str) -> Result<File> {
+    open_ownership_file(root, name, false)
+}
+fn open_ownership_file(root: &Path, name: &str, create: bool) -> Result<File> {
+    let path = root.join(name);
+    if let Ok(metadata) = fs::symlink_metadata(&path) {
+        ensure!(
+            metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() == 0,
+            "invalid service ownership file"
+        );
+    }
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .write(true)
+        .create(create)
+        .truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW).mode(0o600);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x00200000);
+    }
+    let file = options.open(&path)?;
+    let opened = file.metadata()?;
+    ensure!(
+        opened.is_file() && opened.len() == 0,
+        "invalid opened service ownership file"
+    );
+    crate::managed_collection::reject_file_aliases(&path, &opened)?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        ensure!(
+            file.metadata()?.file_attributes() & 0x400 == 0,
+            "redirected service ownership file"
+        );
+    }
+    Ok(file)
 }
 
 pub struct ProjectLease {
@@ -241,6 +272,28 @@ mod tests {
             b"original user fixture"
         );
         drop(lease);
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod existing_owner_tests {
+    use super::*;
+    #[test]
+    fn existing_owner_never_creates_or_repairs_missing_or_malformed_leaf() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        assert!(acquire_existing_file(root.path(), "manifest.lock").is_err());
+        assert_eq!(fs::read_dir(root.path())?.count(), 0);
+        fs::write(root.path().join("manifest.lock"), b"legacy")?;
+        assert!(acquire_existing_file(root.path(), "manifest.lock").is_err());
+        assert_eq!(fs::read(root.path().join("manifest.lock"))?, b"legacy");
+        fs::write(root.path().join("manifest.lock"), b"")?;
+        let held = acquire_existing_file(root.path(), "manifest.lock")?;
+        assert!(acquire_existing_file(root.path(), "manifest.lock").is_err());
+        drop(held);
+        drop(acquire_existing_file(root.path(), "manifest.lock")?);
+        assert_eq!(fs::read_dir(root.path())?.count(), 1);
+        assert_eq!(fs::metadata(root.path().join("manifest.lock"))?.len(), 0);
         Ok(())
     }
 }

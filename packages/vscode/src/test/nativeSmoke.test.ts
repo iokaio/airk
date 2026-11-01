@@ -7,14 +7,14 @@ import {NativeServiceFixture} from './nativeServiceFixture';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {McpStdioSession} from '../mcpStdioSession';
-import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry} from './nativeReadRetry';
+import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry,QuickStatusObservation,QuickStatusObserver} from './nativeReadRetry';
 
-async function quickStatus(session:McpStdioSession):Promise<any>{
+async function quickStatus(session:McpStdioSession,observer?:QuickStatusObserver):Promise<any>{
     return observeQuickStatus(async deadline=>{
         // native read: observeQuickStatus applies the typed retry contract to this reply.
         const result=await session.request('tools/call',{name:'status',arguments:{}},Math.max(1,deadline-performance.now()));
         return result.isError===true?result:JSON.parse(result.content[0].text);
-    });
+    },undefined,observer);
 }
 
 test('one root-scoped MCP session survives late registration and rejects ambiguous indexes',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
@@ -59,15 +59,24 @@ test('registered native MCP verifies before the first publication without starti
     }finally{await fixture.dispose();}
 });
 
-test('pinned MCP quick status completes cold verification without diagnostics or inference',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
+test('pinned MCP quick status completes cold verification without diagnostics or inference',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async t=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);let session:McpStdioSession|undefined;
+    const attempts:QuickStatusObservation[]=[];let confirmed:QuickStatusObservation|undefined;let dropped=0;
+    const observe:QuickStatusObserver=value=>{
+        if(value.kind==='confirmed')confirmed=value;
+        else if(attempts.length<64)attempts.push(value);
+        else dropped++;
+    };
     try{
         const spec=await fixture.register('pinned-status');const {launchArgs}=await import('../model');
         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec,'mcp',true),cwd:fixture.owner,clientName:'pinned-status-test',clientVersion:'1.6.4'},60000)).session;
-        const status=await quickStatus(session);assert.equal(status.project,spec.service!.project);
+        const status=await quickStatus(session,observe);assert.equal(status.project,spec.service!.project);
         assert.equal(status.index_state,'unavailable');assert.equal(status.files,null);assert.equal(status.publication,null);
         const embedding=await fixture.embedding();assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
-    }finally{session?.close();await fixture.dispose();}
+    }finally{
+        t.diagnostic(JSON.stringify({quickStatus:{attempts,confirmed:confirmed??null,dropped,nativeStageCounts:'unmeasured',hashCounts:'unmeasured'}}));
+        session?.close();await fixture.dispose();
+    }
 });
 
 test('basic status includes version and health, caches snapshots and diagnostics forces a new observation',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
@@ -78,15 +87,58 @@ test('basic status includes version and health, caches snapshots and diagnostics
         const {launchArgs}=await import('../model');
         session=(await McpStdioSession.open({command:spec.command,args:launchArgs(spec),cwd:fixture.owner,clientName:'status-cache-test',clientVersion:'1.6.1'},60000)).session;
         const read=async(name:string,args:Record<string,unknown>={})=>{
-            const result=await requestWithReadRetry(session!,name,args,name==='diagnostics'?60000:10000);return JSON.parse(result.content[0].text);
+            const result=await requestWithReadRetry(session!,name,args,name==='diagnostics'?60000:15000);return JSON.parse(result.content[0].text);
         };
         const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
         const first=await quickStatus(session);assert.equal(first.version,expectedVersion);assert.ok(['ok','updating','paused','unknown','needs_attention'].includes(first.health));
         assert.equal(first.files,1);assert.equal(first.cached,false);assert.ok(first.observed_unix_ms>0);
+        const primedTerse=await read('status',{response_mode:'terse'});
+        assert.equal(primedTerse.generation,undefined);assert.equal(primedTerse.publication.token,first.publication.token);
+        const full=await read('status',{response_mode:'full'});
+        assert.equal(full.cached,false,'full rendering requires a distinct observation');assert.ok(Number.isInteger(full.generation));
+        assert.ok(full.observed_unix_ms>=first.observed_unix_ms);assert.equal(full.publication.token,first.publication.token);
         const cached=await read('status',{response_mode:'full'});assert.equal(cached.cached,true);assert.ok(cached.cache_age_ms<5000);
-        assert.equal(cached.observed_unix_ms,first.observed_unix_ms);assert.equal(cached.publication.token,first.publication.token);
-        for(const value of [first,cached]){assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
+        assert.equal(cached.observed_unix_ms,full.observed_unix_ms);assert.equal(cached.generation,full.generation);
+        const legacy=await read('airk_status',{response_mode:'full'});
+        assert.equal(legacy.cached,true);assert.equal(legacy.observed_unix_ms,full.observed_unix_ms);
+        assert.equal(legacy.publication.token,first.publication.token);assert.equal(legacy.project,first.project);
+        const terse=await read('status',{response_mode:'terse'});assert.equal(terse.cached,false);assert.equal(terse.generation,undefined,'full cache must not leak generation into terse');
+        const included=await read('status',{response_mode:'terse',include_status:true});assert.equal(included.cached,false);assert.equal(included.generation,undefined);assert.ok(included.freshness);
+        const includedHit=await read('status',{response_mode:'terse',include_status:true});assert.equal(includedHit.cached,true);assert.equal(includedHit.observed_unix_ms,included.observed_unix_ms);
+        const beforeDetail=await read('status',{response_mode:'terse'});assert.equal(beforeDetail.cached,false);assert.equal((await read('status',{response_mode:'terse'})).cached,true);
+        for(const value of [first,primedTerse,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
         const detail=await read('diagnostics');assert.ok(detail.runtime);assert.ok(detail.work);
-        const after=await read('status');assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
+        const after=await read('status',{response_mode:'terse'});assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
     }finally{session?.close();await fixture.dispose();}
 });
+
+for(const binding of ['pinned','source'] as const){
+    test(`four cold ${binding} clients observe first status without diagnostic warmup`,{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
+        const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+        const sessions:McpStdioSession[]=[];
+        try{
+            const spec=await fixture.register(`four-${binding}-status`);
+            const {launchArgs}=await import('../model');
+            const args=binding==='pinned'?launchArgs(spec,'mcp',true):
+                ['runtime','launch','--install-dir',fixture.install,'--','--root',spec.root,'mcp'];
+            const opened=await Promise.allSettled(Array.from({length:4},async(_,client)=>{
+                const opened=await McpStdioSession.open({command:fixture.launcher,args,cwd:fixture.owner,
+                    clientName:`cold-${binding}-${client}`,clientVersion:'1.8.0'},60000);
+                sessions.push(opened.session);
+            }));
+            for(const result of opened)if(result.status==='rejected')throw result.reason;
+            const expected=await Promise.all(sessions.map(async session=>{
+                // native read: one static configured-scope declaration before this session's first native status.
+                const result=await session.request('tools/call',{name:'projects',arguments:{}},10000);
+                return JSON.parse(result.content[0].text).default_project;
+            }));
+            const observations=await Promise.all(sessions.map(session=>quickStatus(session)));
+            for(const [index,observation] of observations.entries()){
+                assert.equal(observation.project,expected[index]);
+                assert.equal(observation.index_state,'unavailable');
+                assert.equal(observation.files,null);assert.equal(observation.publication,null);
+            }
+            assert.equal((await fixture.embedding()).loads,0,'first status does not start inference');
+        }finally{for(const session of sessions)session.close();await fixture.dispose();}
+    });
+}

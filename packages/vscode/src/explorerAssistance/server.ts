@@ -52,7 +52,7 @@ export class AssistanceServer {
         case 'tools/call': {
             if (typeof params.name !== 'string') { return failure(id, -32602, 'Tool name required'); }
             const result = await this.tools.call(params.name, params.arguments, this.client);
-            const structured = result.ok ? result.value : { error: { code: result.code, message: EXPLORER_ERRORS[result.code].message, ...(result.detail ? { detail: result.detail } : {}) } };
+            const structured = result.ok ? result.value : { error: { code: result.code, message: EXPLORER_ERRORS[result.code].message, ...(result.detail !== undefined ? { detail: result.detail } : {}) } };
             return reply(id, { content: [{ type: 'text', text: JSON.stringify(structured) }], structuredContent: structured, isError: !result.ok });
         }
         case 'resources/list': return reply(id, { resources: this.index.catalog.topics.map(topic => ({

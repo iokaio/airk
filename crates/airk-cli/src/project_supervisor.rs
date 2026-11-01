@@ -37,6 +37,7 @@ struct ChildWorker {
     runtime: PathBuf,
     last_renewal: Instant,
     pool_binding: Option<Incarnation>,
+    pool_pending: bool,
     last_status: Instant,
     waiting: Option<(
         Incarnation,
@@ -147,6 +148,7 @@ impl ChildWorker {
             runtime: root.into(),
             last_renewal: Instant::now(),
             pool_binding: None,
+            pool_pending: false,
             last_status: Instant::now(),
             waiting: None,
         };
@@ -223,14 +225,17 @@ impl ChildWorker {
         identity: WorkerIdentity,
         allowance: QueryAllowance,
         pool: Option<crate::embedding_pool_protocol::Access>,
+        helper_pending: bool,
     ) -> Result<()> {
         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
+        let pool_pending = helper_pending && !self.derived && pool_binding.is_none();
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
             &WorkerCommand::Activate {
                 identity,
                 allowance,
                 pool: pool.map(Box::new),
+                pool_pending,
             },
         )?;
         ensure!(
@@ -241,12 +246,14 @@ impl ChildWorker {
             "project activation failed"
         );
         self.pool_binding = pool_binding;
+        self.pool_pending = pool_pending;
         Ok(())
     }
 
     fn configure_pool(
         &mut self,
         pool: Option<crate::embedding_pool_protocol::Access>,
+        pool_pending: bool,
     ) -> Result<()> {
         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
         service_ipc::write_frame(
@@ -254,6 +261,7 @@ impl ChildWorker {
             &WorkerCommand::ConfigurePool {
                 identity: self.identity.context("project identity missing")?,
                 pool: pool.map(Box::new),
+                pool_pending,
             },
         )?;
         ensure!(
@@ -264,6 +272,7 @@ impl ChildWorker {
             "project pool configuration unknown"
         );
         self.pool_binding = pool_binding;
+        self.pool_pending = pool_pending;
         Ok(())
     }
     fn run_job(&mut self, allowance: airk_core::service_resources::WorkAllowance) -> Result<()> {
@@ -350,7 +359,10 @@ impl PoolRecovery {
         }
     }
     fn due(&self, now: Instant) -> bool {
-        !self.suppressed && self.attempts < 3 && now >= self.retry_at
+        self.admission_pending() && now >= self.retry_at
+    }
+    fn admission_pending(&self) -> bool {
+        !self.suppressed && self.attempts < 3
     }
     fn attempted(&mut self) {
         self.attempts += 1;
@@ -524,6 +536,7 @@ struct WorkerAdmission<'a> {
     policy: &'a Mutex<Broker>,
     pool: &'a mut Option<Pool>,
     resources: &'a mut airk_kernel::service_resources::Resources,
+    helper_pending: bool,
 }
 
 fn settle_failed_start(root: &Path, instance: Incarnation, project: ProjectBinding) {
@@ -548,6 +561,7 @@ fn start_worker(
         policy,
         pool,
         resources,
+        helper_pending,
     } = admission;
     let project = registration.binding;
     if let Some(worker) = workers.get(&project) {
@@ -631,7 +645,7 @@ fn start_worker(
         .as_mut()
         .filter(|_| !derived)
         .and_then(|pool| pool.access(identity.worker, registration).ok());
-    if let Err(error) = worker.activate(identity, allowance, access) {
+    if let Err(error) = worker.activate(identity, allowance, access, helper_pending) {
         drop(worker);
         resources.process_exited(identity)?;
         if let Some(pool) = pool.as_mut() {
@@ -705,6 +719,7 @@ impl Supervisor {
                 let mut pending_after = None;
                 let mut source_after = None;
                 let mut background_after = None;
+                let mut next_receipt_maintenance = Instant::now();
                 let mut endpoints_ready = false;
                 let mut next_recovery_check=Instant::now();
                 loop {
@@ -990,7 +1005,9 @@ impl Supervisor {
                             .as_ref()
                             .filter(|_| !worker.derived)
                             .map(Pool::identity);
-                        if worker.pool_binding != desired_pool {
+                        let desired_pending=desired_pool.is_none()&&!worker.derived
+                            &&pool_recovery.admission_pending();
+                        if worker.pool_binding != desired_pool || worker.pool_pending!=desired_pending {
                             let access = (|| -> Result<_> {
                                 match pool.as_mut() {
                                     Some(pool) => Ok(Some(
@@ -1018,7 +1035,7 @@ impl Supervisor {
                                     continue;
                                 }
                             };
-                            if let Err(error) = worker.configure_pool(access) {
+                            if let Err(error) = worker.configure_pool(access,desired_pending) {
                                 if clean_disconnected_exit(&mut worker.child, &error) {
                                     clean_renewals.insert(*project);
                                 }
@@ -1140,6 +1157,7 @@ impl Supervisor {
                                         policy: &policy,
                                         pool: &mut pool,
                                         resources: &mut resources,
+                                    helper_pending: pool_recovery.admission_pending(),
                                     },
                                 )?;
                                 workers
@@ -1293,6 +1311,10 @@ impl Supervisor {
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
                     if let Some(registry) = registry.as_mut() {
+                        if Instant::now() >= next_receipt_maintenance {
+                            let _ = registry.maintain_job_receipts();
+                            next_receipt_maintenance = Instant::now() + Duration::from_secs(2);
+                        }
                         if let Ok(due) = registry.due_background_jobs(background_after, 8) {
                             background_after = if due.len() == 8 {
                                 due.last().map(|item| item.0)
@@ -1319,6 +1341,13 @@ impl Supervisor {
                                 let _ = registry.enqueue_source_reconcile(
                                     project, instance, nonce, revision, now_ms,
                                 );
+                            }
+                        }
+                        if let Ok(due) = registry.due_automatic_audits(now_ms, 8) {
+                            for (project,revision) in due {
+                                if let Ok(nonce)=new_instance_id() {
+                                    let _=registry.enqueue_automatic_audit(project,revision,instance,nonce,now_ms);
+                                }
                             }
                         }
                         if let Ok(due) = registry.due_maintenance(now_ms) {
@@ -1352,6 +1381,7 @@ impl Supervisor {
                                     policy: &policy,
                                     pool: &mut pool,
                                     resources: &mut resources,
+                                helper_pending: pool_recovery.admission_pending(),
                                 },
                             );
                         }
@@ -1403,6 +1433,7 @@ impl Supervisor {
                                     policy: &policy,
                                     pool: &mut pool,
                                     resources: &mut resources,
+                                helper_pending: pool_recovery.admission_pending(),
                                 },
                             );
                         }
@@ -1509,6 +1540,12 @@ impl Supervisor {
                         });
                         match worker.work_status(control, keep_for_maintenance, freshness) {
                             Ok(observation) => {
+                                if let Some(code) = observation.integrity_observation_failure.as_deref() {
+                                    log.record_code(
+                                        airk_core::service_logs::LogKind::MetadataUnavailable,
+                                        Some(*project), None, Some(code),
+                                    );
+                                }
                                 if let Some(progress) = observation.progress.as_ref()
                                     && let Some(grant) = resources.running(*project)
                                 {
@@ -1929,17 +1966,30 @@ mod tests {
         let now = Instant::now();
         let mut recovery = PoolRecovery::new(now);
         for attempt in 1..=3 {
+            assert!(recovery.admission_pending());
             assert!(recovery.due(now + Duration::from_secs(30 * attempt)));
             recovery.attempted();
             let failed = now + Duration::from_secs(30 * attempt);
             recovery.failed(failed);
             assert!(!recovery.due(failed));
         }
+        assert!(
+            !recovery.admission_pending(),
+            "exhaustion must publish unavailable even with no helper identity"
+        );
         assert!(!recovery.due(now + Duration::from_secs(3600)));
         let mut explicit = PoolRecovery::new(now);
         explicit.suppressed = true;
+        assert!(
+            !explicit.admission_pending(),
+            "explicit suppression must wake authority waiters"
+        );
         assert!(!explicit.due(now + Duration::from_secs(3600)));
         explicit = PoolRecovery::new(now);
+        assert!(
+            explicit.admission_pending(),
+            "explicit retry restores only a finite admission window"
+        );
         assert!(explicit.due(now));
     }
 }

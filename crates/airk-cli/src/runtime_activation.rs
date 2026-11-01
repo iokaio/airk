@@ -221,6 +221,59 @@ pub(super) async fn start_selected(
     }
 }
 
+/// Ordinary settled election only. The legacy activation/probe/rollback/startup
+/// routes retain their existing independent verification and saved identities.
+pub(super) async fn start_verified(verified: &VerifiedSelection<'_>) -> Result<ServiceHealth> {
+    start_verified_checked(verified, None).await
+}
+
+pub(super) async fn start_verified_checked(
+    verified: &VerifiedSelection<'_>,
+    cancel: Option<&setup::SetupCancellation>,
+) -> Result<ServiceHealth> {
+    if let Some(cancel) = cancel {
+        cancel.checkpoint()?;
+    }
+    let root = verified.authority.root;
+    ensure!(
+        verified.selection.active == verified.approval.manifest_sha256,
+        "runtime selection identity mismatch"
+    );
+    let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
+    if !manager.owns_restart()? {
+        return start_with_digest_checked(
+            root,
+            &verified.approval,
+            &verified.main,
+            true,
+            Some(&verified.main_sha256),
+            cancel,
+        )
+        .await;
+    }
+    // OS ownership is still authoritative; never start a competing detached child.
+    let (observation, _attempt) = setup::observe_or_effect(
+        health(root, &verified.approval, &verified.main_sha256),
+        cancel,
+        || manager.start().map(|_| ()),
+    )
+    .await?;
+    if let Some(observation) = observation {
+        return Ok(observation);
+    }
+    let until = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        if let Ok(observation) = health(root, &verified.approval, &verified.main_sha256).await {
+            return Ok(observation);
+        }
+        ensure!(
+            tokio::time::Instant::now() < until,
+            "OS-managed runtime did not report exact healthy payload within 60 seconds"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 fn manager(root: &Path, intent: &Intent) -> Result<crate::service_manager::ServiceManager> {
     let manager = crate::service_manager::ServiceManager::for_runtime(root)?;
     ensure!(
@@ -345,8 +398,7 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
                 migrate_selected(root, &intent, &main, &approval).await?;
                 probe(root, &approval, &main, intent.manager).await?;
             }
-            record(root, &intent, Outcome::Selected)?;
-            finish(root)
+            complete_selected(root, &intent)
         }
         Err(error) if committed => {
             Err(error
@@ -359,6 +411,75 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
                 .context("candidate failed and predecessor restoration is still pending")?;
             Err(error.context("candidate failed; preceding public selection was preserved"))
         }
+    }
+}
+
+fn complete_selected(root: &Path, intent: &Intent) -> Result<()> {
+    record(root, intent, Outcome::Selected)?;
+    finish(root)
+}
+
+#[cfg(test)]
+mod setup_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn accepted_activation_completion_after_close_does_not_authorize_final_start()
+    -> Result<()> {
+        let (_owner, root, identity) = super::super::tests::unselected_fixture()?;
+        let prior = "c".repeat(64);
+        replace_json(
+            &root,
+            "selected.json",
+            &Selection {
+                schema: 1,
+                active: identity.clone(),
+                previous: Some(prior.clone()),
+            },
+        )?;
+        replace_json(
+            &root,
+            INTENT,
+            &serde_json::json!({
+                "schema":1,"install":root,"control":layout::control(&root)?,"candidate":identity,
+                "prior":{"schema":1,"active":prior,"previous":null},"manager":false,"phase":"probe"
+            }),
+        )?;
+        let lock = install_lock(&root)?;
+        let _authority = InstallerAuthority {
+            root: &root,
+            _lock: &lock,
+        };
+        let intent = pending(&root)?.context("saved exact intent missing")?;
+        let cancel = setup::SetupCancellation::default();
+        let (release, released) = tokio::sync::oneshot::channel::<()>();
+        // Inject only the completed exact probe result. Use the real production
+        // receipt/finish operation, then the actual post-resume admission fence.
+        let mut completion = Box::pin(setup::settle_then_checkpoint(
+            async {
+                released.await?;
+                complete_selected(&root, &intent)
+            },
+            Some(&cancel),
+        ));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(completion.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        cancel.close();
+        release
+            .send(())
+            .expect("accepted intent completion retained");
+        assert!(completion.await.is_err());
+        assert!(pending(&root)?.is_none());
+        let receipt = result(&root)?.context("accepted intent lost completion receipt")?;
+        assert_eq!(receipt.candidate, identity);
+        assert!(matches!(receipt.outcome, Outcome::Selected));
+        assert_eq!(selection_record(&root)?.active, identity);
+        assert!(!root.join(format!("startup-{identity}.json")).exists());
+        assert!(!root.join("bootstrap.json").exists());
+        Ok(())
     }
 }
 

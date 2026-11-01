@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native relationship traversal over the exact current source/target postings.
-use super::{CurrentRead, CurrentToken, discovery::fact_hit, postings::Lookup};
+use super::{
+    CurrentRead, CurrentToken,
+    discovery::{fact_hit, require_integrity},
+    postings::Lookup,
+};
 use crate::FileStore;
 use airk_core::{Artifact, EvidenceBasis, RelationshipHit, RelationshipQuery};
 use anyhow::{Context, Result, ensure};
@@ -20,13 +24,15 @@ pub struct CurrentRelationships {
     pub coverage: &'static str,
 }
 
-fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
-    let mut edges = Vec::new();
+pub(crate) fn visit_edges(
+    artifact: &Artifact,
+    mut visit: impl FnMut(RelationshipHit) -> Result<()>,
+) -> Result<()> {
     for fact in &artifact.facts {
         let Some(code) = &fact.code else { continue };
         let citation = fact_hit(artifact, fact).citation;
         if let Some(owner) = &code.owner_id {
-            edges.push(RelationshipHit {
+            visit(RelationshipHit {
                 source: owner.clone(),
                 target: code.symbol_id.clone(),
                 kind: "contains".into(),
@@ -35,10 +41,10 @@ fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
                 producer: "airk-syntax-containment".into(),
                 producer_version: "native-facts/4".into(),
                 citation: citation.clone(),
-            });
+            })?;
         }
         if let Some(target) = &code.target {
-            edges.push(RelationshipHit {
+            visit(RelationshipHit {
                 source: code
                     .owner_id
                     .clone()
@@ -50,9 +56,12 @@ fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
                 producer: code.producer.clone(),
                 producer_version: code.producer_version.clone(),
                 citation,
-            });
+            })?;
         }
     }
+    Ok(())
+}
+pub(crate) fn sort_edges(edges: &mut [RelationshipHit]) {
     edges.sort_by(|a, b| {
         (a.citation.start_line, &a.source, &a.target, &a.kind).cmp(&(
             b.citation.start_line,
@@ -61,6 +70,15 @@ fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
             &b.kind,
         ))
     });
+}
+fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
+    let mut edges = Vec::new();
+    visit_edges(artifact, |edge| {
+        edges.push(edge);
+        Ok(())
+    })
+    .expect("infallible edge collector");
+    sort_edges(&mut edges);
     edges
 }
 
@@ -83,7 +101,17 @@ impl CurrentRead {
                 && query.kind.as_ref().is_none_or(|kind| kind.len() <= 128),
             "invalid current relationship query"
         );
-        let imported = self.analysis(store)?;
+        let private = self.private_query_eligible()?;
+        let projected_import = if private {
+            self.observe_private_integrity(self.imported_projection(store))?
+        } else {
+            None
+        };
+        let imported = if projected_import.is_none() {
+            self.analysis(store)?
+        } else {
+            None
+        };
         let mut response = CurrentRelationships {
             revision: self.token()?,
             collection: self.head().scope.collection.clone(),
@@ -106,6 +134,7 @@ impl CurrentRead {
                 }
                 if visited.len() == MAX_SYMBOLS || files == MAX_FILES {
                     response.truncated = true;
+                    self.token()?;
                     return Ok(response);
                 }
                 visited.insert(symbol.clone());
@@ -130,6 +159,23 @@ impl CurrentRead {
                             .map(|e| e.citation.path.clone()),
                     );
                 }
+                let selected_imports = projected_import
+                    .as_ref()
+                    .map(|projection| {
+                        self.observe_private_integrity(projection.lookup_paths(
+                            lookup,
+                            &query.path_prefix,
+                            None,
+                            MAX_FILES - files + 1,
+                        ))
+                    })
+                    .transpose()?
+                    .unwrap_or_default();
+                paths.extend(
+                    selected_imports
+                        .iter()
+                        .map(|selected| selected.path.clone()),
+                );
                 paths.sort();
                 paths.dedup();
                 if paths.len() > MAX_FILES - files {
@@ -150,14 +196,95 @@ impl CurrentRead {
                         .context("current relationship evidence size overflow")?;
                     if bytes > MAX_EVIDENCE_BYTES.saturating_sub(work) {
                         response.truncated = true;
+                        self.token()?;
                         return Ok(response);
                     }
                     files += 1;
                     work += bytes;
-                    let artifact =
-                        store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
-                    store.verify_retained_source(&compact)?;
-                    let mut candidates = edges(&artifact);
+                    let projection = if private {
+                        self.observe_private_integrity(self.native_edge_projection(store, &path))?
+                    } else {
+                        None
+                    };
+                    let mut candidates = if let Some(projection) = &projection {
+                        let selected = self.observe_private_integrity(
+                            projection.lookup_paths(lookup, &path, None, 1),
+                        )?;
+                        let mut rows = std::collections::BTreeMap::new();
+                        if let Some(selected) =
+                            selected.first().filter(|selected| selected.path == path)
+                        {
+                            require_integrity(
+                                self,
+                                selected.source.to_string() == compact.content_hash,
+                                "native relationship source expired",
+                            )?;
+                            for page in &selected.pages {
+                                for row in self.observe_private_integrity(projection.page(*page))? {
+                                    if let super::query_projection::ProjectionRow::Edge {
+                                        ordinal,
+                                        hit,
+                                    } = row
+                                    {
+                                        require_integrity(
+                                            self,
+                                            hit.citation.path == path
+                                                && hit.citation.content_hash
+                                                    == compact.content_hash,
+                                            "native relationship source expired",
+                                        )?;
+                                        rows.insert(ordinal, *hit);
+                                    }
+                                }
+                            }
+                        }
+                        rows.into_values().collect()
+                    } else if private && self.native_edges_declared_empty(&path)? {
+                        Vec::new()
+                    } else {
+                        let result = (|| {
+                            let artifact = store
+                                .load_retained_bounded(&compact, retained.object_bytes as u64)?;
+                            store.verify_retained_source(&compact)?;
+                            Ok(edges(&artifact))
+                        })();
+                        if private {
+                            self.observe_private_integrity(result)?
+                        } else {
+                            result?
+                        }
+                    };
+                    if let Some(projection) = &projected_import
+                        && let Some(selected) = selected_imports
+                            .iter()
+                            .find(|selected| selected.path == path)
+                    {
+                        require_integrity(
+                            self,
+                            selected.source.to_string() == compact.content_hash,
+                            "current analysis source expired",
+                        )?;
+                        let mut rows = std::collections::BTreeMap::new();
+                        for page in &selected.pages {
+                            for row in self
+                                .observe_private_integrity(projection.query_page(*page))?
+                                .iter()
+                            {
+                                if let super::query_projection::ProjectionRow::Edge { ordinal, hit } =
+                                    row
+                                    && hit.citation.path == path
+                                {
+                                    require_integrity(
+                                        self,
+                                        hit.citation.content_hash == compact.content_hash,
+                                        "current analysis source expired",
+                                    )?;
+                                    rows.insert(*ordinal, hit.as_ref().clone());
+                                }
+                            }
+                        }
+                        candidates.extend(rows.into_values());
+                    }
                     if let Some(imported) = &imported {
                         self.verify_analysis_path(imported, &path)?;
                         candidates.extend(
@@ -181,6 +308,7 @@ impl CurrentRead {
                         if response.relationships.len() == query.limit || encoded.len() > remaining
                         {
                             response.truncated = true;
+                            self.token()?;
                             return Ok(response);
                         }
                         remaining -= encoded.len();
@@ -202,6 +330,7 @@ impl CurrentRead {
                 break;
             }
         }
+        self.token()?;
         Ok(response)
     }
 }

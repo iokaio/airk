@@ -32,7 +32,7 @@ pub(super) fn migrate(connection: &mut Connection, version: i64) -> Result<()> {
         sql == SCHEMA.trim_end_matches(';'),
         "unexpected removal history schema"
     );
-    tx.pragma_update(None, "user_version", 10)?;
+    tx.pragma_update(None, "user_version", version.max(10))?;
     tx.commit()?;
     Ok(())
 }
@@ -157,6 +157,7 @@ impl ServiceRegistry {
             "service_watch",
             "service_inspections",
             "service_maintenance",
+            "service_background_audit",
             "service_background",
             "service_setup_pending",
             "service_semantic_review",
@@ -175,8 +176,8 @@ impl ServiceRegistry {
             [project.to_string()],
         )?;
         tx.execute(
-            "DELETE FROM service_recovery_budget WHERE scope=?1 OR scope=?2",
-            params![format!("source:{project}"), format!("work:{project}")],
+            "DELETE FROM service_recovery_budget WHERE scope=?1 OR scope=?2 OR scope=?3 OR scope=?4 OR scope=?5",
+            params![format!("source:{project}"), format!("work:{project}"), format!("integrity:{project}"), format!("integrity_damage:{project}"), format!("owner_session:{project}")],
         )?;
         tx.execute(
             "INSERT OR REPLACE INTO service_removed_projects VALUES(?1,?2,?3)",

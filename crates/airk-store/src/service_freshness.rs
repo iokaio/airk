@@ -182,13 +182,14 @@ mod tests {
         let failed = registry.source_freshness(project, 104)?;
         assert_eq!(failed.state, FreshnessState::Failed);
         assert_eq!(failed.error.as_deref(), Some("source_unavailable"));
-        let verify = registry.enqueue_internal(project, nonce(1), JobKind::Verify, nonce(3))?;
+        let inspection =
+            registry.enqueue_internal(project, nonce(1), JobKind::Inspect, nonce(3))?;
         registry
-            .claim_job_id(&lease, verify.id)?
-            .context("verify not claimable")?;
+            .claim_job_id(&lease, inspection.id)?
+            .context("inspection not claimable")?;
         registry.complete_job_at(
             &lease,
-            verify.id,
+            inspection.id,
             JobOutcome::Succeeded { revision: None },
             105,
         )?;
@@ -297,7 +298,11 @@ mod tests {
                     code: "source_unavailable".into(),
                 },
             ),
-            (4, JobKind::Verify, JobOutcome::Succeeded { revision: None }),
+            (
+                4,
+                JobKind::Inspect,
+                JobOutcome::Succeeded { revision: None },
+            ),
         ] {
             let job =
                 registry.enqueue_internal(project.binding, nonce(1), kind, nonce(sequence))?;

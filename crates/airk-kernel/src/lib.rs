@@ -78,6 +78,11 @@ pub struct Kernel {
     service_collection: Option<airk_store::service::collection::Collection>,
     service_selection: Option<Arc<airk_store::service::collection::Selection>>,
     service_freshness: Option<Arc<service_freshness::Cache>>,
+    native_owner: Arc<
+        std::sync::Mutex<
+            Option<airk_store::service::collection::integrity::native_owner::NativeOwnerSession>,
+        >,
+    >,
 }
 
 type ProgressObserver = Arc<dyn Fn(&airk_core::readiness::IndexProgress) + Send + Sync>;
@@ -314,6 +319,7 @@ impl Kernel {
             service_collection,
             service_selection: None,
             service_freshness: None,
+            native_owner: Arc::new(std::sync::Mutex::new(None)),
         };
         if recover {
             kernel.recover_runtime_bootstrap()?;
@@ -542,16 +548,13 @@ impl Kernel {
         max_bytes: usize,
     ) -> Result<SearchResponse> {
         let read = self.current_reader()?;
-        let artifact = self.current_artifact(&read, path, true)?;
-        let mut metadata = self.empty_snapshot();
-        metadata.generation = read.head().sequence;
-        Self::read_snapshot(
-            Some(current::runtime::envelope(&read)?),
-            &metadata,
-            &artifact,
+        self.current_read_lines(
+            &read,
             path,
-            start_line,
-            end_line,
+            current::runtime::LineSelection::Range {
+                start: start_line,
+                end: end_line,
+            },
             max_bytes,
         )
     }
@@ -573,43 +576,67 @@ impl Kernel {
         // Lookup only in inventory: caller paths never become filesystem reads.
         let last_line = artifact.chunks.last().map_or(0, |c| c.end_line);
         ensure!(end_line <= last_line, "line range exceeds indexed source");
-        let locations: Vec<_> = artifact
-            .chunks
-            .iter()
-            .filter(|c| c.end_line >= start_line && c.start_line <= end_line)
-            .map(|c| &c.location)
-            .collect();
         let location = if artifact.extraction_method == "utf8" {
             DocumentLocation::Lines {
                 start: start_line,
                 end: end_line,
             }
         } else {
-            let location = locations.first().context("document location unavailable")?;
+            let mut locations = artifact
+                .chunks
+                .iter()
+                .filter(|c| c.end_line >= start_line && c.start_line <= end_line)
+                .map(|c| &c.location);
+            let location = locations.next().context("document location unavailable")?;
             ensure!(
-                locations.iter().all(|other| *other == *location),
+                locations.all(|other| other == location),
                 "range crosses document locations; request one page/block/slide at a time"
             );
-            (*location).clone()
+            location.clone()
         };
+        Self::selected_lines_response(
+            publication,
+            snapshot,
+            artifact,
+            path,
+            start_line,
+            end_line,
+            location,
+            artifact.chunks.iter().flat_map(|chunk| {
+                chunk
+                    .text
+                    .split_inclusive('\n')
+                    .enumerate()
+                    .map(move |(offset, line)| (chunk.start_line + offset, line))
+            }),
+            max_bytes,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn selected_lines_response<'a>(
+        publication: Option<airk_core::evidence::RevisionEnvelope>,
+        snapshot: &Snapshot,
+        artifact: &Artifact,
+        path: &str,
+        start_line: usize,
+        end_line: usize,
+        location: DocumentLocation,
+        lines: impl Iterator<Item = (usize, &'a str)>,
+        max_bytes: usize,
+    ) -> Result<SearchResponse> {
         let mut remaining = max_bytes;
         let mut text = String::new();
         let mut truncated = false;
-        for chunk in &artifact.chunks {
-            for (offset, line) in chunk.text.split_inclusive('\n').enumerate() {
-                let number = chunk.start_line + offset;
-                if number < start_line || number > end_line {
-                    continue;
-                }
-                let (part, cut) = truncate_utf8(line, remaining);
-                remaining -= part.len();
-                text.push_str(&part);
-                if cut {
-                    truncated = true;
-                    break;
-                }
+        for (number, line) in lines {
+            if number < start_line || number > end_line {
+                continue;
             }
-            if truncated {
+            let (part, cut) = truncate_utf8(line, remaining);
+            remaining -= part.len();
+            text.push_str(&part);
+            if cut {
+                truncated = true;
                 break;
             }
         }
@@ -767,9 +794,12 @@ impl Kernel {
             let mut snapshot = verified.clone();
             let reservation = self.publication_reservation()?;
             for artifact in snapshot.artifacts.values_mut() {
-                *artifact =
-                    self.store
-                        .retain_artifact_with_budget(artifact, None, Some(&reservation))?;
+                *artifact = self.store.retain_artifact_with_budget_owned(
+                    &writer,
+                    artifact,
+                    None,
+                    Some(&reservation),
+                )?;
             }
             snapshot.storage_format = 1;
             snapshot.embedding_model = self.configured_model()?;
@@ -797,21 +827,15 @@ impl Kernel {
             "context radius must be 0..100"
         );
         let read = self.current_reader()?;
-        let mut metadata = self.empty_snapshot();
-        metadata.generation = read.head().sequence;
-        let artifact = self.current_artifact(&read, path, true)?;
-        let indexed_lines = artifact.chunks.last().map_or(0, |chunk| chunk.end_line);
-        ensure!(
-            line > 0 && line <= indexed_lines,
-            "line is outside indexed source"
-        );
-        Self::read_snapshot(
-            Some(current::runtime::envelope(&read)?),
-            &metadata,
-            &artifact,
+        self.current_read_lines(
+            &read,
             path,
-            line.saturating_sub(before).max(1),
-            line.saturating_add(after).min(indexed_lines),
+            current::runtime::LineSelection::Context {
+                line,
+                before,
+                after,
+                maximum_end: false,
+            },
             max_bytes,
         )
     }
@@ -927,5 +951,141 @@ impl Kernel {
             resolution: "textual-occurrences; includes comments, strings and definitions; no name resolution",
             evidence,
         })
+    }
+}
+
+impl Kernel {
+    /// Only a live native owner can attach relaxed request authority. Public
+    /// Kernel instances and unsupported native roots keep ordinary strict reads.
+    fn attach_private_read(
+        &self,
+        read: Arc<airk_store::current::CurrentRead>,
+    ) -> Result<Arc<airk_store::current::CurrentRead>> {
+        let slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        match slot.as_ref() {
+            Some(owner) => owner.attach_read(read),
+            None => Ok(read),
+        }
+    }
+
+    fn retire_failed_native_owner_after_replacement(
+        &self,
+        replaced: Option<airk_core::identity::Incarnation>,
+        token: airk_store::current::CurrentToken,
+    ) -> Result<()> {
+        let mut slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        if let Some(owner) = slot.as_ref()
+            && owner.failed()
+        {
+            owner.require_owned_replacement(
+                replaced.context("failed owner replacement scope missing")?,
+                token,
+            )?;
+            // Dropping a failed capability leaves its durable Active marker.
+            // A later enrollment still requires explicit physical recovery.
+            slot.take();
+        }
+        Ok(())
+    }
+
+    /// Current-process failure observation used to choose a fresh accepted Verify
+    /// recovery epoch even when a query failed after the last worker status sample.
+    pub fn native_owner_requires_recovery(&self) -> Result<bool> {
+        Ok(self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
+            .as_ref()
+            .is_some_and(|owner| owner.failed()))
+    }
+
+    pub(crate) fn retire_failed_native_owner_after_recovery(
+        &self,
+        registry: &airk_store::service::registry::ServiceRegistry,
+        proof: &airk_store::service::collection::integrity::verify::EnabledComponentAuditProof,
+    ) -> Result<()> {
+        let mut slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        if let Some(owner) = slot.as_ref() {
+            owner.require_recovered_owner(registry, proof)?;
+            slot.take();
+        }
+        Ok(())
+    }
+
+    /// Native worker admission. Unsupported boundaries retain strict behavior;
+    /// inherited Active or policy/head mismatches remain explicit recovery errors.
+    pub fn try_arm_native_owner(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: Arc<airk_store::service::ProjectLease>,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        identity: airk_core::service::WorkerIdentity,
+    ) -> Result<bool> {
+        if let Some(owner) = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
+            .as_ref()
+        {
+            if owner.failed() {
+                return Err(anyhow::Error::new(airk_store::service::collection::integrity::native_owner::NativeOwnerRecoveryRequired));
+            }
+            return Ok(true);
+        }
+        if self.current_scope()?.is_none() {
+            return Ok(false);
+        }
+        match self.arm_native_owner(registry, lease, bound, identity) {
+            Ok(()) => Ok(true),
+            Err(error) if error.downcast_ref::<airk_store::service::collection::integrity::native_owner::NativeBoundaryUnavailable>().is_some() => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Explicit native-worker admission before sealed request readers are exposed.
+    /// The fixed recovery profile covers every component relaxed by those readers.
+    pub fn arm_native_owner(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: Arc<airk_store::service::ProjectLease>,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        identity: airk_core::service::WorkerIdentity,
+    ) -> Result<()> {
+        let mut slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        ensure!(slot.is_none(), "native owner session already admitted");
+        let collection = self
+            .service_collection
+            .as_ref()
+            .context("native owner requires service collection")?;
+        *slot = Some(collection.arm_native_owner(registry, lease, bound, identity)?);
+        Ok(())
+    }
+    /// Owning CLI final-drain adapter only, after actual LocalTools shutdown.
+    /// Consumes once; any failure leaves durable Active and cannot be retried as clean.
+    pub fn settle_native_owner_after_owned_drain(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+    ) -> Result<()> {
+        let owner = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
+            .take();
+        if let Some(owner) = owner {
+            owner.settle_after_owned_drain(registry)?;
+        }
+        Ok(())
     }
 }

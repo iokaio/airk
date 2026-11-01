@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Qualified single-current-index storage foundation. Runtime adoption is separate.
 pub mod analysis;
+pub mod audit_witness;
 pub mod collection;
 mod database;
 pub mod discovery;
@@ -12,15 +13,19 @@ pub mod lexical;
 pub mod maintenance;
 pub mod map;
 pub mod metadata;
+pub mod native_projection;
+pub mod native_range;
 pub mod postings;
 #[cfg(test)]
 mod publication_spike_tests;
+pub mod query_projection;
 mod read;
 mod rebuild;
 pub mod recent;
 mod recent_events;
 pub mod relationships;
 pub mod resources;
+pub mod text_range;
 pub mod vector_map;
 mod wal;
 mod wal_budget;
@@ -35,7 +40,9 @@ pub use journal::{
 };
 mod admission;
 pub use admission::{CurrentOpenContention, with_work_admission};
-pub use read::{CurrentRead, CurrentReadContention};
+pub use read::{
+    CurrentRead, CurrentReadContention, CurrentRequestExpired, PrivateIntegrityFailure,
+};
 /// Protect retained assets used by a helper without opening its project database.
 pub struct CurrentObjectLease {
     _gate: gate::Gate,
@@ -204,6 +211,7 @@ impl crate::FileStore {
     pub fn write_runtime_bootstrap(&self, writer: &crate::WriterLock, bytes: &[u8]) -> Result<()> {
         use std::io::Write;
         gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
         ensure!(
             bytes.len() <= 2 << 20 && self.runtime_bootstrap()?.is_none(),
             "invalid or existing runtime bootstrap"
@@ -217,6 +225,7 @@ impl crate::FileStore {
     }
     pub fn finish_runtime_bootstrap(&self, writer: &crate::WriterLock) -> Result<()> {
         gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
         std::fs::remove_file(self.directory().join("current-runtime-bootstrap.json"))?;
         crate::maintenance::sync_parent(self.directory())
     }

@@ -228,6 +228,28 @@ for(const from of ['1.4.4','1.5.12','1.6.0']){
         }finally{await f.close();}
     });
 }
+test('unsupported automatic downgrade remains visible and never applies a transition',async context=>{
+    const f=await serviceTestHost(context,{automatic:true,runtimeVersion:'1.9.0',bundledVersion:releaseVersion});
+    try{
+        assert.equal(f.binding.version,'1.9.0');
+        assert.ok(!f.calls.includes('upgrade-applied'));
+        assert.ok(f.calls.some(line=>line.startsWith('Automatic installation failed:')&&line.includes('explicit_runtime_upgrade_or_matching_extension_required')));
+        assert.ok(f.calls.some(line=>line.startsWith('AIRK installation needs attention:')));
+    }finally{await f.close();}
+});
+
+test('failed supported automatic upgrade is reported by its setup owner',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,runtimeVersion:'1.6.0',bundledVersion:releaseVersion});
+    try{
+        context.mock.method(RuntimeHost.prototype,'transition',async()=>{throw new ServiceError('upgrade_fixture_refused');});
+        const before=f.calls.length;
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.equal(f.binding.version,'1.6.0');assert.ok(!f.calls.includes('upgrade-applied'));
+        assert.ok(f.calls.slice(before).some(line=>line.startsWith('Automatic installation failed:')&&line.includes('upgrade_fixture_refused')));
+        assert.ok(f.calls.slice(before).some(line=>line.startsWith('AIRK installation needs attention:')));
+    }finally{await f.close();}
+});
+
 for(const command of ['airk.installCli','airk.retryUpdate']){
     test(`${command} upgrades a completed older installation to the shipped version`,async context=>{
         const f=await serviceTestHost(context,{runtimeVersion:'1.5.12',bundledVersion:releaseVersion});
@@ -289,6 +311,22 @@ test('a deleted open folder does not block automatic setup of other trusted fold
         assert.equal(f.state.picks,0);
         assert.ok(f.calls.some(value=>value.startsWith('Source folder is missing:')));
         assert.equal(f.writes.filter(value=>value.reserve_project?.setup_watch===true).length,1);
+    }finally{await f.close();}
+});
+
+test('transient selected metadata failure does not block complete trusted project preparation',async context=>{
+    const f=await serviceTestHost(context,{registered:false,roots:2});
+    try{
+        context.mock.method(RuntimeHost.prototype as any,'invoke',async(_command:string,args:string[])=>{
+            assert.deepEqual(args.slice(0,2),['runtime','source-scope']);
+            throw new ServiceError('selected_metadata_fixture_unavailable');
+        });
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.equal(f.registrations.size,2);
+        assert.equal(f.warnings.length,0);
+        assert.ok(f.calls.some(line=>line.includes('Selected project availability is unconfirmed:')&&line.includes('selected_metadata_fixture_unavailable')));
+        assert.ok(!f.calls.some(line=>line.includes('Project preparation needs attention:')));
+        assert.equal(f.writes.filter(value=>value.reserve_project?.setup_watch===true).length,2);
     }finally{await f.close();}
 });
 
@@ -394,15 +432,42 @@ test('data review is read-only until a plan digest is confirmed and never delete
     }finally{await f.close();}
 });
 
-test('a rebuilt VSIX with the same version is detected and offers the reload action',async context=>{
+test('Windows extension-path casing aliases keep the same loaded code active',async context=>{
+    if(process.platform!=='win32'){context.skip('Windows path identity');return;}
+    const f=await serviceTestHost(context,{codeFile:true,automatic:true});
+    try{
+        for(const extensionPath of [f.root.toLowerCase(),f.root.toUpperCase(),path.toNamespacedPath(f.root.toUpperCase())]){
+            f.stub.extensions.getExtension=()=>({extensionPath,packageJSON:{version:f.state.installedVersion}});
+            f.focus();f.extensionsChanged();
+            await new Promise(resolve=>setImmediate(resolve));
+            assert.equal(f.notices.length,0,extensionPath);
+            assert.doesNotMatch(f.statusBar.text,/Reload to finish update/,extensionPath);
+            assert.notEqual((await f.api.getServerDefinitions()).length,0,'matching code retains native MCP admission');
+        }
+        assert.equal(f.calls.includes('workbench.action.reloadWindow'),false);
+    }finally{await f.close();}
+});
+
+for(const change of ['size','mtime'] as const)test(`a same-version VSIX ${change} change still offers reload and fences older code`,async context=>{
     const fs=await import('node:fs/promises');
-    const f=await serviceTestHost(context,{codeFile:true});
+    const f=await serviceTestHost(context,{codeFile:true,automatic:true});
     try{
         f.focus();f.extensionsChanged();
         assert.equal(f.notices.some(notice=>notice.actions.includes('Reload to finish update')),false,'an unchanged installation stays quiet');
-        await fs.writeFile(path.join(f.root,'out','serviceExtension.js'),'// fixture build 2 with different bytes\n');
+        const file=path.join(f.root,'out','serviceExtension.js'),before=await fs.stat(file);
+        if(change==='size'){
+            await fs.writeFile(file,'// fixture build 2 with different bytes\n');
+            assert.notEqual((await fs.stat(file)).size,before.size);
+        }else{
+            await fs.utimes(file,before.atime,new Date(before.mtimeMs+5000));
+            const after=await fs.stat(file);
+            assert.equal(after.size,before.size,'mtime-only change retains identical file size');
+            assert.notEqual(after.mtimeMs,before.mtimeMs);
+        }
         f.focus();f.extensionsChanged();
         assert.ok(f.notices.some(notice=>notice.message.includes('(rebuilt) is installed')&&notice.actions.includes('Reload to finish update')));
         assert.match(f.statusBar.text,/Reload to finish update/);
+        assert.deepEqual(await f.api.getServerDefinitions(),[],'changed code cannot admit native MCP through the older interface');
+        assert.equal(f.calls.includes('workbench.action.reloadWindow'),false,'reload remains an explicit user action');
     }finally{await f.close();}
 });

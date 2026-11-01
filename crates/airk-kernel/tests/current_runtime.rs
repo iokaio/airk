@@ -11,6 +11,46 @@ fn unlinked_tempdir() -> Result<tempfile::TempDir> {
     Ok(tempfile::Builder::new().tempdir_in(std::env::temp_dir().canonicalize()?)?)
 }
 
+/// Compare independently exposed scalar output with detailed publication-bound observations.
+fn assert_summary_parity(kernel: &Kernel) -> Result<()> {
+    let status = kernel.status()?;
+    let summary = kernel.status_summary()?;
+    assert_eq!(summary["index_state"], "available");
+    assert_eq!(summary["files"], status.files);
+    assert_eq!(summary["generation"], status.generation);
+    assert_eq!(summary["indexed_vectors"], status.indexed_vectors);
+    assert_eq!(
+        summary["publication"]["token"],
+        serde_json::to_value(
+            status
+                .publication
+                .as_ref()
+                .expect("published fixture")
+                .token
+        )?
+    );
+    assert_eq!(
+        summary["semantic_readiness"]["state"],
+        serde_json::to_value(status.semantic_readiness.state)?
+    );
+    assert_eq!(
+        summary["semantic_readiness"]["completed_artifacts"],
+        status.semantic_readiness.completed_artifacts
+    );
+    assert_eq!(
+        summary["semantic_readiness"]["selected_artifacts"],
+        status.semantic_readiness.selected_artifacts
+    );
+    assert_eq!(
+        summary["discovery_readiness"]["state"],
+        serde_json::to_value(status.discovery_readiness.state)?
+    );
+    if status.semantic_readiness.state == SemanticState::Failed {
+        assert_eq!(summary["health"], "needs_attention");
+    }
+    Ok(())
+}
+
 #[test]
 #[ignore = "large repository capacity qualification; run explicitly in release mode"]
 fn twelve_thousand_files_publish_reopen_update_and_reclaim() -> Result<()> {
@@ -102,6 +142,7 @@ fn public_runtime_indexes_updates_and_reads_current_evidence() -> Result<()> {
     kernel.index()?;
     let before = kernel.status()?;
     assert_eq!(before.files, 2);
+    assert_summary_parity(&kernel)?;
     assert!(
         directory
             .path()
@@ -428,6 +469,7 @@ fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() ->
     other.scheduled_index(false, false)?;
     let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
     kernel.scheduled_index(false, false)?;
+    assert_summary_parity(&kernel)?;
     let mut completed = kernel.status()?.semantic_readiness.completed_artifacts;
     assert!(completed < 65);
     kernel.schedule_pause(true)?;
@@ -494,6 +536,7 @@ fn editor_semantic_batches_resume_after_reopen_and_preserve_scope_and_pause() ->
         reopened.status()?.semantic_readiness.state,
         SemanticState::Ready
     );
+    assert_summary_parity(&reopened)?;
     assert_eq!(reopened.run_scheduled_enrichment()?.state, "idle");
     assert_eq!(other.status()?.publication, foreign_head);
     Ok(())
@@ -611,6 +654,7 @@ fn failed_semantic_batch_is_persisted_and_does_not_hide_exact_evidence() -> Resu
     );
     let status = kernel.status()?;
     assert_eq!(status.semantic_readiness.state, SemanticState::Failed);
+    assert_summary_parity(&kernel)?;
     assert_eq!(status.semantic_readiness.completed_artifacts, 0);
     let query = SearchQuery {
         text: "authenticate".into(),

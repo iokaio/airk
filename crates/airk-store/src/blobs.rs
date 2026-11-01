@@ -12,6 +12,7 @@ use std::{
 };
 
 const MAX_ARTIFACT_BYTES: u64 = airk_core::extraction::MAX_PAYLOAD_BYTES as u64;
+type SourceObserver<'a> = &'a mut dyn FnMut(&[u8]) -> Result<()>;
 pub const MAX_CATALOG_BYTES: u64 = airk_core::publication::MAX_INVENTORY_BYTES as u64;
 
 /// A missing derived source/extraction object. This typed context is attached
@@ -355,6 +356,53 @@ pub(crate) fn verify_v2_generation(
 }
 
 impl FileStore {
+    pub fn retain_artifact_with_budget_owned(
+        &self,
+        writer: &crate::WriterLock,
+        artifact: &Artifact,
+        source: Option<&[u8]>,
+        reservation: Option<&crate::quota::Reservation>,
+    ) -> Result<Artifact> {
+        crate::current::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
+        self.retain_artifact_with_budget(artifact, source, reservation)
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn retain_payload_with_budget_owned(
+        &self,
+        writer: &crate::WriterLock,
+        artifact: &Artifact,
+        payload: &airk_core::extraction::ExtractionPayload,
+        profile: &airk_core::extraction::ExtractionProfile,
+        source: Option<&[u8]>,
+        reservation: Option<&crate::quota::Reservation>,
+    ) -> Result<Artifact> {
+        self.retain_payload_encoded_owned(
+            writer,
+            artifact,
+            payload,
+            profile,
+            source,
+            reservation,
+            airk_core::compression::CompressionMode::Off,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn retain_payload_encoded_owned(
+        &self,
+        writer: &crate::WriterLock,
+        artifact: &Artifact,
+        payload: &airk_core::extraction::ExtractionPayload,
+        profile: &airk_core::extraction::ExtractionProfile,
+        source: Option<&[u8]>,
+        reservation: Option<&crate::quota::Reservation>,
+        mode: airk_core::compression::CompressionMode,
+    ) -> Result<Artifact> {
+        crate::current::gate::check_writer(self, writer)?;
+        writer.invalidate_census_before_mutation()?;
+        self.retain_payload_encoded(artifact, payload, profile, source, reservation, mode)
+    }
+
     /// Receipt-authenticated full-generation model dependencies. Historical
     /// representations deliberately do not retain these retrieval assets.
     pub fn model_object_references(
@@ -1179,6 +1227,87 @@ impl FileStore {
     /// Authenticate retained source identity without allocating/decoding a copy
     /// when evidence materialization uses the independently verified payload.
     pub fn verify_retained_source(&self, entry: &Artifact) -> Result<()> {
+        self.verify_retained_source_observed(entry, None)
+    }
+    /// Independent maintenance verifies decoded source SHA as well as stored
+    /// compression bytes, retaining only existing bounded codec buffers.
+    pub fn verify_retained_source_deep(&self, entry: &Artifact) -> Result<()> {
+        let mut observe = |_bytes: &[u8]| Ok(());
+        self.verify_retained_source_observed(entry, Some(&mut observe))
+    }
+    /// Exact split_inclusive newline count, with streaming UTF-8/hash validation.
+    /// At most one existing decoded block plus a three-byte UTF-8 tail is retained.
+    pub fn verify_retained_source_utf8_lines(&self, entry: &Artifact) -> Result<usize> {
+        self.verify_retained_source_utf8_observed(entry, &mut |_| Ok(()))
+    }
+    pub(crate) fn verify_retained_source_utf8_observed(
+        &self,
+        entry: &Artifact,
+        visit: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<usize> {
+        let mut tail = Vec::<u8>::new();
+        let mut newlines = 0usize;
+        let mut last = None;
+        let mut utf8_error = None;
+        let mut observer = |chunk: &[u8]| -> Result<()> {
+            visit(chunk)?;
+            newlines = newlines
+                .checked_add(chunk.iter().filter(|byte| **byte == b'\n').count())
+                .context("source line count overflow")?;
+            if let Some(byte) = chunk.last() {
+                last = Some(*byte);
+            }
+            if utf8_error.is_some() {
+                return Ok(());
+            }
+            let mut offset = 0;
+            if !tail.is_empty() {
+                let width = match tail[0] {
+                    0xc2..=0xdf => 2,
+                    0xe0..=0xef => 3,
+                    0xf0..=0xf4 => 4,
+                    _ => anyhow::bail!("invalid UTF-8 tail lead"),
+                };
+                let needed = width - tail.len();
+                let take = needed.min(chunk.len());
+                tail.extend_from_slice(&chunk[..take]);
+                offset = take;
+                if take < needed {
+                    return Ok(());
+                }
+                if let Err(error) = std::str::from_utf8(&tail) {
+                    utf8_error = Some(error);
+                    return Ok(());
+                }
+                tail.clear();
+            }
+            let suffix = &chunk[offset..];
+            match std::str::from_utf8(suffix) {
+                Ok(_) => {}
+                Err(error) if error.error_len().is_none() => {
+                    tail.extend_from_slice(&suffix[error.valid_up_to()..])
+                }
+                Err(error) => utf8_error = Some(error),
+            }
+            ensure!(tail.len() <= 3, "invalid UTF-8 continuation tail");
+            Ok(())
+        };
+        self.verify_retained_source_observed(entry, Some(&mut observer))?;
+        if let Some(error) = utf8_error {
+            return Err(error.into());
+        }
+        if !tail.is_empty() {
+            std::str::from_utf8(&tail)?;
+        }
+        newlines
+            .checked_add(usize::from(last.is_some_and(|byte| byte != b'\n')))
+            .context("source line count overflow")
+    }
+    fn verify_retained_source_observed(
+        &self,
+        entry: &Artifact,
+        mut observer: Option<SourceObserver<'_>>,
+    ) -> Result<()> {
         ensure!(
             entry.bytes <= airk_core::extraction::MAX_SOURCE_BYTES
                 && entry.retained.as_ref().is_some_and(|r| r.raw_source),
@@ -1192,12 +1321,22 @@ impl FileStore {
             let path = object_path(self.directory(), "sources", &encoding.stored_digest)?;
             ensure!(
                 retained_read_context(
-                    crate::compression::verify(
-                        &path,
-                        encoding,
-                        &entry.content_hash,
-                        entry.bytes as u64,
-                    ),
+                    if let Some(observer) = observer.as_deref_mut() {
+                        crate::compression::visit_decoded(
+                            &path,
+                            encoding,
+                            &entry.content_hash,
+                            entry.bytes as u64,
+                            observer,
+                        )
+                    } else {
+                        crate::compression::verify(
+                            &path,
+                            encoding,
+                            &entry.content_hash,
+                            entry.bytes as u64,
+                        )
+                    },
                     "sources",
                     &path,
                     &entry.content_hash,
@@ -1247,6 +1386,9 @@ impl FileStore {
                     "retained source grew during verification"
                 );
                 hash.update(&buffer[..count]);
+                if let Some(observer) = observer.as_deref_mut() {
+                    observer(&buffer[..count])?;
+                }
             }
             ensure!(
                 total == entry.bytes && format!("{:x}", hash.finalize()) == entry.content_hash,
@@ -1254,6 +1396,59 @@ impl FileStore {
             );
         }
         Ok(())
+    }
+
+    /// A selected immutable logical block, authenticated independently. This does
+    /// not establish private-owner authority or certify unselected source bytes.
+    pub(crate) fn read_retained_source_block(
+        &self,
+        entry: &Artifact,
+        range: std::ops::Range<usize>,
+        expected: airk_core::identity::Sha256Digest,
+    ) -> Result<Vec<u8>> {
+        use std::io::{Seek, SeekFrom};
+        ensure!(
+            range.start < range.end
+                && range.end <= entry.bytes
+                && range.len() <= 65_536
+                && entry.bytes <= airk_core::extraction::MAX_SOURCE_BYTES
+                && entry.retained.as_ref().is_some_and(|r| r.raw_source),
+            "source block outside admitted object"
+        );
+        let bytes = if entry
+            .retained
+            .as_ref()
+            .and_then(|r| r.source_encoding.as_ref())
+            .is_some()
+        {
+            self.read_retained_source_range(entry, range, 2 << 20)
+                .map_err(crate::current::resources::authenticated_decode_error)?
+        } else {
+            let path = object_path(self.directory(), "sources", &entry.content_hash)?;
+            retained_read_context(
+                (|| -> Result<Vec<u8>> {
+                    let mut file = File::open(&path)?;
+                    let metadata = file.metadata()?;
+                    if !metadata.is_file() || metadata.len() != entry.bytes as u64 {
+                        return Err(anyhow::anyhow!("retained source block length mismatch")
+                            .context(crate::current::PrivateIntegrityFailure));
+                    }
+                    file.seek(SeekFrom::Start(range.start as u64))?;
+                    let mut bytes = vec![0; range.len()];
+                    file.read_exact(&mut bytes)?;
+                    Ok(bytes)
+                })(),
+                "sources",
+                &path,
+                &entry.content_hash,
+            )?
+        };
+        if airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(&bytes).into()) != expected
+        {
+            return Err(anyhow::anyhow!("retained source block digest mismatch")
+                .context(crate::current::PrivateIntegrityFailure));
+        }
+        Ok(bytes)
     }
 
     pub fn read_retained_source_range(

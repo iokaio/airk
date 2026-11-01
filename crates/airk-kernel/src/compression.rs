@@ -165,7 +165,8 @@ impl Kernel {
             admitted += bytes;
             let retained = self.store.load_retrieval_artifact(artifact)?;
             let source = self.store.read_retained_source(artifact)?;
-            let updated = self.store.retain_payload_encoded(
+            let updated = self.store.retain_payload_encoded_owned(
+                &writer,
                 &retained.artifact,
                 &retained.payload,
                 &retained.profile,

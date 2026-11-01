@@ -41,12 +41,12 @@ function descriptorFiles(directory: string): string[] {
     try { return fs.readdirSync(windowsDirectory(directory)); } catch { return []; }
 }
 
-test('the launch descriptor names the bundled server by digest and is rewritten only when something changed', t => {
+test('the launch descriptor names the bundled server by digest and is rewritten only when something changed', async t => {
     const root = scratch(t), storage = path.join(root, 'storage'), extension = path.join(root, 'extension');
     fs.mkdirSync(path.join(extension, 'out'), { recursive: true });
     fs.writeFileSync(path.join(extension, 'out', 'explorerAssistance.js'), 'one');
     const runtime = { path: process.execPath, electron: true };
-    assert.equal(writeLaunchDescriptor(storage, extension, '1.5.0', runtime), true);
+    assert.equal(await writeLaunchDescriptor(storage, extension, '1.5.0', runtime), true);
     const file = launchDescriptorPath(storage);
     assert.equal(file, path.join(storage, 'explorer-assistance', 'launch-1.json'), 'the native forwarder accepts only this location');
     const descriptor = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -56,9 +56,9 @@ test('the launch descriptor names the bundled server by digest and is rewritten 
     assert.equal(descriptor.server_sha256, createHash('sha256').update('one').digest('hex'));
     assert.deepEqual(descriptor.runtime, runtime);
     if (process.platform !== 'win32') { assert.equal(fs.statSync(file).mode & 0o077, 0); assert.equal(fs.statSync(path.dirname(file)).mode & 0o077, 0); }
-    assert.equal(writeLaunchDescriptor(storage, extension, '1.5.0', runtime), false, 'unchanged inputs keep the existing file');
+    assert.equal(await writeLaunchDescriptor(storage, extension, '1.5.0', runtime), false, 'unchanged inputs keep the existing file');
     fs.writeFileSync(path.join(extension, 'out', 'explorerAssistance.js'), 'two');
-    assert.equal(writeLaunchDescriptor(storage, extension, '1.5.0', runtime), true);
+    assert.equal(await writeLaunchDescriptor(storage, extension, '1.5.0', runtime), true);
     assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).server_sha256, createHash('sha256').update('two').digest('hex'));
     assert.deepEqual(fs.readdirSync(path.dirname(file)), ['launch-1.json'], 'no temporary files remain');
 
@@ -106,6 +106,16 @@ test('a window attaches only for working directories inside its folders, and det
     assert.equal((await uiStatus(workspace, directory)).ui.code, 'UI_NOT_ATTACHED');
 });
 
+test('Assistance root cap counts usable unique canonical roots after missing and duplicate entries',async t=>{
+    const root=scratch(t),directory=path.join(root,'assistance'),first=path.join(root,'first'),second=path.join(root,'second');
+    fs.mkdirSync(first);fs.mkdirSync(second);
+    const roots=[...Array(33).fill(path.join(root,'missing')),...Array(33).fill(first),second];
+    const host=await AssistanceIpcHost.start({directory,version:'1.8.0',roots,explorerOpen:()=>false});
+    assert.ok(host);t.after(()=>host!.dispose());
+    const descriptor=JSON.parse(fs.readFileSync(path.join(windowsDirectory(directory),descriptorFiles(directory)[0]),'utf8'));
+    assert.deepEqual(descriptor.roots,[fs.realpathSync(first),fs.realpathSync(second)]);
+});
+
 test('the endpoint answers only the current credential and only typed requests', { timeout: 30000 }, async t => {
     const root = scratch(t), directory = path.join(root, 'assistance');
     const host = (await AssistanceIpcHost.start({ directory, version: '1.5.0', roots: [root], explorerOpen: () => false }))!;
@@ -121,7 +131,7 @@ test('the endpoint answers only the current credential and only typed requests',
     assert.equal(await ask(first.endpoint, JSON.stringify({ v: 1, credential: '0'.repeat(64), type: 'status' })), '', 'a wrong credential gets no reply');
     assert.match(await ask(first.endpoint, JSON.stringify({ v: 1, credential: first.credential, type: 'run_command' })), /INVALID_SCHEMA/);
     assert.match(await ask(first.endpoint, JSON.stringify({ v: 2, credential: first.credential, type: 'status' })), /SCHEMA_UNSUPPORTED/);
-    host.rotate();
+    await host.rotate();
     const rotated = read();
     assert.notEqual(rotated.credential, first.credential);
     assert.ok(rotated.expires_unix_ms >= first.expires_unix_ms);
@@ -223,16 +233,41 @@ test('native Windows namespace roots match editor paths without admitting siblin
     assert.equal(contains('/work/book','/work/book-other','linux'),false);
 });
 
-test('Windows descriptor directories replace inherited profile entries with user, SYSTEM and Administrators', { skip: process.platform !== 'win32' }, () => {
-    const calls: { file: string; args: readonly string[] }[] = [];
-    const run = ((file: string, args: readonly string[]) => {
-        calls.push({ file, args });
-        return file.endsWith('whoami.exe') ? '"host\fixture","S-1-5-21-1-2-3-1001"\r\n' : '';
-    }) as unknown as typeof import('node:child_process').execFileSync;
-    const directory = path.join(os.tmpdir(), `airk-acl-fixture-${process.pid}`);
-    restrictWindowsDirectory(directory, run);
-    restrictWindowsDirectory(directory, run);
-    assert.equal(calls.length, 2, 'each directory is restricted once per process');
-    assert.match(calls[1].file, /icacls\.exe$/);
-    assert.deepEqual(calls[1].args, [directory, '/inheritance:r', '/grant:r', '*S-1-5-21-1-2-3-1001:(OI)(CI)F', '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F']);
+test('Windows ACL setup is async and caches the physical directory rather than its old pathname',{skip:process.platform!=='win32'},async()=>{
+    const root=await fs.promises.mkdtemp(path.join(os.tmpdir(),'airk-acl-physical-')),directory=path.join(root,'private');
+    await fs.promises.mkdir(directory);const calls:{file:string;args:readonly string[]}[]=[];
+    const run=async(file:string,args:readonly string[])=>{calls.push({file,args});return file.endsWith('whoami.exe')?'"host\\fixture","S-1-5-21-1-2-3-1001"\r\n':'';};
+    try{
+        await restrictWindowsDirectory(directory,run);await restrictWindowsDirectory(directory,run);
+        assert.equal(calls.length,2);
+        await fs.promises.rename(directory,path.join(root,'old'));await fs.promises.mkdir(directory);
+        await restrictWindowsDirectory(directory,run);assert.equal(calls.length,4,'replacement must run ACL setup again');
+        assert.match(calls[1].file,/icacls\.exe$/);
+        assert.deepEqual(calls[1].args,[directory,'/inheritance:r','/grant:r','*S-1-5-21-1-2-3-1001:(OI)(CI)F','*S-1-5-18:(OI)(CI)F','*S-1-5-32-544:(OI)(CI)F']);
+    }finally{await fs.promises.rm(root,{recursive:true,force:true});}
+});
+
+test('Windows directory replaced during ACL completion is refused',{skip:process.platform!=='win32'},async()=>{
+    const root=await fs.promises.mkdtemp(path.join(os.tmpdir(),'airk-acl-race-')),directory=path.join(root,'private');
+    await fs.promises.mkdir(directory);
+    try{
+        await assert.rejects(restrictWindowsDirectory(directory,async(file)=>{
+            if(file.endsWith('whoami.exe'))return '"fixture","S-1-5-21-1-2-3-1001"';
+            await fs.promises.rename(directory,path.join(root,'old'));await fs.promises.mkdir(directory);return '';
+        }),/changed during setup/);
+    }finally{await fs.promises.rm(root,{recursive:true,force:true});}
+});
+
+test('Assistance ACL wait leaves executor responsive and trust loss publishes no credential',{skip:process.platform!=='win32'},async context=>{
+    const root=await fs.promises.mkdtemp(path.join(os.tmpdir(),'airk-acl-host-')),source=path.join(root,'source'),directory=path.join(root,'assistance');
+    await fs.promises.mkdir(source);let trusted=true,entered!:()=>void,release!:()=>void;
+    const began=new Promise<void>(resolve=>{entered=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
+    context.mock.method(require('../privateDirectory'),'restrictWindowsDirectory',async()=>{entered();await held;return {assertCurrent(){}};});
+    try{
+        const pending=AssistanceIpcHost.start({directory,version:'1.8.0',roots:[source],authorized:()=>trusted,explorerOpen:()=>false});
+        await began;assert.equal(await Promise.resolve(42),42);
+        assert.deepEqual(fs.readdirSync(windowsDirectory(directory)),[]);
+        trusted=false;release();await assert.rejects(pending,/no longer authorized/);
+        assert.deepEqual(fs.readdirSync(windowsDirectory(directory)),[]);
+    }finally{release?.();await fs.promises.rm(root,{recursive:true,force:true});}
 });

@@ -62,7 +62,7 @@ function RuntimeVersions(props: { state: ScreenProps['state']; view: ManagementV
             ['VS Code extension', props.state.extensionVersion], ...props.view.runtimeVersions,
             ...(props.state.status?.runtimeVersions ?? [['MCP frontend (airk)', 'not observed'], ['Index worker (airk)', 'not observed']] as FactRow[]),
         ]} hideUnobserved />
-        <p class="muted">CLI and helper versions describe the selected installation. Process observations describe the service and the selected project’s MCP connection and worker; they may differ during an upgrade. {props.state.status ? `Project runtime observed ${ago(props.state.status.observedAt)}.` : 'Connect to the selected project to observe its processes.'} {!props.view.connected && 'Disconnected: observations may be stale.'}</p>
+        <p class="muted">CLI and helper versions describe the selected installation. Process observations describe the service and the selected project’s MCP connection and worker; they may differ during an upgrade. {(props.state.status?.runtimeVersions || props.state.status?.versionsMatch !== undefined) ? `Project runtime details observed ${ago(props.state.status.detailsObservedAt ?? props.state.status.observedAt)}.` : 'Connect to the selected project to observe its processes.'} {!props.view.connected && 'Disconnected: observations may be stale.'}</p>
         {props.state.status?.versionsMatch === false && <p class="callout" role="alert">The observed runtime versions do not match. Review Service before relying on the new version’s behavior.</p>}
     </section>;
 }

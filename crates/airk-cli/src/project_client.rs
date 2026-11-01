@@ -14,6 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[path = "status_observation.rs"]
+mod status_observation;
+pub(crate) use status_observation::StatusOwner;
+use status_observation::{RequestTicket, RetiredRequest};
 #[derive(Debug)]
 struct RetrySetup(&'static str);
 impl std::fmt::Display for RetrySetup {
@@ -86,6 +90,7 @@ fn setup_rejection(error: &anyhow::Error) -> Option<serde_json::Value> {
 
 pub struct Connection {
     stream: Stream,
+    identity: airk_core::service::WorkerIdentity,
     authorized_until: Instant,
     last_finished: Instant,
     healthy: bool,
@@ -110,20 +115,54 @@ impl Connection {
         )
         .await
     }
+    async fn connect_frontend(
+        root: &Path,
+        project: ProjectBinding,
+        client: airk_core::usage::ClientFamily,
+        owner: &StatusOwner,
+        ticket: RequestTicket,
+        once: bool,
+    ) -> Result<Self> {
+        if once {
+            return Self::connect_once_checked(root, project, client, Some((owner, &ticket))).await;
+        }
+        retry_setup(
+            || Self::connect_once_checked(root, project, client, Some((owner, &ticket))),
+            Duration::from_secs(30),
+            8,
+            Duration::from_millis(100),
+        )
+        .await
+    }
     async fn connect_once(
         root: &Path,
         project: ProjectBinding,
         client: airk_core::usage::ClientFamily,
     ) -> Result<Self> {
-        let ControlResponse::Health { observation } =
+        Self::connect_once_checked(root, project, client, None).await
+    }
+    async fn connect_once_checked(
+        root: &Path,
+        project: ProjectBinding,
+        client: airk_core::usage::ClientFamily,
+        owner: Option<(&StatusOwner, &RequestTicket)>,
+    ) -> Result<Self> {
+        let response = {
+            let _health_request = owner
+                .map(|(owner, ticket)| owner.admit_ticket(ticket))
+                .transpose()?;
             service_runtime::request(root, ControlMethod::Health).await?
-        else {
+        };
+        let ControlResponse::Health { observation } = response else {
             anyhow::bail!("service health unavailable")
         };
         ensure!(
             observation.version == env!("CARGO_PKG_VERSION"),
             "native service version differs from this client"
         );
+        let _broker_request = owner
+            .map(|(owner, ticket)| owner.admit_ticket(ticket))
+            .transpose()?; // one request after health
         let (role, mut grant) =
             match service_runtime::request(root, ControlMethod::Connect { project }).await? {
                 ControlResponse::Connection { role, grant } => (role, grant),
@@ -170,6 +209,7 @@ impl Connection {
         );
         Ok(Self {
             stream,
+            identity: grant.identity,
             authorized_until: setup_started + Duration::from_secs(55),
             last_finished: Instant::now(),
             healthy: true,
@@ -180,6 +220,12 @@ impl Connection {
         self.healthy
             && now < self.authorized_until
             && now.saturating_duration_since(self.last_finished) < Duration::from_secs(25)
+    }
+
+    fn reusable_for_source(&self, fence: SourceFence, now: Instant) -> bool {
+        self.reusable(now)
+            && self.identity.project == fence.project
+            && self.identity.fencing_generation >= fence.fencing_generation
     }
 
     pub async fn call(
@@ -245,23 +291,49 @@ impl Connection {
 #[derive(Default)]
 struct ClientState {
     connection: Option<Connection>,
+    connection_scope: Option<CacheScope>,
     status_receipt: airk_mcp::response::StatusReceipt,
-    cached_status: Option<CachedStatus>,
 }
 
-struct Backend {
+pub(crate) struct Backend {
     root: PathBuf,
     project: ProjectBinding,
     state: tokio::sync::Mutex<ClientState>,
+    latest_source: std::sync::Mutex<Option<SourceFence>>,
+    status: Arc<StatusOwner>,
     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SourceFence {
+    pub namespace: airk_core::identity::Incarnation,
+    pub revision: u64,
+    pub project: ProjectBinding,
+    pub fencing_generation: u64,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CacheScope {
+    Pinned(airk_core::identity::Incarnation),
+    Registered(SourceFence),
+    Source(SourceFence),
+}
+impl From<airk_core::identity::Incarnation> for CacheScope {
+    fn from(value: airk_core::identity::Incarnation) -> Self {
+        Self::Pinned(value)
+    }
+}
+pub(crate) fn source_scope_superseded() -> serde_json::Value {
+    let detail = serde_json::json!({"error":{"code":"direct_query_setup","reason":"busy",
+        "query_submitted":false,"retryable":true,"retry_after_ms":100,"fresh_brokerage_required":true}});
+    serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true})
+}
 struct CachedStatus {
-    scope: airk_core::identity::Incarnation,
+    scope: CacheScope,
     captured: Instant,
     observed_unix_ms: u64,
     body: serde_json::Value,
 }
 impl CachedStatus {
+    #[cfg(test)]
     fn agrees_with(&self, result: &Result<serde_json::Value>) -> bool {
         let Ok(result) = result else {
             return false;
@@ -284,7 +356,7 @@ impl CachedStatus {
         .find(|token| token.is_string())
         .is_some_and(|token| *token == self.body["publication"]["token"])
     }
-    fn new(scope: airk_core::identity::Incarnation, result: &serde_json::Value) -> Option<Self> {
+    fn new(scope: impl Into<CacheScope>, result: &serde_json::Value) -> Option<Self> {
         if result["isError"] == true {
             return None;
         }
@@ -294,7 +366,7 @@ impl CachedStatus {
             return None;
         }
         Some(Self {
-            scope,
+            scope: scope.into(),
             captured: Instant::now(),
             observed_unix_ms: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -307,12 +379,12 @@ impl CachedStatus {
     }
     fn reply(
         &self,
-        scope: airk_core::identity::Incarnation,
+        scope: impl Into<CacheScope>,
         now: Instant,
         cached: bool,
     ) -> Option<serde_json::Value> {
         let age = now.saturating_duration_since(self.captured);
-        if scope != self.scope || age >= Duration::from_secs(5) {
+        if scope.into() != self.scope || age >= Duration::from_secs(5) {
             return None;
         }
         let mut body = self.body.clone();
@@ -323,18 +395,33 @@ impl CachedStatus {
     }
 }
 
-fn status_scope(
-    root: &Path,
-    project: ProjectBinding,
-) -> Result<Option<airk_core::identity::Incarnation>> {
+fn status_scope(root: &Path, project: ProjectBinding) -> Result<Option<CacheScope>> {
     if !root.join("service-1.4.sqlite3").try_exists()? {
         return Ok(None);
     }
-    let registry = airk_store::service::registry::ServiceRegistry::open_saved(root)?;
-    registry.get(project)?; // A removed project cannot be served from a cache.
-    Ok(Some(registry.incarnation()?))
+    let deadline = Some(Instant::now() + Duration::from_secs(2));
+    let registry =
+        airk_store::service::registry::ServiceRegistry::open_saved_before(root, deadline)?;
+    let before = registry.source_scope_stamp(deadline)?;
+    let registered = registry.get(project)?;
+    let after = registry.source_scope_stamp(deadline)?;
+    if before != after {
+        return Err(airk_store::service::registry::SavedScopeExpired.into());
+    }
+    Ok(Some(CacheScope::Registered(SourceFence {
+        namespace: after.namespace,
+        revision: after.revision,
+        project,
+        fencing_generation: registered.fencing_generation,
+    })))
 }
 impl airk_mcp::remote::RemoteTools for Backend {
+    fn close(&self) {
+        self.status.close();
+    }
+    fn shutdown(&self) -> airk_mcp::remote::ReadyFuture<'_> {
+        Box::pin(async move { self.status.shutdown().await })
+    }
     fn client(&self, client: airk_core::usage::ClientFamily) {
         if let Ok(mut label) = self.client.lock() {
             *label = client;
@@ -345,135 +432,274 @@ impl airk_mcp::remote::RemoteTools for Backend {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
+        self.call_bound(tool, arguments, None, None)
+    }
+}
+
+impl Backend {
+    fn accept_source_fence(&self, fence: SourceFence) -> bool {
+        if fence.project != self.project {
+            return false;
+        }
+        let mut latest = self
+            .latest_source
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if latest.is_some_and(|old| {
+            old.namespace != fence.namespace
+                || old.revision > fence.revision
+                || (old.revision == fence.revision
+                    && old.fencing_generation > fence.fencing_generation)
+        }) {
+            return false;
+        }
+        *latest = Some(fence);
+        true
+    }
+    fn source_fence_current(&self, scope: CacheScope) -> bool {
+        match scope {
+            CacheScope::Pinned(_) | CacheScope::Registered(_) => true,
+            CacheScope::Source(fence) => {
+                self.latest_source
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .as_ref()
+                    == Some(&fence)
+            }
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn call_observed(
+        &self,
+        tool: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        fence: SourceFence,
+    ) -> airk_mcp::remote::RemoteFuture<'_> {
+        self.call_bound(tool, arguments, Some(fence), None)
+    }
+    pub(crate) fn call_observed_until(
+        &self,
+        tool: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        fence: SourceFence,
+        expires: Instant,
+    ) -> airk_mcp::remote::RemoteFuture<'_> {
+        self.call_bound(tool, arguments, Some(fence), Some(expires))
+    }
+    fn call_bound(
+        &self,
+        tool: String,
+        arguments: serde_json::Map<String, serde_json::Value>,
+        observed: Option<SourceFence>,
+        source_expires: Option<Instant>,
+    ) -> airk_mcp::remote::RemoteFuture<'_> {
         Box::pin(async move {
             if tool == "airk_help" {
                 return Ok(serde_json::to_value(airk_mcp::help::call(
                     serde_json::Value::Object(arguments),
                 ))?);
             }
-            if matches!(tool.as_str(), "airk_status" | "airk_diagnostics") {
-                if serde_json::from_value::<airk_mcp::StatusArgs>(serde_json::Value::Object(
+            if matches!(tool.as_str(), "airk_status" | "airk_diagnostics")
+                && serde_json::from_value::<airk_mcp::StatusArgs>(serde_json::Value::Object(
                     arguments.clone(),
                 ))
                 .is_err()
-                {
-                    return Ok(
-                        serde_json::json!({"content":[{"type":"text","text":"Invalid airk_status arguments; inspect its current schema with airk_help."}],"isError":true}),
-                    );
-                }
-                // Cold image hashing must not consume a freshly brokered connection's idle/grant lifetime.
-                if tool == "airk_diagnostics" {
-                    crate::runtime_metadata::observe_process();
-                }
-            }
-            let scope = if tool == "airk_status" {
-                let root = self.root.clone();
-                let project = self.project;
-                tokio::task::spawn_blocking(move || status_scope(&root, project)).await??
-            } else {
-                None
-            };
-            let mut state = self.state.lock().await;
-            if let Some(scope) = scope
-                && let Some(reply) = state
-                    .cached_status
-                    .as_ref()
-                    .and_then(|cached| cached.reply(scope, Instant::now(), true))
             {
-                return Ok(reply);
+                return Ok(airk_mcp::unified::failure(
+                    "INVALID_SCHEMA",
+                    "Invalid status arguments.",
+                ));
             }
-            if tool == "airk_diagnostics" {
-                state.cached_status = None;
-            }
-            if state
-                .connection
-                .as_ref()
-                .is_none_or(|connection| !connection.reusable(Instant::now()))
+            if let Some(fence) = observed
+                && !self.accept_source_fence(fence)
             {
-                state.connection = None;
+                return Ok(source_scope_superseded());
+            }
+            if source_expires.is_some_and(|until| Instant::now() >= until) {
+                return Ok(source_scope_superseded());
+            }
+            if tool == "airk_status" {
                 let client = self
                     .client
                     .lock()
-                    .map(|client| *client)
+                    .map(|value| *value)
                     .unwrap_or(airk_core::usage::ClientFamily::Unknown);
-                let connected = if matches!(tool.as_str(), "airk_status" | "airk_diagnostics") {
-                    Connection::connect_once(&self.root, self.project, client).await
-                } else {
-                    Connection::connect_as(&self.root, self.project, client).await
-                };
-                let mut connection = match connected {
+                return self
+                    .status
+                    .status(
+                        self.root.clone(),
+                        self.project,
+                        arguments,
+                        observed,
+                        source_expires,
+                        client,
+                    )
+                    .await;
+            }
+            if tool == "airk_diagnostics" {
+                self.status.invalidate();
+                crate::runtime_metadata::observe_process();
+            }
+            if observed.is_none() {
+                self.status
+                    .bind_initial_pinned_scope(self.root.clone(), self.project)
+                    .await?;
+            }
+            // Capture logical receipt and actual-authority generation before any
+            // evidence-channel wait. A later grant returns its own fresh ticket.
+            let mut ticket = self.status.request_ticket(self.project, source_expires);
+            if observed.is_some_and(|expected| ticket.scope != Some(CacheScope::Source(expected))) {
+                return Ok(source_scope_superseded());
+            }
+            let mut state = self.state.lock().await;
+            if source_expires.is_some_and(|until| Instant::now() >= until)
+                || observed
+                    .is_some_and(|fence| !self.source_fence_current(CacheScope::Source(fence)))
+                || !self.status.ticket_current(&ticket)
+            {
+                return Ok(source_scope_superseded());
+            }
+            if state.connection.as_ref().is_none_or(|connection| {
+                !self
+                    .status
+                    .transport_reusable(&ticket, state.connection_scope, connection)
+            }) {
+                state.connection = None;
+                state.connection_scope = None;
+                let client = self
+                    .client
+                    .lock()
+                    .map(|value| *value)
+                    .unwrap_or(airk_core::usage::ClientFamily::Unknown);
+                let connected = Connection::connect_frontend(
+                    &self.root,
+                    self.project,
+                    client,
+                    &self.status,
+                    ticket,
+                    tool == "airk_diagnostics",
+                )
+                .await;
+                if source_expires.is_some_and(|until| Instant::now() >= until)
+                    || observed
+                        .is_some_and(|fence| !self.source_fence_current(CacheScope::Source(fence)))
+                    || !self.status.ticket_scope_current(&ticket)
+                {
+                    return Ok(source_scope_superseded());
+                }
+                let connection = match connected {
                     Ok(connection) => connection,
-                    Err(_) if matches!(tool.as_str(), "airk_status" | "airk_diagnostics") => {
-                        if tool == "airk_status" {
-                            return Ok(airk_mcp::unified::success(
-                                serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unavailable","publication":null,"files":null,"chunks":null,"index_error":{"code":"index_worker_unavailable","message":"No index query was submitted. Call diagnostics for service and queued-job diagnosis."}}),
-                            ));
-                        }
+                    Err(error) if error.is::<RetiredRequest>() => {
+                        return Ok(source_scope_superseded());
+                    }
+                    Err(_) if tool == "airk_diagnostics" => {
                         return Ok(
                             crate::runtime_metadata::unavailable(&self.root, self.project).await,
                         );
                     }
                     Err(error) => return setup_rejection(&error).ok_or(error),
                 };
-                connection.restore_status_receipt(state.status_receipt);
+                ticket = match self
+                    .status
+                    .authenticated_worker(ticket, connection.identity)
+                {
+                    Ok(ticket) => ticket,
+                    Err(error) if error.is::<RetiredRequest>() => {
+                        return Ok(source_scope_superseded());
+                    }
+                    Err(error) => return Err(error),
+                };
+                state.connection_scope = ticket.scope;
                 state.connection = Some(connection);
+            } else {
+                ticket = match self.status.authenticated_worker(
+                    ticket,
+                    state
+                        .connection
+                        .as_ref()
+                        .expect("checked evidence connection")
+                        .identity,
+                ) {
+                    Ok(ticket) => ticket,
+                    Err(error) if error.is::<RetiredRequest>() => {
+                        return Ok(source_scope_superseded());
+                    }
+                    Err(error) => return Err(error),
+                };
             }
-            let is_status = tool == "airk_status";
-            let mut result = state
+            if source_expires.is_some_and(|until| Instant::now() >= until)
+                || observed
+                    .is_some_and(|fence| !self.source_fence_current(CacheScope::Source(fence)))
+                || !self.status.ticket_current(&ticket)
+            {
+                return Ok(source_scope_superseded());
+            }
+            let receipt = if ticket.scope.is_some() {
+                ticket.receipt
+            } else {
+                state.status_receipt
+            };
+            let connection = state
                 .connection
                 .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("project connection unavailable"))?
-                .call(tool, arguments)
-                .await;
-            if result.is_err() {
-                state.connection = None;
-            } else if let Some(connection) = &state.connection {
-                // Only a completely received result advances this client's
-                // observations. Cancellation/reconnect retains its older receipt.
-                state.status_receipt = connection.status_receipt();
-            }
-
-            if !is_status
-                && state
-                    .cached_status
-                    .as_ref()
-                    .is_some_and(|cached| !cached.agrees_with(&result))
-            {
-                // A changed publication or rejected old token invalidates the
-                // preflight cache immediately rather than repeating a stale token.
-                state.cached_status = None;
-            }
-            if is_status {
-                state.cached_status = scope.and_then(|scope| {
-                    result
-                        .as_ref()
-                        .ok()
-                        .and_then(|value| CachedStatus::new(scope, value))
-                });
-                if let Some(cached) = &state.cached_status
-                    && let Some(reply) = cached.reply(cached.scope, Instant::now(), false)
-                {
-                    result = Ok(reply);
+                .ok_or_else(|| anyhow::anyhow!("project connection unavailable"))?;
+            connection.restore_status_receipt(receipt);
+            let _query = match self.status.admit_ticket(&ticket) {
+                Ok(permit) => permit,
+                Err(_) => return Ok(source_scope_superseded()),
+            };
+            let result = connection.call(tool, arguments).await;
+            if result.is_ok() {
+                let receipt = connection.status_receipt();
+                state.status_receipt = receipt;
+                if ticket.scope.is_some() {
+                    self.status.adopt_receipt(
+                        (ticket.scope, ticket.scalar_epoch, ticket.receipt),
+                        receipt,
+                    );
                 }
+            } else {
+                state.connection = None;
+                state.connection_scope = None;
             }
-
+            // Logical invalidation does not retire authenticated transport authority.
+            self.status.invalidate();
             result
         })
     }
 }
 
-/// One direct client session, shared by stdio MCP and native read-only tools.
 pub fn tools(root: PathBuf, project: ProjectBinding) -> Arc<dyn airk_mcp::remote::RemoteTools> {
+    source_tools(root, project)
+}
+pub(crate) fn source_tools(root: PathBuf, project: ProjectBinding) -> Arc<Backend> {
     Arc::new(Backend {
         root,
         project,
         state: tokio::sync::Mutex::new(Default::default()),
+        latest_source: std::sync::Mutex::new(None),
+        status: Arc::new(StatusOwner::default()),
         client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
     })
 }
 
 pub async fn bridge(root: PathBuf, project: ProjectBinding) -> Result<()> {
     airk_mcp::remote::serve(tools(root, project)).await
+}
+
+pub(crate) fn source_tools_owned(
+    root: PathBuf,
+    project: ProjectBinding,
+    status: Arc<StatusOwner>,
+) -> Arc<Backend> {
+    Arc::new(Backend {
+        root,
+        project,
+        state: tokio::sync::Mutex::new(ClientState::default()),
+        client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
+        latest_source: std::sync::Mutex::new(None),
+        status,
+    })
 }
 
 #[cfg(test)]
@@ -708,6 +934,12 @@ mod tests {
         let now = Instant::now();
         let mut connection = Connection {
             stream,
+            identity: airk_core::service::WorkerIdentity {
+                service: airk_core::identity::Incarnation::from_bytes([1; 16]),
+                worker: airk_core::identity::Incarnation::from_bytes([2; 16]),
+                project: "ab".repeat(32).parse()?,
+                fencing_generation: 1,
+            },
             authorized_until: now + Duration::from_secs(55),
             last_finished: now,
             healthy: true,
@@ -731,3 +963,845 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod source_observation_tests {
+    use super::*;
+
+    fn fence(namespace: u8, revision: u64) -> SourceFence {
+        SourceFence {
+            namespace: airk_core::identity::Incarnation::from_bytes([namespace; 16]),
+            revision,
+            project: "ab".repeat(32).parse().unwrap(),
+            fencing_generation: 1,
+        }
+    }
+
+    #[test]
+    fn revision_namespace_and_generation_are_cache_scope_not_mutable_authority() {
+        let old = fence(1, 9);
+        let value = airk_mcp::unified::success(serde_json::json!({
+            "index_state":"available", "publication":{"token":"saved"}
+        }));
+        let cached = CachedStatus::new(CacheScope::Source(old), &value).unwrap();
+        for changed in [
+            fence(2, 9),
+            fence(1, 10),
+            SourceFence {
+                fencing_generation: 2,
+                ..old
+            },
+        ] {
+            assert!(
+                cached
+                    .reply(CacheScope::Source(changed), cached.captured, true)
+                    .is_none()
+            );
+        }
+        assert!(
+            cached
+                .reply(
+                    CacheScope::Source(old),
+                    cached.captured + Duration::from_secs(5),
+                    true
+                )
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn replaced_source_observation_is_unsubmitted_without_evidence_mutex() -> Result<()> {
+        let control = tempfile::tempdir()?;
+        let old = fence(1, 9);
+        let backend = source_tools(control.path().into(), old.project);
+        backend.status.source_scope(fence(1, 10));
+        let guard = backend.state.lock().await;
+        let reply = backend
+            .call_observed("airk_status".into(), serde_json::Map::new(), old)
+            .await?;
+        let detail: serde_json::Value =
+            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(detail["error"]["query_submitted"], false);
+        assert!(guard.connection.is_none());
+        assert!(std::fs::read_dir(control.path())?.next().is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn observed_cache_hit_does_not_reopen_registry_and_retains_age() -> Result<()> {
+        let control = tempfile::tempdir()?;
+        let scope = fence(1, 9);
+        let backend = source_tools(control.path().into(), scope.project);
+        let value = airk_mcp::unified::success(serde_json::json!({
+            "index_state":"available", "publication":{"token":"saved"}
+        }));
+        let mut cached = CachedStatus::new(CacheScope::Source(scope), &value).unwrap();
+        cached.captured -= Duration::from_secs(1);
+        let timestamp = cached.observed_unix_ms;
+        backend.status.seed(cached);
+        // Hold the same mutex that a long evidence query owns. Scalar cache
+        // reads must complete without acquiring it or reopening the registry.
+        let guard = backend.state.lock().await;
+        let reply = backend
+            .call_observed("airk_status".into(), serde_json::Map::new(), scope)
+            .await?;
+        let body: serde_json::Value =
+            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(body["cached"], true);
+        assert_eq!(body["observed_unix_ms"], timestamp);
+        assert!(body["cache_age_ms"].as_u64().unwrap() >= 1000);
+        assert!(guard.connection.is_none());
+        assert!(std::fs::read_dir(control.path())?.next().is_none());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_cache_return_age_tests {
+    use super::*;
+    #[tokio::test]
+    async fn expired_source_observation_cannot_hit_fresh_status_after_backend_wait() -> Result<()> {
+        let control = tempfile::tempdir()?;
+        let fence = SourceFence {
+            namespace: airk_core::identity::Incarnation::from_bytes([81; 16]),
+            revision: 1,
+            project: "ab".repeat(32).parse()?,
+            fencing_generation: 1,
+        };
+        let backend = source_tools(control.path().into(), fence.project);
+        let state = backend.state.lock().await;
+        backend.status.seed(
+            CachedStatus::new(
+                CacheScope::Source(fence),
+                &airk_mcp::unified::success(
+                    serde_json::json!({"index_state":"available","publication":{"token":"saved"}}),
+                ),
+            )
+            .unwrap(),
+        );
+        let reply = backend
+            .call_observed_until(
+                "airk_status".into(),
+                serde_json::Map::new(),
+                fence,
+                Instant::now(),
+            )
+            .await?;
+        assert!(state.connection.is_none());
+        drop(state);
+        let detail: serde_json::Value =
+            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+        assert_eq!(detail["error"]["query_submitted"], false);
+        assert_eq!(detail["error"]["retryable"], true);
+        assert!(backend.state.lock().await.connection.is_none());
+        assert!(std::fs::read_dir(control.path())?.next().is_none());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod source_brokerage_ipc_tests {
+    use super::*;
+    use airk_core::{
+        identity::Incarnation,
+        service::{ConnectionGrant, ControlRequest, ServiceHealth, WorkerIdentity},
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Peer {
+        broker: tokio::task::JoinHandle<Result<()>>,
+        worker: tokio::task::JoinHandle<Result<()>>,
+        broker_began: Arc<tokio::sync::Notify>,
+        broker_release: Arc<tokio::sync::Notify>,
+        query_began: Arc<tokio::sync::Notify>,
+        query_release: Arc<tokio::sync::Notify>,
+        queries: Arc<AtomicUsize>,
+        receipt: airk_mcp::response::StatusReceipt,
+        control_calls: Arc<AtomicUsize>,
+        handshakes: Arc<AtomicUsize>,
+        received_receipts: Arc<std::sync::Mutex<Vec<airk_mcp::response::StatusReceipt>>>,
+        received_options: Arc<std::sync::Mutex<Vec<serde_json::Map<String, serde_json::Value>>>>,
+    }
+    fn fence(generation: u64, revision: u64) -> SourceFence {
+        SourceFence {
+            namespace: Incarnation::from_bytes([101; 16]),
+            revision,
+            project: "ab".repeat(32).parse().unwrap(),
+            fencing_generation: generation,
+        }
+    }
+    // Real same-user control and worker transports; the peer implements only
+    // Health/Connect/grant acceptance and records actual submitted Query frames.
+    fn peer(
+        root: &Path,
+        old: SourceFence,
+        generation: u64,
+        pause_broker: bool,
+        pause_reply: bool,
+    ) -> Result<Peer> {
+        peer_with_options(root, old, generation, pause_broker, pause_reply, false)
+    }
+    fn peer_with_options(
+        root: &Path,
+        old: SourceFence,
+        generation: u64,
+        pause_broker: bool,
+        pause_reply: bool,
+        render_options: bool,
+    ) -> Result<Peer> {
+        local_ipc::prepare_root(root)?;
+        let mut control = local_ipc::Listener::bind(&local_ipc::endpoint(root, "control")?)?;
+        let identity = WorkerIdentity {
+            service: Incarnation::from_bytes([102; 16]),
+            worker: Incarnation::from_bytes([103; 16]),
+            project: old.project,
+            fencing_generation: generation,
+        };
+        let role = protocol::role(identity.worker);
+        let mut worker = local_ipc::Listener::bind(&local_ipc::endpoint(root, &role)?)?;
+        let grant = ConnectionGrant {
+            protocol: PROTOCOL_VERSION,
+            identity,
+            caller: local_ipc::caller_identity()?,
+            token: "cd".repeat(32).parse()?,
+            ttl_ms: 5000,
+            client: airk_core::usage::ClientFamily::Unknown,
+        };
+        let health = ServiceHealth {
+            storage_formats: None,
+            build: None,
+            build_error: None,
+            logs: airk_core::service_logs::LogTelemetry {
+                available: false,
+                dropped_records: 0,
+                write_failures: 0,
+            },
+            version: env!("CARGO_PKG_VERSION").into(),
+            protocol: PROTOCOL_VERSION,
+            instance: identity.service,
+            process_id: std::process::id(),
+            executable_sha256: "00".repeat(32),
+            runtime_sha256: None,
+            user: local_ipc::current_user()?,
+            uptime_ms: 0,
+            policy: airk_kernel::service_broker::Broker::new(identity.service, Default::default())?
+                .status(Instant::now()),
+        };
+        let broker_began = Arc::new(tokio::sync::Notify::new());
+        let broker_release = Arc::new(tokio::sync::Notify::new());
+        let began = broker_began.clone();
+        let release = broker_release.clone();
+        let control_calls = Arc::new(AtomicUsize::new(0));
+        let counted_control = control_calls.clone();
+        let broker = tokio::spawn(async move {
+            let mut stream = control.accept().await?;
+            let request: ControlRequest =
+                local_ipc::read_message(&mut stream, Duration::from_secs(5))
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("health request missing"))?;
+            counted_control.fetch_add(1, Ordering::SeqCst);
+            ensure!(
+                matches!(request.method, ControlMethod::Health),
+                "unexpected control request"
+            );
+            local_ipc::write_message(
+                &mut stream,
+                &ControlResponse::Health {
+                    observation: Box::new(health),
+                },
+                Duration::from_secs(5),
+            )
+            .await?;
+            drop(stream);
+            let mut stream = control.accept().await?;
+            let request: ControlRequest =
+                local_ipc::read_message(&mut stream, Duration::from_secs(5))
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("Connect missing"))?;
+            ensure!(
+                matches!(request.method,ControlMethod::Connect { project } if project==identity.project),
+                "unexpected brokerage"
+            );
+            counted_control.fetch_add(1, Ordering::SeqCst);
+            began.notify_one();
+            if pause_broker {
+                release.notified().await;
+            }
+            local_ipc::write_message(
+                &mut stream,
+                &ControlResponse::Connection { role, grant },
+                Duration::from_secs(5),
+            )
+            .await?;
+            Ok(())
+        });
+        let query_began = Arc::new(tokio::sync::Notify::new());
+        let query_release = Arc::new(tokio::sync::Notify::new());
+        let queries = Arc::new(AtomicUsize::new(0));
+        let counted = queries.clone();
+        let began = query_began.clone();
+        let release = query_release.clone();
+        let receipt: airk_mcp::response::StatusReceipt =
+            serde_json::from_value(serde_json::json!({"freshness":"ef".repeat(32)}))?;
+        let received_receipts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded_receipts = received_receipts.clone();
+        let received_options = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let recorded_options = received_options.clone();
+        let handshakes = Arc::new(AtomicUsize::new(0));
+        let counted_handshakes = handshakes.clone();
+        let worker = tokio::spawn(async move {
+            let mut stream = worker.accept().await?;
+            let observed: ConnectionGrant =
+                local_ipc::read_message(&mut stream, Duration::from_secs(5))
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("grant missing"))?;
+            ensure!(observed.identity == identity, "grant identity changed");
+            counted_handshakes.fetch_add(1, Ordering::SeqCst);
+            local_ipc::write_message(&mut stream, &Accepted { identity }, Duration::from_secs(5))
+                .await?;
+            while let Some(query) =
+                local_ipc::read_message::<_, Query>(&mut stream, Duration::from_secs(5)).await?
+            {
+                recorded_receipts.lock().unwrap().push(query.status_receipt);
+                recorded_options
+                    .lock()
+                    .unwrap()
+                    .push(query.arguments.clone());
+                counted.fetch_add(1, Ordering::SeqCst);
+                began.notify_one();
+                if pause_reply {
+                    release.notified().await;
+                }
+                // Distinct wire fixtures exercise the owner's rendering key;
+                // native response-policy tests establish the real generation rule.
+                let mut rendered = serde_json::json!({"index_state":"available","publication":{"token":"original-query"}});
+                if render_options
+                    && query
+                        .arguments
+                        .get("response_mode")
+                        .and_then(|value| value.as_str())
+                        == Some("full")
+                {
+                    rendered["generation"] = 17.into();
+                }
+                local_ipc::write_message(
+                    &mut stream,
+                    &protocol::QueryResult {
+                        result: airk_mcp::unified::success(rendered),
+                        status_receipt: receipt,
+                        rebind: false,
+                    },
+                    Duration::from_secs(5),
+                )
+                .await?;
+            }
+            Ok(())
+        });
+        Ok(Peer {
+            broker,
+            worker,
+            broker_began,
+            broker_release,
+            query_began,
+            query_release,
+            queries,
+            receipt,
+            received_receipts,
+            received_options,
+            control_calls,
+            handshakes,
+        })
+    }
+    fn body(reply: &serde_json::Value) -> Result<serde_json::Value> {
+        Ok(serde_json::from_str(
+            reply["content"][0]["text"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("reply body missing"))?,
+        )?)
+    }
+    #[tokio::test]
+    async fn superseded_during_actual_brokerage_never_submits_query_or_installs_receipt()
+    -> Result<()> {
+        for newer in [fence(1, 10), fence(2, 9)] {
+            let owner = tempfile::tempdir()?;
+            let root = owner.path().join("runtime");
+            let old = fence(1, 9);
+            let peer = peer(&root, old, 2, true, false)?;
+            let backend = source_tools(root.clone(), old.project);
+            backend.status.source_scope(old);
+            let mut request = backend.call_observed("airk_status".into(), Default::default(), old);
+            tokio::select! { _=peer.broker_began.notified()=>{}, result=&mut request=>anyhow::bail!("broker did not block: {result:?}") }
+            assert!(backend.accept_source_fence(newer));
+            backend.status.source_scope(newer);
+            peer.broker_release.notify_one();
+            let reply = request.await?;
+            {
+                let state = backend.state.lock().await;
+                assert!(state.connection.is_none());
+                assert!(backend.status.cache_empty());
+                assert_eq!(state.status_receipt, Default::default());
+            }
+            drop(backend);
+            peer.broker.await??;
+            peer.worker.await??;
+            assert_eq!(peer.queries.load(Ordering::SeqCst), 0);
+            assert_eq!(body(&reply)?["error"]["query_submitted"], false);
+            assert_eq!(body(&reply)?["error"]["retryable"], true);
+        }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn cold_newer_grant_submits_but_newer_observed_epoch_discards_retained_channel()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        let old = fence(0, 9);
+        let peer = peer(&root, old, 2, false, false)?;
+        let backend = source_tools(root.clone(), old.project);
+        backend.status.source_scope(old); // actual RootNative selector binds the shared owner before dispatch
+        let first = backend
+            .call_observed("airk_diagnostics".into(), Default::default(), old)
+            .await?;
+        assert_eq!(body(&first)?["index_state"], "available");
+        peer.broker.await??; // No broker remains; a known stale channel must not hide that fact.
+        {
+            let state = backend.state.lock().await;
+            let connection = state.connection.as_ref().unwrap();
+            assert_eq!(connection.identity.fencing_generation, 2);
+            assert!(connection.reusable_for_source(old, Instant::now()));
+            assert!(connection.reusable_for_source(fence(2, 10), Instant::now()));
+            assert!(!connection.reusable_for_source(fence(3, 11), Instant::now()));
+        }
+        backend.status.source_scope(fence(3, 11));
+        let second = backend
+            .call_observed("airk_diagnostics".into(), Default::default(), fence(3, 11))
+            .await?;
+        assert!(
+            body(&second)?["publication"].is_null(),
+            "fresh brokerage failure must not report retained old publication"
+        );
+        assert_eq!(
+            backend.state.lock().await.status_receipt,
+            peer.receipt,
+            "logical complete receipt survives channel invalidation"
+        );
+        drop(backend);
+        peer.worker.await??;
+        assert_eq!(
+            peer.queries.load(Ordering::SeqCst),
+            1,
+            "no query may use the known superseded channel"
+        );
+        Ok(())
+    }
+    #[tokio::test]
+    async fn submitted_old_reply_preserves_own_receipt_but_cannot_repopulate_source_status_cache()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        let old = fence(1, 9);
+        let peer = peer(&root, old, 1, false, true)?;
+        let backend = source_tools(root.clone(), old.project);
+        backend.status.source_scope(old); // actual RootNative selector binds the shared owner before dispatch
+        let mut request = backend.call_observed("airk_read_file".into(), Default::default(), old);
+        tokio::select! { _=peer.query_began.notified()=>{}, result=&mut request=>anyhow::bail!("query did not block: {result:?}") }
+        assert!(backend.accept_source_fence(fence(2, 10)));
+        backend.status.source_scope(fence(2, 10));
+        peer.query_release.notify_one();
+        let reply = request.await?;
+        assert_eq!(body(&reply)?["publication"]["token"], "original-query");
+        {
+            let state = backend.state.lock().await;
+            assert!(backend.status.cache_empty());
+            assert_eq!(state.status_receipt, peer.receipt);
+        }
+        drop(backend);
+        peer.broker.await??;
+        peer.worker.await??;
+        assert_eq!(
+            peer.queries.load(Ordering::SeqCst),
+            1,
+            "submitted reads must never replay"
+        );
+        Ok(())
+    }
+    #[tokio::test]
+    async fn submitted_obsolete_status_never_adopts_receipt_or_caches_or_replays() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        let old = fence(1, 9);
+        let peer = peer(&root, old, 1, false, true)?;
+        let backend = source_tools(root, old.project);
+        backend.status.source_scope(old);
+        let mut request = backend.call_observed("airk_status".into(), Default::default(), old);
+        tokio::select! {_=peer.query_began.notified()=>{},result=&mut request=>anyhow::bail!("status query did not block: {result:?}")}
+        let replacement = fence(2, 10);
+        assert!(backend.accept_source_fence(replacement));
+        backend.status.source_scope(replacement);
+        peer.query_release.notify_one();
+        let reply = request.await?;
+        assert_eq!(
+            body(&reply)?["error"]["code"],
+            "status_observation_superseded"
+        );
+        assert_eq!(body(&reply)?["error"]["query_submitted"], true);
+        assert_eq!(backend.status.receipt(), Default::default());
+        assert!(backend.status.cache_empty());
+        backend.status.shutdown().await?;
+        drop(backend);
+        peer.broker.await??;
+        peer.worker.await??;
+        assert_eq!(peer.queries.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pinned_evidence_first_receipt_is_sent_on_first_independent_status_connection()
+    -> Result<()> {
+        use airk_core::service::ProjectRegistration;
+        use airk_store::service::registry::ServiceRegistry;
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        local_ipc::prepare_root(&root)?;
+        let project = ProjectRegistration::new(
+            owner.path().join("source").to_string_lossy().into_owned(),
+            owner.path().join("data").to_string_lossy().into_owned(),
+            "fixture".into(),
+        )?;
+        let namespace = Incarnation::from_bytes([101; 16]);
+        let mut registry = ServiceRegistry::open(&root, namespace)?;
+        registry.register(&project)?;
+        drop(registry);
+        let mut observed = fence(0, 1);
+        observed.project = project.binding;
+        let first = peer(&root, observed, 1, false, false)?;
+        let backend = source_tools(root.clone(), project.binding);
+        let reply = airk_mcp::remote::RemoteTools::call(
+            &*backend,
+            "airk_read_file".into(),
+            Default::default(),
+        )
+        .await?;
+        assert_eq!(body(&reply)?["publication"]["token"], "original-query");
+        assert_eq!(backend.status.receipt(), first.receipt);
+        backend.state.lock().await.connection = None;
+        first.broker.await??;
+        first.worker.await??;
+        let second = peer(&root, observed, 1, false, false)?;
+        let reply = airk_mcp::remote::RemoteTools::call(
+            &*backend,
+            "airk_status".into(),
+            Default::default(),
+        )
+        .await?;
+        assert_eq!(body(&reply)?["index_state"], "available");
+        assert_eq!(&*second.received_receipts.lock().unwrap(), &[first.receipt]);
+        backend.status.shutdown().await?;
+        drop(backend);
+        second.broker.await??;
+        second.worker.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn namespace_replaced_during_actual_status_brokerage_never_submits_or_carries_receipt()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        let old = fence(1, 9);
+        let peer = peer(&root, old, 1, true, false)?;
+        let backend = source_tools(root, old.project);
+        backend.status.source_scope(old);
+        // A previously observed logical receipt belongs only to this old scope.
+        backend.status.observed_receipt(peer.receipt);
+        let mut request = backend.call_observed("airk_status".into(), Default::default(), old);
+        tokio::select! {_=peer.broker_began.notified()=>{},result=&mut request=>anyhow::bail!("status brokerage did not block: {result:?}")}
+        let mut replacement = old;
+        replacement.namespace = Incarnation::from_bytes([104; 16]);
+        backend.status.source_scope(replacement); // serialized selector accepted replacement namespace
+        peer.broker_release.notify_one();
+        let reply = request.await?;
+        assert_eq!(body(&reply)?["error"]["query_submitted"], false);
+        assert_eq!(backend.status.receipt(), Default::default());
+        assert!(backend.status.cache_empty());
+        backend.status.shutdown().await?;
+        drop(backend);
+        peer.broker.await??;
+        peer.worker.await??;
+        assert_eq!(peer.queries.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn consecutive_status_misses_reuse_healthy_private_channel_after_scalar_invalidation()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        let observed = fence(0, 9);
+        let peer = peer(&root, observed, 2, false, false)?;
+        let backend = source_tools(root, observed.project);
+        backend.status.source_scope(observed);
+        let first = backend
+            .call_observed("airk_status".into(), Default::default(), observed)
+            .await?;
+        assert_eq!(body(&first)?["index_state"], "available");
+        peer.broker.await??; // No broker remains: a second miss must use the valid private channel.
+        backend.status.invalidate();
+        let second = backend
+            .call_observed("airk_status".into(), Default::default(), observed)
+            .await?;
+        assert_eq!(body(&second)?["index_state"], "available");
+        assert_eq!(body(&second)?["cached"], false);
+        assert_eq!(
+            peer.control_calls.load(Ordering::SeqCst),
+            2,
+            "one Health and one Connect"
+        );
+        assert_eq!(
+            peer.handshakes.load(Ordering::SeqCst),
+            1,
+            "one grant/Accepted exchange"
+        );
+        assert_eq!(
+            peer.queries.load(Ordering::SeqCst),
+            2,
+            "one submitted Query per miss"
+        );
+        backend.status.shutdown().await?;
+        drop(backend);
+        peer.worker.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn private_status_channel_refuses_known_newer_worker_and_expired_authorization()
+    -> Result<()> {
+        for expired in [false, true] {
+            let owner = tempfile::tempdir()?;
+            let root = owner.path().join("runtime");
+            let old = fence(0, 9);
+            let peer = peer(&root, old, 2, false, false)?;
+            let backend = source_tools(root, old.project);
+            backend.status.source_scope(old);
+            backend
+                .call_observed("airk_status".into(), Default::default(), old)
+                .await?;
+            peer.broker.await??;
+            let next = if expired {
+                backend.status.expire_channel();
+                old
+            } else {
+                let next = fence(3, 10);
+                backend.status.source_scope(next);
+                next
+            };
+            backend.status.invalidate();
+            let reply = backend
+                .call_observed("airk_status".into(), Default::default(), next)
+                .await?;
+            assert_eq!(
+                body(&reply)?["index_error"]["code"],
+                "index_worker_unavailable"
+            );
+            assert!(backend.status.channel_empty().await);
+            assert_eq!(
+                peer.queries.load(Ordering::SeqCst),
+                1,
+                "known stale channel submitted a Query"
+            );
+            backend.status.shutdown().await?;
+            drop(backend);
+            peer.worker.await??;
+        }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn uncertain_private_status_exchange_is_discarded_without_replay_then_fresh_call_can_recover()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        let observed = fence(0, 9);
+        let first = peer(&root, observed, 2, false, false)?;
+        let backend = source_tools(root.clone(), observed.project);
+        backend.status.source_scope(observed);
+        backend
+            .call_observed("airk_status".into(), Default::default(), observed)
+            .await?;
+        first.broker.await??;
+        first.worker.abort();
+        assert!(first.worker.await.unwrap_err().is_cancelled());
+        backend.status.invalidate();
+        assert!(
+            backend
+                .call_observed("airk_status".into(), Default::default(), observed)
+                .await
+                .is_err()
+        );
+        assert!(backend.status.channel_empty().await);
+        assert_eq!(first.queries.load(Ordering::SeqCst), 1);
+        let second = peer(&root, observed, 2, false, false)?;
+        let reply = backend
+            .call_observed("airk_status".into(), Default::default(), observed)
+            .await?;
+        assert_eq!(body(&reply)?["index_state"], "available");
+        assert_eq!(second.queries.load(Ordering::SeqCst), 1);
+        backend.status.shutdown().await?;
+        drop(backend);
+        second.broker.await??;
+        second.worker.await??;
+        Ok(())
+    }
+    #[tokio::test]
+    async fn source_and_pinned_status_cache_keys_rendered_options_and_reuses_transport()
+    -> Result<()> {
+        use airk_core::service::ProjectRegistration;
+        use airk_store::service::registry::ServiceRegistry;
+        for pinned in [false, true] {
+            let owner = tempfile::tempdir()?;
+            let root = owner.path().join("runtime");
+            local_ipc::prepare_root(&root)?;
+            let mut observed = fence(0, 9);
+            if pinned {
+                let project = ProjectRegistration::new(
+                    "/option-source".into(),
+                    "/option-data".into(),
+                    "fixture".into(),
+                )?;
+                let mut registry = ServiceRegistry::open(&root, observed.namespace)?;
+                registry.register(&project)?;
+                observed.project = project.binding;
+            }
+            let peer = peer_with_options(&root, observed, 2, false, false, true)?;
+            let backend = source_tools(root, observed.project);
+            if !pinned {
+                backend.status.source_scope(observed);
+            }
+            let options = [
+                serde_json::json!({}),
+                serde_json::json!({"response_mode":"full"}),
+                serde_json::json!({}),
+                serde_json::json!({"include_status":true}),
+                serde_json::json!({"include_status":true}),
+            ];
+            let mut captured = None;
+            for (index, options) in options.iter().enumerate() {
+                let arguments = options.as_object().unwrap().clone();
+                let reply = if pinned {
+                    airk_mcp::remote::RemoteTools::call(&*backend, "airk_status".into(), arguments)
+                        .await?
+                } else {
+                    backend
+                        .call_observed("airk_status".into(), arguments, observed)
+                        .await?
+                };
+                let value = body(&reply)?;
+                assert_eq!(value["index_state"], "available");
+                assert_eq!(
+                    value.get("generation").is_some(),
+                    index == 1,
+                    "wrong rendered mode at request {index}"
+                );
+                assert_eq!(
+                    value["cached"],
+                    index == 4,
+                    "option changes must genuinely observe, same options must hit"
+                );
+                if index == 3 {
+                    captured = Some(value["observed_unix_ms"].clone());
+                }
+                if index == 4 {
+                    assert_eq!(Some(value["observed_unix_ms"].clone()), captured);
+                }
+            }
+            assert_eq!(
+                &*peer.received_options.lock().unwrap(),
+                &options[..4]
+                    .iter()
+                    .map(|value| value.as_object().unwrap().clone())
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(peer.control_calls.load(Ordering::SeqCst), 2);
+            assert_eq!(peer.handshakes.load(Ordering::SeqCst), 1);
+            assert_eq!(peer.queries.load(Ordering::SeqCst), 4);
+            backend.status.shutdown().await?;
+            drop(backend);
+            peer.broker.await??;
+            peer.worker.await??;
+        }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn newly_observed_namespace_never_submits_on_fresh_old_evidence_channel() -> Result<()> {
+        for pinned in [true, false] {
+            let owner = tempfile::tempdir()?;
+            let root = owner.path().join("runtime");
+            let old = fence(1, 9);
+            let peer = peer(&root, old, 1, false, false)?;
+            let backend = source_tools(root, old.project);
+            if pinned {
+                backend.status.seed(CachedStatus::new(CacheScope::Registered(old),&airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":"old"}}))).unwrap());
+            } else {
+                backend.status.source_scope(old);
+            }
+            if pinned {
+                airk_mcp::remote::RemoteTools::call(
+                    &*backend,
+                    "airk_read_file".into(),
+                    Default::default(),
+                )
+                .await?;
+            } else {
+                backend
+                    .call_observed("airk_read_file".into(), Default::default(), old)
+                    .await?;
+            }
+            peer.broker.await??;
+            assert_eq!(peer.queries.load(Ordering::SeqCst), 1);
+            assert!(
+                backend
+                    .state
+                    .lock()
+                    .await
+                    .connection
+                    .as_ref()
+                    .unwrap()
+                    .reusable(Instant::now())
+            );
+            let mut replacement = old;
+            replacement.namespace = Incarnation::from_bytes([104; 16]);
+            // The status observation has authenticated the replacement domain.
+            // Keep the old worker transport alive to prove known-fence refusal,
+            // not incidental EOF/idle expiry or a retry after an uncertain write.
+            if pinned {
+                backend.status.seed(CachedStatus::new(CacheScope::Registered(replacement),&airk_mcp::unified::success(serde_json::json!({"index_state":"available","publication":{"token":"replacement"}}))).unwrap());
+            } else {
+                backend.status.source_scope(replacement);
+            }
+            let _result = if pinned {
+                airk_mcp::remote::RemoteTools::call(
+                    &*backend,
+                    "airk_diagnostics".into(),
+                    Default::default(),
+                )
+                .await
+            } else {
+                backend
+                    .call_observed("airk_read_file".into(), Default::default(), old)
+                    .await
+            };
+            assert_eq!(
+                peer.queries.load(Ordering::SeqCst),
+                1,
+                "known replacement must prevent any additional old-channel Query"
+            );
+            backend.status.shutdown().await?;
+            drop(backend);
+            peer.worker.await??;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[path = "project_client_authority_tests.rs"]
+mod shared_authority_ipc_tests;

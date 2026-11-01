@@ -1357,3 +1357,525 @@ fn publication_cadence_amortizes_cost_with_bounded_delay() {
     }
     assert_eq!(publication_interval(Duration::MAX), Duration::from_secs(30));
 }
+
+#[test]
+fn scalar_summary_preserves_policy_semantic_and_discovery_corruption_precedence() -> Result<()> {
+    use airk_core::readiness::DefaultSearchPolicy;
+    let root = model_data_directory()?;
+    let data = model_data_directory()?;
+    write_static_test_model(&data.path().join("models/local"))?;
+    std::fs::write(root.path().join("fixture.txt"), "authenticate original\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.scheduled_index(false, false)?;
+    kernel.set_default_semantic_search_policy(DefaultSearchPolicy::LexicalWhilePending)?;
+    let read = kernel.current_reader()?;
+    let state = read.collection_state()?.expect("published state");
+    let mut resources = Vec::new();
+    for key in ["semantic-policy", "semantic-work", "scan-work"] {
+        let reference = read.resource_reference(key)?.expect("fixture resource");
+        let path = kernel
+            .store
+            .directory()
+            .join("current-resources")
+            .join(format!("{}.json", reference.digest));
+        let original = std::fs::read(&path)?;
+        resources.push((path, original));
+    }
+    assert_eq!(
+        resources
+            .iter()
+            .map(|(path, _)| path)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        3,
+        "precedence requires independently damaged resources"
+    );
+    // Give each independently authenticated resource a distinct failure. A byte
+    // mutation is rejected before read_work's typed-decode context is attached.
+    std::fs::write(&resources[0].0, b"")?;
+    let mut corrupt = resources[1].1.clone();
+    corrupt[0] ^= 1;
+    std::fs::write(&resources[1].0, corrupt)?;
+    std::fs::remove_file(&resources[2].0)?;
+    let policy_error = format!(
+        "{:#}",
+        super::super::enrichment::read_policy(&read, &kernel.store).unwrap_err()
+    );
+    let semantic_error = format!(
+        "{:#}",
+        super::super::enrichment::read_work(&read, &kernel.store).unwrap_err()
+    );
+    let discovery_error = format!(
+        "{:#}",
+        super::super::progress::readiness(&read, &kernel.store).unwrap_err()
+    );
+    assert_ne!(policy_error, semantic_error);
+    assert_ne!(policy_error, discovery_error);
+    assert_ne!(semantic_error, discovery_error);
+    // Acquiring the same published read and scalar state does not preempt the
+    // independently ordered resource errors.
+    let fresh = kernel.current_reader()?;
+    assert_eq!(fresh.token()?, read.token()?);
+    assert_eq!(
+        fresh
+            .collection_state()?
+            .expect("same scalar state")
+            .counts
+            .files,
+        state.counts.files
+    );
+    assert_eq!(
+        format!("{:#}", kernel.status_summary().unwrap_err()),
+        policy_error
+    );
+    std::fs::write(&resources[0].0, &resources[0].1)?;
+    assert_eq!(
+        format!("{:#}", kernel.status_summary().unwrap_err()),
+        semantic_error
+    );
+    // Standalone readiness retains policy -> state -> upgrade -> semantic work.
+    assert_eq!(
+        format!(
+            "{:#}",
+            super::super::enrichment::readiness(&read, &kernel.store).unwrap_err()
+        ),
+        semantic_error
+    );
+    std::fs::write(&resources[1].0, &resources[1].1)?;
+    assert_eq!(
+        format!("{:#}", kernel.status_summary().unwrap_err()),
+        discovery_error
+    );
+    assert_eq!(
+        format!(
+            "{:#}",
+            super::super::progress::readiness_with_state(&read, &kernel.store, &state).unwrap_err()
+        ),
+        discovery_error
+    );
+    std::fs::write(&resources[2].0, &resources[2].1)?;
+    assert!(kernel.status_summary().is_ok());
+    Ok(())
+}
+
+#[test]
+fn optional_projection_quota_refusal_still_publishes_original_values_and_scalars() -> Result<()> {
+    use airk_store::current::{
+        map::MapDomain,
+        metadata::{FileMetadataRef, ProjectionOmission},
+    };
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let text = (0..200)
+        .map(|i| format!("pub fn source_{i}() {{}}\n"))
+        .collect::<String>();
+    std::fs::write(root.path().join("original.rs"), &text)?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let read = kernel.current_reader()?;
+    let before = read.token()?;
+    let original_metadata: FileMetadataRef = serde_json::from_slice(
+        &read
+            .map_get(MapDomain::FileMetadata, b"original.rs")?
+            .context("original metadata missing")?,
+    )?;
+    let metadata_bytes = original_metadata
+        .encoding
+        .as_ref()
+        .map_or(original_metadata.bytes as u64, |encoding| {
+            encoding.stored_bytes
+        });
+    let mut input = read
+        .captured_input("original.rs")?
+        .context("captured original missing")?;
+    input.artifact.path = "copy.rs".into();
+    drop(read);
+    let scope = kernel.current_scope()?.context("scope missing")?;
+    let quota = kernel.collection_quota()?;
+    let writer = kernel.store.lock()?;
+    let mandatory = kernel.publication_reservation()?;
+    let capacity = kernel.store.current_database_capacity(&scope)?;
+    let allowance = kernel
+        .store
+        .current_write(&writer, &quota, &scope, capacity)?
+        .required_publication_allowance()?;
+    let old_policy = quota.policy()?;
+    let status = quota.status()?;
+    let mut tight = old_policy.clone();
+    // Preserve the exact mandatory SQL allowance plus the new immutable
+    // metadata and a bounded ledger margin. Optional pages exceed that margin.
+    tight.root_bytes =
+        status.used_bytes + status.reserved_bytes + allowance + metadata_bytes + 16384;
+    quota.configure(tight)?;
+    let result = CurrentUpdater {
+        store: &kernel.store,
+        quota: &quota,
+        scope: &scope,
+        writer: &writer,
+        reservation: &mandatory,
+        configuration: None,
+    }
+    .apply(&[ArtifactChange::Upsert(Box::new(input))], None);
+    quota.configure(old_policy)?;
+    result?;
+    drop(writer);
+    drop(mandatory);
+    let read = kernel.current_reader()?;
+    assert_ne!(read.token()?, before);
+    let copy = read
+        .artifact("copy.rs")?
+        .context("mandatory source was not published")?;
+    assert_eq!(
+        kernel.store.load_retrieval_artifact(&copy)?.payload.text,
+        text
+    );
+    assert!(read.file_scalars("copy.rs")?.is_some());
+    assert!(
+        read.native_fact_projection(&kernel.store, "copy.rs")?
+            .is_none()
+    );
+    let reference: FileMetadataRef = serde_json::from_slice(
+        &read
+            .map_get(MapDomain::FileMetadata, b"copy.rs")?
+            .context("metadata reference missing")?,
+    )?;
+    assert!(matches!(
+        reference.native_facts_omission,
+        Some(ProjectionOmission::Budget)
+    ));
+    assert!(
+        read.native_fact_projection(&kernel.store, "original.rs")?
+            .is_some()
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("original.rs"))?,
+        text
+    );
+    assert!(
+        !root.path().join("copy.rs").exists(),
+        "publication wrote a source file"
+    );
+    Ok(())
+}
+
+#[test]
+fn canonical_native_projection_preserves_partial_syntax_profiles_modes_and_cursors() -> Result<()> {
+    use airk_core::{
+        FactQuery,
+        discovery::{CompactFact, DiscoveryOptions, MinimalFacts},
+        extraction::IndexDetail,
+    };
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(
+        root.path().join("partial.rs"),
+        "pub fn first() {}\npub fn second() {}\npub fn broken(",
+    )?;
+    std::fs::write(root.path().join("complete.rs"), "pub fn stable() {}\n")?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    let mut prior_profile = None;
+    let mut old_cursor = None;
+    for detail in [IndexDetail::Detailed, IndexDetail::AgentLean] {
+        kernel.configure_index_detail(detail)?;
+        kernel.index()?;
+        let read = kernel.current_reader()?;
+        let projected = read
+            .native_fact_projection(&kernel.store, "partial.rs")?
+            .context("kernel writer omitted projection")?;
+        assert_eq!(projected.artifact().parse_status, "partial-syntax");
+        if let Some(prior) = prior_profile {
+            assert_ne!(
+                projected.header().profile,
+                prior,
+                "profile change reused old certification"
+            );
+        }
+        prior_profile = Some(projected.header().profile);
+        let query = FactQuery {
+            path_prefix: "partial.rs".into(),
+            name: None,
+            kind: None,
+            language: None,
+            exact_name: false,
+            limit: 100,
+            max_bytes: 65536,
+            path_exact: true,
+            document_only: false,
+        };
+        let mut hits = Vec::new();
+        let mut minimal = MinimalFacts::default();
+        for page in 0..projected.header().pages.len() {
+            for row in projected.page(page)?.rows {
+                let hit = projected.hit(&row);
+                let candidate = minimal
+                    .candidate(&hit, projected.artifact(), true)?
+                    .context("minimal candidate omitted")?;
+                minimal.admit(candidate)?;
+                hits.push(hit);
+            }
+        }
+        assert!(
+            hits.len() >= 2,
+            "partial syntax discarded valid definitions"
+        );
+        if detail == IndexDetail::Detailed {
+            let complete = read
+                .native_fact_projection(&kernel.store, "complete.rs")?
+                .context("complete syntax projection absent")?;
+            assert!(
+                complete
+                    .page(0)?
+                    .rows
+                    .iter()
+                    .any(|row| row.continuity_key.is_some()),
+                "native continuity identity was discarded"
+            );
+        }
+        let rich =
+            read.native_facts_page(&kernel.store, &query, false, &DiscoveryOptions::default())?;
+        assert_eq!(
+            serde_json::to_value(&rich.facts)?,
+            serde_json::to_value(&hits)?
+        );
+        let compact = read.native_facts_page(
+            &kernel.store,
+            &query,
+            false,
+            &DiscoveryOptions {
+                compact: true,
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(
+            serde_json::to_value(&compact.outline)?,
+            serde_json::to_value(hits.iter().map(CompactFact::from).collect::<Vec<_>>())?
+        );
+        let small = read.native_facts_page(
+            &kernel.store,
+            &query,
+            false,
+            &DiscoveryOptions {
+                minimal: true,
+                ..Default::default()
+            },
+        )?;
+        assert_eq!(
+            serde_json::to_value(&small.minimal)?,
+            serde_json::to_value(Some(minimal))?
+        );
+        if let Some(cursor) = old_cursor.take() {
+            assert!(
+                read.native_facts_page(
+                    &kernel.store,
+                    &query,
+                    false,
+                    &DiscoveryOptions {
+                        cursor: Some(cursor),
+                        ..Default::default()
+                    }
+                )
+                .is_err()
+            );
+        }
+        let mut options = DiscoveryOptions::default();
+        let mut one = query.clone();
+        one.limit = 1;
+        let mut continued = Vec::new();
+        for _ in 0..=hits.len() {
+            let page = read.native_facts_page(&kernel.store, &one, false, &options)?;
+            continued.extend(page.facts);
+            if old_cursor.is_none() {
+                old_cursor = page.page.cursor.clone();
+            }
+            options.cursor = page.page.cursor;
+            if options.cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(
+            serde_json::to_value(&continued)?,
+            serde_json::to_value(&hits)?
+        );
+        let mut tiny = query.clone();
+        tiny.max_bytes = 1;
+        assert_eq!(
+            read.native_facts_page(&kernel.store, &tiny, false, &Default::default())?
+                .page
+                .required_record_bytes,
+            Some(serde_json::to_vec(&hits[0])?.len())
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn native_edge_pages_preserve_actual_strict_relationship_order_and_citations() -> Result<()> {
+    use airk_store::current::query_projection::ProjectionRow;
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let source = "pub fn called() {}\npub fn caller() { called(); called(); }\n";
+    std::fs::write(root.path().join("calls.rs"), source)?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let read = kernel.current_reader()?;
+    let projection = read
+        .native_edge_projection(&kernel.store, "calls.rs")?
+        .context("native edge pages missing")?;
+    let mut edges = Vec::new();
+    for page in 0..projection.header().pages {
+        for row in projection.page(page)? {
+            let ProjectionRow::Edge { ordinal, hit } = row else {
+                anyhow::bail!("unexpected native fact in edge page");
+            };
+            assert_eq!(ordinal, edges.len());
+            edges.push(hit);
+        }
+    }
+    assert!(!edges.is_empty());
+    for direction in ["incoming", "outgoing"] {
+        let symbols = edges
+            .iter()
+            .map(|edge| {
+                if direction == "incoming" {
+                    edge.target.clone()
+                } else {
+                    edge.source.clone()
+                }
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        for symbol in symbols {
+            let mut seen = std::collections::BTreeSet::new();
+            let expected = edges
+                .iter()
+                .filter(|edge| {
+                    (if direction == "incoming" {
+                        &edge.target
+                    } else {
+                        &edge.source
+                    }) == &symbol
+                })
+                .map(serde_json::to_value)
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter(|edge| seen.insert(edge.to_string()))
+                .collect::<Vec<_>>();
+            let strict = read.native_relationships(
+                &kernel.store,
+                &airk_core::RelationshipQuery {
+                    symbol,
+                    direction: direction.into(),
+                    kind: None,
+                    path_prefix: "calls.rs".into(),
+                    hops: 1,
+                    limit: 100,
+                    max_bytes: 65536,
+                },
+            )?;
+            assert!(!strict.truncated);
+            assert_eq!(
+                serde_json::to_value(strict.relationships)?,
+                serde_json::to_value(expected)?
+            );
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("calls.rs"))?,
+        source
+    );
+    Ok(())
+}
+
+#[test]
+fn optional_import_quota_refusal_preserves_authoritative_publication() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let source = "pub fn source() {}\n";
+    std::fs::write(root.path().join("source.rs"), source)?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\n",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let manifest = kernel.prepare_analysis("quota-fixture", "1", &["Cargo.toml".into()])?;
+    let read = kernel.current_reader()?;
+    let mut snapshot = kernel.current_scan_projection(&read)?;
+    let mut fact = read
+        .native_facts_page(
+            &kernel.store,
+            &airk_core::FactQuery {
+                path_prefix: "source.rs".into(),
+                name: None,
+                kind: None,
+                language: None,
+                exact_name: false,
+                limit: 100,
+                max_bytes: 65536,
+                path_exact: true,
+                document_only: false,
+            },
+            true,
+            &Default::default(),
+        )?
+        .facts
+        .into_iter()
+        .next()
+        .context("native fixture fact missing")?;
+    if let Some(code) = &mut fact.code {
+        code.basis = airk_core::EvidenceBasis::Imported;
+    }
+    snapshot.analysis = Some(manifest.clone());
+    snapshot.imported_facts = (0..200)
+        .map(|ordinal| airk_core::FactHit {
+            name: format!("imported_{ordinal}"),
+            ..fact.clone()
+        })
+        .collect();
+    let analysis_bytes = airk_store::current::analysis::AnalysisEvidence {
+        manifest,
+        facts: snapshot.imported_facts.clone(),
+        relationships: vec![],
+    }
+    .canonical_bytes()?
+    .len() as u64;
+    drop(read);
+    let scope = kernel.current_scope()?.context("scope missing")?;
+    let quota = kernel.collection_quota()?;
+    let writer = kernel.store.lock()?;
+    let mandatory = kernel.publication_reservation()?;
+    let capacity = kernel.store.current_database_capacity(&scope)?;
+    let allowance = kernel
+        .store
+        .current_write(&writer, &quota, &scope, capacity)?
+        .required_publication_allowance()?;
+    let policy = quota.policy()?;
+    let status = quota.status()?;
+    let mut tight = policy.clone();
+    tight.root_bytes =
+        status.used_bytes + status.reserved_bytes + allowance + analysis_bytes + 16384;
+    quota.configure(tight)?;
+    let published = kernel.publish_current_projection(&writer, &snapshot, &mandatory);
+    quota.configure(policy)?;
+    published?;
+    drop(writer);
+    drop(mandatory);
+    let read = kernel.current_reader()?;
+    assert!(read.imported_projection(&kernel.store)?.is_none());
+    assert_eq!(
+        serde_json::to_value(
+            read.analysis(&kernel.store)?
+                .context("authoritative import missing")?
+                .facts
+        )?,
+        serde_json::to_value(snapshot.imported_facts)?
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("source.rs"))?,
+        source
+    );
+    Ok(())
+}

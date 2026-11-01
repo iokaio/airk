@@ -107,6 +107,11 @@ pub struct RuntimePair {
 }
 
 pub fn digest_file(path: &Path) -> Result<String> {
+    digest_file_checked(path, &|| Ok(()))
+}
+
+pub(crate) fn digest_file_checked(path: &Path, check: &dyn Fn() -> Result<()>) -> Result<String> {
+    check()?;
     let metadata = fs::symlink_metadata(path)?;
     ensure!(
         metadata.is_file()
@@ -127,6 +132,7 @@ pub fn digest_file(path: &Path) -> Result<String> {
     let mut buffer = [0; 64 * 1024];
     let mut remaining = MAX_EXECUTABLE_BYTES;
     loop {
+        check()?;
         let count = file.read(&mut buffer)?;
         if count == 0 {
             break;
@@ -227,6 +233,21 @@ fn payload_root_for_layout(main: &Path, app_layout: bool) -> Result<&Path> {
 
 /// A stable launcher can validate a later selected runtime without adopting its version.
 pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<PathBuf> {
+    let (main, helper, pair) = read_installed_pair(main, expected_version)?;
+    ensure!(
+        digest_file(&main)? == pair.airk_sha256 && digest_file(&helper)? == pair.embed_sha256,
+        "runtime executable pair digest mismatch"
+    );
+    Ok(helper)
+}
+
+/// Structural metadata read only: this does NOT verify executable bytes or
+/// authorize execution. The installer compares these fields only after its full
+/// approved inventory hash pass; standalone callers retain verify_installed_pair.
+pub(crate) fn read_installed_pair(
+    main: &Path,
+    expected_version: &str,
+) -> Result<(PathBuf, PathBuf, RuntimePair)> {
     let image = crate::process_roles::main_image(main)?;
     let main = image.as_path();
     let parent = main.parent().context("runtime directory missing")?;
@@ -270,11 +291,7 @@ pub fn verify_installed_pair(main: &Path, expected_version: &str) -> Result<Path
     } else {
         "airk-embed"
     });
-    ensure!(
-        digest_file(main)? == pair.airk_sha256 && digest_file(&helper)? == pair.embed_sha256,
-        "runtime executable pair digest mismatch"
-    );
-    Ok(helper)
+    Ok((main.to_path_buf(), helper, pair))
 }
 
 #[cfg(test)]

@@ -175,16 +175,10 @@ impl Kernel {
             .resolved_path
             .clone()
             .context("resolved path missing")?;
-        let artifact = self.current_artifact(&pinned, &path, true)?;
-        let mut metadata = self.empty_snapshot();
-        metadata.generation = pinned.head().sequence;
-        let payload = Self::read_snapshot(
-            Some(envelope(&pinned)?),
-            &metadata,
-            &artifact,
+        let payload = self.current_read_lines(
+            &pinned,
             &path,
-            start,
-            end,
+            super::runtime::LineSelection::Range { start, end },
             max_bytes,
         )?;
         self.current_conditional(
@@ -222,23 +216,15 @@ impl Kernel {
             .resolved_path
             .clone()
             .context("resolved path missing")?;
-        let artifact = self.current_artifact(&pinned, &path, true)?;
-        let lines = artifact
-            .chunks
-            .iter()
-            .map(|c| c.end_line)
-            .max()
-            .unwrap_or(0);
-        ensure!(line <= lines, "line is outside indexed source");
-        let mut metadata = self.empty_snapshot();
-        metadata.generation = pinned.head().sequence;
-        let payload = Self::read_snapshot(
-            Some(envelope(&pinned)?),
-            &metadata,
-            &artifact,
+        let payload = self.current_read_lines(
+            &pinned,
             &path,
-            line.saturating_sub(before).max(1),
-            line.saturating_add(after).min(lines),
+            super::runtime::LineSelection::Context {
+                line,
+                before,
+                after,
+                maximum_end: true,
+            },
             max_bytes,
         )?;
         self.current_conditional(
