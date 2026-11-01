@@ -178,6 +178,8 @@ Storage uses independent collection ownership, admitted publication/replacement 
 
 ## Development and records
 
+Developer references: [every MCP tool: purpose, contracts and examples](docs/mcp-developer-guide.md) and [every CLI command: behavior and implementation](docs/cli-developer-guide.md). The guides explain the 28-tool unified MCP catalog versus the 18-tool native CLI catalog and link to each other for navigation.
+
 Read [CONTRIBUTING.md](CONTRIBUTING.md), [architecture and dependency boundaries](docs/architecture.md) and the [documentation index](docs/README.md). The runtime builder stages a host-native executable pair without creating a VSIX. Formatting, Clippy, workspace tests, repository checks and exact artifact verification remain release gates. Installed-platform evidence is recorded separately from development fixtures.
 
 [Semantic index optimization](docs/semantic-index-optimization.md) explains the

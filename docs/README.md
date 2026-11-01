@@ -1,5 +1,7 @@
 # AIRK documentation
 
+Developer references: [MCP tools](mcp-developer-guide.md) covers all 28 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. Both explain why `airk tools list` has 18 native tools while unified MCP has 28, and map the remaining capabilities to separate terminal commands.
+
 [Release records](releases/README.md) contains versioned notes, dated release evidence and the historical checklist. The [release workflow](release-workflow.md) remains current procedural guidance.
 
 **1.8.2 — installed responsiveness:** [Performance improvements and causal analysis](performance-improvements-1.8.2.md) leads with the owner-approved installed experience and five successful first-status observations: no status timeout, 2.29-second median initialization through confirmed status, with the 7.31-second first-session outlier retained. The historical 1.7.6 example took about 5.5 seconds including a timeout; these are unmatched observations, not a controlled speedup percentage. The separate native corpus campaign and its regressions remain explicit.

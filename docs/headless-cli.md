@@ -4,6 +4,8 @@ Everything AIRK indexes and answers is available without VS Code. This page maps
 
 To experiment without any installation, build with `build.ps1` or `build.sh` at the repository root. Each build writes `builds/<UTC timestamp>-<platform>/` with the runtime and a README that walks through starting the service and registering a project.
 
+For command purpose, implementation ownership, effects and catalog differences, use the [CLI developer guide](cli-developer-guide.md). The companion [MCP developer guide](mcp-developer-guide.md) explains the agent tool interface and links back to CLI commands.
+
 ## Feature map
 
 | Extension feature | Headless equivalent |

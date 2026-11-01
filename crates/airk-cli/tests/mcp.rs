@@ -583,7 +583,24 @@ fn concurrent_mcp_agents_share_one_index_and_refresh_after_publication() -> anyh
         "project-a",
     )?;
     let store = collection.selected_store()?;
-    let writer_lock = store.lock()?;
+    // Read readiness does not promise that native maintenance has released its
+    // short writer turn. Wait only for typed OS contention, then retain the
+    // actual lock throughout both concurrent reads on every host platform.
+    let writer_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let writer_lock = loop {
+        match store.lock() {
+            Ok(lock) => break lock,
+            Err(error)
+                if matches!(
+                    error.downcast_ref::<std::fs::TryLockError>(),
+                    Some(std::fs::TryLockError::WouldBlock)
+                ) && std::time::Instant::now() < writer_deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => return Err(error.context("acquiring concurrent-reader fixture lock")),
+        }
+    };
     let barrier = std::sync::Barrier::new(2);
     std::thread::scope(|scope| -> anyhow::Result<()> {
         let readers: Vec<_> = agents

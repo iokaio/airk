@@ -28,7 +28,7 @@ impl ToolSession for RemoteSession {
 #[derive(Subcommand)]
 #[command(disable_help_subcommand = true)]
 pub enum ToolsCommand {
-    /// List the same tools advertised to MCP clients; --json includes their schemas.
+    /// List the 18 native prefixed tools; --json includes schemas. Unified MCP adds projects and nine Explorer Assistance tools.
     List {
         #[arg(long)]
         json: bool,

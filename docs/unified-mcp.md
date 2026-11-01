@@ -1,6 +1,8 @@
 # One AIRK MCP connection
 
-The Workbench development branch exposes one server named `airk`, with 28 unique, unprefixed tools (the preceding 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer.
+For detailed per-tool developer guidance, see the [MCP developer guide](mcp-developer-guide.md) and its companion [CLI developer guide](cli-developer-guide.md). Native terminal tools cover 18 operations; projects and nine Assistance operations have separate CLI commands and different registry/proposal scope where documented.
+
+AIRK 1.8.2 exposes one server named `airk`, with 28 unique, unprefixed tools (the preceding 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer.
 
 Tool names are unique within this server; the client may add its own server namespace. Repeating `airk_` on every tool adds no distinction between reading evidence and proposing a form. Verbs and descriptions carry that distinction. Previously saved `airk_*` and `airk_explorer_*` calls remain callable compatibility aliases; they are omitted from discovery so agents see one catalog. Native `airk tools` exposes eighteen read-only aliases including `airk_parse`; Explorer retains its seventeen direct evidence operations.
 

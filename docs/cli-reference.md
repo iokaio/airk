@@ -3997,7 +3997,7 @@ List, describe or call the read-only MCP tools from the terminal.
 Usage: airk tools [OPTIONS] <COMMAND>
 
 Commands:
-  list   List the same tools advertised to MCP clients; --json includes their schemas
+  list   List the 18 native prefixed tools; --json includes schemas. Unified MCP adds projects and nine Explorer Assistance tools
   help   Show a tool's description, input schema, defaults and argument template
   call   Invoke an MCP tool and print its unchanged result envelope as JSON
   shell  Open a collection-bound interactive console with help and examples
@@ -4067,7 +4067,7 @@ Use 'airk tools help airk_search' for the JSON format. Tool errors exit nonzero.
 ## airk tools list
 
 ```text
-List the same tools advertised to MCP clients; --json includes their schemas
+List the 18 native prefixed tools; --json includes schemas. Unified MCP adds projects and nine Explorer Assistance tools
 
 Usage: airk tools list [OPTIONS]
 

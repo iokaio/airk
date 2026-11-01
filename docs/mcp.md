@@ -1,6 +1,8 @@
 # MCP tools
 
-The unpublished 1.8.0 candidate reduces repeated response preparation without changing tool schemas, returned evidence or byte-budget semantics: status shares scalar metadata within one authorized read, inventory counts exact encoded path sizes, help avoids temporary content copies during complete-reply sizing, and immutable built-in catalogs are reused. Dynamic project authority remains per request. See the [implementation and validation ledger](optimizations.md).
+For the purpose, inputs, examples and implementation/tests of every tool, read the [MCP developer guide](mcp-developer-guide.md). Its companion [CLI developer guide](cli-developer-guide.md) maps terminal commands, including the distinction between 18 native prefixed tools and 28 unified MCP tools. This page retains the native transport and evidence contracts.
+
+AIRK 1.8.2 carries forward the 1.8.0 work that reduces repeated response preparation without changing tool schemas, returned evidence or byte-budget semantics: status shares scalar metadata within one authorized read, inventory counts exact encoded path sizes, help avoids temporary content copies during complete-reply sizing, and immutable built-in catalogs are reused. Dynamic project authority remains per request. See the [implementation and validation ledger](optimizations.md).
 
 `parse` prepares or executes finite read-only evidence plans with schema `airk.parse.request/1`, one of text/recipe/plan and mode prepare/execute. It shares the Workbench native runner, exact publication checks, scope and aggregate budgets. See [examples, limits and qualification](workbench/implementation.md). It works without Explorer and never writes sources, indexes or invokes an agent.
 
