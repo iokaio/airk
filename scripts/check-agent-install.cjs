@@ -69,7 +69,7 @@ async function main(){
     await fs.writeFile(path.join(driver,'driver.js'),`const vscode=require('vscode'),fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict');
 exports.activate=()=>{let reloading=false;void (async()=>{
  const extension=vscode.extensions.getExtension('iokaio.airk');assert.ok(extension);
- const extensionRelative=path.relative(${JSON.stringify(extensions)},extension.extensionPath);assert.ok(extensionRelative&&!extensionRelative.startsWith('..')&&!path.isAbsolute(extensionRelative));
+ const fixtureExtensions=${JSON.stringify(extensions)},extensionRelative=path.relative(process.platform==='win32'?path.toNamespacedPath(fixtureExtensions):fixtureExtensions,process.platform==='win32'?path.toNamespacedPath(extension.extensionPath):extension.extensionPath);assert.ok(extensionRelative&&!extensionRelative.startsWith('..')&&!path.isAbsolute(extensionRelative));
  const api=await extension.activate();await fs.writeFile(${JSON.stringify(path.join(run,'activation-ready.json'))},'{}');
  let definitions=await api.getServerDefinitions();await fs.writeFile(${JSON.stringify(path.join(run,'definitions-ready.json'))},'{}');
  const files=${JSON.stringify(files)},name=${JSON.stringify(name)};
@@ -245,7 +245,8 @@ exports.activate=()=>{let reloading=false;void (async()=>{
             const saved=await fs.readFile(path.join(run,'observed-binding.json'),'utf8').catch(()=>undefined);
             if(saved){
                 const control=JSON.parse(saved).controlDir;assert.ok(typeof control==='string'&&path.isAbsolute(control),'No observed fixture control directory');
-                const relative=path.relative(install,control);assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative),'Control directory must belong to the fixture install');
+                const relative=path.relative(process.platform==='win32'?path.toNamespacedPath(install):install,process.platform==='win32'?path.toNamespacedPath(control):control);
+                assert.ok(relative&&!relative.startsWith('..')&&!path.isAbsolute(relative),'Control directory must belong to the fixture install');
                 const stopped=await execute(launcher,['service','shutdown','--runtime-dir',control],{windowsHide:true,env,timeout:30000});
                 await fs.writeFile(path.join(run,'shutdown.json'),JSON.stringify({requested:true,stdout:stopped.stdout,stderr:stopped.stderr}));
             }else await fs.writeFile(path.join(run,'shutdown.json'),JSON.stringify({requested:false,reason:'No native binding was observed; shutdown was not attempted.'}));

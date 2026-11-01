@@ -151,7 +151,7 @@ Run `node scripts/check-agent-install.cjs <Code.exe> <new-vsix> <previous-vsix>`
 
 In a fresh profile it first drives the actual **Set up AIRK on this computer?** review before waiting for native/MCP readiness: readiness intentionally waits for that decision. It captures the real dialog text and screenshot, checks the displayed version/source/storage and persistent effects, and verifies that no native installation, source index or agent-file migration exists before clicking **Set up**. The retained `setup-review.json`, `setup-review.txt` and `setup-review.png` record that boundary. Do not preseed an accepted decision or bypass the review merely to make the readiness wait pass. A previously accepted installation may instead report previous-version readiness, which is recorded separately. Installing the VSIX alone does not qualify this first-use boundary.
 
-It shuts down its private service and retains results under ignored `artifacts/editor-qualification/`. It does not change the normal editor profile or qualify replacement of already connected external agent processes.
+It shuts down its private service and retains results under ignored `artifacts/editor-qualification/`. On Windows, compare the observed control directory and owned installation root using the same namespaced-path normalization before the containment check; ordinary `D:\...` and `\\?\D:\...` spellings must not falsely reject the same fixture. Keep the ownership check and shutdown-result assertion: a product assertion receipt alone does not prove successful harness cleanup. It does not change the normal editor profile or qualify replacement of already connected external agent processes.
 
 ### Native previous-version upgrade fixture
 
