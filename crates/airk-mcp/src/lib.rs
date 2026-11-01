@@ -782,7 +782,12 @@ impl AirkServer {
     )]
     async fn status(&self, Parameters(args): Parameters<StatusArgs>) -> CallToolResult {
         self.execute_response_policy(UsageOperation::Status,args.response,false,move|kernel|{
-            kernel.status_summary().or_else(|_error|Ok(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unavailable","publication":null,"files":null,"chunks":null,"freshness":kernel.changes_freshness(),"index_error":{"code":"index_status_unavailable","message":"Published index metadata could not be read. Use diagnostics for details."}})))
+            kernel.status_summary().or_else(|error| {
+                if airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() {
+                    return Err(error);
+                }
+                Ok(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unavailable","publication":null,"files":null,"chunks":null,"freshness":kernel.changes_freshness(),"index_error":{"code":"index_status_unavailable","message":"Published index metadata could not be read. Use diagnostics for details."}}))
+            })
         }).await
     }
 
@@ -806,6 +811,9 @@ impl AirkServer {
                     let mut status = serde_json::to_value(status)?;
                     status["index_state"] = "available".into();
                     status
+                }
+                Err(error) if airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() => {
+                    return Err(error);
                 }
                 Err(error) if runtime.is_some() || work.is_some() => {
                     unavailable_status(&kernel, runtime.clone(), work.clone(), &error.to_string())
