@@ -7,7 +7,7 @@ import {NativeServiceFixture} from './nativeServiceFixture';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import {McpStdioSession} from '../mcpStdioSession';
-import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry,QuickStatusObservation,QuickStatusObserver} from './nativeReadRetry';
+import {assertQuickStatusTimeout,observeQuickStatus,requestWithReadRetry,readRetryReceipt,ReadRetryReceipt,QuickStatusObservation,QuickStatusObserver} from './nativeReadRetry';
 
 async function quickStatus(session:McpStdioSession,observer?:QuickStatusObserver):Promise<any>{
     return observeQuickStatus(async deadline=>{
@@ -146,7 +146,7 @@ for(const binding of ['pinned','source'] as const){
 test('mixed four-call batches honor status snapshots and typed read admission',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
     const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
     const sessions:McpStdioSession[]=[];
-    const refusals:Array<{binding:string;round:number;tool:string;code:unknown;query_submitted:false}>=[];
+    const refusals:Array<{binding:string;round:number;tool:string}&ReadRetryReceipt>=[];
     try{
         const spec=await fixture.register('mixed-status');
         await fs.writeFile(path.join(spec.root,'session.rs'),'pub struct Session;\nimpl Session { pub fn new() -> Self { Session } }\nfn connect() -> Session { Session::new() }\n');
@@ -178,9 +178,7 @@ test('mixed four-call batches honor status snapshots and typed read admission',{
                 for(const workload of workloads){
                     const replies=await Promise.allSettled(workload.map(([name,arguments_])=>requestWithReadRetry(session,name,arguments_,30000,reply=>{
                         if(reply.isError!==true)return;
-                        const error=record(JSON.parse(reply.content[0].text).error);
-                        assert.equal(error.query_submitted,false,`${binding} round ${round} ${name}: ${JSON.stringify(reply)}`);
-                        refusals.push({binding,round,tool:name,code:error.code,query_submitted:false});
+                        refusals.push({binding,round,tool:name,...readRetryReceipt(reply)});
                     })));
                     for(const [index,reply]of replies.entries()){
                         assert.equal(reply.status,'fulfilled',`${binding} round ${round} ${workload[index][0]}: ${reply.status==='rejected'?String(reply.reason):''}`);

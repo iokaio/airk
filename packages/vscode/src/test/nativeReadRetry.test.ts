@@ -1,9 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 import {strict as assert} from 'node:assert';
 import {test} from 'node:test';
-import {assertQuickStatusTimeout,boundedReply,observeQuickStatus,readRetryDelay,requestWithReadRetry,QuickStatusObservation} from './nativeReadRetry';
+import {assertQuickStatusTimeout,boundedReply,observeQuickStatus,readRetryDelay,readRetryReceipt,requestWithReadRetry,QuickStatusObservation} from './nativeReadRetry';
 import {McpStdioSession} from '../mcpStdioSession';
 import {publishedStatusPending} from './nativeServiceFixture';
+
+test('mixed-batch receipt observation accepts both explicit replay contracts and rejects submitted or unknown errors',()=>{
+    const wrap=(value:unknown)=>({isError:true,content:[{type:'text',text:JSON.stringify(value)}]});
+    for(const code of ['publication_busy','selection_busy']){
+        assert.deepEqual(readRetryReceipt(wrap({status:'retry',code,retryable:true,action:'repeat_same_request',retry_after_ms:1})),{code,action:'repeat_same_request'});
+    }
+    const error={code:'direct_query_setup',reason:'busy',query_submitted:false,retryable:true,retry_after_ms:1,fresh_brokerage_required:true};
+    assert.deepEqual(readRetryReceipt(wrap({error})),{code:'direct_query_setup',query_submitted:false});
+    assert.throws(()=>readRetryReceipt(wrap({error:{...error,query_submitted:true}})),/Unrecognized native read refusal: .*query_submitted/);
+    assert.throws(()=>readRetryReceipt(wrap({status:'retry',code:'unknown_busy',retryable:true,action:'repeat_same_request',retry_after_ms:1})),/Unrecognized native read refusal: .*unknown_busy/);
+});
 
 test('quick-status measurements separate first response from confirmed recovery without source content',async()=>{
     const timeout={project:'a'.repeat(64),health:'unknown',index_state:'unknown',publication:null,files:null,chunks:null,index_error:{code:'status_timeout',retryable:true,message:'private sentinel'}};
