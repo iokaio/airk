@@ -28,7 +28,7 @@ Local Windows checks before the source commit:
 
 - All 13 MCP bridge tests passed, including live `query_concurrency` reporting without an additional policy read. The queued-channel increase regression also passed in the workspace CLI library run.
 - Formatting, workspace/all-target/all-feature Clippy, repository checks, exact 1.8.6 version synchronization and staged whitespace checks passed. AGENTS.md and CLAUDE.md remain byte-identical.
-- Extension tests: 537 passed, 19 skipped, zero failures. Python repository/release contracts: 291 run, six skipped, zero failures.
+- Extension tests after the receipt-observer regression: 538 passed, 19 skipped, zero failures. Python repository/release contracts: 291 run, six skipped, zero failures.
 - Release notices cover 366 third-party packages; dependency advisory checks reported no policy failures, retaining the existing reviewed dispositions.
 - The initial full workspace run stopped on three actual-process recovery tests because the default temporary namespace did not qualify as a native private boundary. An initial fixture setup also inherited a noncanonical ACL and did not resolve that precondition. In a new canonical owner-only fixture base, the exact already-built recovery executable passed all three tests with one explicit subprocess-helper ignore. No production boundary or test assertion was weakened. The complete workspace rerun with that documented fixture override is in progress.
 - A fresh release runtime pair was built from native source digest `7c8502610fcca8e7b7ceb12cf1530c002ff10da87b12244b2af7cb0d38defa03` (748 inputs). Five four-CPU managed/native/installed smoke rounds and the final twenty-scenario MCP replay are pending; the replay must identify the committed source and matching runtime before PR creation.
@@ -36,3 +36,11 @@ Local Windows checks before the source commit:
 The complete combined change received an explicit primary-agent review of contracts, service/client/worker admission, source/revision fences, cursor/filter behavior, Windows storage eligibility, Workbench persistence/exports and CI selection. Review found and corrected the live-increase channel-pool race described above and removed links to ignored local-only scenario ledgers. This was a single-agent review, not an independent review.
 
 Hosted CI and publication are still pending. Local Windows results do not establish macOS/Linux qualification or manual installed-editor acceptance.
+
+### Constrained smoke observer follow-up
+
+The initial five four-CPU rounds completed all 15 checks: all five native-client checks and all five installer/lifecycle checks passed; all five managed MCP smokes failed in the mixed-batch test's receipt observer. That observer assumed every `isError` response contained a nested `error` object, although the shared native read contract also supports top-level `status: retry` / `action: repeat_same_request` receipts. The failure discarded the underlying receipt before the helper could classify it.
+
+The observer now records both forms through the existing strict `readRetryDelay` validator. A new unit regression covers publication/selection hints, unsubmitted setup refusals and rejection of submitted or unknown errors. It does not broaden production retry behavior, replay uncertain work or relax the publication/identity assertions. The extension suite passes 538 tests with 19 skips. A separate review of this test-only correction checked the shared retry parser, callback callers and negative cases; no sibling observer had the same assumption.
+
+The initial isolated repository preparation was deliberately stopped before any of the twenty scenario calls began, so the observer correction could be committed first. Its derived index is retained only in the owned temporary namespace for the final replay. The five corrected managed MCP rounds and the twenty-scenario results remain pending. The unchanged native-client/installer passes are retained rather than repeated as a debugging loop.

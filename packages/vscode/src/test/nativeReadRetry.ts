@@ -17,6 +17,14 @@ export function boundedReply(value:unknown,limit=2048):string{
     return text.length>limit?`${text.slice(0,limit)}... (${text.length} bytes)`:text;
 }
 
+export type ReadRetryReceipt={code:string;query_submitted:false}|{code:string;action:'repeat_same_request'};
+/** Observe both native receipt shapes through the same strict replay validator. */
+export function readRetryReceipt(reply:any):ReadRetryReceipt{
+    assert.notEqual(readRetryDelay(reply),undefined,`Unrecognized native read refusal: ${boundedReply(reply)}`);
+    const body=JSON.parse(reply.content[0].text);
+    return body.error?{code:body.error.code,query_submitted:false}:{code:body.code,action:'repeat_same_request'};
+}
+
 /** Repeat one MCP read only after an explicit typed rejection, within its original budget. */
 export async function requestWithReadRetry(session:McpStdioSession,name:string,args:Record<string,unknown>={},timeout=120000,onReply?:(reply:any)=>void):Promise<any>{
     const deadline=performance.now()+timeout;
