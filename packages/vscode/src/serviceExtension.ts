@@ -40,7 +40,13 @@ function nativeExecutionSetting():boolean{
  * in place, so the version alone cannot reveal that a rebuilt VSIX replaced it. */
 function codeStamp(root:string|undefined):string|undefined{
     if(!root)return undefined;
-    try{const info=statSync(path.join(root,'out','serviceExtension.js'));return `${path.resolve(root)}:${info.size}:${info.mtimeMs}`;}catch{return undefined;}
+    try{
+        const info=statSync(path.join(root,'out','serviceExtension.js')),resolved=path.resolve(root);
+        // VS Code's context and extension registry may spell the same Windows
+        // path differently. Preserve file changes without treating casing as a rebuild.
+        const identity=process.platform==='win32'?path.toNamespacedPath(resolved).toLowerCase():resolved;
+        return `${identity}:${info.size}:${info.mtimeMs}`;
+    }catch{return undefined;}
 }
 function same(left:string,right:string):boolean {
     return path.relative(process.platform==='win32'?path.toNamespacedPath(left):left,process.platform==='win32'?path.toNamespacedPath(right):right)==='';

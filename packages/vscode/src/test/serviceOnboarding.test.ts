@@ -432,15 +432,42 @@ test('data review is read-only until a plan digest is confirmed and never delete
     }finally{await f.close();}
 });
 
-test('a rebuilt VSIX with the same version is detected and offers the reload action',async context=>{
+test('Windows extension-path casing aliases keep the same loaded code active',async context=>{
+    if(process.platform!=='win32'){context.skip('Windows path identity');return;}
+    const f=await serviceTestHost(context,{codeFile:true,automatic:true});
+    try{
+        for(const extensionPath of [f.root.toLowerCase(),f.root.toUpperCase(),path.toNamespacedPath(f.root.toUpperCase())]){
+            f.stub.extensions.getExtension=()=>({extensionPath,packageJSON:{version:f.state.installedVersion}});
+            f.focus();f.extensionsChanged();
+            await new Promise(resolve=>setImmediate(resolve));
+            assert.equal(f.notices.length,0,extensionPath);
+            assert.doesNotMatch(f.statusBar.text,/Reload to finish update/,extensionPath);
+            assert.notEqual((await f.api.getServerDefinitions()).length,0,'matching code retains native MCP admission');
+        }
+        assert.equal(f.calls.includes('workbench.action.reloadWindow'),false);
+    }finally{await f.close();}
+});
+
+for(const change of ['size','mtime'] as const)test(`a same-version VSIX ${change} change still offers reload and fences older code`,async context=>{
     const fs=await import('node:fs/promises');
-    const f=await serviceTestHost(context,{codeFile:true});
+    const f=await serviceTestHost(context,{codeFile:true,automatic:true});
     try{
         f.focus();f.extensionsChanged();
         assert.equal(f.notices.some(notice=>notice.actions.includes('Reload to finish update')),false,'an unchanged installation stays quiet');
-        await fs.writeFile(path.join(f.root,'out','serviceExtension.js'),'// fixture build 2 with different bytes\n');
+        const file=path.join(f.root,'out','serviceExtension.js'),before=await fs.stat(file);
+        if(change==='size'){
+            await fs.writeFile(file,'// fixture build 2 with different bytes\n');
+            assert.notEqual((await fs.stat(file)).size,before.size);
+        }else{
+            await fs.utimes(file,before.atime,new Date(before.mtimeMs+5000));
+            const after=await fs.stat(file);
+            assert.equal(after.size,before.size,'mtime-only change retains identical file size');
+            assert.notEqual(after.mtimeMs,before.mtimeMs);
+        }
         f.focus();f.extensionsChanged();
         assert.ok(f.notices.some(notice=>notice.message.includes('(rebuilt) is installed')&&notice.actions.includes('Reload to finish update')));
         assert.match(f.statusBar.text,/Reload to finish update/);
+        assert.deepEqual(await f.api.getServerDefinitions(),[],'changed code cannot admit native MCP through the older interface');
+        assert.equal(f.calls.includes('workbench.action.reloadWindow'),false,'reload remains an explicit user action');
     }finally{await f.close();}
 });
