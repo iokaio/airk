@@ -225,7 +225,7 @@ impl ServiceRegistry {
 }
 
 /// Fixed owned-fixture failure only; does not expose registry SQL authority.
-#[cfg(test)]
+#[cfg(all(test, windows))]
 impl ServiceRegistry {
     pub(crate) fn test_refuse_integrity_damage(&self, refuse: bool) -> Result<()> {
         if refuse {

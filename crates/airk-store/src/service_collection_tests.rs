@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 use crate::current::{CurrentHead, CurrentScope, lexical::LexicalManifest, map};
+#[cfg(windows)]
 use crate::service::ProjectLease;
 use airk_core::graph_storage::{GraphHead, GraphScope};
 use std::{

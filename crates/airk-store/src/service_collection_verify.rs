@@ -2391,7 +2391,7 @@ pub(crate) fn test_projection_progress(collection: &Collection) -> Result<Projec
     Ok(receipt.progress)
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(crate) fn test_write_recovery_receipt(
     collection: &Collection,
     value: serde_json::Value,
@@ -2401,7 +2401,7 @@ pub(crate) fn test_write_recovery_receipt(
     write(collection, RECOVERY_RECEIPT, &receipt)
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 pub(crate) fn test_recovery_receipt_bytes(value: serde_json::Value) -> Result<Vec<u8>> {
     let receipt: RecoveryReceipt = serde_json::from_value(value)?;
     Ok(serde_json::to_vec(&receipt)?)

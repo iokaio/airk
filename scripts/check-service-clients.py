@@ -565,12 +565,12 @@ class Fixture:
             assert scopes["default_project"] == self.projects[name]["binding"]
             assert len(scopes["projects"]) == 1
             if workbench:
-                # Serial plan acceptance check: learned requests propose only; execution is
-                # sent once, never replayed after a partial/uncertain plan reply.
+                # Keep learned review and finite conversational execution distinct.
+                # Each execution is sent once, never replayed after uncertainty.
                 with self.hold_publication(name):
                     send({"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {
                         **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
-                            "text": "Please retrieve the source contents of fixture_0.py", "response_mode": "full"}}})
+                            "text": "Please fetch the source contents of fixture_0.py", "response_mode": "full"}}})
                     proposed_reply = receive(5)["result"]
                     assert proposed_reply.get("isError") is not True, proposed_reply
                     proposed = tool_value(proposed_reply)
@@ -584,6 +584,15 @@ class Fixture:
                     confirmed = tool_value(confirmed_reply)
                     assert confirmed["executed"] is True and confirmed["status"] == "complete", confirmed
                     assert confirmed["evidence"][0]["citation"]["path"] == "fixture_0.py", confirmed
+                    send({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {
+                        **params, "name": "parse", "arguments": {"schema": "airk.parse.request/1", "mode": "execute",
+                            "text": "Please retrieve the source contents of fixture_0.py", "response_mode": "full"}}})
+                    parsed_reply = receive(7)["result"]
+                    assert parsed_reply.get("isError") is not True, parsed_reply
+                    parsed = tool_value(parsed_reply)
+                    assert parsed["status"] == "complete" and parsed["executed"] is True, parsed
+                    assert parsed["plan"]["tier"] == "parsed", parsed
+                    assert parsed["evidence"][0]["citation"]["path"] == "fixture_0.py", parsed
             return len(catalog)
         finally:
             child.stdin.close()
