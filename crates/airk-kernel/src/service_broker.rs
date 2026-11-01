@@ -19,6 +19,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Clone, Copy, Debug)]
 pub struct BrokerLimits {
+    pub reserved_status: bool,
     pub projects: usize,
     pub pending_grants: usize,
     pub connections_per_project: usize,
@@ -30,6 +31,7 @@ pub struct BrokerLimits {
 impl Default for BrokerLimits {
     fn default() -> Self {
         Self {
+            reserved_status: false,
             projects: 1024,
             pending_grants: 4096,
             connections_per_project: 64,
@@ -39,6 +41,21 @@ impl Default for BrokerLimits {
                 concurrent_queries: 32,
                 response_bytes: 32 * MAX_FRAME_BYTES,
             },
+        }
+    }
+}
+impl BrokerLimits {
+    /// Finite aggregate metadata allowance; each project receives its configured grant.
+    pub fn service() -> Self {
+        Self {
+            reserved_status: true,
+            connections_per_project: 1024,
+            queries_per_caller: 65,
+            total: QueryAllowance {
+                concurrent_queries: 4096,
+                response_bytes: 4096 * MAX_FRAME_BYTES,
+            },
+            ..Self::default()
         }
     }
 }
@@ -60,7 +77,7 @@ struct Worker {
     expires: Instant,
     draining: bool,
     connections: BTreeMap<Incarnation, Connection>,
-    active: BTreeMap<Incarnation, (Incarnation, usize)>,
+    active: BTreeMap<Incarnation, (Incarnation, usize, bool)>,
     response_bytes: usize,
 }
 
@@ -122,7 +139,7 @@ impl Broker {
             || limits.queries_per_connection == 0
             || limits.queries_per_connection > 64
             || limits.queries_per_caller == 0
-            || limits.queries_per_caller > 64
+            || limits.queries_per_caller > 65
             || limits.total.concurrent_queries == 0
             || limits.total.concurrent_queries > 4096
             || limits.total.response_bytes == 0
@@ -145,6 +162,38 @@ impl Broker {
         } else {
             Err(Error::OwnershipLost)
         }
+    }
+
+    /// Preserve all accepted charges when lowering capacity; new work waits for them to drain.
+    pub fn configure_queries(
+        &mut self,
+        identity: WorkerIdentity,
+        concurrency: usize,
+        now: Instant,
+    ) -> Result<()> {
+        airk_core::service_resources::validate_query_concurrency(concurrency)
+            .map_err(|_| Error::InvalidRequest)?;
+        self.worker(identity, now)?;
+        let queries = concurrency + 1; // Independent status/control headroom.
+        let allocated = self
+            .workers
+            .iter()
+            .filter(|(p, _)| **p != identity.project)
+            .map(|(_, w)| w.allowance.concurrent_queries)
+            .sum::<usize>();
+        if allocated + queries > self.limits.total.concurrent_queries
+            || (allocated + queries) * MAX_FRAME_BYTES > self.limits.total.response_bytes
+        {
+            return Err(Error::Busy);
+        }
+        self.workers
+            .get_mut(&identity.project)
+            .ok_or(Error::UnknownWorker)?
+            .allowance = QueryAllowance {
+            concurrent_queries: queries,
+            response_bytes: queries * MAX_FRAME_BYTES,
+        };
+        Ok(())
     }
 
     /// Call only after the supervisor proves OS ownership and classifies pending recovery.
@@ -356,6 +405,16 @@ impl Broker {
         response_bytes: usize,
         now: Instant,
     ) -> Result<Incarnation> {
+        self.begin_query_with_control(identity, session, response_bytes, now, false)
+    }
+    pub fn begin_query_with_control(
+        &mut self,
+        identity: WorkerIdentity,
+        session: Incarnation,
+        response_bytes: usize,
+        now: Instant,
+        control: bool,
+    ) -> Result<Incarnation> {
         let worker = self.worker(identity, now)?;
         let connection = worker
             .connections
@@ -367,7 +426,15 @@ impl Broker {
         if response_bytes == 0 || response_bytes > MAX_FRAME_BYTES {
             return Err(Error::InvalidRequest);
         }
-        if worker.active.len() >= worker.allowance.concurrent_queries
+        if (!control
+            && self.limits.reserved_status
+            && worker
+                .active
+                .values()
+                .filter(|(_, _, control)| !control)
+                .count()
+                >= worker.allowance.concurrent_queries.saturating_sub(1))
+            || worker.active.len() >= worker.allowance.concurrent_queries
             || connection.active >= self.limits.queries_per_connection
             || worker
                 .connections
@@ -397,7 +464,9 @@ impl Broker {
             .get_mut(&session)
             .ok_or(Error::InvalidGrant)?
             .active += 1;
-        worker.active.insert(request, (session, response_bytes));
+        worker
+            .active
+            .insert(request, (session, response_bytes, control));
         worker.response_bytes += response_bytes;
         Ok(request)
     }
@@ -412,7 +481,7 @@ impl Broker {
         if worker.identity != identity {
             return Err(Error::StaleIdentity);
         }
-        let (session, bytes) = worker
+        let (session, bytes, _) = worker
             .active
             .remove(&request)
             .ok_or(Error::UnknownRequest)?;
@@ -526,6 +595,68 @@ mod tests {
         broker
             .redeem(&grant, id, caller, now, Duration::from_secs(30))
             .unwrap()
+    }
+
+    #[test]
+    fn service_capacity_matches_channels_and_lowering_keeps_accepted_charges() {
+        for concurrency in [4, 8, 16, 32, 64] {
+            let id = identity(1, 1);
+            let now = Instant::now();
+            let mut broker = Broker::new(id.service, BrokerLimits::service()).unwrap();
+            broker
+                .register(
+                    id,
+                    QueryAllowance {
+                        concurrent_queries: concurrency + 1,
+                        response_bytes: (concurrency + 1) * MAX_FRAME_BYTES,
+                    },
+                    now,
+                    Duration::from_secs(60),
+                )
+                .unwrap();
+            let sessions: Vec<_> = (0..concurrency + 2)
+                .map(|_| connect(&mut broker, id, now))
+                .collect();
+            let mut active: Vec<_> = sessions
+                .iter()
+                .take(concurrency + 1)
+                .enumerate()
+                .map(|(index, session)| {
+                    broker
+                        .begin_query_with_control(
+                            id,
+                            *session,
+                            MAX_FRAME_BYTES,
+                            now,
+                            index == concurrency,
+                        )
+                        .unwrap()
+                })
+                .collect();
+            assert_eq!(broker.status(now).active_queries, concurrency + 1);
+            assert_eq!(
+                broker.begin_query(id, sessions[concurrency + 1], MAX_FRAME_BYTES, now),
+                Err(Error::Busy)
+            );
+            broker.configure_queries(id, 4, now).unwrap();
+            assert_eq!(broker.status(now).active_queries, concurrency + 1);
+            assert_eq!(
+                broker.status(now).reserved_response_bytes,
+                (concurrency + 1) * MAX_FRAME_BYTES
+            );
+            while active.len() >= 5 {
+                broker.finish_query(id, active.remove(0)).unwrap();
+            }
+            let request = broker
+                .begin_query(id, sessions[concurrency + 1], MAX_FRAME_BYTES, now)
+                .unwrap();
+            broker.finish_query(id, request).unwrap();
+            for request in active {
+                broker.finish_query(id, request).unwrap();
+            }
+            broker.configure_queries(id, 64, now).unwrap();
+            assert_eq!(broker.status(now).allocated.concurrent_queries, 65);
+        }
     }
 
     #[test]

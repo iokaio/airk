@@ -27,6 +27,7 @@ pub mod maintenance;
 /// Read-only native capability/catalog inspection; does not open collection state.
 pub use airk_retrieval::model_catalog::inspect_catalog as inspect_model_catalog;
 mod publication;
+mod references;
 mod remote_tokenization;
 mod resources;
 pub mod retrieval_retry;
@@ -188,6 +189,8 @@ pub struct FileInfo {
 pub struct ReferencesResponse {
     pub resolution: &'static str,
     pub evidence: SearchResponse,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<airk_core::references::ReferencePage>,
 }
 
 impl Kernel {
@@ -680,6 +683,7 @@ impl Kernel {
             generation: read.head().sequence,
             collection: self.collection.clone(),
             relationships: result.relationships,
+            suggested_targets: result.suggested_targets,
             truncated: result.truncated,
             coverage: result.coverage.into(),
         })
@@ -950,6 +954,7 @@ impl Kernel {
         Ok(ReferencesResponse {
             resolution: "textual-occurrences; includes comments, strings and definitions; no name resolution",
             evidence,
+            page: None,
         })
     }
 }

@@ -142,7 +142,7 @@ impl FileStore {
         let conn = read_transaction(&self.directory)?;
         let tx = &conn;
         let generation = identity(tx, root, collection)?;
-        let mut response = RelationshipsResponse {indexing:conn.detail.into(),generation,publication:conn.publication.clone(),collection:collection.into(),relationships:Vec::new(),truncated:false,coverage:"Selected syntax patterns and optional manifest-bound producer assertions. External targets are identifiers only; impact is incomplete.".into()};
+        let mut response = RelationshipsResponse {indexing:conn.detail.into(),generation,publication:conn.publication.clone(),collection:collection.into(),relationships:Vec::new(),suggested_targets:Vec::new(),truncated:false,coverage:"Selected syntax patterns and optional manifest-bound producer assertions. External targets are identifiers only; impact is incomplete.".into()};
         let mut pending = BTreeSet::from([q.symbol.clone()]);
         let mut visited = BTreeSet::new();
         let mut returned = BTreeSet::new();

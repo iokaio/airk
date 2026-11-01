@@ -3,10 +3,47 @@
 import { object, Value } from './workbenchContracts';
 import { operator, OperatorId, StrategyStep, StudioDocument, STUDIO_SCHEMA, STRATEGY_SCHEMA, validateStudio } from './explorerStrategies';
 
+/** These producer/syntax IDs identify one indexed revision, not a portable name.
+ * A double colon is an ordinary qualified name (for example syntax::Session).
+ * Durable continuity keys have their own field/contract and are not rewritten.
+ */
+export function hasRevisionBoundSymbolInputs(plan:Value):boolean {
+    return (Array.isArray(plan.steps)?plan.steps:[]).some(raw=>{
+        const args=object(object(raw).args);
+        return ['name','symbol'].some(field=>typeof args[field]==='string'&&/^(syntax|scip|ctags|lsp):(?!:)/.test(args[field] as string));
+    });
+}
+export function assertPortablePlanInputs(plan:Value):void {
+    if(hasRevisionBoundSymbolInputs(plan))throw new Error('This plan contains a revision-bound symbol ID. Save an export to retain its exact publication, or collect a fresh definition and bind its symbol ID before reusing the plan.');
+}
+
+/** A saved form cannot turn an old byte-span identity into a new publication. */
+export function assertOriginalPublicationForSymbolInputs(plan:Value):void {
+    if(!hasRevisionBoundSymbolInputs(plan))return;
+    const token=typeof plan.publication==='string'?plan.publication:'';
+    const match=/^airk-r1:[0-9a-f]{32}:(0|[1-9][0-9]{0,19}):[0-9a-f]{64}$/.exec(token);
+    if(!match||BigInt(match[1])>18446744073709551615n){
+        throw new Error('A literal revision-bound symbol ID needs its original publication. Use Inspect from retained evidence or an explicitly publication-bound plan; preparing an old ID cannot refresh its identity.');
+    }
+}
+
+/** A new run may refresh portable selectors; literal revision IDs must not float. */
+export function planForWorkbenchRerun(plan:Value):Value {
+    assertPortablePlanInputs(plan);
+    const fresh=structuredClone(plan);
+    for(const key of ['digest','publication','catalog','collection'])delete fresh[key];
+    for(const raw of Array.isArray(fresh.steps)?fresh.steps:[]){
+        const args=object(object(raw).args);
+        for(const key of ['known_hash','revision','cursor'])delete args[key];
+    }
+    return fresh;
+}
+
 export function strategyFromPlan(plan:Value,title:string,objective:string):StudioDocument {
     const names:Record<string,OperatorId>={status:'airk.status',capabilities:'airk.capabilities',search:'airk.search',list_files:'airk.listFiles',symbols:'airk.symbols',imports:'airk.imports',code_facts:'airk.codeFacts',document_facts:'airk.documentFacts',references:'airk.references',relationships:'airk.relationships',outline:'airk.outline',read_file:'airk.readFile',changes:'airk.changes',file_info:'airk.fileInfo'};
     const steps:StrategyStep[]=[{id:'workbench-status',op:'airk.status',args:{}}];
     if(!Array.isArray(plan.steps)){throw new Error('Prepare a plan before saving a strategy.');}
+    assertPortablePlanInputs(plan);
     for(const raw of plan.steps){
         const step=object(raw),op=names[String(step.tool)],spec=op&&operator(op);
         if(!spec||step.id==='workbench-status'){throw new Error('This plan needs a native plan export; its operations cannot be converted to a Strategy.');}

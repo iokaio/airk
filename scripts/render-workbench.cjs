@@ -2,7 +2,7 @@
 // Real Workbench browser bundle, fictional bridge; no native work or editor qualification.
 const fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict');
 const {spawn}=require('node:child_process'),{pathToFileURL}=require('node:url');
-const root=path.resolve(__dirname,'..'),output=path.join(root,process.argv.some(arg=>['--scroll','--selection'].includes(arg))?'artifacts/workbench-review-1.8.2/browser':'artifacts/workbench-review-1.7.1/browser');
+const root=path.resolve(__dirname,'..'),output=path.join(root,process.argv.some(arg=>['--mcp-navigation','--form-drafts'].includes(arg))?'artifacts/mcp-optimizations-1.8.4/browser':process.argv.some(arg=>['--scroll','--selection'].includes(arg))?'artifacts/workbench-review-1.8.2/browser':'artifacts/workbench-review-1.7.1/browser');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms)),project='ab'.repeat(32),publication='fictional-publication',hash='12'.repeat(32);
 function fixture(scene){
     const plan={schema:'airk.parse.plan/1',collection:'fictional',publication,path_prefix:'src/',digest:'fictional',steps:[{id:'query',tool:'symbols',args:{name:'QueueClient',path_prefix:'src/'}}]};
@@ -13,10 +13,46 @@ function fixture(scene){
     const turns=scene==='welcome'?[]:[{id:'turn-1',at:1793340000000,input:scene==='proposal'?'Could you retrieve the definition of QueueClient?':'/symbols QueueClient',format:'structured',envelope}];
     return {projects:[{id:project,name:'Fictional project'}],project,session:{schema:1,id:'fictional-session',project,title:'Inspect QueueClient',createdAt:1793340000000,updatedAt:1793340000000,revision:0,omitted:0,turns},recent:[],busy:false,save:'Local browser fixture',persistence:true,status:{files:42,health:'ready',publication:{token:publication}},cards:{'turn-1':evidence.map((row,i)=>({id:`record-${i}`,path:row.citation.path,hash,start:2,end:3,text:row.text,location:row.citation.location,step:'query',publication}))}};
 }
+/** Fictional host session ownership, including the real scalar form acknowledgement shape. */
+function installFixtureHost(){
+    const clone=value=>structuredClone(value),defaults=()=>({activeTool:'search',values:{},scope:'',recipe:'',revision:0});
+    window.fixture.sessionEpoch??=0;
+    window.fixture.session.formDraft??=defaults();
+    window.fixtureSessions=new Map([[window.fixture.session.id,clone(window.fixture.session)]]);
+    let sequence=0;
+    const remember=()=>window.fixtureSessions.set(window.fixture.session.id,clone(window.fixture.session));
+    const emit=()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:clone(window.fixture)}}));
+    const recent=()=>window.fixture.recent=[...window.fixtureSessions.values()].map(session=>({id:session.id,title:session.title,updatedAt:session.updatedAt,turns:session.turns.length}));
+    window.fixtureSelectSession=id=>{
+        remember();const session=window.fixtureSessions.get(id);if(!session)return;
+        window.fixture.session=clone(session);window.fixture.sessionEpoch++;window.fixture.cards={};window.fixture.continuations={};recent();emit();
+    };
+    window.acquireVsCodeApi=()=>({postMessage(message){
+        window.messages.push(clone(message));
+        if(message.type==='ready'){setTimeout(emit,0);return;}
+        if(message.type==='recent'){window.fixtureSelectSession(message.id);return;}
+        if(['new','clear','fork'].includes(message.type)){
+            remember();const before=window.fixture.session;
+            if(message.type==='clear')for(const [id,session]of window.fixtureSessions)if(session.project===before.project)window.fixtureSessions.delete(id);
+            window.fixture.session={...clone(before),id:`browser-new-session-${++sequence}`,title:'New session',revision:0,formDraft:defaults(),turns:message.type==='fork'?clone(before.turns):[]};
+            window.fixture.sessionEpoch++;window.fixture.cards={};window.fixture.continuations={};remember();recent();emit();return;
+        }
+        if(message.type==='formDraft'||message.type==='resetForm'){
+            const session=window.fixture.session,current=session.formDraft??defaults();
+            if(message.sessionId!==session.id||message.project!==session.project||message.epoch!==window.fixture.sessionEpoch||message.revision<=current.revision)return;
+            if(message.type==='resetForm'&&message.tool!==current.activeTool)return;
+            const draft=clone(current);draft.activeTool=message.tool;draft.revision=message.revision;
+            if(message.type==='resetForm')delete draft.values[message.tool];
+            else {if(message.values!==undefined)draft.values[message.tool]=clone(message.values);if(message.scope!==undefined)draft.scope=message.scope;if(message.recipe!==undefined)draft.recipe=message.recipe;}
+            session.formDraft=draft;remember();
+            window.dispatchEvent(new MessageEvent('message',{data:{type:'formDraft',sessionId:session.id,project:session.project,epoch:window.fixture.sessionEpoch,formDraft:clone(draft),save:'Choices saved in browser fixture'}}));
+        }
+    }});
+}
 function html(scene,dark){
     const script=pathToFileURL(path.join(root,'packages/vscode/out/workbenchWebview.js')).href,css=pathToFileURL(path.join(root,'packages/vscode/out/workbenchWebview.css')).href;
     const foreground=dark?'#ddd':'#333',surface=dark?'#2d2d30':'#fff';
-    return `<!doctype html><html><head><meta charset='utf-8'><link rel='stylesheet' href='${css}'><style>:root{--vscode-font-family:Arial,sans-serif;--vscode-font-size:13px;--vscode-foreground:${foreground};--vscode-sideBar-background:${dark?'#252526':'#f3f3f3'};--vscode-input-background:${surface};--vscode-input-foreground:${foreground};--vscode-editorWidget-background:${surface};--vscode-descriptionForeground:${dark?'#aaa':'#666'};--vscode-panel-border:${dark?'#555':'#ccc'};--vscode-button-secondaryBackground:${dark?'#3a3d41':'#e1e1e1'};--vscode-button-secondaryHoverBackground:${dark?'#4a4d51':'#ddd'};--vscode-button-background:#007acc;--vscode-button-foreground:#fff;--vscode-focusBorder:#007fd4;--vscode-textLink-foreground:${dark?'#4daafc':'#005fb8'};--vscode-textCodeBlock-background:${dark?'#181818':'#eee'};--vscode-editorWarning-foreground:#cca700;--vscode-errorForeground:#f44747;--vscode-editor-font-family:Consolas,monospace;--vscode-editor-font-size:12px}</style></head><body><div id='root'></div><script>window.fixture=${JSON.stringify(fixture(scene)).replaceAll('<','\\u003c')};window.messages=[];window.acquireVsCodeApi=()=>({postMessage(message){window.messages.push(message);if(message.type==='ready'){setTimeout(()=>window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:window.fixture}})),0)}}});</script><script src='${script}'></script></body></html>`;
+    return `<!doctype html><html><head><meta charset='utf-8'><link rel='stylesheet' href='${css}'><style>:root{--vscode-font-family:Arial,sans-serif;--vscode-font-size:13px;--vscode-foreground:${foreground};--vscode-sideBar-background:${dark?'#252526':'#f3f3f3'};--vscode-input-background:${surface};--vscode-input-foreground:${foreground};--vscode-editorWidget-background:${surface};--vscode-descriptionForeground:${dark?'#aaa':'#666'};--vscode-panel-border:${dark?'#555':'#ccc'};--vscode-button-secondaryBackground:${dark?'#3a3d41':'#e1e1e1'};--vscode-button-secondaryHoverBackground:${dark?'#4a4d51':'#ddd'};--vscode-button-background:#007acc;--vscode-button-foreground:#fff;--vscode-focusBorder:#007fd4;--vscode-textLink-foreground:${dark?'#4daafc':'#005fb8'};--vscode-textCodeBlock-background:${dark?'#181818':'#eee'};--vscode-editorWarning-foreground:#cca700;--vscode-errorForeground:#f44747;--vscode-editor-font-family:Consolas,monospace;--vscode-editor-font-size:12px}</style></head><body><div id='root'></div><script>window.fixture=${JSON.stringify(fixture(scene)).replaceAll('<','\\u003c')};window.messages=[];(${installFixtureHost.toString()})();</script><script src='${script}'></script></body></html>`;
 }
 async function main(){
     await fs.mkdir(output,{recursive:true});const scratch=await fs.mkdtemp(path.join(output,'browser-'));
@@ -33,6 +69,146 @@ async function main(){
         const evaluate=async expression=>{const result=await call('Runtime.evaluate',{expression,returnByValue:true});if(result.exceptionDetails)throw new Error(JSON.stringify(result.exceptionDetails));return result.result.value;};
         const until=async expression=>{for(let i=0;i<100;i++){if(await evaluate(expression))return;await delay(50);}throw new Error(`UI did not become ready: ${expression}`);};
         const checks=[];console.log('Browser protocol:',await call('Browser.getVersion'));await call('Page.enable');
+        if(process.argv.includes('--form-drafts')){
+            await call('Emulation.setDeviceMetricsOverride',{width:640,height:1200,deviceScaleFactor:1,mobile:false});
+            const file=path.join(scratch,'form-drafts.html');await fs.writeFile(file,html('welcome',true));
+            await call('Page.navigate',{url:pathToFileURL(file).href});await until(`!!document.querySelector('.composer textarea')`);
+            const operations={search:{type:'object',required:['query'],properties:{query:{type:'string'},language:{type:'string'}}},
+                symbols:{type:'object',properties:{name:{type:'string'},name_match:{type:'string',enum:['exact','suffix','contains']},compact:{type:'boolean'},include_count:{type:'boolean'}}},
+                references:{type:'object',required:['name'],properties:{name:{type:'string'},order:{type:'string',enum:['index','path','code_first']},include_files:{type:'boolean'}}}};
+            await evaluate(`window.fixture.operations=${JSON.stringify(operations)};window.fixture.session.title='Session alpha';window.fixture.sessionEpoch=0;window.alphaId=window.fixture.session.id;window.fixtureSessions.set(window.alphaId,structuredClone(window.fixture.session));window.betaId='browser-session-beta';window.fixtureSessions.set(window.betaId,{...structuredClone(window.fixture.session),id:window.betaId,title:'Session beta',turns:[],formDraft:{activeTool:'search',values:{},revision:0,scope:'',recipe:''}});window.fixture.recent=[...window.fixtureSessions.values()].map(session=>({id:session.id,title:session.title,updatedAt:session.updatedAt,turns:0}));window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:structuredClone(window.fixture)}}));`);
+            const openForm=async()=>{if(!await evaluate(`!!document.querySelector('#evidence-options')`))await evaluate(`document.querySelector('[aria-label="Add scope, recipe or tool"]').click()`);await until(`!!document.querySelector('.tool-form form')`);};
+            const fieldValue=label=>evaluate(`document.querySelector('.tool-form [aria-label=${JSON.stringify(label)}]')?.value`);
+            const setField=async(label,value)=>{await evaluate(`(()=>{const field=document.querySelector('.tool-form [aria-label=${JSON.stringify(label)}]');if(!field)throw new Error('Missing field');field.value=${JSON.stringify(value)};field.dispatchEvent(new Event(field.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`);await delay(25);};
+            const selectTool=async tool=>{await setField('Operation',tool);await until(`document.querySelector('.tool-form [aria-label="Operation"]').value===${JSON.stringify(tool)}`);};
+            const closeForm=async()=>{await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);await until(`!document.querySelector('#evidence-options')`);};
+            const selectSession=async title=>{await closeForm();await evaluate(`document.querySelector('[aria-label="Session history"]').click()`);await until(`!!document.querySelector('#session-history')`);await evaluate(`[...document.querySelectorAll('#session-history .history-item')].find(button=>button.textContent.includes(${JSON.stringify(title)})).click()`);await until(`!document.querySelector('#session-history')`);await openForm();};
+            await openForm();await setField('query','alpha query');await setField('language','rust');
+            await evaluate(`(()=>{const scope=document.querySelector('[aria-label="Literal collection-relative path prefix"]');scope.value='src/alpha/';scope.dispatchEvent(new Event('input',{bubbles:true}));})()`);await delay(25);
+            await evaluate(`(()=>{const recipe=document.querySelector('[aria-label="Recipe"]');recipe.value='component';recipe.dispatchEvent(new Event('change',{bubbles:true}));})()`);await delay(25);
+            await selectTool('symbols');await setField('name','SessionAlpha');await setField('Name matching','suffix');await setField('Compact results','false');
+            await closeForm();await openForm();
+            assert.equal(await fieldValue('Operation'),'symbols');assert.equal(await fieldValue('name'),'SessionAlpha');assert.equal(await fieldValue('Name matching'),'suffix');assert.equal(await fieldValue('Compact results'),'false');
+            assert.equal(await evaluate(`document.querySelector('[aria-label="Literal collection-relative path prefix"]').value`),'src/alpha/');
+            assert.equal(await evaluate(`document.querySelector('[aria-label="Recipe"]').value`),'component');
+            await selectTool('search');assert.equal(await fieldValue('query'),'alpha query');assert.equal(await fieldValue('language'),'rust');
+            checks.push({check:'Close/reopen, operator maps and shared scope/recipe restore within the session',passed:true});
+
+            await selectSession('Session beta');assert.equal(await fieldValue('Operation'),'search');assert.equal(await fieldValue('query'),'');
+            assert.equal(await evaluate(`document.querySelector('[aria-label="Literal collection-relative path prefix"]').value`),'');
+            assert.equal(await evaluate(`document.querySelector('[aria-label="Recipe"]').value`),'');
+            await setField('query','beta query');await selectTool('references');await setField('name','SessionBeta');await setField('order','path');
+            await selectSession('Session alpha');assert.equal(await fieldValue('Operation'),'search');assert.equal(await fieldValue('query'),'alpha query');
+            await selectTool('symbols');assert.equal(await fieldValue('name'),'SessionAlpha');
+            checks.push({check:'History A to B and back restores each session own active tool and values',passed:true});
+
+            const beforeNative=await evaluate(`window.messages.filter(message=>['run','continue','followTarget','followDefinition'].includes(message.type)).length`);
+            await evaluate(`document.querySelector('[aria-label="Reset this tool form"]').focus({preventScroll:true})`);
+            assert.equal(await evaluate(`document.activeElement.title`),'Reset this tool form');
+            assert.equal(await evaluate(`document.activeElement.type`),'button');
+            for(const type of ['keyDown','keyUp'])await call('Input.dispatchKeyEvent',{type,key:' ',code:'Space',windowsVirtualKeyCode:32,nativeVirtualKeyCode:32});
+            await until(`document.querySelector('.tool-form [aria-label="name"]').value===''`);
+            assert.equal(await fieldValue('Operation'),'symbols');assert.equal(await fieldValue('Name matching'),'');
+            assert.equal(await evaluate(`document.querySelector('[aria-label="Literal collection-relative path prefix"]').value`),'src/alpha/');
+            assert.equal(await evaluate(`document.querySelector('[aria-label="Recipe"]').value`),'component');
+            await selectTool('search');assert.equal(await fieldValue('query'),'alpha query');
+            assert.equal(await evaluate(`window.messages.filter(message=>['run','continue','followTarget','followDefinition'].includes(message.type)).length`),beforeNative,'editing, switching and keyboard reset never emit evidence execution');
+            const beforeAck=await evaluate(`JSON.stringify(window.fixture.session.formDraft)`);
+            await evaluate(`(()=>{const current=structuredClone(window.fixture.session.formDraft),stale={...current,revision:Math.max(0,current.revision-1),values:{search:{query:'stale injection'}}};window.dispatchEvent(new MessageEvent('message',{data:{type:'formDraft',sessionId:window.fixture.session.id,project:window.fixture.session.project,epoch:window.fixture.sessionEpoch,formDraft:stale,save:'stale'}}));})()`);await delay(25);
+            assert.equal(await fieldValue('query'),'alpha query');assert.equal(await evaluate(`JSON.stringify(window.fixture.session.formDraft)`),beforeAck);
+            checks.push({check:'Accessible Reset icon clears active fields only; stale acknowledgement ignored; no query side effects',passed:true});
+
+            await closeForm();await evaluate(`document.querySelector('[aria-label="New session"]').click()`);await openForm();
+            assert.equal(await fieldValue('Operation'),'search');assert.equal(await fieldValue('query'),'');
+            assert.equal(await evaluate(`document.querySelector('[aria-label="Literal collection-relative path prefix"]').value`),'');
+            assert.equal(await evaluate(`document.querySelector('[aria-label="Recipe"]').value`),'');
+            assert.deepEqual(await evaluate(`window.fixture.session.formDraft.values`),{});
+            checks.push({check:'New session starts with defaults and inherits no previous form/scope/recipe',passed:true});
+            const png=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await fs.writeFile(path.join(output,'session-form-defaults-reset.png'),Buffer.from(png.data,'base64'));
+            await fs.writeFile(path.join(output,'form-drafts-summary.json'),JSON.stringify({basis:'Actual compiled Workbench component with fictional session-owning host and scalar acknowledgements; separate real host/store tests cover persistence and fences; no installed/native qualification',checks},null,2)+'\n');
+            console.log('Workbench per-session choices, operator maps, new defaults and keyboard Reset browser checks passed.');await call('Browser.close');return;
+        }
+        if(process.argv.includes('--mcp-navigation')){
+            await call('Emulation.setDeviceMetricsOverride',{width:480,height:900,deviceScaleFactor:1,mobile:false});
+            const file=path.join(scratch,'mcp-navigation.html');await fs.writeFile(file,html('results',true));
+            await call('Page.navigate',{url:pathToFileURL(file).href});await until(`!!document.querySelector('.result')`);
+            const nativeFields={name:{type:'string'},name_match:{type:'string',enum:['exact','suffix','contains']},include_count:{type:'boolean'},include_files:{type:'boolean'},
+                language:{type:'string',maxLength:128},evidence_kind:{type:'string',enum:['code','document']},exclude_path_prefix:{type:'string'},
+                limit:{type:'integer',minimum:1,maximum:100},cursor:{type:'string',minLength:1,maxLength:32768}};
+            const discoverySteps=[
+                {id:'refs',tool:'references',status:'complete',arguments:{name:'Session',path_prefix:'src/'},result:{publication:{token:publication},evidence:{truncated:true,resolution:'textual',coverage:'Candidate scan remains incomplete.'},page:{cursor:'retained-reference-page',more:true,required_record_bytes:12000,count_unit:'matching_lines',files:[{path:'src/session.rs',count:2}],match_count:{total_matches:null,lower_bound:2,complete:false,scope:'scanned_candidates'}}}},
+                {id:'find',tool:'search',status:'complete',result:{publication:{token:publication},definitions:[{name:'Session',total_matches:null,lower_bound:1,complete:false,evidence_scope:'native_definition_records',matches:[{symbol_id:'syntax:session',citation:{path:'src/session.rs',content_hash:hash,start_line:3,end_line:5}}]}]}},
+                {id:'links',tool:'relationships',status:'complete',arguments:{path_prefix:'src/'},result:{publication:{token:publication},suggested_targets:[{target:'Session::spawn',citation:{path:'src/session.rs'},coverage:'Written target only; not resolved callers.'}]}},
+            ];
+            await evaluate(`window.fixture.session.turns[0].envelope={...window.fixture.session.turns[0].envelope,executed:true,status:'partial',steps:${JSON.stringify(discoverySteps)}};window.fixture.operations={search:{type:'object',properties:{query:{type:'string'}}},symbols:{type:'object',required:['name'],properties:${JSON.stringify(nativeFields)}}};window.fixture.continuations={'turn-1':[{id:'page-0',tool:'references',callsRemaining:9,requiredRecordBytes:12000}]};window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:structuredClone(window.fixture)}}))`);
+            await until(`document.querySelectorAll('.discovery-details').length===3`);
+            assert.equal(await evaluate(`document.body.textContent.includes('At least 2 verified matching lines')&&document.body.textContent.includes('total unknown')`),true,'lower bounds and unknown totals are visible');
+            assert.equal(await evaluate(`document.querySelector('[aria-label="references discovery details"]').textContent.includes('12000 bytes')`),true,'oversized next record is explained');
+            assert.equal(await evaluate(`document.body.textContent.includes('not compiler-resolved callers')`),true,'candidate relationship limits remain explicit');
+            await evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Find callers of Session::spawn').click()`);
+            assert.deepEqual(await evaluate(`window.messages.filter(message=>message.type==='followTarget').at(-1)`),{type:'followTarget',turn:'turn-1',step:'links',target:'Session::spawn'});
+            await evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent==='Inspect Session — src/session.rs').click()`);
+            assert.deepEqual(await evaluate(`window.messages.filter(message=>message.type==='followDefinition').at(-1)`),{type:'followDefinition',turn:'turn-1',step:'find',name:'Session',path:'src/session.rs'});
+            await evaluate(`[...document.querySelectorAll('button')].find(button=>button.textContent.startsWith('Fetch next references page')).click()`);
+            assert.deepEqual(await evaluate(`window.messages.filter(message=>message.type==='continue').at(-1)`),{type:'continue',turn:'turn-1',step:'page-0'});
+            checks.push({check:'structured discoveries, qualified follow-ups and guarded pagination',passed:true});
+
+            for(const count of [0,2]){
+                const coverage={basis:'verified_lexical_candidates',candidate_scan_complete:true,query_complete:false,query_total_matches:null,
+                    token_boundary_complete:false,line_completeness:count===0?'no_returned_lines':'complete_source_lines'};
+                await evaluate(`(()=>{const page=window.fixture.session.turns[0].envelope.steps[0].result.page;Object.assign(page,{more:false,cursor:undefined,required_record_bytes:undefined,count_unit:'matching_lines',coverage:${JSON.stringify(coverage)},match_count:{total_matches:${count},lower_bound:${count},complete:true,scope:'verified_lexical_candidates'}});window.fixture.continuations={'turn-1':[]};window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:structuredClone(window.fixture)}}));})()`);
+                await until(`document.querySelector('[aria-label="references discovery details"] .counts')?.textContent.includes('${count} matching lines in verified lexical candidates; whole-query total unknown')`);
+                assert.equal(await evaluate(`document.querySelector('[aria-label="references discovery details"]').textContent.includes('identifier tokens split across indexed chunk boundaries can be missed')`),true,`candidate/global distinction remains visible at ${count} matches`);
+                assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(button=>button.textContent.startsWith('Fetch next references page'))`),false,'terminal candidate coverage must not invent a fetch cursor');
+            }
+            await evaluate(`(()=>{const page=window.fixture.session.turns[0].envelope.steps[0].result.page;Object.assign(page,{count_unit:'matching_line_fragments',incomplete_reason:'original_line_completeness_unverified',match_count:{total_matches:null,lower_bound:1,complete:false,scope:'verified_lexical_candidates'}});page.coverage.line_completeness='includes_unverified_fragments';window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:structuredClone(window.fixture)}}));})()`);
+            await until(`document.querySelector('[aria-label="references discovery details"]').textContent.includes('fragments whose completeness as original source lines is unverified')`);
+            assert.equal(await evaluate(`document.querySelector('[aria-label="references discovery details"] .counts').textContent.includes('matching line fragments')`),true,'partial fragments use their qualified count unit');
+            const unchangedNative=await evaluate(`JSON.stringify(window.fixture.session.turns[0].envelope)`);
+            await evaluate(`[...document.querySelectorAll('.result header button')].find(button=>button.textContent==='markdown').click()`);
+            await until(`document.querySelector('.result>pre')?.textContent.includes('"query_complete": false')`);
+            assert.equal(await evaluate(`document.querySelector('.result>pre').textContent.includes('includes_unverified_fragments')`),true,'Markdown preserves fragment qualification and unknown whole-query coverage');
+            assert.equal(await evaluate(`JSON.stringify(window.fixture.session.turns[0].envelope)`),unchangedNative,'changing output format cannot rewrite native coverage');
+            await evaluate(`[...document.querySelectorAll('.result header button')].find(button=>button.textContent==='structured').click()`);
+            checks.push({check:'candidate-scope exact zero/nonzero totals, unknown whole query, token boundary gaps and terminal fragment coverage',passed:true});
+
+            await evaluate(`(()=>{const envelope=window.fixture.session.turns[0].envelope;envelope.steps=[{id:'legacy',tool:'references',status:'complete',result:{resolution:'textual',evidence:{hits:[],truncated:false}}}];envelope.evidence=[];window.fixture.cards={'turn-1':[]};window.fixture.continuations={'turn-1':[]};window.dispatchEvent(new MessageEvent('message',{data:{type:'state',state:structuredClone(window.fixture)}}));})()`);
+            await until(`document.querySelector('[aria-label="references discovery details"]').textContent.includes('Textual candidate matches do not establish complete reference coverage; the whole-query total is unknown.')`);
+            assert.equal(await evaluate(`document.querySelector('[aria-label="references discovery details"]').textContent.includes('identifier tokens split across indexed chunk boundaries')`),false,'legacy results cannot manufacture a typed coverage claim');
+            assert.equal(await evaluate(`!!document.querySelector('[aria-label="references discovery details"] .counts')`),false,'legacy zero-hit result does not invent an exact or lower-bound count');
+            assert.equal(await evaluate(`[...document.querySelectorAll('button')].some(button=>button.textContent.startsWith('Fetch next references page'))`),false,'legacy zero-hit result has no invented continuation');
+            assert.equal(await evaluate(`Object.hasOwn(window.fixture.session.turns[0].envelope,'source_coverage')`),false,'display warning does not manufacture native coverage metadata');
+            checks.push({check:'legacy textual zero-hit fallback warns whole-query unknown without invented typed metadata/count/continuation',passed:true});
+
+            await evaluate(`document.querySelector('[aria-label="Add scope, recipe or tool"]').click()`);await until(`!!document.querySelector('.tool-form form')`);
+            await evaluate(`(()=>{const select=document.querySelector('.tool-form [aria-label=\"Operation\"]');select.value='symbols';select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+            await until(`!!document.querySelector('.tool-form [aria-label="Name matching"]')`);
+            const setField=async(label,value)=>{
+                await evaluate(`(()=>{const field=[...document.querySelectorAll('.tool-form input,.tool-form select')].find(item=>item.getAttribute('aria-label')===${JSON.stringify(label)});if(!field)throw new Error('Missing field');field.value=${JSON.stringify(value)};field.dispatchEvent(new Event(field.tagName==='SELECT'?'change':'input',{bubbles:true}));})()`);
+                await delay(20);
+            };
+            await setField('name','Session');
+            await evaluate(`document.querySelector('.tool-form form').requestSubmit()`);
+            assert.deepEqual(await evaluate(`window.messages.filter(message=>message.type==='run').at(-1).plan.steps[0].args`),{name:'Session'},'unset optional fields do not inject defaults');
+            await setField('Name matching','suffix');await setField('Show count precision','false');await setField('Summarize files','true');
+            await setField('language','rust');await setField('Evidence type','code');await setField('Exclude path prefix','src/generated/');
+            await setField('limit','12');await setField('cursor','a'.repeat(8192));
+            await evaluate(`[...document.querySelectorAll('.tool-form button')].find(button=>button.textContent==='Run form').click()`);
+            const request=await evaluate(`window.messages.filter(message=>message.type==='run').at(-1)`),args=request.plan.steps[0].args;
+            assert.equal(request.prepare,false);assert.equal(request.plan.steps[0].tool,'symbols');
+            assert.deepEqual({...args,cursor:undefined},{name:'Session',name_match:'suffix',include_count:false,include_files:true,language:'rust',evidence_kind:'code',exclude_path_prefix:'src/generated/',limit:12,cursor:undefined});
+            assert.equal(args.cursor.length,8192,'opaque cursor is not limited to an arbitrary4096 characters');
+            const before=await evaluate(`window.messages.filter(message=>message.type==='run').length`);
+            await setField('limit','101');await evaluate(`[...document.querySelectorAll('.tool-form button')].find(button=>button.textContent==='Run form').click()`);
+            assert.equal(await evaluate(`window.messages.filter(message=>message.type==='run').length`),before,'invalid numeric range never emits a native request');
+            checks.push({check:'actual tool controls preserve boolean/enum/integer/long cursor types, omission and validity',passed:true});
+            assert.equal(await evaluate(`document.documentElement.scrollWidth<=innerWidth`),true,'navigation/forms remain bounded horizontally');
+            await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+            const png=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await fs.writeFile(path.join(output,'mcp-navigation.png'),Buffer.from(png.data,'base64'));
+            await fs.writeFile(path.join(output,'mcp-navigation-summary.json'),JSON.stringify({basis:'Actual compiled Workbench browser bundle with original fictional host/data; no installed editor or native qualification',checks},null,2)+'\n');
+            console.log('Workbench MCP navigation/forms browser checks passed (compiled fictional bridge, not installed qualification).');
+            await call('Browser.close');return;
+        }
         if(process.argv.includes('--selection')){
             await call('Emulation.setDeviceMetricsOverride',{width:480,height:800,deviceScaleFactor:1,mobile:false});
             const file=path.join(scratch,'selection.html');await fs.writeFile(file,html('results',true));

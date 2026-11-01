@@ -2,7 +2,7 @@
 
 A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). Its complete cumulative diff must stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only then do PR/main CI run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remains the authenticated producer.
 
-The current package version is **1.8.2**; see [its release record](releases/release-1.8.2.md). The separate [dependency audit](dependency-advisories.md) workflow runs only when lockfiles or the advisory policy change, weekly, and on request; routine CI is unchanged. Prior release and qualification records retain their original scope.
+The current package version is **1.8.4**; see [its release record](releases/release-1.8.4.md). The separate [dependency audit](dependency-advisories.md) workflow runs only when lockfiles or the advisory policy change, weekly, and on request; routine CI is unchanged. Prior release and qualification records retain their original scope.
 
 Container compilation and ownership tests run as UID/GID 10001. Every cache-using
 build step first repairs only its three mounted Cargo/target cache directories,
@@ -75,7 +75,7 @@ Usage accounting has a separate best-effort contract: successful and failed jobs
 
 ## Downloadable candidates
 
-Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.2 release notes](releases/release-1.8.2.md) describe current behavior and qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 28-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
+Ordinary CI and local extension packaging default to the stable channel for the checked-in version. A stable candidate is still an unpublished build artifact; release workflows verify and publish it separately. The [1.8.6 release notes](releases/release-1.8.6.md) describe current behavior and qualification limits, while the [October 17 release summary](releases/releases-2026-10-17.md) records earlier published versions. The container smoke verifies the exact unified 28-tool MCP catalog; the unsupported history endpoint remains absent. Future previews require an explicit channel and a distinct version.
 
 Successful native jobs upload an artifact named `airk-native-<target>-<commit>-<run-id>-<attempt>` to the workflow run's Artifacts section. It contains:
 
@@ -117,7 +117,9 @@ When all four conditions hold, main uploads `airk-promotion-<commit>-<run>-<atte
 | Script contract tests only | Quick checks and Python contracts on all four platforms |
 | Rust, dependency, Docker, workflow, executable script or unknown input | Native checks on Linux, Windows and Apple Silicon (Intel after merge), four-host Python contracts, extension and container validation |
 
-`Required checks` always runs. It requires success for every selected job and an intentional skip for every unselected job. A failed plan, cancellation, unexpected skip or missing result cannot pass. `signed-off` remains independently required; branch protection is unchanged.
+`Required checks` aggregates dependency results even after failures. Its condition is `always() && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main' || !cancelled())`: only explicitly canceled or superseded non-PR runs on `main` skip this aggregate instead of generating a second failure from interrupted work. This follows [GitHub's status-check semantics](https://docs.github.com/en/actions/reference/workflows-and-actions/expressions#status-check-functions).
+
+PRs and non-main refs retain unconditional aggregation, including manually dispatched feature-branch runs after cancellation: [GitHub treats a skipped required job as successful for merging](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-jobs-with-conditions), so skipping a gate on the PR's head could bypass its protection. Whenever the gate runs, it still requires success for every selected job and an intentional skip for every unselected job; failed, canceled, unexpectedly skipped, missing or extra results fail closed, including when the gate is invoked directly. A skipped main aggregate does not qualify a canceled CI run or its artifacts for publication. `signed-off` remains independently required; branch protection, platform selection and release provenance checks are unchanged.
 
 ## Test execution and measurements
 

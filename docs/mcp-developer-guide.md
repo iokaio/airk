@@ -1,6 +1,6 @@
 # AIRK MCP developer guide
 
-This guide explains **all 28 public tools in AIRK 1.8.2**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md).
+This guide explains **all 28 public tools in the AIRK 1.8.6 release candidate**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Candidate qualification and remaining work are recorded in the [1.8.5 release record](releases/release-1.8.5.md).
 
 ## Start with the right layer
 
@@ -20,10 +20,13 @@ Use `tools/list` on the actual MCP connection as the authoritative public catalo
 
 ## Shared request and evidence rules
 
+- For a named identifier, start with compact `symbols`, inspect scoped `references`, then expand one chosen definition using `read_file`/`context`. Use `search` for concepts and supplementary code/document discovery. `symbols` and `code_facts` share the native fact reader; their cost depends on filters and requested detail, not just the tool name.
+- Obtain `status` before broad evidence fan-out and prefer small batches. Concurrent evidence capacity defaults to 16 and is configurable in Management → Service to 4, 8, 16, 32 or 64. Matching native channels and project processing have the same allowance; status has one additional slot. A bounded 128-request queue absorbs brief contention, but downstream setup, ownership and deadlines can still refuse unsubmitted work. Honor typed busy receipts without treating saturation as missing evidence.
 - In a multi-root connection, obtain selectors from projects and pass `project` only where the schema accepts it. Explorer UI selection never changes retrieval scope. A returned configured selector and the native service registry binding are different identity roles.
 - Native evidence is an indexed snapshot. Preserve exact publication tokens, content hashes, validators and original locations. Verify relevant live bytes before editing; neither a successful tool call nor a matching indexed hash proves live-source freshness.
 - Use literal relative prefixes where supported. `path` selects an exact indexed path. Scope before raising budgets. `limit`, `max_bytes`, compactness and pagination have per-tool contracts; a small response is not proof that internal work is constant.
 - Terse is the default where response options exist. `response_mode: full` adds explicit provenance/coverage; `include_status` repeats current observations. `compact: false` controls record richness separately. Do not add these keys to template/proposal calls whose schemas omit them.
+- Exact publication tokens and original source locations remain in evidence. Terse status receipts suppress repeated scalar observations; they are not connection-only replacements for citation identity. Copied replies and exports must remain independently interpretable.
 - Repeat continuation requests with the same filters and representation. Current-only revision tokens/cursors expire when superseded. Finish every needed changes page before advancing its baseline; independent coverage floors can make remembered history unavailable.
 - Typed busy/retry responses must be honored exactly as returned. Retry unchanged only where the receipt explicitly says the query was not submitted or permits that exact read retry. Transport failure after submission is uncertain; do not blindly replay a plan or operation.
 - Native evidence tools do not write project sources or expose management commands. Normal connection, cache, usage-accounting and owned service lifecycle metadata can still be maintained. UI proposals are separately marked as drafts and require user review.
@@ -79,13 +82,15 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 ## status
 
+In the 1.8.4 local candidate, a completed status query that overlaps ordinary scalar-cache invalidation returns its original snapshot successfully with `status_observation.superseded: true`, `reason: scalar_invalidation` and an explanatory message. Original publication and observation age are retained. The superseded snapshot does not repopulate the current cache or acknowledge an obsolete status receipt; the query is not replayed. Project/namespace changes, authenticated worker replacement, expired source authorization and shutdown retain their existing rejection behavior. Cached reuse still has its five-second limit, and 1.8.5 uses the configured evidence capacity plus one reserved status slot.
+
 **Why and when:** Answer the inexpensive question: what publication and readiness does this configured project currently expose?
 
 **How it works:** The frontend prepares the selected runtime, then obtains bounded scalar metadata. Successful observations can be reused for five seconds with their original observation time and cache age. The cold preparation allowance is ten seconds; established observation has a separate two-second allowance.
 
 **Inputs:** Optional configured `project`, `response_mode` and `include_status`. It does not accept a request to run diagnostics.
 
-**Result and limits:** Version, index state, counts, publication, freshness and semantic readiness. A successful envelope can still report unavailable or unknown evidence. Require `index_state: available` and a publication; never turn a timeout into proof that the index is unavailable.
+**Result and limits:** `query_concurrency` (configured frontend evidence capacity at admission), version, index state, counts, publication, freshness and semantic readiness. A successful envelope can still report unavailable or unknown evidence. Require `index_state: available` and a publication; never turn a timeout into proof that the index is unavailable.
 
 ```json
 {
@@ -103,7 +108,7 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 **Inputs:** Optional configured `project` and response options. Request explicitly; do not poll it as an automatic substitute for status.
 
-**Result and limits:** Detailed coverage and runtime/work observations, including missing/failed observations and optional editor binding/revisions. It does not start indexing, repair storage or prove that an old progress sample is advancing.
+**Result and limits:** `query_concurrency` (the same admission observation as status), detailed coverage and runtime/work observations, including missing/failed observations and optional editor binding/revisions. It does not start indexing, repair storage or prove that an old progress sample is advancing.
 
 ```json
 {
@@ -136,11 +141,11 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 **Why and when:** Discover relevant code and documents together when the exact source path or declaration is not yet known.
 
-**How it works:** The kernel selects a current indexed head, applies a literal path scope and performs lexical, vector or hybrid retrieval. It materializes bounded, source-bound evidence at original locations. Local model/index readiness governs vector modes.
+**How it works:** The kernel selects a current indexed head, applies literal path scope and optional indexed extraction filters, then performs lexical, vector or hybrid retrieval. Filters constrain authenticated candidate paths before either branch's bounded top-k selection. It materializes bounded, source-bound evidence at original locations. Local model/index readiness governs vector modes.
 
-**Inputs:** `query`; optional `mode`, `path_prefix`, `limit`, `max_bytes`, `full_chunks` and response options. Lexical terms are ANDed. Omitted mode follows saved collection policy; an explicit mode does not silently mean another mode.
+**Inputs:** `query`; optional `mode`, `path_prefix`, `language`, `evidence_kind`, `exclude_path_prefix`, `limit`, `max_bytes`, `full_chunks` and response options. Language is an exact saved extraction label. Evidence kind is `code`, `document`, `configuration` or `unknown`, derived from indexed extraction metadata rather than a filename guess. Exclusion is one literal relative prefix for this query, not a change to indexing or authorization. Lexical terms are ANDed. Omitted mode follows saved collection policy; an explicit mode does not silently mean another mode.
 
-**Result and limits:** Ranked hits, citations, exact publication and truncation/coverage information. Focused snippets are the default; `full_chunks` changes returned text, not the indexed source. Hybrid results while semantic work is partial do not prove complete vector coverage.
+**Result and limits:** Ranked hits, citations, exact publication and truncation/coverage information. Filter candidate discovery has its own finite work limit; a truncated roster is disclosed rather than reported as an exhaustive absence. Optional bounded `definitions` hints identify verified native declaration records from the same sealed read, with exact/unknown count precision and cited candidate pointers; imported assertions are excluded from this hint family. Their pointer list can be shorter than the qualified count; they do not change search ranking or lexical AND semantics. Focused snippets are the default; `full_chunks` changes returned text, not the indexed source. Hybrid results while semantic work is partial do not prove complete vector coverage. Prose, comments and scripts can rank alongside code; for a known type/function use definition lookup first.
 
 ```json
 {
@@ -240,7 +245,7 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 **Why and when:** Understand one file's structure before spending a large text budget on it.
 
-**How it works:** The discovery/conditional reader selects definitions, imports or structured document elements from the retained extraction, preserving locations, order and continuation.
+**How it works:** The discovery/conditional reader selects definitions, imports, available call candidates or structured document elements from one retained file, preserving source order, locations and continuation. This is an indexed-evidence read. The `code/outline` route accepted by suggest_view instead names an Explorer UI page.
 
 **Inputs:** Exact `path`; optional `compact`, `limit`, `max_bytes`, `cursor`, current revision/hash/validator and response options.
 
@@ -263,9 +268,9 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 **How it works:** The discovery reader selects grammar-derived definitions from indexed code facts. A requested language/profile must match the index's vocabulary.
 
-**Inputs:** Optional exact `name`, `language`, `path_prefix`, `compact`, budgets and continuation. Omit name to list definitions in a bounded scope.
+**Inputs:** Optional `name`, `language`, `path_prefix`, `compact`, budgets and continuation. Default name matching is exact: `Session` does not discover `OwnerSession`. Explicit `name_match: suffix|contains` compares simple or qualified names case-sensitively; explicit `exact` retains exact name/qualified name/symbol-ID lookup. Every explicit mode, including `exact`, requires a nonempty name. `include_count` requests count precision, not an unlimited count pass. Omit name and match mode to list definitions in a bounded scope.
 
-**Result and limits:** Definition signatures and locations; rich output adds IDs/details usable in later inspection. Equal written names can have multiple candidates. This is not a cross-language name resolver.
+**Result and limits:** Definition signatures and locations; rich output adds IDs/details usable in later inspection. Start compact and expand a chosen candidate when needed; `compact: false` can exhaust bytes before the record limit. Optional top-level `match_count` reports a nullable exact total, verified lower bound, completeness and count scope. A partial page scan is not a whole-query total. Matching mode and representation bind the continuation, and equal written names can have multiple candidates. This is not a cross-language name resolver.
 
 ```json
 {
@@ -284,7 +289,7 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 **How it works:** The discovery reader selects retained import/use/include declarations with their source locations.
 
-**Inputs:** Optional name substring, `language`, `path_prefix`, `compact`, budgets and cursor.
+**Inputs:** Optional name substring, `language`, `path_prefix`, `compact`, budgets and cursor. Omitted `name_match` preserves the existing case-insensitive substring behavior. Explicit `exact|suffix|contains` selects the same qualified-name matching rules as symbols, and `include_count` requests qualified count metadata; other import semantics remain unchanged.
 
 **Result and limits:** Bounded import declarations and provenance. Absence does not prove that a dynamic dependency does not exist.
 
@@ -304,7 +309,7 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 **How it works:** The kernel queries retained syntax facts and optional source-hash-bound producer assertions. Coverage and producer basis distinguish written candidates from imported assertions.
 
-**Inputs:** Exact `name`/qualified name/symbol ID and optional kind/language/path filters, or one durable `symbol_key` without textual filters. `compact`, budgets and cursor control representation/paging.
+**Inputs:** Exact-default `name`/qualified name/symbol ID and optional kind/language/path filters, or one durable `symbol_key` without textual filters. Explicit `name_match: suffix|contains` compares simple or qualified names case-sensitively; opaque symbol IDs are not substring targets. Every explicit mode, including `exact`, requires a nonempty name. `include_count` requests the same qualified page-count metadata as symbols. Durable-key lookup excludes explicit matching/count options. `compact`, budgets and cursor control representation/paging.
 
 **Result and limits:** Fact records with locations, signatures, scope and provenance. Syntax does not resolve a call target; an imported SCIP assertion is evidence from its producer, not a runtime call observation.
 
@@ -345,16 +350,22 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 **Why and when:** Collect bounded exact identifier mentions for impact investigation, including strings/comments that a structural query could omit.
 
-**How it works:** Indexed lexical candidates are verified against retained source for exact-case whole-identifier occurrences, including CamelCase handling.
+**How it works:** Indexed lexical candidates are verified against retained source for exact-case whole-identifier matches. A complete CamelCase identifier remains one identifier: references for `Owner` do not find the name `OwnerSession`. Use explicit suffix/contains definition lookup when that is the intended discovery.
 
-**Inputs:** Exact `name`, optional literal `path_prefix`, `limit`, `max_bytes` and response options.
+**Inputs:** Exact `name`; optional literal `path_prefix`, indexed `language`, `evidence_kind`, `exclude_path_prefix`, `limit`, `max_bytes` and response options. A new filter, `cursor`, explicit `order: index|path|code_first`, `include_files` or `include_count` selects the paged contract. That contract defaults to deterministic stable-ID `index` order. Omit all new options to preserve the preceding selection and response contract. Repeat identifier, filters, order and representation with continuation; count/text budgets may increase within supported maxima, including to satisfy `required_record_bytes`.
 
-**Result and limits:** Textual occurrences with locations. Check truncation before impact analysis; these are not semantically resolved references or executed test coverage.
+**Result and limits:** Exact-case whole-identifier matches verified within lexical candidates, including comments, prose and scripts. These are not semantically resolved references or executed test coverage. The paged response adds `page` with continuation, incomplete reason and explicit `coverage`. UTF-8 source matches reconstruct complete physical lines across retained chunk splits, preserving original CRLF/line coordinates. Extracted non-UTF-8 text can instead return qualified fragments; inspect `count_unit` and `coverage.line_completeness`. When the next record cannot fit the current text budget, an empty page can carry `required_record_bytes` and a resumable cursor. A record over the absolute maximum or an artifact over finite scan/deduplication capacity instead reports a terminal incomplete result.
+
+Optional file summaries count only returned-page records in the reported unit and have an additional 16-row/4-KiB metadata allowance beyond the text budget. `match_count` can be exact for the bounded `verified_lexical_candidates` scope, or a lower bound for `page_scan`; it is never a whole-query total. `coverage.query_complete` and `token_boundary_complete` remain false and the global query total remains unknown: an identifier split across index chunk tokenization can be absent from candidate postings. Candidate-scan completion and zero returned matches do not prove no uses. Use live verification or further scoped source reads when completeness matters. Scan, candidate, text and metadata limits remain distinct; a superseded-publication cursor fails explicitly.
 
 ```json
 {
   "name": "Owner",
   "path_prefix": "src/",
+  "language": "rust",
+  "order": "path",
+  "include_files": true,
+  "include_count": true,
   "limit": 20,
   "max_bytes": 8192
 }
@@ -370,7 +381,7 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 **Inputs:** `symbol` from returned evidence, direction incoming/outgoing, optional kind, literal path scope, `hops` from 1 to 3 and output budgets.
 
-**Result and limits:** Bounded related nodes/edges with their basis and coverage. Missing edges do not prove no impact; no complete call graph or runtime execution claim follows.
+**Result and limits:** Bounded related nodes/edges with their basis and coverage. Current associated-type navigation is Rust-only: where retained same-file owner/scope evidence establishes declarations for an exact type/impl ID, bounded `suggested_targets` can provide written method spellings for follow-up queries. Duplicate names, aliases, cross-file impls, missing facts and ambiguous associations do not become resolved links. Incoming callers still attach to written targets such as `Owner::new`, not automatically to every type named Owner. Missing edges do not prove no impact; no complete call graph or runtime execution claim follows.
 
 ```json
 {
@@ -412,6 +423,8 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 **How it works:** The native Workbench runner resolves text, a named recipe or explicit steps into a finite plan, then optionally executes eligible read-only steps with publication, scope, call/fanout/byte/time budgets.
 
 **Inputs:** `schema: airk.parse.request/1`; exactly one text/recipe/plan; mode prepare/execute. Preparation is the default. Explicit plan execution must retain required choices and exact revision identity.
+
+Prepare/Execute requires the original publication for retained literal syntax/provider IDs, including pasted/raw-text forms; preparation cannot substitute today's token for that identity, so preserve stored text and use a retained inspection action or a fresh name/current binding.
 
 **Result and limits:** A prepared/needs-input/completed result with plan tier, per-step outcomes, citations and completeness. Finite supported parsing can execute when requested; learned proposals remain review-only until explicit plan submission. It never edits source or executes tests.
 
@@ -662,3 +675,9 @@ For a change check: retain the publication and selectors, call changes, consume 
 For a UI proposal: read the appropriate template/help, explicitly inspect diagnostics if a current window binding/revision is needed, validate the complete argument object, submit once with a stable idempotency key, then inspect proposal_status. The user still applies/runs/saves it. For handoff, wait for a user-created share token.
 
 When modifying a tool, read its schema, dispatcher, kernel/adapter contract and linked tests first. Preserve exact scopes, request/response identity, source read-only behavior, original locations, validators, budgets and failure distinctions. Update this guide and the catalog/native contracts together, and verify current names against the advertised catalog. Native catalog/argument tests live in [MCP lib.rs](../crates/airk-mcp/src/lib.rs), unified catalog/alias/deadline tests in [unified.rs](../crates/airk-mcp/src/unified.rs), and native transport/client qualification in [check-service-clients.py](../scripts/check-service-clients.py). A linked test is evidence for its asserted contract, not a claim of complete platform or language qualification.
+
+## Request capacity in status and diagnostics (1.8.6)
+
+Successful MCP `status` and `diagnostics` responses (including the `airk_status` and `airk_diagnostics` aliases) include top-level `query_concurrency`, for example `"query_concurrency": 16`, in both JSON text and structured content. It is the evidence request limit read by the frontend for this request's admission: default 16, configured choices 4, 8, 16, 32 and 64. The separate reserved status/control slot is additional. It does not report free permits, queue depth or guaranteed admission. For a multi-project bridge, it is the minimum configured backend limit used by that bridge.
+
+The value reuses the existing admission policy read; reporting adds no configuration read, collection access or service RPC. It is refreshed for each request even when the index status snapshot is cached. Original publication, observation time and cache age continue to describe the index snapshot. Error receipts remain unchanged. Both terse and full responses include the field; status retains its lightweight scope. The [bridge implementation and regression](../crates/airk-mcp/src/remote.rs) cover live capacity changes, aliases, cached metadata, text/structured agreement, error preservation and one policy read per request.

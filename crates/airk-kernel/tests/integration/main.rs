@@ -33,6 +33,7 @@ mod publication_migration;
 mod publication_v2;
 mod publication_writers;
 mod razor_v2;
+mod reference_paging;
 mod repository_syntax_v2;
 mod retention_lifecycle_v2;
 mod roots;

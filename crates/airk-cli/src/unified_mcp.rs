@@ -504,6 +504,9 @@ struct RootNative {
     backend: tokio::sync::Mutex<SourceBackendCache>,
 }
 impl RemoteTools for RootNative {
+    fn query_concurrency(&self) -> usize {
+        crate::service_resource_policy::query_concurrency(&self.control)
+    }
     fn close(&self) {
         self.lookup.close();
         self.status.close();
@@ -661,6 +664,9 @@ struct Native {
     backend: Arc<dyn RemoteTools>,
 }
 impl RemoteTools for Native {
+    fn query_concurrency(&self) -> usize {
+        crate::service_resource_policy::query_concurrency(&self.control)
+    }
     fn close(&self) {
         self.backend.close();
     }

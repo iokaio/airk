@@ -4,6 +4,14 @@ The `airk` executable is the whole engine, not only a VS Code helper. This guide
 
 For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. `airk tools list` exposes 18 native prefixed operations; unified MCP adds projects and nine Assistance operations. The terminal exposes those separately through `airk projects` and `airk explorer`, so 18 is not a count of all CLI capabilities.
 
+## Identifier navigation in 1.8.4
+
+For a known type/function, use compact `airk symbol` first, scoped `airk refs` for textual uses, and `airk read`/`context` to inspect a selected location. `airk outline` reads one file's structure in source order; it does not propose an Explorer screen. Search remains useful for concepts and supplementary passages, with bounded same-publication definition pointers where available.
+
+`symbol` and `code-facts` keep exact matching by default; `--name-match suffix|contains` explicitly expands simple/qualified names case-sensitively. `--include-count` requests a qualified count, whose total can remain unknown under bounded scanning. Search and refs accept indexed `--language`, `--evidence-kind code|document|configuration|unknown` and literal `--exclude-path-prefix`, applied before candidate ranking rather than to a tiny returned top-k.
+
+References add `--order index|path|code_first`, `--include-files`, `--include-count`, `--cursor`, `--limit` and `--max-bytes`. New selectors opt into a paged response; omitted selectors preserve the preceding response contract. Continue with the same identifier, scope, filters and ordering. File summaries count matching lines returned on this page, not every occurrence or every matching file. A too-small byte budget can produce an empty page with required bytes and a resumable cursor; terminal scan/absolute-record limits instead remain explicit coverage gaps. See the [developer guide](cli-developer-guide.md#identifier-investigations-and-bounded-discovery) for the full contract and examples.
+
 ## Conventions
 
 - Ordinary one-shot commands print JSON on stdout. Help, text/CSV/Markdown exports and interactive `tools shell` have their own output formats. MCP stdio and persistent service console are protocol streams; foreground service/host commands retain ownership until stopped.

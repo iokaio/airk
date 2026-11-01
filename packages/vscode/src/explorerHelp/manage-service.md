@@ -16,10 +16,13 @@ Management › Service details shows the native service's health, runtime select
 
 - Connect, start, restart or stop the service. Stop and restart ask first and name the instance.
 - Review a bundled runtime upgrade, the previous runtime, a payload repair or a saved activation. Each review shows the exact selection before anything changes.
-- Change the resource preset or custom limits.
+- Set **Concurrent requests…** to **4, 8, 16, 32 or 64** (default **16**). The same service-host setting controls MCP evidence admission, independent native channels and each project’s processing allowance. One status/control slot is reserved in addition. Changes apply to subsequent requests; accepted work drains after a decrease.
+- Change the resource preset or custom limits. Request capacity is preserved when changing presets.
 - Start, stop or force-stop the inference helper.
 
 ## Limits
+
+Changes apply on this service host. Running project workers acknowledge the new capacity before it is saved; AIRK frontends pick it up before subsequent requests, and other Management windows show it on their next refresh. Accepted work drains after a reduction. The CLI can read and change the same policy with `airk service rpc` using `resources` and `configure_resources` (`configuration.query_concurrency`).
 
 Health confirms responsiveness only. An external service manager controls lifecycle, upgrades and rollback when one is configured.
 

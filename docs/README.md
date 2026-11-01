@@ -1,6 +1,18 @@
 # AIRK documentation
 
+**1.8.6 release candidate:** MCP `status` and `diagnostics` return `query_concurrency`, the configured evidence request limit observed at admission. It reuses the existing policy read, including for cached status; it is a capacity limit, not a count of free slots. This release includes the preceding unpublished MCP, Workbench and concurrent-request improvements. See the [1.8.6 release record](releases/release-1.8.6.md) for behavior and validation.
+
+**1.8.5 local candidate:** [configurable request capacity](releases/release-1.8.5.md), default 16 and choices 4, 8, 16, 32 and 64, connects Management → Service to MCP admission, independent native channels and project processing. Qualification is recorded with the candidate.
+
 Developer references: [MCP tools](mcp-developer-guide.md) covers all 28 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. Both explain why `airk tools list` has 18 native tools while unified MCP has 28, and map the remaining capabilities to separate terminal commands.
+
+**Earlier 1.8.4 development:** MCP admission, identifier navigation and bounded discovery improvements are being implemented on feat/mcpoptimizations. See the [candidate record](releases/release-1.8.4.md) for implemented behavior and validation; pending work is not a published capability.
+
+**Why 1.8.4:** the installed replacement 1.8.3 had a different native source digest from the tested checkout and still returned mixed-load status errors. The [1.8.4 record](releases/release-1.8.4.md#why-the-version-changed) explains the distinct-version rebuild, the status/admission/Windows permission issues addressed and the remaining qualification limits.
+
+**1.8.4 developer-directory follow-up:** Windows native write-boundary checks accept ordinary read-only sharing and creator-owner inheritance; unsupported or foreign-writable layouts retain verified-read fallback. Configured write roots and read-only sources remain enforced.
+
+The [20-scenario MCP test results](mcp-improvements-test-results.md) record scoped correctness checks and remaining improvements. The 1.8.4 status follow-up returns completed observations with a supersession note after ordinary scalar invalidation, preserving scope/worker checks; see the [candidate record](releases/release-1.8.4.md).
 
 [Release records](releases/README.md) contains versioned notes, dated release evidence and the historical checklist. The [release workflow](release-workflow.md) remains current procedural guidance.
 
@@ -62,7 +74,7 @@ Successful runtime activation finishes quietly. A detected extension update offe
 
 Trusted VSIX installation and **Install or Repair CLI** refresh recognized existing workspace AIRK connections in Codex (`.codex/config.toml`), Claude Code (`.mcp.json`) and GitHub Copilot (`.vscode/mcp.json`) to the installed stable launcher and registered service arguments. Other servers, environment and tool policies remain intact; missing entries do not enable an agent. Foreign/custom launches, unsupported TOML, unsaved edits and unsafe files remain for manual review with a visible warning. Restart connected agents after installation. Targeted Windows installation is covered by the local installer harness; broader platform qualification remains pending.
 
-The current branch is synchronized at **1.8.2**, carrying forward the 1.5.0 addition of the [AIRK Explorer and Explorer Assistance](releases/release-1.5.0.md); the paragraphs above and below about 1.4.x describe earlier releases. [Routine CI](ci-and-builds.md) runs the full workspace once on Linux, focused native regressions elsewhere, all platform builds/package smoke and a container smoke. Full platform/container suites and installed-runtime lifecycle campaigns are explicit qualification. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
+The current branch is synchronized at **1.8.6**, carrying forward the 1.5.0 addition of the [AIRK Explorer and Explorer Assistance](releases/release-1.5.0.md); the paragraphs above and below about 1.4.x describe earlier releases. [Routine CI](ci-and-builds.md) runs the full workspace once on Linux, focused native regressions elsewhere, all platform builds/package smoke and a container smoke. Full platform/container suites and installed-runtime lifecycle campaigns are explicit qualification. 1.4.2 scales Balanced admission to one quarter of detected RAM (2–32 GiB), protects capacity for up to four project query workers, and raises Balanced source pacing to 64 MiB/s per job within a 256 MiB/s shared ceiling. Native watching supports 8,192 directories per project and 32,768 shared, with bounded incremental traversal and specific limit diagnostics. Existing manual resource overrides and storage quotas are preserved. These are admission policies, not hard OS memory or disk-I/O limits. Follow the [versioning process](versioning.md) from local candidates through CI and publication. Its checks run on Windows x64; earlier installed-editor and Linux receipts do not qualify this follow-up.
 
 The [MCP contract](mcp.md) distinguishes raw unavailable diagnostics, bounded publication/readiness observations and typed exact-request retries. Qualification clients preserve these distinctions and exact submitted-query accounting.
 
@@ -78,7 +90,7 @@ Trusted VSIX activation now installs the native runtime and the `airk` terminal 
 
 The **1.4.4 release** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [historical 1.4.4 release record](releases/release-1.4.4.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). Native Mac and the complete installed-platform/signing/policy matrix remain unqualified.
 
-The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.8.2; publication is verified separately.
+The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.8.6; publication is verified separately.
 
 The [Windows build/editor guide](windows-local-build.md) describes pair builds, stage-only acceptance without a VSIX, and real native registration/usage/response-mode checks in isolated editor profiles.
 
@@ -172,6 +184,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [Google Antigravity manual MCP setup](antigravity-mcp.md)
 - [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
 - [Agent Lean index modes and MCP efficiency plan](mcp-prioritization.md)
+- [2026-11-01 agent-side MCP investigation: query log, admission, ranking and tool-description recommendations](mcp-recommendations.md)
 - [1.2.4 diagnostics, structured contention retries, helper identity and bounded batch recovery](releases/release-1.2.4.md)
 - [1.2.3 Agent Lean default and indexing fix](releases/release-1.2.3.md)
 - [1.2.2 semantic indexing fix](releases/release-1.2.2.md)

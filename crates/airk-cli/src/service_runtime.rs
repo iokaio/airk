@@ -152,7 +152,7 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     let instance = new_instance_id()?;
     let (log, log_guard) = crate::service_logs::Log::start(root.canonicalize()?, instance);
     log.record(airk_core::service_logs::LogKind::ServiceStarted, None, None);
-    let policy = Arc::new(Mutex::new(Broker::new(instance, BrokerLimits::default())?));
+    let policy = Arc::new(Mutex::new(Broker::new(instance, BrokerLimits::service())?));
     let sources = crate::source_supervisor::SourceSupervisor::start(
         root.canonicalize()?,
         instance,

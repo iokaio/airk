@@ -37,6 +37,7 @@ struct Queries {
     count: AtomicUsize,
     receipts: Mutex<Vec<airk_mcp::response::StatusReceipt>>,
     hold_reply: Mutex<Option<Arc<Gate>>>,
+    barrier: Mutex<Option<Arc<tokio::sync::Barrier>>>,
 }
 struct OwnedIpc {
     route: Arc<Mutex<WorkerIdentity>>,
@@ -195,6 +196,8 @@ impl OwnedIpc {
                     while let Some(query)=local_ipc::read_message::<_,Query>(&mut stream,Duration::from_secs(5)).await? {
                         observed.count.fetch_add(1,Ordering::SeqCst);
                         observed.receipts.lock().unwrap().push(query.status_receipt);
+                        let barrier = observed.barrier.lock().unwrap().clone();
+                        if let Some(barrier) = barrier { barrier.wait().await; }
                         let gate=observed.hold_reply.lock().unwrap().take();
                         if let Some(gate)=gate { gate.hold().await; }
                         local_ipc::write_message(&mut stream,&protocol::QueryResult {
@@ -521,5 +524,126 @@ async fn original_source_expiry_during_health_prevents_connect() -> Result<()> {
     assert_eq!(queries.count.load(Ordering::SeqCst), 0);
     drop(pending);
     drained(backend, ipc).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn simultaneous_cold_evidence_calls_share_the_first_authenticated_binding() -> Result<()> {
+    for pinned in [false, true] {
+        let (_owner, root, scope, backend) = fixture(pinned)?;
+        let identity = test_identity(scope.project, 1, 123);
+        let mut ipc = OwnedIpc::new(&root, identity)?;
+        let queries = ipc.add_worker(&root, identity)?;
+        let gate = Arc::new(Gate::default());
+        *ipc.controls.hold_health.lock().unwrap() = Some(gate.clone());
+        let mut first = Box::pin(call(&backend, pinned, scope, "airk_read_file"));
+        tokio::select! { _=gate.entered.notified()=>{}, result=&mut first=>anyhow::bail!("cold Health never held: {result:?}") }
+        // Poll both siblings while the first owns setup, before ANY worker
+        // authority is known. No sleep or scheduling assumption creates the race.
+        let mut second = Box::pin(call(&backend, pinned, scope, "airk_read_file"));
+        let mut third = Box::pin(call(&backend, pinned, scope, "airk_read_file"));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(second.as_mut().poll(&mut context).is_pending());
+        assert!(third.as_mut().poll(&mut context).is_pending());
+        assert_eq!(backend.state_waiters.available_permits(), 128);
+        gate.release.notify_one();
+        let (first, second, third) = tokio::join!(first, second, third);
+        for reply in [first?, second?, third?] {
+            assert_ne!(reply["isError"], true, "{reply}");
+            assert_eq!(
+                response_body(&reply)?["publication"]["token"],
+                worker_publication(identity)
+            );
+        }
+        assert_eq!(queries.count.load(Ordering::SeqCst), 3);
+        assert_eq!(ipc.controls.health.load(Ordering::SeqCst), 3);
+        assert_eq!(ipc.controls.connect.load(Ordering::SeqCst), 3);
+        assert_eq!(backend.state_waiters.available_permits(), 128);
+        drained(backend, ipc).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn queued_known_authority_is_not_promoted_across_a_worker_replacement() -> Result<()> {
+    for pinned in [false, true] {
+        let (_owner, root, scope, backend) = fixture(pinned)?;
+        let old = test_identity(scope.project, 1, 124);
+        let newer = test_identity(scope.project, 2, 125);
+        let mut ipc = OwnedIpc::new(&root, old)?;
+        let old_queries = ipc.add_worker(&root, old)?;
+        let new_queries = ipc.add_worker(&root, newer)?;
+        call(&backend, pinned, scope, "airk_read_file").await?;
+        let gate = Arc::new(Gate::default());
+        *old_queries.hold_reply.lock().unwrap() = Some(gate.clone());
+        let mut accepted = Box::pin(call(&backend, pinned, scope, "airk_read_file"));
+        tokio::select! { _=gate.entered.notified()=>{}, result=&mut accepted=>anyhow::bail!("old query never held: {result:?}") }
+        let mut spare = Vec::new();
+        for _ in 0..15 {
+            spare.push(backend.state.lock().await);
+        }
+        let mut queued = Box::pin(call(&backend, pinned, scope, "airk_read_file"));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(queued.as_mut().poll(&mut context).is_pending());
+        *ipc.route.lock().unwrap() = newer;
+        call(&backend, pinned, scope, "airk_status").await?;
+        gate.release.notify_one();
+        let (original, refused) = tokio::join!(accepted, queued);
+        assert_eq!(
+            response_body(&original?)?["publication"]["token"],
+            worker_publication(old)
+        );
+        let refused = refused?;
+        assert_eq!(
+            response_body(&refused)?["error"]["query_submitted"],
+            false,
+            "{refused}"
+        );
+        assert_eq!(old_queries.count.load(Ordering::SeqCst), 2);
+        assert_eq!(new_queries.count.load(Ordering::SeqCst), 1);
+        drop(spare);
+        drained(backend, ipc).await?;
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn configured_parallel_channels_submit_all_requests_before_any_reply() -> Result<()> {
+    for concurrency in [4, 8, 16, 32, 64] {
+        for pinned in [false, true] {
+            let (_owner, root, scope, backend) = fixture(pinned)?;
+            crate::service_resource_policy::save(
+                &root,
+                &airk_core::service_resources::ResourceConfiguration {
+                    query_concurrency: concurrency,
+                    ..Default::default()
+                },
+            )?;
+            let identity = test_identity(scope.project, 1, 127);
+            let mut ipc = OwnedIpc::new(&root, identity)?;
+            let queries = ipc.add_worker(&root, identity)?;
+            *queries.barrier.lock().unwrap() =
+                Some(Arc::new(tokio::sync::Barrier::new(concurrency)));
+            let mut requests = tokio::task::JoinSet::new();
+            for _ in 0..concurrency {
+                let backend = backend.clone();
+                requests
+                    .spawn(async move { call(&backend, pinned, scope, "airk_read_file").await });
+            }
+            while let Some(reply) =
+                tokio::time::timeout(Duration::from_secs(10), requests.join_next()).await?
+            {
+                let reply = reply??;
+                assert_ne!(reply["isError"], true, "{concurrency}: {reply}");
+                assert_eq!(
+                    response_body(&reply)?["publication"]["token"],
+                    worker_publication(identity)
+                );
+            }
+            assert_eq!(queries.count.load(Ordering::SeqCst), concurrency);
+            assert_eq!(ipc.controls.connect.load(Ordering::SeqCst), concurrency);
+            drained(backend, ipc).await?;
+        }
+    }
     Ok(())
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Bounded inventory and fact discovery.
 use super::*;
-use airk_core::discovery::{self, DiscoveryKey, DiscoveryOptions};
+use airk_core::discovery::{self, DiscoveryKey, DiscoveryOptions, FactDiscoveryOptions};
 
 impl Kernel {
     pub fn list_files(&self, prefix: &str, limit: usize, max_bytes: usize) -> Result<FileList> {
@@ -102,7 +102,22 @@ impl Kernel {
         query: &FactQuery,
         options: &DiscoveryOptions,
     ) -> Result<FactsResponse> {
-        self.current_facts(self.current_reader()?.as_ref(), query, false, options)
+        self.facts_page_with_options(query, options, &FactDiscoveryOptions::default())
+    }
+
+    pub fn facts_page_with_options(
+        &self,
+        query: &FactQuery,
+        options: &DiscoveryOptions,
+        fact_options: &FactDiscoveryOptions,
+    ) -> Result<FactsResponse> {
+        self.current_facts_with_options(
+            self.current_reader()?.as_ref(),
+            query,
+            false,
+            options,
+            fact_options,
+        )
     }
 
     pub fn code_facts(&self, query: &FactQuery) -> Result<FactsResponse> {
@@ -114,7 +129,22 @@ impl Kernel {
         query: &FactQuery,
         options: &DiscoveryOptions,
     ) -> Result<FactsResponse> {
-        self.current_facts(self.current_reader()?.as_ref(), query, true, options)
+        self.code_facts_page_with_options(query, options, &FactDiscoveryOptions::default())
+    }
+
+    pub fn code_facts_page_with_options(
+        &self,
+        query: &FactQuery,
+        options: &DiscoveryOptions,
+        fact_options: &FactDiscoveryOptions,
+    ) -> Result<FactsResponse> {
+        self.current_facts_with_options(
+            self.current_reader()?.as_ref(),
+            query,
+            true,
+            options,
+            fact_options,
+        )
     }
 
     pub fn outline(&self, path: &str, limit: usize, max_bytes: usize) -> Result<FactsResponse> {

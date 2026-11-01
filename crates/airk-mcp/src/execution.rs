@@ -50,15 +50,17 @@ impl Admission {
         if !kernel.is_service_collection() {
             return Self::default();
         }
-        // The resident grant includes one bounded native materialization. This
-        // inner permit survives transport cancellation and applies to status,
+        // The inner permit survives transport cancellation and applies to status,
         // rendering and accounting too; an outer IPC grant cannot replace it.
-        let materialization = Arc::new(Semaphore::new(1));
+        // The authenticated worker broker owns the live configured admission.
+        // This inner lifetime gate retains accepted blocking work, including on cancellation.
+        let capacity = airk_core::service_resources::MAX_QUERY_CONCURRENCY as u32 + 1;
+        let materialization = Arc::new(Semaphore::new(capacity as usize));
         Self(Arc::new(State {
             evidence: materialization.clone(),
             control: materialization,
-            evidence_workers: 1,
-            control_workers: 1,
+            evidence_workers: capacity,
+            control_workers: capacity,
             shared: true,
             closing: AtomicBool::new(false),
             queued: AtomicU64::new(0),
@@ -384,7 +386,7 @@ mod tests {
         let server = AirkServer::new(kernel);
         let admission = server.admission.clone();
         assert_eq!(admission.status()["shared_execution_budget"], true);
-        assert_eq!(admission.status()["evidence_workers"], 1);
+        assert_eq!(admission.status()["evidence_workers"], 65);
         let (entered, started) = tokio::sync::oneshot::channel();
         let (release, hold) = std::sync::mpsc::channel();
         let call = tokio::spawn(async move {
@@ -397,6 +399,7 @@ mod tests {
                 .await
         });
         started.await?;
+        let remaining = admission.0.evidence.clone().acquire_many_owned(64).await?;
         call.abort();
         assert!(call.await.unwrap_err().is_cancelled());
         let waiting = admission.clone();
@@ -413,6 +416,7 @@ mod tests {
             !drain.is_finished(),
             "cancelled transport returned native memory credit"
         );
+        drop(remaining);
         release.send(())?;
         tokio::time::timeout(Duration::from_secs(3), drain).await??;
         assert!(status.await?.is_err());

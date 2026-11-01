@@ -15,6 +15,70 @@ use std::{
 
 struct Children(Vec<Child>);
 
+#[test]
+fn configured_query_capacity_updates_live_worker_and_reads_through_matching_channels() -> Result<()>
+{
+    use airk_core::service::{ControlMethod as Method, ControlResponse as Response};
+    use airk_core::service_resources::ResourceConfiguration;
+    let owner = tempfile::tempdir()?;
+    let runtime = owner.path().join("runtime");
+    let source = owner.path().join("source");
+    let data = owner.path().join("data");
+    fs::create_dir(&source)?;
+    fs::create_dir(&data)?;
+    let original = "pub struct Copper;\n";
+    fs::write(source.join("fixture.rs"), original)?;
+    bind_fixture_data(&runtime, &data)?;
+    {
+        let kernel =
+            airk_kernel::Kernel::open_service_collection(&source, Some(data.clone()), "capacity")?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+    }
+    let project = airk_kernel::service_projects::registration(&source, &data, "capacity")?;
+    let mut children = Children(vec![start(&runtime)?]);
+    wait_ready(&runtime)?;
+    let result = tokio::runtime::Runtime::new()?.block_on(async {
+        ensure!(matches!(airk_cli::service_runtime::request(&runtime, Method::Register { project: project.clone() }).await?, Response::Registered { .. }), "registration failed");
+        let backend = airk_cli::project_client::tools(runtime.clone(), project.binding);
+        // Establish the worker first; later configurations must update this same owner.
+        let first = backend.call("airk_symbols".into(), serde_json::json!({"name":"Copper"}).as_object().unwrap().clone()).await?;
+        ensure!(first["isError"] != true, "initial read failed: {first}");
+        for concurrency in [4,16,64,4] {
+            let configuration = ResourceConfiguration { query_concurrency: concurrency, ..Default::default() };
+            let configured = airk_cli::service_runtime::request(&runtime, Method::ConfigureResources { configuration }).await?;
+            ensure!(matches!(configured, Response::Resources { ref observation, configuration_error:false, .. } if observation.configuration.query_concurrency == concurrency), "capacity update was not acknowledged");
+            let mut requests = tokio::task::JoinSet::new();
+            for _ in 0..concurrency {
+                let backend = backend.clone();
+                requests.spawn(async move { backend.call("airk_symbols".into(), serde_json::json!({"name":"Copper","max_bytes":4000}).as_object().unwrap().clone()).await });
+            }
+            while let Some(reply) = requests.join_next().await {
+                let reply = reply??;
+                ensure!(reply["isError"] != true, "{concurrency} channel read failed: {reply}");
+            }
+            let Response::Health { observation } = airk_cli::service_runtime::request(&runtime, Method::Health).await? else { anyhow::bail!("health missing") };
+            ensure!(observation.policy.allocated.concurrent_queries == concurrency + 1, "service capacity differs from configured evidence channels plus status");
+            let persisted = airk_cli::service_runtime::request(&runtime, Method::Resources).await?;
+            ensure!(matches!(persisted, Response::Resources { observation, .. } if observation.configuration.query_concurrency == concurrency), "resource observation lost capacity");
+        }
+        backend.close();
+        backend.shutdown().await?;
+        drop(backend);
+        Ok::<_,anyhow::Error>(())
+    });
+    let shutdown = control(&runtime, "shutdown");
+    let exited = wait_exit(&mut children.0[0]);
+    result?;
+    shutdown?;
+    ensure!(exited?, "service did not drain");
+    ensure!(
+        fs::read_to_string(source.join("fixture.rs"))? == original,
+        "source changed"
+    );
+    Ok(())
+}
+
 // Existing evidence fixtures explicitly bind their storage before pre-populating
 // it. Production workers bind after activation and never adopt unbound 1.4 data.
 fn bind_fixture_data(runtime: &Path, data: &Path) -> Result<()> {

@@ -340,6 +340,24 @@ impl ChildWorker {
         self.last_renewal = Instant::now();
         Ok(())
     }
+    fn configure_queries(&mut self, concurrency: usize) -> Result<()> {
+        let identity = self.identity.context("project identity missing")?;
+        service_ipc::write_frame(
+            self.input.as_mut().context("project input missing")?,
+            &WorkerCommand::ConfigureQueries {
+                identity,
+                concurrency,
+            },
+        )?;
+        ensure!(
+            matches!(
+                self.output.recv_timeout(Duration::from_secs(3))?,
+                Reply::QueriesConfigured
+            ),
+            "project query capacity update failed"
+        );
+        Ok(())
+    }
 }
 
 // Three attempts per service lifetime (or explicit start), with no source-job dependency.
@@ -628,8 +646,9 @@ fn start_worker(
     };
     let identity = worker.identity.context("missing worker identity")?;
     let allowance = QueryAllowance {
-        concurrent_queries: 1,
-        response_bytes: MAX_FRAME_BYTES,
+        concurrent_queries: resources.snapshot().configuration.query_concurrency + 1,
+        response_bytes: (resources.snapshot().configuration.query_concurrency + 1)
+            * MAX_FRAME_BYTES,
     };
     policy
         .lock()
@@ -1106,18 +1125,35 @@ impl Supervisor {
                             configuration,
                             reply,
                         }) => {
-                            let result = configuration
-                                .validate()
-                                .and_then(|_| {
-                                    crate::service_resource_policy::save(&root, &configuration)
-                                })
-                                .and_then(|_| resources.reconfigure(configuration));
-                            let result = result.and_then(|_| match pool.as_mut() {
-                                Some(pool) => pool.configure_threads(
-                                    resources.snapshot().inference_threads_limit,
-                                ),
-                                None => Ok(()),
-                            });
+                            let previous = resources.snapshot().configuration;
+                            let result = (|| -> Result<()> {
+                                configuration.validate()?;
+                                for worker in workers.values_mut() {
+                                    let identity = worker.identity.context("project identity missing")?;
+                                    worker.configure_queries(configuration.query_concurrency)?;
+                                    policy.lock().map_err(|_| anyhow::anyhow!("service policy unavailable"))?
+                                        .configure_queries(identity, configuration.query_concurrency, Instant::now())?;
+                                }
+                                resources.reconfigure(configuration.clone())?;
+                                if let Some(pool) = pool.as_mut() {
+                                    pool.configure_threads(resources.snapshot().inference_threads_limit)?;
+                                }
+                                crate::service_resource_policy::save(&root, &configuration)
+                            })();
+                            if result.is_err() {
+                                // Never publish a setting before native owners acknowledge it.
+                                // Restore accepted policy; failed acknowledgements remain explicit.
+                                for worker in workers.values_mut() {
+                                    let _ = worker.configure_queries(previous.query_concurrency);
+                                    if let (Some(identity), Ok(mut policy)) = (worker.identity, policy.lock()) {
+                                        let _ = policy.configure_queries(identity, previous.query_concurrency, Instant::now());
+                                    }
+                                }
+                                let _ = resources.reconfigure(previous);
+                                if let Some(pool) = pool.as_mut() {
+                                    let _ = pool.configure_threads(resources.snapshot().inference_threads_limit);
+                                }
+                            }
                             let response = if result.is_ok() {
                                 configuration_error = false;
                                 ControlResponse::Resources {

@@ -4,7 +4,10 @@ use super::{CurrentRead, CurrentToken, postings::Lookup};
 use crate::FileStore;
 use airk_core::{
     Artifact, Citation, Fact, FactHit, FactQuery,
-    discovery::{self, CompactFact, DiscoveryKey, DiscoveryOptions, DiscoveryPage},
+    discovery::{
+        self, CompactFact, DiscoveryKey, DiscoveryOptions, DiscoveryPage, FactDiscoveryOptions,
+        MatchCount, NameMatch,
+    },
 };
 use anyhow::{Context, Result, ensure};
 use serde::Serialize;
@@ -44,7 +47,44 @@ pub(crate) fn require_integrity(
     })
 }
 
-fn matches(artifact: &Artifact, fact: &Fact, q: &FactQuery, code_only: bool) -> bool {
+fn exact_name_match(fact: &Fact, name: &str) -> bool {
+    fact.name == name
+        || fact.code.as_ref().is_some_and(|code| {
+            code.qualified_name == name
+                || code.symbol_id == name
+                || airk_core::code::terminal_call_name(code, &fact.kind) == Some(name)
+        })
+}
+
+fn matches_name(fact: &Fact, q: &FactQuery, options: &FactDiscoveryOptions) -> bool {
+    q.name.as_ref().is_none_or(|name| match options.name_match {
+        Some(NameMatch::Exact) => exact_name_match(fact, name),
+        Some(NameMatch::Suffix) => {
+            fact.name.ends_with(name)
+                || fact
+                    .code
+                    .as_ref()
+                    .is_some_and(|code| code.qualified_name.ends_with(name))
+        }
+        Some(NameMatch::Contains) => {
+            fact.name.contains(name)
+                || fact
+                    .code
+                    .as_ref()
+                    .is_some_and(|code| code.qualified_name.contains(name))
+        }
+        None if q.exact_name => exact_name_match(fact, name),
+        None => fact.name.to_lowercase().contains(&name.to_lowercase()),
+    })
+}
+
+fn matches(
+    artifact: &Artifact,
+    fact: &Fact,
+    q: &FactQuery,
+    code_only: bool,
+    options: &FactDiscoveryOptions,
+) -> bool {
     (!code_only || fact.code.is_some())
         && (!q.document_only
             || (fact.code.is_none() && !matches!(fact.kind.as_str(), "definition" | "import")))
@@ -52,19 +92,7 @@ fn matches(artifact: &Artifact, fact: &Fact, q: &FactQuery, code_only: bool) -> 
         && q.language
             .as_ref()
             .is_none_or(|lang| lang == &artifact.language)
-        && q.name.as_ref().is_none_or(|name| {
-            if q.exact_name {
-                &fact.name == name
-                    || fact.code.as_ref().is_some_and(|code| {
-                        &code.qualified_name == name
-                            || &code.symbol_id == name
-                            || airk_core::code::terminal_call_name(code, &fact.kind)
-                                == Some(name.as_str())
-                    })
-            } else {
-                fact.name.to_lowercase().contains(&name.to_lowercase())
-            }
-        })
+        && matches_name(fact, q, options)
 }
 
 fn row_key(path: &str, ordinal: usize, fact: &Fact) -> DiscoveryKey {
@@ -163,7 +191,29 @@ impl CurrentRead {
         code_only: bool,
         options: &DiscoveryOptions,
     ) -> Result<CurrentFactPage> {
+        self.native_facts_page_with_options(
+            store,
+            query,
+            code_only,
+            options,
+            &FactDiscoveryOptions::default(),
+        )
+    }
+
+    pub fn native_facts_page_with_options(
+        &self,
+        store: &FileStore,
+        query: &FactQuery,
+        code_only: bool,
+        options: &DiscoveryOptions,
+        fact_options: &FactDiscoveryOptions,
+    ) -> Result<CurrentFactPage> {
         airk_core::validate_budget(query.limit, query.max_bytes)?;
+        ensure!(
+            fact_options.name_match.is_none()
+                || query.name.as_ref().is_some_and(|name| !name.is_empty()),
+            "name_match requires a nonempty name"
+        );
         ensure!(
             !options.compact || !options.minimal,
             "choose compact facts or minimal navigation, not both"
@@ -197,11 +247,27 @@ impl CurrentRead {
         let mut filters = query.clone();
         filters.limit = 0;
         filters.max_bytes = 0;
-        let binding = discovery::binding(
-            &serde_json::to_string(&revision)?,
-            "current-native-facts/1",
-            (filters, code_only, options.compact, options.minimal),
-        )?;
+        let revision_identity = serde_json::to_string(&revision)?;
+        let binding = if *fact_options == FactDiscoveryOptions::default() {
+            // Retain existing wire/cursor identities for omitted controls.
+            discovery::binding(
+                &revision_identity,
+                "current-native-facts/1",
+                (filters, code_only, options.compact, options.minimal),
+            )?
+        } else {
+            discovery::binding(
+                &revision_identity,
+                "current-native-facts/2",
+                (
+                    filters,
+                    code_only,
+                    options.compact,
+                    options.minimal,
+                    fact_options,
+                ),
+            )?
+        };
         let after = discovery::decode(options.cursor.as_deref(), &binding)?;
         if let Some(after) = &after {
             ensure!(
@@ -211,7 +277,10 @@ impl CurrentRead {
                 "current fact cursor path unavailable"
             );
         }
-        let lookup = if let Some(name) = query.name.as_deref().filter(|_| query.exact_name) {
+        let exact_name = fact_options
+            .name_match
+            .map_or(query.exact_name, |mode| mode == NameMatch::Exact);
+        let lookup = if let Some(name) = query.name.as_deref().filter(|_| exact_name) {
             if self.terminal_call_postings_complete()?
                 || query.kind.as_deref().is_some_and(|kind| kind != "call")
             {
@@ -329,6 +398,7 @@ impl CurrentRead {
             },
         };
         let mut last = after.clone();
+        let mut matched = 0usize;
         let mut work = self.resource_reference("analysis")?.map_or(0, |r| r.bytes);
         'files: for path in paths {
             if after
@@ -507,7 +577,10 @@ impl CurrentRead {
                     continue;
                 }
                 let fact = &row.fact;
-                if matches(&artifact, fact, query, code_only) {
+                if matches(&artifact, fact, query, code_only, fact_options) {
+                    // Count only records actually checked under this page's
+                    // existing work bounds, including the first unadmitted hit.
+                    matched = matched.saturating_add(1);
                     let mut hit = fact_hit(&artifact, fact);
                     hit.continuity_key = row.continuity_key;
                     if let Some(minimal) = response.minimal.as_mut() {
@@ -574,6 +647,15 @@ impl CurrentRead {
                 .as_ref()
                 .map(|key| discovery::encode(&binding, key))
                 .transpose()?;
+        }
+        if fact_options.include_count {
+            let complete = after.is_none() && !response.truncated;
+            response.page.match_count = Some(MatchCount {
+                total_matches: complete.then_some(matched),
+                lower_bound: matched,
+                complete,
+                scope: if complete { "query" } else { "page_scan" }.into(),
+            });
         }
         self.token()?;
         Ok(response)

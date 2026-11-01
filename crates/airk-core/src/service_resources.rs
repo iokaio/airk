@@ -7,6 +7,20 @@ use crate::{
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_QUERY_CONCURRENCY: usize = 16;
+pub const MAX_QUERY_CONCURRENCY: usize = 64;
+pub const QUERY_CONCURRENCY_CHOICES: [usize; 5] = [4, 8, 16, 32, 64];
+pub const fn default_query_concurrency() -> usize {
+    DEFAULT_QUERY_CONCURRENCY
+}
+pub fn validate_query_concurrency(value: usize) -> Result<()> {
+    ensure!(
+        QUERY_CONCURRENCY_CHOICES.contains(&value),
+        "concurrent evidence requests must be 4, 8, 16, 32 or 64"
+    );
+    Ok(())
+}
+
 /// Observed native scheduling/execution exclusion, never inferred work progress.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -46,17 +60,32 @@ pub enum ResourcePreset {
     Throughput,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceConfiguration {
+    #[serde(default = "default_query_concurrency")]
+    pub query_concurrency: usize,
     pub preset: ResourcePreset,
     pub extraction_threads: Option<u16>,
     pub inference_threads: Option<u16>,
     pub memory_bytes: Option<u64>,
     pub background_io_bytes_per_second: Option<u64>,
 }
+impl Default for ResourceConfiguration {
+    fn default() -> Self {
+        Self {
+            query_concurrency: DEFAULT_QUERY_CONCURRENCY,
+            preset: Default::default(),
+            extraction_threads: None,
+            inference_threads: None,
+            memory_bytes: None,
+            background_io_bytes_per_second: None,
+        }
+    }
+}
 impl ResourceConfiguration {
     pub fn validate(&self) -> Result<()> {
+        validate_query_concurrency(self.query_concurrency)?;
         ensure!(
             self.extraction_threads
                 .is_none_or(|threads| (1..=64).contains(&threads))
@@ -128,4 +157,31 @@ pub struct ResourceSnapshot {
     pub pressure: bool,
     pub running_jobs: usize,
     pub waiting_projects: usize,
+}
+
+#[cfg(test)]
+mod concurrency_tests {
+    use super::*;
+    #[test]
+    fn saved_legacy_policy_defaults_to_sixteen_and_only_listed_values_are_valid() {
+        let mut legacy = serde_json::to_value(ResourceConfiguration::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("query_concurrency");
+        assert_eq!(
+            serde_json::from_value::<ResourceConfiguration>(legacy)
+                .unwrap()
+                .query_concurrency,
+            16
+        );
+        for value in 0..=66 {
+            let configuration = ResourceConfiguration {
+                query_concurrency: value,
+                ..Default::default()
+            };
+            assert_eq!(
+                configuration.validate().is_ok(),
+                QUERY_CONCURRENCY_CHOICES.contains(&value),
+                "{value}"
+            );
+        }
+    }
 }

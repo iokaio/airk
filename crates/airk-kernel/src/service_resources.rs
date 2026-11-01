@@ -13,7 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-// Include the resident baseline and its one admitted bounded query materialization.
+// Resident/query headroom estimate, not an OS hard limit. Per-request byte bounds
+// and the configured worker broker allowance remain independently enforced.
 const RESIDENT_BYTES: u64 = 512 << 20;
 const MODEL_BYTES: u64 = 512 << 20;
 // Main service baseline plus the bounded, independently killable source watcher.

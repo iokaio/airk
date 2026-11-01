@@ -21,6 +21,8 @@ pub mod mapped_binding;
 pub mod model_objects;
 pub mod publication;
 pub mod readiness;
+pub mod references;
+pub mod search_filters;
 pub mod service;
 pub mod service_cleanup;
 pub mod service_configuration;
@@ -36,6 +38,7 @@ pub mod vector_evidence;
 pub mod vector_selection;
 pub mod workbench;
 pub use code::*;
+pub use search_filters::{EvidenceKind, SearchFilters};
 
 pub const SCHEMA_VERSION: u32 = 3;
 pub const EXTRACTOR_VERSION: &str = "native-facts/10";

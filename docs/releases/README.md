@@ -4,6 +4,13 @@ Versioned release notes and dated release evidence live here. Each record retain
 
 ## Versions
 
+- [1.8.6](./release-1.8.6.md): status/diagnostics request capacity and the preceding unpublished MCP, Workbench and concurrency improvements; publication evidence recorded separately
+
+- [1.8.5](./release-1.8.5.md): configurable concurrent evidence requests and matching native channel/project capacity; unpublished manual-test candidate
+- [1.8.4](./release-1.8.4.md): distinct-version local candidate carrying the unpublished MCP/Workbench changes and status/Windows permission follow-ups; validation and artifact identity recorded separately
+
+- [1.8.3](./release-1.8.3.md): development candidate for MCP admission, scoped identifier discovery and bounded navigation; qualification pending
+
 - [1.8.2](./release-1.8.2.md) — installed startup/status responsiveness, conversational evidence parsing, query-first Workbench reveal, result selection/copy and [performance measurements/causal analysis](../performance-improvements-1.8.2.md); publication verified separately
 
 - [1.8.1](./release-1.8.1.md) — unpublished source candidate: reveal Workbench results and retain scroll position across sidebar tab switches

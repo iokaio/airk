@@ -29,6 +29,7 @@ struct Key {
     args: serde_json::Value,
 }
 struct Snapshot {
+    authority: u64,
     options: serde_json::Value,
     scope: CacheScope,
     epoch: u64,
@@ -63,6 +64,7 @@ pub(super) struct RequestTicket {
     pub(super) authority: u64,
     pub(super) scalar_epoch: u64,
     pub(super) receipt: airk_mcp::response::StatusReceipt,
+    initial_authority: bool,
     project: ProjectBinding,
     expires: Option<Instant>,
 }
@@ -84,6 +86,7 @@ impl std::fmt::Display for RetiredRequest {
 impl std::error::Error for RetiredRequest {}
 pub(crate) struct StatusOwner {
     closed: AtomicBool,
+    closed_notification: tokio::sync::Notify,
     epoch: AtomicU64,
     state: tokio::sync::Mutex<State>,
     scope: Mutex<Option<CacheScope>>,
@@ -97,6 +100,7 @@ impl Default for StatusOwner {
     fn default() -> Self {
         Self {
             closed: AtomicBool::new(false),
+            closed_notification: tokio::sync::Notify::new(),
             epoch: AtomicU64::new(0),
             state: Default::default(),
             scope: Mutex::new(None),
@@ -206,6 +210,7 @@ impl StatusOwner {
             authority: authority.generation,
             scalar_epoch: self.epoch.load(Ordering::Acquire),
             receipt: self.receipt(),
+            initial_authority: authority.known.is_none(),
             project,
             expires,
         }
@@ -214,6 +219,37 @@ impl StatusOwner {
         !self.closed.load(Ordering::Acquire)
             && ticket.expires.is_none_or(|until| Instant::now() < until)
             && *self.scope.lock().unwrap_or_else(|e| e.into_inner()) == ticket.scope
+    }
+    pub(super) fn after_evidence_wait(&self, ticket: RequestTicket) -> Result<RequestTicket> {
+        let scope = self.scope.lock().unwrap_or_else(|e| e.into_inner());
+        let authority = self.authority.lock().unwrap_or_else(|e| e.into_inner());
+        if self.closed.load(Ordering::Acquire)
+            || ticket.expires.is_some_and(|until| Instant::now() >= until)
+            || *scope != ticket.scope
+        {
+            return Err(RetiredRequest.into());
+        }
+        if authority.generation == ticket.authority {
+            return Ok(ticket);
+        }
+        // Simultaneous cold calls can capture tickets before the first grant
+        // establishes ANY worker authority. They may join exactly that first
+        // binding after the shared evidence setup completes. A previously known
+        // worker, a second replacement, changed scope or expired ticket cannot
+        // be promoted by waiting on this mutex.
+        if ticket.initial_authority
+            && ticket.authority.checked_add(1) == Some(authority.generation)
+            && authority.known.is_some()
+        {
+            return Ok(RequestTicket {
+                authority: authority.generation,
+                scalar_epoch: self.epoch.load(Ordering::Acquire),
+                receipt: self.receipt(),
+                initial_authority: false,
+                ..ticket
+            });
+        }
+        Err(RetiredRequest.into())
     }
     pub(super) fn ticket_current(&self, ticket: &RequestTicket) -> bool {
         let scope = self.scope.lock().unwrap_or_else(|e| e.into_inner());
@@ -310,6 +346,7 @@ impl StatusOwner {
                 authority: authority.generation,
                 scalar_epoch: self.epoch.load(Ordering::Acquire),
                 receipt: Default::default(),
+                initial_authority: false,
                 project: ticket.project,
                 expires: ticket.expires,
             })
@@ -330,7 +367,16 @@ impl StatusOwner {
     }
     pub(crate) fn close(&self) {
         self.closed.store(true, Ordering::Release);
+        self.closed_notification.notify_waiters();
         self.invalidate();
+    }
+    pub(super) async fn when_closed(&self) {
+        let notified = self.closed_notification.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+        if !self.closed.load(Ordering::Acquire) {
+            notified.await;
+        }
     }
     pub(crate) fn invalidate(&self) {
         if self
@@ -481,8 +527,9 @@ impl StatusOwner {
     ) -> Result<serde_json::Value> {
         ensure!(!self.closed.load(Ordering::Acquire), "status owner closed");
         let current = self.scope.lock().unwrap_or_else(|e| e.into_inner());
+        let authority = self.authority.lock().unwrap_or_else(|e| e.into_inner());
         if *current != Some(snapshot.scope)
-            || self.epoch.load(Ordering::Acquire) != snapshot.epoch
+            || authority.generation != snapshot.authority
             || source_expires.is_some_and(|until| Instant::now() >= until)
             || snapshot.cached.as_ref().is_some_and(|cached| {
                 Instant::now().saturating_duration_since(cached.captured) >= Duration::from_secs(5)
@@ -494,14 +541,38 @@ impl StatusOwner {
                 source_scope_superseded()
             });
         }
-        // Only a live caller observing a completed reply advances this frontend
-        // receipt. Background completion after caller timeout never acknowledges it.
-        self.observed_receipt(snapshot.receipt);
-        Ok(snapshot
+        let superseded = self.epoch.load(Ordering::Acquire) != snapshot.epoch;
+        if superseded && (!snapshot.submitted || hit) {
+            return Ok(source_scope_superseded());
+        }
+        let result = snapshot
             .cached
             .as_ref()
             .and_then(|cached| cached.reply(snapshot.scope, Instant::now(), hit))
-            .unwrap_or_else(|| snapshot.result.clone()))
+            .unwrap_or_else(|| snapshot.result.clone());
+        if superseded {
+            // A scalar invalidation does not invalidate this completed query's
+            // evidence. Keep its original publication/age without acknowledging
+            // an obsolete receipt or repopulating the current cache.
+            if result["isError"] == true {
+                return Ok(result);
+            }
+            let mut body: serde_json::Value = serde_json::from_str(
+                result["content"][0]["text"]
+                    .as_str()
+                    .context("status observation body missing")?,
+            )?;
+            body["status_observation"] = serde_json::json!({
+                "superseded": true,
+                "reason": "scalar_invalidation",
+                "message": "Status changed during this observation; the returned snapshot retains its original publication and observation time."
+            });
+            return Ok(airk_mcp::unified::success(body));
+        }
+        // Only a live caller observing a completed reply advances this frontend
+        // receipt. Background completion after caller timeout never acknowledges it.
+        self.observed_receipt(snapshot.receipt);
+        Ok(result)
     }
     pub(crate) async fn status(
         self: &Arc<Self>,
@@ -659,6 +730,7 @@ impl StatusOwner {
         };
         if source.is_none() && !self.install_pinned_scope(before, scope) {
             return Ok(Snapshot {
+                authority: ticket.authority,
                 options: request_args,
                 scope,
                 epoch: self.epoch.load(Ordering::Acquire),
@@ -671,6 +743,7 @@ impl StatusOwner {
         }
         if *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope) {
             return Ok(Snapshot {
+                authority: ticket.authority,
                 options: request_args,
                 scope,
                 epoch: self.epoch.load(Ordering::Acquire),
@@ -692,6 +765,7 @@ impl StatusOwner {
         ensure!(!self.closed.load(Ordering::Acquire), "status owner closed");
         if expires.is_some_and(|until| Instant::now() >= until) {
             return Ok(Snapshot {
+                authority: ticket.authority,
                 options: request_args,
                 scope,
                 epoch,
@@ -719,6 +793,7 @@ impl StatusOwner {
             })
         {
             return Ok(Snapshot {
+                authority: ticket.authority,
                 options: request_args,
                 scope,
                 epoch,
@@ -736,10 +811,10 @@ impl StatusOwner {
         }
         let mut channel = self.connection.lock().await;
         if expires.is_some_and(|until| Instant::now() >= until)
-            || self.epoch.load(Ordering::Acquire) != epoch
             || *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope)
         {
             return Ok(Snapshot {
+                authority: ticket.authority,
                 options: request_args,
                 scope,
                 epoch,
@@ -777,6 +852,7 @@ impl StatusOwner {
                     "index_error":{"code":"index_worker_unavailable","message":"No index query was submitted. Call diagnostics for service and queued-job diagnosis."}}),
                         );
                         return Ok(Snapshot {
+                            authority: ticket.authority,
                             options: request_args,
                             scope,
                             epoch,
@@ -792,6 +868,7 @@ impl StatusOwner {
         };
         if expires.is_some_and(|until| Instant::now() >= until) {
             return Ok(Snapshot {
+                authority: ticket.authority,
                 options: request_args,
                 scope,
                 epoch,
@@ -804,14 +881,16 @@ impl StatusOwner {
         }
         self.accepting()?;
         ticket = self.authenticated_worker(ticket, connection.identity)?;
-        epoch = ticket.scalar_epoch;
-        if self.epoch.load(Ordering::Acquire) != epoch
-            || *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope)
-        {
+        // Evidence completion may invalidate scalar state while setup waits.
+        // Begin this new observation at the current scalar epoch; scope and
+        // authenticated worker authority remain independently fenced.
+        epoch = self.epoch.load(Ordering::Acquire);
+        if *self.scope.lock().unwrap_or_else(|e| e.into_inner()) != Some(scope) {
             if self.transport_reusable(&ticket, Some(scope), &connection) {
                 *channel = Some((scope, connection));
             }
             return Ok(Snapshot {
+                authority: ticket.authority,
                 options: request_args,
                 scope,
                 epoch,
@@ -830,6 +909,7 @@ impl StatusOwner {
             *channel = Some((scope, connection));
         }
         let snapshot = Snapshot {
+            authority: ticket.authority,
             options: request_args.clone(),
             scope,
             epoch,
@@ -847,6 +927,7 @@ impl StatusOwner {
         {
             // Immutable logical observation only: no stream/read/transaction retained.
             let saved = Snapshot {
+                authority: ticket.authority,
                 options: request_args,
                 scope,
                 epoch,
@@ -870,6 +951,11 @@ impl StatusOwner {
         self.set_scope(cached.scope);
         let epoch = self.epoch.load(Ordering::Acquire);
         *self.cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(Snapshot {
+            authority: self
+                .authority
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .generation,
             options: serde_json::json!({}),
             scope: cached.scope,
             epoch,
@@ -916,6 +1002,58 @@ fn superseded() -> serde_json::Value {
 #[cfg(test)]
 mod ownership_tests {
     use super::*;
+
+    #[test]
+    fn unbound_waiters_join_only_the_first_matching_authority() -> Result<()> {
+        use airk_core::{identity::Incarnation, service::WorkerIdentity};
+        let owner = StatusOwner::default();
+        let scope = SourceFence {
+            namespace: Incarnation::from_bytes([131; 16]),
+            revision: 1,
+            project: "ab".repeat(32).parse()?,
+            fencing_generation: 1,
+        };
+        owner.source_scope(scope);
+        let cold = owner.request_ticket(scope.project, None);
+        let first = WorkerIdentity {
+            service: Incarnation::from_bytes([132; 16]),
+            worker: Incarnation::from_bytes([133; 16]),
+            project: scope.project,
+            fencing_generation: 1,
+        };
+        owner.authenticated_worker(cold, first)?;
+        let joined = owner.after_evidence_wait(cold)?;
+        assert!(owner.ticket_current(&joined));
+        assert!(!joined.initial_authority);
+        let known = owner.request_ticket(scope.project, None);
+        let replacement = WorkerIdentity {
+            worker: Incarnation::from_bytes([134; 16]),
+            fencing_generation: 2,
+            ..first
+        };
+        owner.authenticated_worker(known, replacement)?;
+        assert!(
+            owner.after_evidence_wait(cold).is_err(),
+            "two bindings cannot promote an unbound waiter"
+        );
+        assert!(
+            owner.after_evidence_wait(known).is_err(),
+            "known authority replacement must retire the queued request"
+        );
+        let expired = owner.request_ticket(scope.project, Some(Instant::now()));
+        assert!(owner.after_evidence_wait(expired).is_err());
+        let changed = owner.request_ticket(scope.project, None);
+        owner.source_scope(SourceFence {
+            revision: 2,
+            ..scope
+        });
+        assert!(owner.after_evidence_wait(changed).is_err());
+        let closed = owner.request_ticket(scope.project, None);
+        owner.close();
+        assert!(owner.after_evidence_wait(closed).is_err());
+        Ok(())
+    }
+
     #[tokio::test]
     async fn source_and_pinned_cached_status_report_actual_reuse_and_original_age() -> Result<()> {
         use airk_core::service::ProjectRegistration;
@@ -1039,6 +1177,7 @@ mod ownership_tests {
         };
         owner.source_scope(fence);
         let scope = CacheScope::Source(fence);
+        let authority = owner.authority.lock().unwrap().generation;
         let epoch = owner.epoch.load(Ordering::Acquire);
         let key = Key {
             project,
@@ -1053,6 +1192,7 @@ mod ownership_tests {
                     .call("airk_status".into(), Default::default())
                     .await?;
                 Ok(Snapshot {
+                    authority,
                     options: serde_json::json!({}),
                     scope,
                     epoch,
@@ -1174,10 +1314,12 @@ mod ownership_tests {
             }
         }
         assert!(matches!(*owner.state.lock().await, State::Idle));
+        let authority = owner.authority.lock().unwrap().generation;
         let epoch = owner.epoch.load(Ordering::Acquire);
         let result = owner
             .observe(key, None, move |_| async move {
                 Ok(Snapshot {
+                    authority,
                     options: serde_json::json!({}),
                     scope: CacheScope::Source(fence),
                     epoch,
@@ -1271,7 +1413,7 @@ mod ownership_tests {
         Ok(())
     }
     #[test]
-    fn same_head_invalidation_rejects_old_snapshot_without_receipt_ack() -> Result<()> {
+    fn same_head_invalidation_returns_snapshot_note_without_receipt_ack() -> Result<()> {
         let owner = StatusOwner::default();
         let fence = SourceFence {
             namespace: airk_core::identity::Incarnation::from_bytes([93; 16]),
@@ -1280,22 +1422,57 @@ mod ownership_tests {
             fencing_generation: 1,
         };
         owner.source_scope(fence);
+        let result = airk_mcp::unified::success(serde_json::json!({
+            "index_state": "available", "publication": {"token": "original-query"}
+        }));
+        let mut cached = CachedStatus::new(CacheScope::Source(fence), &result).unwrap();
+        cached.observed_unix_ms = 123;
+        let receipt = serde_json::from_value(serde_json::json!({"freshness":"cd".repeat(32)}))?;
+        let authority = owner.authority.lock().unwrap().generation;
         let snapshot = Snapshot {
+            authority,
             options: serde_json::json!({}),
             scope: CacheScope::Source(fence),
             epoch: owner.epoch.load(Ordering::Acquire),
-            result: serde_json::Value::Null,
-            cached: None,
+            result,
+            cached: Some(cached),
             submitted: true,
             reused: false,
-            receipt: Default::default(),
+            receipt,
         };
         owner.invalidate(); // model/work/pause may change while publication stays identical
         let reply = owner.reply(&snapshot, None, false)?;
         let detail: serde_json::Value =
             serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
-        assert_eq!(detail["error"]["code"], "status_observation_superseded");
-        assert_eq!(detail["error"]["query_submitted"], true);
+        assert_eq!(reply["isError"], false);
+        assert_eq!(reply["structuredContent"], detail);
+        assert_eq!(detail["status_observation"]["superseded"], true);
+        assert_eq!(
+            detail["status_observation"]["reason"],
+            "scalar_invalidation"
+        );
+        assert_eq!(detail["publication"]["token"], "original-query");
+        assert_eq!(detail["observed_unix_ms"], 123);
+        assert_eq!(detail["cached"], false);
+        assert_eq!(owner.receipt(), Default::default());
+        assert!(owner.cache_empty());
+        // An invalidated cached hit cannot masquerade as a fresh observation.
+        assert_eq!(owner.reply(&snapshot, None, true)?["isError"], true);
+        // Worker replacement and expired source grants remain hard failures.
+        owner.authority.lock().unwrap().generation += 1;
+        assert_eq!(owner.reply(&snapshot, None, false)?["isError"], true);
+        owner.authority.lock().unwrap().generation = snapshot.authority;
+        assert_eq!(
+            owner.reply(&snapshot, Some(Instant::now()), false)?["isError"],
+            true
+        );
+        owner.source_scope(SourceFence {
+            revision: 8,
+            ..fence
+        });
+        assert_eq!(owner.reply(&snapshot, None, false)?["isError"], true);
+        owner.close();
+        assert!(owner.reply(&snapshot, None, false).is_err());
         Ok(())
     }
 }

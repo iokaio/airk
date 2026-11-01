@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import Module from 'node:module';
 import { test } from 'node:test';
 import type { LaunchSpec } from '../model';
-import { applyWorkbenchUpdate, type WorkbenchState, type WorkbenchUpdate, type WorkbenchSession, type Value } from '../workbenchContracts';
+import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, type WorkbenchState, type WorkbenchUpdate, type WorkbenchSession, type Value } from '../workbenchContracts';
 import { newSession } from '../workbenchSessions';
 import { renderExport } from '../workbenchRender';
 
@@ -30,9 +30,9 @@ function fixture(attach=false) {
         findShortcut:async():Promise<Value|undefined>=>undefined,
     };
     class FakeClient {
-        readonly calls:string[]=[];disposed=0;canceled=0;
+        readonly calls:string[]=[];readonly requests:{tool:string;args:Value}[]=[];disposed=0;canceled=0;
         constructor(readonly spec:LaunchSpec){created.push(this);}
-        call(tool:string):Promise<{payload:Value}>{this.calls.push(tool);return response(tool,this);}
+        call(tool:string,args:Value={}):Promise<{payload:Value}>{this.calls.push(tool);this.requests.push({tool,args:structuredClone(args)});return response(tool,this);}
         cancel():void{this.canceled++;}
         dispose():void{this.disposed++;}
     }
@@ -68,6 +68,122 @@ function fixture(attach=false) {
         visible:(value:boolean)=>{view.visible=value;visibility.fire();},
     };
 }
+
+test('host draft updates are session-fenced, inert, coalesced and cannot be rolled back by queued result saves',async()=>{
+    const f=fixture(true),gate=deferred<void>();
+    try{
+        await f.state.select(A);await tick();
+        const session=f.state.session!,snapshot=()=> (f.provider as unknown as {state():WorkbenchState}).state();
+        session.turns.push({id:'retained',at:1,input:'Retained query',format:'structured',envelope:{text:'private retained body'}});
+        const fence={sessionId:session.id,project:A,epoch:snapshot().sessionEpoch!},nativeCalls=f.created[0].calls.length;
+        f.state.saveQueue=gate.promise;f.messages.length=0;
+        const pending:Promise<void>[]=[];
+        for(let revision=1;revision<=10;revision++)pending.push(f.state.message({type:'formDraft',...fence,revision,tool:'search',values:{query:`draft-${revision}`,limit:'-'}}));
+        await Promise.all(pending);
+        f.state.save(session); // Older result snapshot is waiting behind the form write.
+        await f.state.message({type:'formDraft',...fence,revision:11,tool:'references',values:{name:''},scope:'src/',recipe:'component'});
+        assert.equal(f.created[0].calls.length,nativeCalls,'drafts never observe or execute native work');
+        assert.ok(f.messages.every(raw=>(raw as {type:string}).type==='formDraft'));
+        assert.ok(!JSON.stringify(f.messages).includes('private retained body'),'typing must not resend the transcript');
+        gate.resolve();await f.state.saveQueue;
+        assert.equal(f.saved.length,2,'one coalesced form write and the explicit result save share the existing queue');
+        assert.ok(f.saved.every(saved=>saved.formDraft?.revision===11),'queued result writes merge current choices');
+        assert.equal(session.formDraft?.values.search.query,'draft-10');
+        assert.equal(session.formDraft?.activeTool,'references');
+        const before=structuredClone(session.formDraft);
+        await f.state.message({type:'formDraft',...fence,revision:12,project:B,tool:'search',values:{query:'wrong project'}});
+        await f.state.message({type:'formDraft',...fence,revision:12,epoch:fence.epoch-1,tool:'search',values:{query:'stale epoch'}});
+        await f.state.message({type:'formDraft',...fence,revision:10,tool:'search',values:{query:'stale revision'}});
+        await f.state.message({type:'resetForm',...fence,revision:12,tool:'search'});
+        assert.deepEqual(session.formDraft,before,'stale/foreign/inactive reset messages cannot change stored inputs');
+        await f.state.message({type:'resetForm',...fence,revision:12,tool:'references'});
+        assert.equal(session.formDraft?.activeTool,'references');
+        assert.equal(session.formDraft?.values.references,undefined);
+        assert.equal(session.formDraft?.values.search.query,'draft-10');
+        assert.equal(session.formDraft?.scope,'src/');assert.equal(session.formDraft?.recipe,'component');
+        await f.state.message({type:'fork'});await f.state.saveQueue;
+        assert.notEqual(f.state.session?.id,session.id);
+        assert.deepEqual(f.state.session?.formDraft,defaultWorkbenchFormDraft(),'a fork is a new session with default input choices');
+        assert.equal(f.state.session?.turns.length,1,'forked transcript history remains available');
+        await f.state.message({type:'formDraft',...fence,revision:99,tool:'search',values:{query:'old session'}});
+        assert.deepEqual(f.state.session?.formDraft,defaultWorkbenchFormDraft());
+        await f.provider.newSession();
+        assert.deepEqual(f.state.session?.formDraft,defaultWorkbenchFormDraft());
+    }finally{gate.resolve();f.provider.dispose();}
+});
+
+test('actual host rerun rejects exact symbol IDs before dropping publication or submitting another read',async()=>{
+    for(const field of ['name','symbol'])for(const source of ['request','parsed']){
+        const f=fixture();
+        try{
+            await f.state.select(A);await tick();
+            const plan={publication:'old-exact-publication',digest:'old-exact-digest',steps:[{
+                id:'inspect',tool:field==='name'?'symbols':'relationships',args:{[field]:'syntax:src/session.rs:10:30:struct_item'},
+            }]};
+            const turn={id:'old-inspect',at:1,input:'Inspect Session',format:'structured' as const,
+                request:{schema:'airk.parse.request/1',mode:'execute',...(source==='request'?{plan}:{text:'/symbols syntax:src/session.rs:10:30:struct_item'})},
+                ...(source==='parsed'?{envelope:{status:'complete',executed:true,plan}}:{}),
+            };
+            f.state.session!.turns.push(turn);
+            const before=structuredClone(turn),client=f.created[0],calls=client.calls.length;
+            await assert.rejects(f.state.message({type:'rerun',turn:turn.id}),/revision-bound symbol ID/);
+            assert.equal(client.calls.length,calls,'no native request is submitted for a stale literal ID');
+            assert.deepEqual(turn,before,'original publication-bound inputs remain available for export');
+            assert.equal(f.state.session!.turns.length,1);
+        }finally{f.provider.dispose();}
+    }
+});
+
+test('stored literal-ID form inputs need an original publication before host Prepare or Run',async()=>{
+    const f=fixture();
+    try{
+        await f.state.select(A);await tick();
+        const session=f.state.session!,snapshot=(f.provider as unknown as {state():WorkbenchState}).state();
+        const id='syntax:src/session.rs:0:17:struct_item';
+        await f.state.message({type:'formDraft',sessionId:session.id,project:A,epoch:snapshot.sessionEpoch,revision:1,tool:'symbols',values:{name:id,path:'src/session.rs'}});
+        await f.state.saveQueue;
+        const draft=structuredClone(session.formDraft),calls=f.created[0].calls.length,turns=session.turns.length;
+        const plan={steps:[{id:'form',tool:'symbols',args:{name:id,path:'src/session.rs'}}],path_prefix:'src/'};
+        for(const prepare of [true,false]){
+            await assert.rejects(f.state.message({type:'run',input:'symbols form',prepare,plan}),/original publication/);
+            assert.equal(f.created[0].calls.length,calls,'unbound saved ID must not submit any native query');
+            assert.equal(session.turns.length,turns,'rejection precedes turn/client admission');
+            assert.deepEqual(session.formDraft,draft,'saved choices are not silently deleted or renamed');
+        }
+        const token=`airk-r1:${'a'.repeat(32)}:1:${'b'.repeat(64)}`;
+        await f.state.message({type:'run',input:'Inspect retained Session',prepare:false,plan:{...plan,publication:token}});
+        let request=f.created[0].requests.filter(value=>value.tool==='airk_parse').at(-1)?.args;
+        assert.equal((request!.plan as Value).publication,token);
+        assert.equal(((request!.plan as Value).steps as {args:Value}[])[0].args.name,id);
+        await f.state.message({type:'run',input:'symbols form',prepare:false,plan:{steps:[{id:'form',tool:'symbols',args:{name:'Session'}}]}});
+        request=f.created[0].requests.filter(value=>value.tool==='airk_parse').at(-1)?.args;
+        assert.equal(((request!.plan as Value).steps as {args:Value}[])[0].args.name,'Session');
+        assert.deepEqual(session.formDraft,draft);
+    }finally{f.provider.dispose();}
+});
+
+test('actual host rerun refreshes ordinary selectors and retains durable keys without mutating saved inputs',async()=>{
+    const f=fixture();
+    try{
+        await f.state.select(A);await tick();
+        const plan={publication:'old-exact-publication',digest:'old-exact-digest',catalog:'old',collection:'old',steps:[
+            {id:'named',tool:'symbols',args:{name:'Session',known_hash:'old',revision:'old',cursor:'old'}},
+            {id:'durable',tool:'code_facts',args:{symbol_key:'airk-c1:durable-fixture'}},
+        ]};
+        const turn={id:'portable',at:1,input:'Find Session',format:'structured' as const,request:{schema:'airk.parse.request/1',mode:'execute',plan}};
+        f.state.session!.turns.push(turn);
+        const before=structuredClone(turn);
+        await f.state.message({type:'rerun',turn:turn.id});
+        const request=f.created[0].requests.filter(value=>value.tool==='airk_parse').at(-1)?.args;
+        assert.ok(request);
+        const fresh=request.plan as Value;
+        for(const key of ['publication','digest','catalog','collection'])assert.equal(fresh[key],undefined);
+        const steps=fresh.steps as {args:Value}[];
+        assert.deepEqual(steps[0].args,{name:'Session'});
+        assert.deepEqual(steps[1].args,{symbol_key:'airk-c1:durable-fixture'});
+        assert.deepEqual(turn,before);
+    }finally{f.provider.dispose();}
+});
 
 test('returning to the retained Workbench reconciles hidden results without recreating its document or client',async()=>{
     const f=fixture(true);await f.state.select(A);await tick();

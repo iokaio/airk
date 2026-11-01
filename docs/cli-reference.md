@@ -145,7 +145,7 @@ Commands:
   model-catalog  Print the offline model catalog and the CPU-based model choice for this machine; opens no project state
   tools          List, describe or call the read-only MCP tools from the terminal
   changes        Report indexed changes since a revision token: added, modified and removed files, symbols and documents
-  code-facts     List code facts (definitions, signatures, durable symbol keys) for a symbol or path, with continuation cursors
+  code-facts     Inspect code facts and signatures with exact default name matching and bounded continuation
   relationships  Follow indexed relationships of a symbol in --direction, optionally of one --kind, up to --hops levels
   setup          Print the MCP client configuration (command and arguments) for an already registered project
   init           Register --root as a project of the installed runtime and prepare its index storage
@@ -155,11 +155,11 @@ Commands:
   read           Read an indexed file's lines (--start-line/--end-line) from the published revision, with a citation
   mcp            Serve the read-only MCP protocol on stdin/stdout for one agent connection (this is what agents launch)
   info           Show what the index knows about one file: language, size, extraction method and parse status
-  outline        Outline one file's structure: symbols, headings and sections with line ranges
-  symbol         Find symbol definitions by name, optionally filtered by language or path prefix
+  outline        Read one indexed file's structure in file order; this returns evidence, not an Explorer page proposal
+  symbol         Find definitions by exact name by default; use --name-match for suffix/contains variants
   imports        List import and dependency statements found under a path prefix
   facts          List document facts (requirements, dates, decisions, features) extracted from indexed documents
-  refs           Find indexed references to a name under a path prefix
+  refs           Find exact-case textual identifier uses; these are candidates, not resolved language references
   context        Read lines around --line in a file (--before/--after), with a citation
   index          Queue indexing of the project's sources and print the job receipt. Follow it with `tools call airk_status`
   setup-model    Prepare the bundled offline embedding model for vector search; keeps an existing or custom selection
@@ -343,27 +343,38 @@ Options:
 ## airk code-facts
 
 ```text
-List code facts (definitions, signatures, durable symbol keys) for a symbol or path, with continuation cursors
+Inspect code facts and signatures with exact default name matching and bounded continuation
 
 Usage: airk code-facts [OPTIONS]
 
 Options:
+      --name-match <NAME_MATCH>
+          Default exact lookup; suffix/contains match simple or qualified names case-sensitively
+
+          [possible values: exact, suffix, contains]
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --include-count
+          Request qualified match counts; a bounded partial scan can report an unknown total
+
+      --collection <COLLECTION>
+          [default: default]
+
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
-      --root <ROOT>
-          [default: .]
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --data-dir <DATA_DIR>
+      --service-install-dir <SERVICE_INSTALL_DIR>
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --symbol-key <SYMBOL_KEY>
           Durable symbol key from indexed continuity evidence; excludes textual filters
@@ -371,16 +382,13 @@ Options:
       --name <NAME>
 
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
+      --service-project <SERVICE_PROJECT>
 
 
       --kind <KIND>
 
 
       --language <LANGUAGE>
-
-
-      --service-project <SERVICE_PROJECT>
 
 
       --path-prefix <PATH_PREFIX>
@@ -1212,7 +1220,7 @@ Options:
 ## airk outline
 
 ```text
-Outline one file's structure: symbols, headings and sections with line ranges
+Read one indexed file's structure in file order; this returns evidence, not an Explorer page proposal
 
 Usage: airk outline [OPTIONS] <PATH>
 
@@ -1431,7 +1439,7 @@ Options:
 ## airk refs
 
 ```text
-Find indexed references to a name under a path prefix
+Find exact-case textual identifier uses; these are candidates, not resolved language references
 
 Usage: airk refs [OPTIONS] <NAME>
 
@@ -1440,8 +1448,8 @@ Arguments:
 
 
 Options:
-      --path-prefix <PATH_PREFIX>
-          [default: ""]
+      --language <LANGUAGE>
+          Exact indexed extraction-language label; not a filename-extension filter
 
       --root <ROOT>
           [default: .]
@@ -1449,14 +1457,45 @@ Options:
       --data-dir <DATA_DIR>
 
 
+      --evidence-kind <EVIDENCE_KIND>
+          Indexed evidence classification; unknown includes unclassified extraction
+
+          [possible values: code, document, configuration, unknown]
+
       --collection <COLLECTION>
           [default: default]
+
+      --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
+          Exclude one literal collection-relative prefix from this query only
+
+      --cursor <CURSOR>
+          Continue one exact publication with identical identifier, filters and ordering
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --order <ORDER>
+          Omit for the legacy response; paged index order uses stable IDs, with path/code_first alternatives
+
+          [possible values: index, path, code_first]
+
+      --include-files
+          Summarize returned page records by file; bounded metadata is additional to the text-byte budget
+
       --service-project <SERVICE_PROJECT>
 
+
+      --include-count
+          Request candidate-scoped counts; the whole-query total remains unknown
+
+      --path-prefix <PATH_PREFIX>
+          [default: ""]
+
+      --limit <LIMIT>
+          [default: 10]
+
+      --max-bytes <MAX_BYTES>
+          [default: 8192]
 
   -h, --help
           Print help
@@ -2855,8 +2894,8 @@ Arguments:
 
 
 Options:
-      --mode <MODE>
-          [possible values: lexical, vector, hybrid]
+      --language <LANGUAGE>
+          Exact indexed extraction-language label; not a filename-extension filter
 
       --root <ROOT>
           [default: .]
@@ -2864,26 +2903,37 @@ Options:
       --data-dir <DATA_DIR>
 
 
-      --semantic
-          Use the configured local embedding model and disk-backed vector graph
+      --evidence-kind <EVIDENCE_KIND>
+          Indexed evidence classification; unknown includes unclassified extraction
+
+          [possible values: code, document, configuration, unknown]
 
       --collection <COLLECTION>
           [default: default]
 
+      --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
+          Exclude one literal collection-relative prefix from this query only
+
+      --mode <MODE>
+          [possible values: lexical, vector, hybrid]
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --semantic
+          Use the configured local embedding model and disk-backed vector graph
+
       --path-prefix <PATH_PREFIX>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --limit <LIMIT>
           [default: 10]
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --max-bytes <MAX_BYTES>
           [default: 8192]
-
-      --service-project <SERVICE_PROJECT>
-
 
   -h, --help
           Print help (see a summary with '-h')
@@ -3945,7 +3995,7 @@ Options:
 ## airk symbol
 
 ```text
-Find symbol definitions by name, optionally filtered by language or path prefix
+Find definitions by exact name by default; use --name-match for suffix/contains variants
 
 Usage: airk symbol [OPTIONS] <NAME>
 
@@ -3954,22 +4004,33 @@ Arguments:
 
 
 Options:
+      --name-match <NAME_MATCH>
+          Default exact lookup; suffix/contains match simple or qualified names case-sensitively
+
+          [possible values: exact, suffix, contains]
+
+      --root <ROOT>
+          [default: .]
+
+      --data-dir <DATA_DIR>
+
+
+      --include-count
+          Request qualified match counts; a bounded partial scan can report an unknown total
+
+      --collection <COLLECTION>
+          [default: default]
+
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
-      --root <ROOT>
-          [default: .]
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --data-dir <DATA_DIR>
+      --service-install-dir <SERVICE_INSTALL_DIR>
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --language <LANGUAGE>
 
@@ -3977,11 +4038,14 @@ Options:
       --path-prefix <PATH_PREFIX>
           [default: ""]
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --service-project <SERVICE_PROJECT>
 
+
+      --limit <LIMIT>
+          [default: 10]
+
+      --max-bytes <MAX_BYTES>
+          [default: 8192]
 
   -h, --help
           Print help

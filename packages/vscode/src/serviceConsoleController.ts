@@ -18,7 +18,7 @@ export interface ConsoleHost {
     rawLogs?(save:boolean,observation?:BootstrapObservation):Promise<void|'opened'|'saved'|'canceled'>;
     diagnosticFailure?(operation:string,error:unknown,observation?:BootstrapObservation):Promise<void>;
     logs(observation?:BootstrapObservation):Promise<void>;
-    resources(current:RecordValue):Promise<RecordValue|undefined>;
+    resources(current:RecordValue,queryOnly?:boolean):Promise<RecordValue|undefined>;
     configuration?(row:RecordValue,operation?:'detail'|'advanced'):Promise<RecordValue|undefined>;
     lifecycle(binding:RuntimeBinding,intent:LifecycleIntent,force?:boolean):Promise<RecordValue>;
     abandonLifecycle?(binding:RuntimeBinding,intent:LifecycleIntent,id:string):Promise<RecordValue>;
@@ -724,8 +724,9 @@ export class ServiceConsoleController {
             case 'nextPage':if(this.state.page?.after)await this.page(true);return;
             case 'morePlan':await this.plan(true);return;
             case 'refreshPlan':if(this.state.plan)this.state.plan.items=[];await this.plan(false);return;
+            case 'queryConcurrency':
             case 'resources':{
-                const configuration=await this.host.resources(record(record(this.state.resources.value?.observation).configuration));
+                const configuration=await this.host.resources(record(record(this.state.resources.value?.observation).configuration),action.action==='queryConcurrency');
                 this.authorized();if(configuration)await this.rpc({configure_resources:{configuration}},'resources');break;
             }
             case 'retryRecovery':{

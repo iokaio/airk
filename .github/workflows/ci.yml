@@ -368,7 +368,10 @@ jobs:
           retention-days: 7
   required:
     name: Required checks
-    if: ${{ always() }}
+    # Keep PR and feature-ref cancellation fail-closed: a skipped required job
+    # can satisfy branch protection, including a manually dispatched PR-head run.
+    # Only canceled non-PR main runs skip redundant failure aggregation.
+    if: ${{ always() && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main' || !cancelled()) }}
     needs: [plan, quick, contracts, extension, native, container]
     runs-on: ubuntu-24.04
     timeout-minutes: 5

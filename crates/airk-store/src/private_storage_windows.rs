@@ -195,7 +195,7 @@ fn inspect_policy(
     if native {
         use windows_sys::Win32::Security::{
             IsWellKnownSid, WinBuiltinAdministratorsSid, WinCreatorOwnerRightsSid,
-            WinLocalSystemSid,
+            WinCreatorOwnerSid, WinLocalSystemSid,
         };
         let count = unsafe { (*dacl).AceCount };
         if count == 0 || count > 16 {
@@ -209,12 +209,13 @@ fn inspect_policy(
                 "invalid native boundary ACL"
             );
             let header = unsafe { &*ace.cast::<ACE_HEADER>() };
-            // Only straightforward propagating allow entries are supported.
+            // Straightforward allow entries, including inheritance-only creator
+            // templates, are sufficient for the native write boundary.
             // No inheritance-protection requirement: actual inherited descriptor
             // is checked; producer creation preserves this safe policy.
             if header.AceType != 0
                 || (header.AceSize as usize) < mem::size_of::<ACCESS_ALLOWED_ACE>()
-                || header.AceFlags & !0x13 != 0
+                || header.AceFlags & !0x1b != 0
             {
                 return Ok(Err(Unknown::UnsupportedAcl));
             }
@@ -230,13 +231,19 @@ fn inspect_policy(
                 || unsafe { IsWellKnownSid(principal, WinCreatorOwnerRightsSid) } != 0;
             let privileged = unsafe { IsWellKnownSid(principal, WinLocalSystemSid) } != 0
                 || unsafe { IsWellKnownSid(principal, WinBuiltinAdministratorsSid) } != 0;
-            if !(is_owner || privileged)
-                || allowed.Mask & 0x1f01ff != 0x1f01ff
-                || (directory && header.AceFlags & 3 != 3)
-            {
+            let creator_template = directory
+                && header.AceFlags & 0x8 != 0
+                && unsafe { IsWellKnownSid(principal, WinCreatorOwnerSid) } != 0;
+            // Read/execute sharing does not permit another principal to alter
+            // derived state. Keep strict per-object privacy a separate policy.
+            let read_only = allowed.Mask & !(0x1200a9 | 0x80000000 | 0x20000000) == 0;
+            if !(is_owner || privileged || creator_template || read_only) {
                 return Ok(Err(Unknown::NotPrivate));
             }
-            owner_grant |= is_owner;
+            owner_grant |= is_owner
+                && header.AceFlags & 0x8 == 0
+                && allowed.Mask & 0x1f01ff == 0x1f01ff
+                && (!directory || header.AceFlags & 3 == 3);
         }
         if !owner_grant {
             return Ok(Err(Unknown::NotPrivate));
@@ -377,8 +384,11 @@ pub(super) mod tests {
         directory_acl(path, true)
     }
     fn directory_acl(path: &std::path::Path, foreign: bool) -> Result<()> {
-        let sid = user_sid()?;
         let extra = if foreign { "(A;OICI;FR;;;WD)" } else { "" };
+        directory_acl_with(path, extra)
+    }
+    fn directory_acl_with(path: &std::path::Path, extra: &str) -> Result<()> {
+        let sid = user_sid()?;
         let text: Vec<u16> = format!("O:{sid}D:P(A;OICI;FA;;;{sid}){extra}")
             .encode_utf16()
             .chain(Some(0))
@@ -448,7 +458,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn foreign_read_grant_never_qualifies_native_creation_boundary() -> Result<()> {
+    fn read_sharing_qualifies_write_boundary_but_not_strict_object_privacy() -> Result<()> {
         let temporary = tempfile::tempdir()?;
         let root = temporary.path().join("foreign-readable");
         foreign_readable_root(&root)?;
@@ -456,10 +466,50 @@ pub(super) mod tests {
             .read(true)
             .custom_flags(0x02000000 | 0x00200000)
             .open(&root)?;
+        assert!(super::native_boundary(&directory, Kind::RootDirectory)?.is_ok());
         assert!(matches!(
-            super::native_boundary(&directory, Kind::RootDirectory)?,
-            Err(Unknown::NotPrivate)
+            super::super::inspect(&directory, Kind::RootDirectory)?,
+            Observation::Unknown(_)
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn foreign_write_access_still_requires_strict_fallback() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        for (name, acl) in [
+            ("write", "(A;OICI;FW;;;WD)"),
+            ("delete", "(A;OICI;SD;;;WD)"),
+            ("change-acl", "(A;OICI;WD;;;WD)"),
+            ("take-owner", "(A;OICI;WO;;;WD)"),
+        ] {
+            let root = temporary.path().join(name);
+            directory_acl_with(&root, acl)?;
+            let directory = fs::OpenOptions::new()
+                .read(true)
+                .custom_flags(0x02000000 | 0x00200000)
+                .open(&root)?;
+            assert!(
+                matches!(
+                    super::native_boundary(&directory, Kind::RootDirectory)?,
+                    Err(Unknown::NotPrivate)
+                ),
+                "foreign {name} grant qualified"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn creator_templates_and_partial_privileged_grants_qualify_native_boundary() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().join("developer-layout");
+        directory_acl_with(&root, "(A;OICIIO;FA;;;CO)(A;OICI;FR;;;BA)(A;OICI;FR;;;SY)")?;
+        let directory = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(0x02000000 | 0x00200000)
+            .open(&root)?;
+        assert!(super::native_boundary(&directory, Kind::RootDirectory)?.is_ok());
         Ok(())
     }
 

@@ -10,7 +10,7 @@ import { ServiceWorkspace } from '../serviceWorkspace';
 import { ServiceError } from '../serviceClient';
 
 test('service activation advertises reviewed bindings without indexing and preserves explicit Stop during resolution',async context=>{
-    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-service-activation-')),source=path.join(root,'source');await fs.mkdir(source);
+    const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-service-activation-'))),source=path.join(root,'source');await fs.mkdir(source);
     await fs.mkdir(path.join(root,'out'));
     for(const name of ['explorerController.js','explorerWebview.js','explorerWebview.css'])await fs.writeFile(path.join(root,'out',name),'');
     const editorListeners=new Set<(editor:any)=>void>();

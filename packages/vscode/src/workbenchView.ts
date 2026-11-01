@@ -6,10 +6,10 @@ import type { ExplorerHost } from './explorerController';
 import type { LaunchSpec } from './model';
 import { EvidenceClient } from './explorerEvidence';
 import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
-import { strategyFromPlan } from './workbenchStrategies';
+import { assertOriginalPublicationForSymbolInputs, assertPortablePlanInputs, planForWorkbenchRerun, strategyFromPlan } from './workbenchStrategies';
 import { newSession, SessionStore } from './workbenchSessions';
-import { CurrentTurnProjections, continuations, evidenceCards, renderExport } from './workbenchRender';
-import { object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
+import { CurrentTurnProjections, continuationCursor, continuationRequiredRecordBytes, continuations, discoveryFollowupPlan, evidenceCards, renderExport } from './workbenchRender';
+import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
 
 // Cold native setup (10 s) plus scalar observation (2 s), with transport slack.
 export const STATUS_RESPONSE_TIMEOUT_MS=15000;
@@ -35,6 +35,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private client?:EvidenceClient;
     private clientIdentity?:string;
     private generation=0;
+    private sessionEpoch=0;
     private session?:WorkbenchSession;
     private sessions?:SessionStore;
     private get store():SessionStore{return this.sessions??=new SessionStore(path.join(this.context.globalStorageUri.fsPath,'workbench'));}
@@ -46,6 +47,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private status?:Value;
     private operations?:Value;
     private saveQueue=Promise.resolve();
+    private readonly queuedFormSaves=new WeakSet<WorkbenchSession>();
     private disposed=false;
     private pendingInput?:string;
     constructor(private readonly context:vscode.ExtensionContext, private readonly host:ExplorerHost){
@@ -66,7 +68,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private invalidateChangedClient():void{
         const spec=this.selectedSpec();
         if(!this.permitted()||(this.session&&!spec)||(this.client&&this.clientIdentity!==JSON.stringify(spec))){
-            this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;
+            this.sessionEpoch++;this.stop();this.releaseClient();this.status=undefined;this.operations=undefined;
         }
     }
     resolveWebviewView(view:vscode.WebviewView):void{
@@ -84,12 +86,15 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         void this.refresh().catch(error=>this.fail(error));
     }
     private state():WorkbenchState{
-        return {projects:this.host.specs().flatMap(s=>s.service?[{id:s.service.project,name:s.name}]:[]),project:this.session?.project,session:this.session,recent:this.recent,
+        return {projects:this.host.specs().flatMap(s=>s.service?[{id:s.service.project,name:s.name}]:[]),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
             ...this.display.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,persistence:this.persistence(),operations:this.operations};
     }
     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
     private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status});}}
     private sendSaved(session:WorkbenchSession):void{if(!this.disposed&&this.session===session){void this.view?.webview.postMessage({type:'saved',sessionId:session.id,project:session.project,revision:session.revision,recent:this.recent,save:this.saving});}}
+    private sendFormDraft(session:WorkbenchSession):void{
+        if(!this.disposed&&this.session===session){void this.view?.webview.postMessage({type:'formDraft',sessionId:session.id,project:session.project,epoch:this.sessionEpoch,formDraft:session.formDraft??defaultWorkbenchFormDraft(),save:this.saving});}
+    }
 
     private fail(error:unknown):void{this.notice=error instanceof Error?error.message:String(error);this.send();}
     async refresh():Promise<void>{
@@ -105,7 +110,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         const identity=JSON.stringify(spec);
         this.stop();
         if(this.client&&this.clientIdentity!==identity){this.releaseClient();}
-        this.status=undefined;this.session=newSession(id);this.recent=[];this.notice=undefined;
+        this.sessionEpoch++;this.status=undefined;this.session=newSession(id);this.recent=[];this.notice=undefined;
         const generation=this.generation,session=this.session;
         const current=()=>generation===this.generation&&session===this.session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
         this.send();
@@ -136,20 +141,28 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         const session=this.session,selected=session.project,generation=this.generation,identity=JSON.stringify(this.selectedSpec());
         const choice=await vscode.window.showWarningMessage('Delete saved Workbench sessions for this project?',{modal:true},'Delete sessions');
         if(choice==='Delete sessions'&&this.session===session&&generation===this.generation&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){
-            this.stop();const accepted=this.generation;
+            this.sessionEpoch++;this.stop();const accepted=this.generation;
             // The already authorized deletion keeps its exact project even if a
             // later selection supersedes it; it never restores that old selection.
             await this.saveQueue;await this.store.remove(selected);
             if(accepted===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity){if(this.selectedSpec()){await this.select(selected);}else{this.session=undefined;this.recent=[];this.status=undefined;this.send();}}
         }
     }
-    private save(session:WorkbenchSession):void{
-        if(!this.persistence()){this.saving='Session persistence off';this.send();return;}
-        this.saving='Saving…';const captured=structuredClone(session),results=this.persistResults();
+    private save(session:WorkbenchSession,formOnly=false):void{
+        if(!this.persistence()){this.saving='Session persistence off';if(!formOnly)this.send();return;}
+        // Coalesce rapid inert input updates behind the same serialized writer.
+        // No timer, second owner or extra inventory/worker observation is added.
+        if(formOnly&&this.queuedFormSaves.has(session))return;
+        if(formOnly)this.queuedFormSaves.add(session);
+        this.saving='Saving…';const captured=formOnly?undefined:structuredClone(session),results=this.persistResults();
         this.saveQueue=this.saveQueue.then(async()=>{
+            if(formOnly)this.queuedFormSaves.delete(session);
+            const writing=captured??structuredClone(session);
+            // A queued result snapshot must never roll newer form choices back.
+            writing.formDraft=structuredClone(session.formDraft??defaultWorkbenchFormDraft());
             // Preserve revisions after earlier saves queued by the same window.
-            captured.revision=session.revision;
-            const recent=await this.store.save(captured,results);session.revision=captured.revision;
+            writing.revision=session.revision;
+            const recent=await this.store.save(writing,results);session.revision=writing.revision;
             if(this.session!==session){return;}
             const summaries=recent??(await this.store.list(session.project)).map(s=>({id:s.id,title:s.title,updatedAt:s.updatedAt,turns:s.turns.length}));
             // Empty saves retain the list fallback; a new transcript can arrive during it.
@@ -159,7 +172,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private async loadRecent(id:string):Promise<void>{
         const session=this.session;if(!session){return;}
-        this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+        this.sessionEpoch++;this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
         const current=()=>generation===this.generation&&this.session===session&&this.localAllowed()&&JSON.stringify(this.selectedSpec())===identity;
         await this.saveQueue;if(!current()){return;}
         let loaded:WorkbenchSession|undefined;
@@ -170,7 +183,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private async deleteRecent(id:string):Promise<void>{
         const session=this.session;if(!session){return;}
-        this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
+        this.sessionEpoch++;this.stop();const generation=this.generation,identity=JSON.stringify(this.selectedSpec());
         // Deletion was explicitly accepted for this project/id. Finish that
         // operation, but never redirect it or reset a superseding transcript.
         await this.saveQueue;await this.store.remove(session.project,id);
@@ -189,6 +202,9 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private async run(input:string,prepare=false,recipe?:string,plan?:Value,pathPrefix?:string):Promise<void>{
         this.authorized();if(!this.session){throw new Error('Choose a project first.');}
+        // Validate before electing a client or stopping an outstanding request.
+        // Form values stay saved, but literal IDs must retain their own fence.
+        if(plan)assertOriginalPublicationForSymbolInputs(plan);
         this.stop();const session=this.session,client=this.evidence(),generation=this.generation;this.busy=true;this.notice=undefined;
         const turn={id:randomUUID(),at:Date.now(),input:(input||`${recipe??'Plan'} evidence`).slice(0,4096),format:'structured' as const,request:undefined as Value|undefined,envelope:undefined as Value|undefined,error:undefined as string|undefined};
         session.turns.push(turn);if(session.turns.length===1){session.title=turn.input.replaceAll('\n',' ').slice(0,80);}this.send();
@@ -199,6 +215,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                 if(shortcut){plan=shortcut;remembered=true;}
             }
             if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
+            if(plan)assertOriginalPublicationForSymbolInputs(plan);
             if(remembered){this.notice='Using an explicitly remembered plan; all steps are validated against current evidence.';}
             const request:Value={schema:'airk.parse.request/1',mode:prepare?'prepare':'execute',...(pathPrefix?{path_prefix:pathPrefix}:{})};
             if(plan){request.plan=plan;}else if(recipe){request.recipe={id:recipe,parameters:input.trim()?{name:input.trim()}:{}};}else{request.text=input;}
@@ -223,12 +240,32 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             case 'manage':await vscode.commands.executeCommand('airk.explorer.open','manage/overview');break;
             case 'forms':{const generation=this.generation;const reply=await this.evidence().call('airk_capabilities',{});if(generation===this.generation&&this.permitted()){this.operations=object(object(reply.payload.workbench).operations);this.send();}break;}
             case 'retrySave':if(this.session){this.save(this.session);}break;
-            case 'fork':if(this.session){this.stop();const fork={...structuredClone(this.session),id:randomUUID(),revision:0,title:`${this.session.title.slice(0,70)} (copy)`};this.session=fork;this.save(fork);this.send();}break;
+            case 'fork':if(this.session){this.sessionEpoch++;this.stop();const fork={...structuredClone(this.session),id:randomUUID(),revision:0,title:`${this.session.title.slice(0,70)} (copy)`,formDraft:defaultWorkbenchFormDraft()};this.session=fork;this.save(fork);this.send();}break;
+            case 'formDraft':case 'resetForm':{
+                const session=this.session,current=session&&normalizeWorkbenchFormDraft(session.formDraft);
+                if(!session||!current||!this.selectedSpec()||message.sessionId!==session.id||message.project!==session.project||message.epoch!==this.sessionEpoch
+                    ||!Number.isSafeInteger(message.revision)||message.revision<=current.revision)return;
+                if(message.type==='resetForm'&&message.tool!==current.activeTool)return;
+                const values={...current.values};
+                if(message.type==='resetForm')delete values[message.tool];
+                else if(message.values!==undefined)values[message.tool]={...message.values};
+                const next=normalizeWorkbenchFormDraft({...current,activeTool:message.tool,values,revision:message.revision,
+                    ...(message.type==='formDraft'&&message.scope!==undefined?{scope:message.scope}:{}),
+                    ...(message.type==='formDraft'&&message.recipe!==undefined?{recipe:message.recipe}:{})});
+                if(!next)throw new Error('Workbench form choices are invalid or exceed the saved-input limits.');
+                session.formDraft=next;session.updatedAt=Date.now();this.save(session,true);this.sendFormDraft(session);break;
+            }
             case 'recent':await this.loadRecent(message.id);break;
             case 'delete':await this.deleteRecent(message.id);break;
             case 'rename':if(this.session){this.session.title=message.title;this.save(this.session);this.send();}break;
             case 'run':await this.run(message.input,message.prepare,message.recipe,message.plan,message.pathPrefix);break;
-            case 'rerun':{const turn=this.session?.turns.find(t=>t.id===message.turn);if(turn){const request=object(turn.request),plan=request.plan?structuredClone(object(request.plan)):undefined;if(plan){delete plan.digest;delete plan.publication;delete plan.catalog;delete plan.collection;for(const raw of Array.isArray(plan.steps)?plan.steps:[]){const args=object(object(raw).args);for(const key of ['known_hash','revision','cursor']){delete args[key];}}}await this.run(turn.input,false,typeof object(request.recipe).id==='string'?String(object(request.recipe).id):undefined,plan,typeof request.path_prefix==='string'?request.path_prefix:undefined);}break;}
+            case 'rerun':{const turn=this.session?.turns.find(t=>t.id===message.turn);if(turn){
+                // Parsed text can also have produced an exact native symbol ID;
+                // inspect its retained plan before discarding any revision fence.
+                assertPortablePlanInputs(object(object(turn.envelope).plan));
+                const request=object(turn.request),plan=request.plan?planForWorkbenchRerun(object(request.plan)):undefined;
+                await this.run(turn.input,false,typeof object(request.recipe).id==='string'?String(object(request.recipe).id):undefined,plan,typeof request.path_prefix==='string'?request.path_prefix:undefined);
+            }break;}
             case 'saveStrategy':{
                 const turn=this.session?.turns.find(t=>t.id===message.turn);if(!turn?.envelope){throw new Error('Collect or prepare evidence first.');}
                 const generation=this.generation,spec=this.evidence().spec,document=strategyFromPlan(object(turn.envelope.plan),turn.input,turn.input);
@@ -241,8 +278,20 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                 if(!envelope||!continuations(envelope).some(c=>c.id===message.step)){throw new Error('No bounded continuation remains for this result.');}
                 const index=Number(message.step.slice(5)),report=object((envelope.steps as unknown[])[index]),result=object(report.result),prior=object(envelope.plan),budgets=object(prior.budgets);
                 const remaining=Number(budgets.max_bytes??524288)-Number(envelope.payload_bytes??0);if(remaining<1024){throw new Error('The original evidence byte budget is exhausted; start a scoped new request.');}
-                const plan={schema:'airk.parse.plan/1',publication:envelope.publication,collection:prior.collection,path_prefix:prior.path_prefix,budgets:{...budgets,calls:Number(budgets.calls??12)-Number(envelope.calls??0),max_bytes:remaining},steps:[{id:'continuation',tool:report.tool,args:{...object(report.arguments),cursor:result.cursor??object(result.content).cursor}}]};
+                const args:Value={...object(report.arguments),cursor:continuationCursor(result)},required=continuationRequiredRecordBytes(result);
+                if(required!==undefined&&required>Number(args.max_bytes??8192)){
+                    if(required>65536||required+512>remaining)throw new Error('The next record cannot fit the remaining evidence budget. Start a scoped request with a larger budget or read its source range.');
+                    args.max_bytes=required;
+                }
+                const plan={schema:'airk.parse.plan/1',publication:envelope.publication,collection:prior.collection,path_prefix:prior.path_prefix,budgets:{...budgets,calls:Number(budgets.calls??12)-Number(envelope.calls??0),max_bytes:remaining},steps:[{id:'continuation',tool:report.tool,args}]};
                 await this.run(`Continue ${String(report.tool)} from ${turn!.input}`,false,undefined,plan);break;
+            }
+            case 'followTarget':case 'followDefinition':{
+                const turn=this.session?.turns.find(value=>value.id===message.turn);
+                if(!turn?.envelope)throw new Error('The discovery result is no longer retained.');
+                const target=message.type==='followTarget'?message.target:message.name;
+                const plan=discoveryFollowupPlan(turn.envelope,message.step,target,message.type==='followDefinition'?message.path:undefined);
+                await this.run(`${message.type==='followTarget'?'Call candidates for':'Definition of'} ${target}`,false,undefined,plan);break;
             }
             case 'open':case 'context':{
                 const turn=this.session?.turns.find(t=>t.id===message.turn),card=turn&&evidenceCards(turn.envelope??{}).find(c=>c.id===message.card);
@@ -273,7 +322,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     dispose():void{this.visibilityChanged.dispose();this.stop();this.disposed=true;this.display.clear();this.releaseClient();for(const sub of this.subscriptions){sub.dispose();}}
     async removeProject(project:string):Promise<void>{
-        if(this.session?.project===project){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
+        if(this.session?.project===project){this.sessionEpoch++;this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
         await this.saveQueue;await this.store.remove(project);this.send();
     }
     async focus(input?:string):Promise<void>{

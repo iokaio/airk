@@ -2,12 +2,13 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { object, Value, WorkbenchSession, WorkbenchSessionSummary } from './workbenchContracts';
+import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, Value, WorkbenchSession, WorkbenchSessionSummary } from './workbenchContracts';
+import { assertPortablePlanInputs } from './workbenchStrategies';
 
 const LIMIT = 4 * 1024 * 1024;
 const validId = (id: string) => /^[a-f0-9-]{36}$/.test(id);
 export function newSession(project: string): WorkbenchSession {
-    return {schema:1,id:randomUUID(),project,title:'New session',createdAt:Date.now(),updatedAt:Date.now(),revision:0,omitted:0,turns:[]};
+    return {schema:1,id:randomUUID(),project,title:'New session',createdAt:Date.now(),updatedAt:Date.now(),revision:0,omitted:0,turns:[],formDraft:defaultWorkbenchFormDraft()};
 }
 export function trimSession(session: WorkbenchSession): void {
     while (session.turns.length > 200) { session.turns.shift(); session.omitted++; }
@@ -47,6 +48,9 @@ export class SessionStore {
         if (session.schema!==1 || session.id!==id || session.project!==project || !Array.isArray(session.turns) || session.turns.length>200
             || !Number.isSafeInteger(session.revision) || typeof session.title!=='string' || session.title.length>80
             || session.turns.some(t=>typeof t.input!=='string'||t.input.length>4096||typeof t.id!=='string'|| !['structured','json','markdown'].includes(t.format))) {throw new Error('Unsupported or corrupt session.');}
+        const formDraft=normalizeWorkbenchFormDraft(session.formDraft);
+        if(!formDraft)throw new Error('Unsupported or corrupt session form choices.');
+        session.formDraft=formDraft;
         return session;
     }
     private async lock<T>(project:string, action:(root:string)=>Promise<T>):Promise<T> {
@@ -56,7 +60,10 @@ export class SessionStore {
         try {return await action(root);} finally {await handle.close();await fs.unlink(file);}
     }
     async save(session:WorkbenchSession,persistResults=true):Promise<WorkbenchSessionSummary[]|undefined> {
-        if (!session.turns.length) {return;}
+        const formDraft=normalizeWorkbenchFormDraft(session.formDraft);
+        if(!formDraft)throw new Error('Unsupported or oversized session form choices.');
+        session.formDraft=formDraft;
+        if (!session.turns.length&&formDraft.revision===0&&formDraft.activeTool==='search'&&formDraft.scope===''&&formDraft.recipe===''&&Object.keys(formDraft.values).length===0) {return;}
         trimSession(session);
         return this.lock(session.project,async root=>{
             let current:WorkbenchSession|undefined;
@@ -95,10 +102,20 @@ export class SessionStore {
     async findShortcut(project:string,input:string,scope:string):Promise<Value|undefined>{
         // Case and whitespace inside quoted paths/identifiers can change the query.
         const normalize=(value:string)=>value.trim();
-        return (await this.shortcuts(project)).find(entry=>normalize(entry.input)===normalize(input)&&entry.scope===scope)?.plan;
+        const plan=(await this.shortcuts(project)).find(entry=>normalize(entry.input)===normalize(input)&&entry.scope===scope)?.plan;
+        if(plan){
+            // Older saved shortcuts must pass the same portability boundary;
+            // loading them cannot bypass the checks used by Remember today.
+            assertPortablePlanInputs(plan);
+            if((Array.isArray(plan.steps)?plan.steps:[]).some(raw=>object(object(raw).args).symbol)){
+                throw new Error('A direct symbol ID cannot be remembered; bind symbol IDs from a fresh definition query.');
+            }
+        }
+        return plan;
     }
     async remember(project:string,input:string,plan:Value):Promise<void>{
         if(!Array.isArray(plan.steps)||!plan.steps.length){throw new Error('Prepare an executable plan before remembering it.');}
+        assertPortablePlanInputs(plan);
         const template=structuredClone(plan);delete template.digest;delete template.publication;delete template.collection;
         for(const raw of Array.isArray(template.steps)?template.steps:[]){const args=object(object(raw).args);if(args.symbol){throw new Error('A direct symbol ID cannot be remembered; bind symbol IDs from a fresh definition query.');}for(const key of ['known_hash','revision','cursor']){delete args[key];}}
         await this.lock(project,async root=>{

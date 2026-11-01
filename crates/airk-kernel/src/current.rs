@@ -24,7 +24,10 @@ pub(crate) mod progress;
 mod publication;
 pub(crate) mod runtime;
 mod search;
-pub use search::{CurrentSearchEvidence, CurrentSearchMode, search_current};
+pub use search::{
+    CurrentSearchEvidence, CurrentSearchMode, DefinitionHint, DefinitionPointer,
+    SearchWithDefinitionsResponse, search_current,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CurrentRecoveryAction {
@@ -148,6 +151,14 @@ pub struct VerifiedCurrentLexical<'a> {
 impl VerifiedCurrentLexical<'_> {
     pub fn search(&self, query: &SearchQuery) -> Result<CurrentLexicalCandidates> {
         self.read.lexical_search(query)
+    }
+
+    pub fn search_paths(
+        &self,
+        query: &SearchQuery,
+        paths: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<CurrentLexicalCandidates> {
+        self.read.lexical_search_paths(query, paths)
     }
 }
 pub fn open_selected_lexical<'a>(

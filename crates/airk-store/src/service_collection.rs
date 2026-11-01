@@ -663,7 +663,9 @@ impl Collection {
     /// The OS object lease is acquired while manifest replacement is excluded.
     /// Keep it through the whole request, not in an idle kernel/session cache.
     pub fn select(&self) -> Result<Selection> {
-        let _lock = manifest_lock(&self.directory)?;
+        // Concurrent readers only exclude manifest replacement, not each other.
+        let _lock =
+            retry_manifest_lock(|| super::acquire_shared_file(&self.directory, "manifest.lock"))?;
         let manifest = self.manifest()?;
         let store = FileStore::new(self.slot(manifest.active));
         let gate = Gate::shared(&store)?;

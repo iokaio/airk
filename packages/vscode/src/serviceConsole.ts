@@ -60,7 +60,7 @@ export class ServiceConsole implements vscode.Disposable {
             version:this.context.extension.packageJSON.version,authority:vscode.env.remoteName?`Remote execution host (${vscode.env.remoteName})`:'Local execution host',
             storage:this.context.globalState,runtime:this.runtime,trusted:()=>vscode.workspace.isTrusted&&!this.disposed,
             changed:state=>this.changed(state),confirm:async(message,acceptLabel='Continue')=>(await vscode.window.showWarningMessage(message,{modal:true},acceptLabel))===acceptLabel,
-            copy:async text=>vscode.env.clipboard.writeText(text),logs:observation=>this.logs(observation),resources:current=>this.resources(current),
+            copy:async text=>vscode.env.clipboard.writeText(text),logs:observation=>this.logs(observation),resources:(current,queryOnly)=>this.resources(current,queryOnly),
             openReport:async text=>{await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({content:text,language:'json'}),{preview:false});},
             saveReport:async text=>{await this.saveDiagnostic(text,'airk-diagnostic-report');},
             exportLogs:observation=>this.exportLogs(observation),
@@ -205,7 +205,16 @@ export class ServiceConsole implements vscode.Disposable {
         const collection=await vscode.window.showInputBox({title:'Old AIRK collection name',prompt:'Use the collection from its old MCP/startup configuration. This review never converts an index.',validateInput:value=>value.length>0&&value.length<=128&&value!=='.'&&value!=='..'&&/^[A-Za-z0-9._-]+$/.test(value)?undefined:'Enter the exact old collection name (letters, digits, dot, dash or underscore).'});authorized();
         return collection?{root,data_dir,collection,executable}:undefined;
     }
-    private async resources(current:RecordValue):Promise<RecordValue|undefined>{
+    private async resources(current:RecordValue,queryOnly=false):Promise<RecordValue|undefined>{
+        if(queryOnly){
+            const selected=Number(current.query_concurrency??16);
+            const choices=[4,8,16,32,64].map(value=>{
+                return {label:`${value} channels`,value,description:[value===16?'Default':'',value===selected?'Current':''].filter(Boolean).join(' · ')};
+            });
+            const value=await vscode.window.showQuickPick(choices,{title:'AIRK: Concurrent evidence requests',
+                placeHolder:'4, 8, 16 (default), 32 or 64 channels. Native processing uses the same setting.'});
+            return value===undefined?undefined:{...current,query_concurrency:value.value};
+        }
         const choice=await vscode.window.showQuickPick([
             {label:'Responsive',value:'responsive',description:'Favor interactive responsiveness'},
             {label:'Balanced',value:'balanced',description:'Default bounded background work'},
@@ -213,7 +222,7 @@ export class ServiceConsole implements vscode.Disposable {
             {label:'Custom overrides',value:'custom',description:'Set native thread, memory and background I/O limits'},
         ],{title:'AIRK service resources',placeHolder:'Changes apply to the selected service host and all registered projects'});
         if(!choice)return;
-        if(choice.value!=='custom')return {preset:choice.value,extraction_threads:null,inference_threads:null,memory_bytes:null,background_io_bytes_per_second:null};
+        if(choice.value!=='custom')return {preset:choice.value,query_concurrency:current.query_concurrency??16,extraction_threads:null,inference_threads:null,memory_bytes:null,background_io_bytes_per_second:null};
         const result={...current};
         for(const [key,label,min,max,scale] of [
             ['extraction_threads','Extraction threads',1,64,1],['inference_threads','Inference threads',1,4,1],

@@ -25,6 +25,48 @@ struct EvidenceOptions {
     artifact_id: Option<airk_core::identity::ArtifactId>,
 }
 
+#[derive(clap::Args, Default, serde::Serialize)]
+struct SearchFilters {
+    /// Exact indexed extraction-language label; not a filename-extension filter.
+    #[arg(long)]
+    language: Option<String>,
+    /// Indexed evidence classification; unknown includes unclassified extraction.
+    #[arg(long, value_parser = ["code", "document", "configuration", "unknown"])]
+    evidence_kind: Option<String>,
+    /// Exclude one literal collection-relative prefix from this query only.
+    #[arg(long)]
+    exclude_path_prefix: Option<String>,
+}
+
+#[derive(clap::Args, Default, serde::Serialize)]
+struct NameMatchOptions {
+    /// Default exact lookup; suffix/contains match simple or qualified names case-sensitively.
+    #[arg(long, value_parser = ["exact", "suffix", "contains"], requires = "name")]
+    name_match: Option<String>,
+    /// Request qualified match counts; a bounded partial scan can report an unknown total.
+    #[arg(long)]
+    include_count: bool,
+}
+
+#[derive(clap::Args, Default, serde::Serialize)]
+struct ReferenceOptions {
+    #[command(flatten)]
+    #[serde(flatten)]
+    filters: SearchFilters,
+    /// Continue one exact publication with identical identifier, filters and ordering.
+    #[arg(long)]
+    cursor: Option<String>,
+    /// Omit for the legacy response; paged index order uses stable IDs, with path/code_first alternatives.
+    #[arg(long, value_parser = ["index", "path", "code_first"])]
+    order: Option<String>,
+    /// Summarize returned page records by file; bounded metadata is additional to the text-byte budget.
+    #[arg(long)]
+    include_files: bool,
+    /// Request candidate-scoped counts; the whole-query total remains unknown.
+    #[arg(long)]
+    include_count: bool,
+}
+
 #[derive(Parser)]
 #[command(
     name = "airk",
@@ -181,8 +223,10 @@ enum Command {
         #[arg(long)]
         cursor: Option<String>,
     },
-    /// List code facts (definitions, signatures, durable symbol keys) for a symbol or path, with continuation cursors.
+    /// Inspect code facts and signatures with exact default name matching and bounded continuation.
     CodeFacts {
+        #[command(flatten)]
+        matching: NameMatchOptions,
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
         compact: Option<bool>,
@@ -190,7 +234,7 @@ enum Command {
         #[arg(long)]
         cursor: Option<String>,
         /// Durable symbol key from indexed continuity evidence; excludes textual filters.
-        #[arg(long, conflicts_with_all = ["name", "kind", "language", "path_prefix", "cursor"])]
+        #[arg(long, conflicts_with_all = ["name", "kind", "language", "path_prefix", "cursor", "name_match", "include_count"])]
         symbol_key: Option<airk_core::identity::SymbolKey>,
         #[arg(long)]
         name: Option<String>,
@@ -238,6 +282,8 @@ enum Command {
     /// fails until the embedding model is set up (`setup-model`). --mode lexical (all words must appear)
     /// always works on a published index; vector and hybrid need ready vectors.
     Search {
+        #[command(flatten)]
+        filters: SearchFilters,
         query: String,
         #[arg(long, value_enum, conflicts_with = "semantic")]
         mode: Option<SearchMode>,
@@ -299,7 +345,7 @@ enum Command {
         #[command(flatten)]
         evidence: EvidenceOptions,
     },
-    /// Outline one file's structure: symbols, headings and sections with line ranges.
+    /// Read one indexed file's structure in file order; this returns evidence, not an Explorer page proposal.
     Outline {
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
@@ -315,8 +361,10 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Find symbol definitions by name, optionally filtered by language or path prefix.
+    /// Find definitions by exact name by default; use --name-match for suffix/contains variants.
     Symbol {
+        #[command(flatten)]
+        matching: NameMatchOptions,
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
         compact: Option<bool>,
@@ -328,6 +376,10 @@ enum Command {
         language: Option<String>,
         #[arg(long, default_value = "")]
         path_prefix: String,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        #[arg(long, default_value_t = 8192)]
+        max_bytes: usize,
     },
     /// List import and dependency statements found under a path prefix.
     Imports {
@@ -363,11 +415,17 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// Find indexed references to a name under a path prefix.
+    /// Find exact-case textual identifier uses; these are candidates, not resolved language references.
     Refs {
+        #[command(flatten)]
+        options: ReferenceOptions,
         name: String,
         #[arg(long, default_value = "")]
         path_prefix: String,
+        #[arg(long, default_value_t = 10)]
+        limit: usize,
+        #[arg(long, default_value_t = 8192)]
+        max_bytes: usize,
     },
     /// Read lines around --line in a file (--before/--after), with a citation.
     Context {
@@ -1588,6 +1646,21 @@ fn evidence(mut value: Value, evidence: EvidenceOptions) -> Result<Value> {
         );
     Ok(value)
 }
+fn query_options(mut value: Value, options: impl serde::Serialize) -> Result<Value> {
+    let options = serde_json::to_value(options)?;
+    value
+        .as_object_mut()
+        .context("query arguments must be an object")?
+        .extend(
+            options
+                .as_object()
+                .context("query options must be an object")?
+                .iter()
+                .filter(|(_, value)| !value.is_null() && **value != Value::Bool(false))
+                .map(|(name, value)| (name.clone(), value.clone())),
+        );
+    Ok(value)
+}
 fn query(command: Command) -> Result<(&'static str, Value)> {
     Ok(match command {
         Command::Status => ("airk_status", json!({})),
@@ -1627,6 +1700,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             ("airk_parse", value)
         }
         Command::Search {
+            filters,
             query,
             mode,
             semantic,
@@ -1645,7 +1719,10 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             };
             (
                 "airk_search",
-                json!({"query":query,"mode":mode,"path_prefix":path_prefix,"limit":limit,"max_bytes":max_bytes}),
+                query_options(
+                    json!({"query":query,"mode":mode,"path_prefix":path_prefix,"limit":limit,"max_bytes":max_bytes}),
+                    filters,
+                )?,
             )
         }
         Command::Files {
@@ -1689,14 +1766,20 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             )?,
         ),
         Command::Symbol {
+            matching,
             compact,
             cursor,
             name,
             language,
             path_prefix,
+            limit,
+            max_bytes,
         } => (
             "airk_symbols",
-            json!({"compact":compact,"cursor":cursor,"name":name,"language":language,"path_prefix":path_prefix}),
+            query_options(
+                json!({"compact":compact,"cursor":cursor,"name":name,"language":language,"path_prefix":path_prefix,"limit":limit,"max_bytes":max_bytes}),
+                matching,
+            )?,
         ),
         Command::Imports {
             compact,
@@ -1720,6 +1803,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             json!({"compact":compact,"cursor":cursor,"document_key":document_key,"path_prefix":path_prefix,"name":name,"kind":kind,"limit":limit,"max_bytes":max_bytes}),
         ),
         Command::CodeFacts {
+            matching,
             compact,
             cursor,
             symbol_key,
@@ -1731,7 +1815,10 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             max_bytes,
         } => (
             "airk_code_facts",
-            json!({"compact":compact,"cursor":cursor,"symbol_key":symbol_key,"path_prefix":path_prefix,"name":name,"kind":kind,"language":language,"limit":limit,"max_bytes":max_bytes}),
+            query_options(
+                json!({"compact":compact,"cursor":cursor,"symbol_key":symbol_key,"path_prefix":path_prefix,"name":name,"kind":kind,"language":language,"limit":limit,"max_bytes":max_bytes}),
+                matching,
+            )?,
         ),
         Command::Relationships {
             symbol,
@@ -1745,9 +1832,18 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             "airk_relationships",
             json!({"symbol":symbol,"direction":direction,"kind":kind,"path_prefix":path_prefix,"hops":hops,"limit":limit,"max_bytes":max_bytes}),
         ),
-        Command::Refs { name, path_prefix } => (
+        Command::Refs {
+            options,
+            name,
+            path_prefix,
+            limit,
+            max_bytes,
+        } => (
             "airk_references",
-            json!({"name":name,"path_prefix":path_prefix}),
+            query_options(
+                json!({"name":name,"path_prefix":path_prefix,"limit":limit,"max_bytes":max_bytes}),
+                options,
+            )?,
         ),
         Command::Context {
             evidence: options,
@@ -1939,6 +2035,126 @@ mod tests {
             ["airk", "changes", "--path", "memo.txt"]
         );
         Ok(())
+    }
+    #[test]
+    fn scoped_discovery_flags_reach_native_schemas_without_changing_defaults() -> Result<()> {
+        let (_, plain) = query(Cli::try_parse_from(["airk", "search", "Owner"])?.command)?;
+        for name in ["language", "evidence_kind", "exclude_path_prefix"] {
+            assert!(plain.get(name).is_none(), "default query added {name}");
+        }
+        let (name, search) = query(
+            Cli::try_parse_from([
+                "airk",
+                "search",
+                "Owner",
+                "--mode",
+                "lexical",
+                "--language",
+                "rust",
+                "--evidence-kind",
+                "code",
+                "--exclude-path-prefix",
+                "fixtures/",
+            ])?
+            .command,
+        )?;
+        assert_eq!(name, "airk_search");
+        assert_eq!(search["language"], "rust");
+        assert_eq!(search["evidence_kind"], "code");
+        assert_eq!(search["exclude_path_prefix"], "fixtures/");
+        serde_json::from_value::<airk_mcp::SearchArgs>(search)?;
+
+        for (args, tool) in [
+            (
+                vec![
+                    "airk",
+                    "symbol",
+                    "Session",
+                    "--name-match",
+                    "suffix",
+                    "--include-count",
+                    "--limit",
+                    "30",
+                    "--max-bytes",
+                    "16384",
+                ],
+                "airk_symbols",
+            ),
+            (
+                vec![
+                    "airk",
+                    "code-facts",
+                    "--name",
+                    "Session",
+                    "--name-match",
+                    "contains",
+                    "--include-count",
+                ],
+                "airk_code_facts",
+            ),
+        ] {
+            let (name, arguments) = query(Cli::try_parse_from(args)?.command)?;
+            assert_eq!(name, tool);
+            assert_eq!(arguments["include_count"], true);
+            if name == "airk_symbols" {
+                assert_eq!(arguments["name_match"], "suffix");
+                assert_eq!(arguments["limit"], 30);
+                serde_json::from_value::<airk_mcp::FactArgs>(arguments)?;
+            } else {
+                assert_eq!(arguments["name_match"], "contains");
+                serde_json::from_value::<airk_mcp::CodeFactArgs>(arguments)?;
+            }
+        }
+        let (_, references) = query(
+            Cli::try_parse_from([
+                "airk",
+                "refs",
+                "Owner",
+                "--path-prefix",
+                "crates/",
+                "--language",
+                "rust",
+                "--evidence-kind",
+                "code",
+                "--order",
+                "path",
+                "--include-files",
+                "--include-count",
+                "--cursor",
+                "opaque-returned-cursor",
+                "--limit",
+                "5",
+                "--max-bytes",
+                "4096",
+            ])?
+            .command,
+        )?;
+        assert_eq!(references["order"], "path");
+        assert_eq!(references["include_files"], true);
+        assert_eq!(references["include_count"], true);
+        assert_eq!(references["cursor"], "opaque-returned-cursor");
+        assert_eq!(references["max_bytes"], 4096);
+        serde_json::from_value::<airk_mcp::ReferenceArgs>(references)?;
+        Ok(())
+    }
+    #[test]
+    fn discovery_flags_reject_unknown_modes_and_continuity_mixtures() {
+        for args in [
+            vec!["airk", "symbol", "Session", "--name-match", "fuzzy"],
+            vec!["airk", "code-facts", "--name-match", "suffix"],
+            vec!["airk", "search", "Owner", "--evidence-kind", "source"],
+            vec!["airk", "refs", "Owner", "--order", "score"],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
+        }
+        let key = "01".repeat(16);
+        for flag in ["--include-count", "--name-match"] {
+            let mut args = vec!["airk", "code-facts", "--symbol-key", &key, flag];
+            if flag == "--name-match" {
+                args.push("suffix");
+            }
+            assert!(Cli::try_parse_from(args).is_err());
+        }
     }
     #[test]
     fn continuity_keys_keep_exact_identity_and_exclude_text_filters() {
