@@ -24,6 +24,7 @@ pub mod recent;
 mod recent_events;
 pub mod relationships;
 pub mod resources;
+pub mod text_range;
 pub mod vector_map;
 mod wal;
 mod wal_budget;

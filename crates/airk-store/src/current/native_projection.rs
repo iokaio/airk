@@ -70,6 +70,7 @@ pub struct PreparedNativeProjection {
     root: ResourceReference,
     edges: Option<ResourceReference>,
     lines: Option<ResourceReference>,
+    text: Option<super::text_range::TextRangeReference>,
     memory: usize,
 }
 impl PreparedNativeProjection {
@@ -81,6 +82,7 @@ pub struct NativeProjectionAdmission {
     pub roots: Option<Vec<ResourceReference>>,
     pub edge_roots: Vec<Option<ResourceReference>>,
     pub line_roots: Vec<Option<ResourceReference>>,
+    pub text_roots: Vec<Option<super::text_range::TextRangeReference>>,
     /// Caller retains this exact guard through Applying, commit or rollback.
     pub reservation: Option<Reservation>,
 }
@@ -437,11 +439,24 @@ impl FileStore {
         } else {
             None
         };
+        let text = if let Some(text) = self.prepare_text_ranges(artifact, mode)? {
+            memory = memory
+                .checked_add(text.memory)
+                .context("text range memory overflow")?;
+            if memory > MAX_PREPARED_NATIVE_BYTES {
+                return Err(ProjectionPreparationLimit.into());
+            }
+            resources.extend(text.resources);
+            Some(text.reference)
+        } else {
+            None
+        };
         Ok(PreparedNativeProjection {
             resources,
             root,
             edges,
             lines,
+            text,
             memory,
         })
     }
@@ -478,6 +493,7 @@ impl FileStore {
                         roots: None,
                         edge_roots: Vec::new(),
                         line_roots: Vec::new(),
+                        text_roots: Vec::new(),
                         reservation: None,
                     });
                 }
@@ -494,6 +510,7 @@ impl FileStore {
             roots: Some(plans.iter().map(|plan| plan.root.clone()).collect()),
             edge_roots: plans.iter().map(|plan| plan.edges.clone()).collect(),
             line_roots: plans.iter().map(|plan| plan.lines.clone()).collect(),
+            text_roots: plans.iter().map(|plan| plan.text.clone()).collect(),
             reservation,
         })
     }
@@ -783,6 +800,8 @@ pub struct FileProjectionCertification {
     pub native: Option<NativeProducerCertificate>,
     pub native_edges: Option<super::query_projection::QueryProducerCertificate>,
     pub native_edges_empty: bool,
+    pub native_lines: bool,
+    pub text_ranges: Option<super::text_range::TextRangeCertificate>,
 }
 #[derive(Clone, Debug)]
 pub struct NativeLeafAuditTurn {
@@ -960,6 +979,9 @@ impl CurrentRead {
         let line_index = self
             .native_line_reference(path)?
             .map_or(0, |reference| reference.bytes as u64);
+        let text_index = self
+            .text_range_reference(path)?
+            .map_or(0, |reference| reference.root.bytes as u64);
         let metadata = self.file_metadata_bytes(path)? as u64;
         (artifact.bytes as u64)
             .checked_add(retained.object_bytes as u64)
@@ -967,6 +989,7 @@ impl CurrentRead {
             .and_then(|bytes| bytes.checked_add(manifest))
             .and_then(|bytes| bytes.checked_add(edges))
             .and_then(|bytes| bytes.checked_add(line_index))
+            .and_then(|bytes| bytes.checked_add(text_index))
             .context("projection certification size overflow")
     }
     /// One admitted source/payload/metadata pass for the historical object and
@@ -1013,8 +1036,9 @@ impl CurrentRead {
                 .contract_version
                 == 2
             && compact.extraction_method == "utf8";
-        let raw_lines = if let Some(reference) = self.native_line_reference(path)? {
-            Some(store.verify_native_line_projection(&reference, &compact)?)
+        let native_lines = self.native_line_reference(path)?;
+        let raw_lines = if let Some(reference) = &native_lines {
+            Some(store.verify_native_line_projection(reference, &compact)?)
         } else if utf8 {
             Some(store.verify_retained_source_utf8_lines(&compact)?)
         } else {
@@ -1025,6 +1049,8 @@ impl CurrentRead {
         if selected.is_none() && native.is_none() {
             return Ok(FileProjectionCertification {
                 scalars: false,
+                native_lines: false,
+                text_ranges: None,
                 native: None,
                 native_edges: None,
                 native_edges_empty: false,
@@ -1075,8 +1101,14 @@ impl CurrentRead {
         if native_edges_empty {
             store.verify_empty_native_edges(&artifact)?;
         }
+        let text_ranges = self
+            .text_range_reference(path)?
+            .map(|reference| store.certify_text_ranges(&reference, &artifact))
+            .transpose()?;
         Ok(FileProjectionCertification {
             scalars,
+            native_lines: native_lines.is_some(),
+            text_ranges,
             native,
             native_edges,
             native_edges_empty,

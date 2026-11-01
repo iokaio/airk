@@ -1131,3 +1131,215 @@ fn compressed_resources_refuse_decoded_size_above_the_selected_reference() -> Re
     );
     Ok(())
 }
+
+#[test]
+fn retained_text_ranges_preserve_overlap_original_locations_and_selected_damage_boundaries()
+-> Result<()> {
+    use airk_core::{
+        DocumentLocation as L,
+        compression::CompressionMode,
+        extraction::{LocalChunk, LocalSpan},
+        location::{ByteSpan, RegionLocation},
+    };
+    let locations = [
+        L::Page { number: 1 },
+        L::Block { number: 2 },
+        L::Slide { number: 3 },
+        L::TableRow { table: 4, row: 5 },
+        L::WorksheetRow {
+            sheet: "Original sheet".into(),
+            row: 6,
+        },
+        L::Mapped {
+            region: RegionLocation::Embedded {
+                region_id: "decoded-region".into(),
+                local_span: ByteSpan { start: 0, end: 4 },
+                original_spans: vec![ByteSpan { start: 1, end: 5 }],
+            },
+        },
+    ];
+    for (index, location) in locations.into_iter().enumerate() {
+        let fixture = Fixture::new()?;
+        let text = "first\nshared\nlast🦀\nnext\n";
+        let seed = retained_input_at(&fixture, "document.txt", text)?;
+        let mut retrieval = fixture.store.load_retrieval_artifact(&seed.artifact)?;
+        retrieval.payload.extraction_method = "document-range-fixture".into();
+        retrieval.payload.chunks = vec![
+            LocalChunk {
+                span: LocalSpan { start: 0, end: 13 },
+                start_line: 1,
+                end_line: 2,
+                location: location.clone(),
+                region: None,
+            },
+            LocalChunk {
+                span: LocalSpan { start: 6, end: 22 },
+                start_line: 2,
+                end_line: 3,
+                location: location.clone(),
+                region: None,
+            },
+            LocalChunk {
+                span: LocalSpan {
+                    start: 22,
+                    end: text.len(),
+                },
+                start_line: 4,
+                end_line: 4,
+                location: L::Page { number: 99 },
+                region: None,
+            },
+        ];
+        let artifact = airk_core::binding::bind_payload(
+            &retrieval.payload,
+            &retrieval.profile,
+            airk_core::binding::ArtifactBinding {
+                path: "document.txt",
+                source_hash: seed.artifact.content_hash.parse()?,
+                source_bytes: text.len(),
+            },
+        )?;
+        let reservation = fixture.quota.reserve(&fixture.scope.collection, 2 << 20)?;
+        let mode = [
+            CompressionMode::Off,
+            CompressionMode::Automatic,
+            CompressionMode::Space,
+        ][index % 3];
+        let compact = fixture.store.retain_payload_encoded(
+            &artifact,
+            &retrieval.payload,
+            &retrieval.profile,
+            Some(text.as_bytes()),
+            Some(&reservation),
+            mode,
+        )?;
+        let input = CapturedInput::new(compact);
+        let mut file = inventory(&fixture, &input, 1)?;
+        file.indexed_lines = 4;
+        publish_options(
+            &fixture,
+            "document.txt",
+            Some(&input),
+            true,
+            Some(file),
+            mode,
+            true,
+        )?;
+        let read = fixture.store.current_read(&fixture.scope)?;
+        let projected = read
+            .text_range_projection(&fixture.store, "document.txt")?
+            .context("text projection missing")?;
+        let full = projected.read_selected(1, 3, 100)?;
+        assert_eq!(full.text, "first\nshared\nshared\nlast🦀\n");
+        assert_eq!(full.location, location);
+        assert!(!full.truncated);
+        assert_eq!(projected.read_selected(2, 2, 100)?.text, "shared\nshared\n");
+        let short = projected.read_selected(3, 3, 7)?;
+        assert_eq!(short.text, "last");
+        assert!(short.truncated);
+        assert!(projected.read_selected(3, 4, 100).is_err());
+        assert_eq!(projected.read_strict(1, 3, 100)?.text, full.text);
+        let certificate = read
+            .certify_file_projections(&fixture.store, "document.txt")?
+            .text_ranges
+            .context("text certificate missing")?;
+        let root = projected.reference();
+        let header: serde_json::Value =
+            serde_json::from_slice(&fixture.store.read_current_resource(&root.root)?)?;
+        let first: resources::ResourceReference =
+            serde_json::from_value(header["chunks"][0]["blocks"][0]["resource"].clone())?;
+        let third: resources::ResourceReference =
+            serde_json::from_value(header["chunks"][2]["blocks"][0]["resource"].clone())?;
+        let refused = projected.audit_physical(
+            &certificate,
+            0,
+            1,
+            root.root.bytes as u64 + first.bytes as u64 - 1,
+            || Ok(()),
+        )?;
+        assert_eq!(refused.next_page, 0);
+        assert_eq!(refused.checked_pages, 0);
+        assert_eq!(
+            refused.required_bytes,
+            Some(root.root.bytes as u64 + first.bytes as u64)
+        );
+        let object = fixture
+            .store
+            .directory()
+            .join("current-resources")
+            .join(format!("{}.json", third.object_digest()?));
+        let original = fs::read(&object)?;
+        fs::write(&object, b"broken text")?;
+        assert!(projected.read_selected(1, 1, 100).is_ok());
+        assert!(projected.read_strict(1, 1, 100).is_err());
+        assert!(
+            read.certify_file_projections(&fixture.store, "document.txt")?
+                .text_ranges
+                .is_some(),
+            "logical certification unexpectedly read unselected data pages"
+        );
+        assert!(
+            projected
+                .audit_physical(&certificate, 2, 1, 1 << 20, || Ok(()))
+                .is_err()
+        );
+        fs::write(&object, original)?;
+        for page in 0..3 {
+            let turn = projected.audit_physical(&certificate, page, 1, 1 << 20, || Ok(()))?;
+            assert_eq!(turn.next_page, page + 1);
+            assert_eq!(turn.complete, page == 2);
+        }
+        let plan = read.reclamation_plan(&fixture.store)?;
+        drop(projected);
+        drop(read);
+        let lock = fixture.store.lock()?;
+        fixture
+            .store
+            .current_write(&lock, &fixture.quota, &fixture.scope, CAPACITY)?
+            .reclaim_objects(&plan)?;
+        assert!(object.is_file());
+    }
+    Ok(())
+}
+
+#[test]
+fn optional_text_metadata_refusal_preserves_valid_overlapping_authoritative_chunks() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let seed = retained_input_at(&fixture, "overlap.txt", "body")?;
+    let mut retrieval = fixture.store.load_retrieval_artifact(&seed.artifact)?;
+    retrieval.payload.chunks = vec![retrieval.payload.chunks[0].clone(); 100_000];
+    retrieval.payload.validate()?;
+    let artifact = airk_core::binding::bind_payload(
+        &retrieval.payload,
+        &retrieval.profile,
+        airk_core::binding::ArtifactBinding {
+            path: "overlap.txt",
+            source_hash: seed.artifact.content_hash.parse()?,
+            source_bytes: 4,
+        },
+    )?;
+    let reservation = fixture.quota.reserve(&fixture.scope.collection, 64 << 20)?;
+    let compact = fixture.store.retain_payload_with_budget(
+        &artifact,
+        &retrieval.payload,
+        &retrieval.profile,
+        Some(b"body"),
+        Some(&reservation),
+    )?;
+    let full = fixture.store.load_projection_artifact(&compact)?;
+    let before = stored_totals(fixture.store.directory())?;
+    let error = fixture
+        .store
+        .prepare_text_ranges(&full, airk_core::compression::CompressionMode::Off)
+        .err()
+        .context("optional text metadata did not decline oversized representation")?;
+    assert!(error.is::<native_projection::ProjectionPreparationLimit>());
+    assert_eq!(
+        stored_totals(fixture.store.directory())?,
+        before,
+        "optional preparation wrote resources before admission"
+    );
+    assert_eq!(fixture.store.load_retained(&compact)?.chunks.len(), 100_000);
+    assert_eq!(fixture.store.read_retained_source(&compact)?, b"body");
+    Ok(())
+}

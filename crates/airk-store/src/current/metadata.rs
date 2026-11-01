@@ -42,6 +42,8 @@ pub struct FileMetadataRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_lines: Option<super::resources::ResourceReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_ranges: Option<super::text_range::TextRangeReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_facts_omission: Option<ProjectionOmission>,
     #[serde(skip)]
     line_witness: Option<std::sync::Arc<IndexedLinesWitness>>,
@@ -68,6 +70,16 @@ impl FileMetadataRef {
             self.native_lines.is_none() || self.scalars.is_some(),
             "native line declaration lacks scalar component"
         );
+        ensure!(
+            self.text_ranges.is_none()
+                || (self.scalars.is_some()
+                    && self.native_facts.is_some()
+                    && self.native_lines.is_none()),
+            "text range declaration lacks its fact/scalar components or conflicts with native source ranges"
+        );
+        if let Some(text) = &self.text_ranges {
+            text.validate()?;
+        }
         Ok(())
     }
 }
@@ -263,6 +275,7 @@ impl FileStore {
             native_edges: None,
             native_edges_empty: false,
             native_lines: None,
+            text_ranges: None,
             native_facts_omission: None,
             line_witness: None,
         };
@@ -410,6 +423,12 @@ impl FileStore {
         if let Some(lines) = self.prepare_native_line_projection(prepared.artifact(), mode)? {
             self.retain_prepared_resource(&lines, Some(reservation), None)?;
             reference.native_lines = Some(lines.reference);
+        }
+        if let Some(text) = self.prepare_text_ranges(prepared.artifact(), mode)? {
+            for resource in &text.resources {
+                self.retain_prepared_resource(resource, Some(reservation), None)?;
+            }
+            reference.text_ranges = Some(text.reference);
         }
         reference.line_witness = Some(prepared.witness.clone());
         Ok(reference)
@@ -717,6 +736,9 @@ pub(super) fn verify_projected_metadata(
     if let Some(lines) = &reference.native_lines {
         store.verify_native_line_projection(lines, artifact)?;
     }
+    if let Some(text) = &reference.text_ranges {
+        store.verify_text_ranges(text, artifact)?;
+    }
     Ok(())
 }
 
@@ -841,6 +863,14 @@ pub(crate) fn prepare(
             }
             if let Some(lines) = &reference.native_lines {
                 store.verify_native_line_projection(lines, &input.artifact)?;
+            }
+            if let Some(text) = &reference.text_ranges {
+                store.verify_text_ranges(
+                    text,
+                    materialized
+                        .as_ref()
+                        .context("text range materialization missing")?,
+                )?;
             }
             for (domain, identity) in handles(&file)? {
                 let c =

@@ -116,6 +116,16 @@ impl CurrentRead {
                         .context("projection retention byte overflow")?;
                 }
 
+                if let Some(text) = &reference.text_ranges {
+                    metadata_bytes = metadata_bytes
+                        .checked_add(text.root.bytes)
+                        .context("text retention metadata overflow")?;
+                    ensure!(
+                        metadata_bytes <= super::MAX_CURRENT_METADATA_READ_BYTES,
+                        "text retention metadata budget exceeded"
+                    );
+                    store.retain_text_range_paths(text, &artifact, &mut retained)?;
+                }
                 if let Some(lines) = &reference.native_lines {
                     ensure!(
                         lines.bytes <= super::native_range::MAX_LINE_INDEX_BYTES,

@@ -54,6 +54,13 @@ fn strict_selected_lines_match_chunked_values_and_exact_conditional_preimages() 
             );
         } else {
             assert!(index.is_none());
+            let retained_text = read
+                .text_range_projection(&kernel.store, path)?
+                .context("retained text producer omitted range pages")?;
+            assert_eq!(
+                retained_text.indexed_lines(),
+                source.split_inclusive('\n').count()
+            );
         }
         let count = source.split_inclusive('\n').count();
         if count == 0 {

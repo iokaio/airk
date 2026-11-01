@@ -33,6 +33,32 @@ impl ProjectionPendingComponent {
         Ok(())
     }
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PendingTextRanges {
+    certificate: crate::current::text_range::TextRangeCertificate,
+    next_page: usize,
+    first_unix_ms: u64,
+    through_unix_ms: u64,
+}
+impl PendingTextRanges {
+    fn new(certificate: crate::current::text_range::TextRangeCertificate, now: u64) -> Self {
+        Self {
+            certificate,
+            next_page: 0,
+            first_unix_ms: now,
+            through_unix_ms: now,
+        }
+    }
+    fn validate(&self) -> Result<()> {
+        self.certificate.validate()?;
+        ensure!(
+            self.next_page <= self.certificate.pages,
+            "invalid text range continuation"
+        );
+        Ok(())
+    }
+}
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ImportedProjectionAudit {
@@ -88,6 +114,10 @@ pub struct ProjectionPendingFile {
     native_edges: Option<ProjectionPendingComponent>,
     #[serde(default)]
     native_edges_empty: bool,
+    #[serde(default)]
+    native_lines: bool,
+    #[serde(default)]
+    text_ranges: Option<PendingTextRanges>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,6 +134,8 @@ pub struct ProjectionAuditProgress {
     schema: u32,
     #[serde(default)]
     preserved_v1_dates: bool,
+    #[serde(default)]
+    preserved_v2_dates: bool,
     #[serde(skip)]
     coverage_skipped: bool,
     pub artifact_root: Sha256Digest,
@@ -114,6 +146,8 @@ pub struct ProjectionAuditProgress {
     pub native_facts: ProjectionComponentCoverage,
     #[serde(default)]
     pub native_edges: ProjectionComponentCoverage,
+    #[serde(default)]
+    pub read_ranges: ProjectionComponentCoverage,
     #[serde(default)]
     imported: ImportedProjectionAudit,
     pub exhausted: bool,
@@ -135,8 +169,9 @@ pub struct ProjectionAuditProgress {
 impl ProjectionAuditProgress {
     fn new(root: Sha256Digest, now: u64) -> Self {
         Self {
-            schema: 2,
+            schema: 3,
             preserved_v1_dates: false,
+            preserved_v2_dates: false,
             coverage_skipped: false,
             artifact_root: root,
             started_unix_ms: now,
@@ -145,6 +180,7 @@ impl ProjectionAuditProgress {
             scalars: Default::default(),
             native_facts: Default::default(),
             native_edges: Default::default(),
+            read_ranges: Default::default(),
             imported: Default::default(),
             exhausted: false,
             pending: None,
@@ -157,11 +193,18 @@ impl ProjectionAuditProgress {
         }
     }
     fn upgrade(&mut self) {
-        if self.schema == 2 {
+        if self.schema == 3 {
             return;
         }
         let mut next = Self::new(self.artifact_root, self.started_unix_ms);
         next.preserved_v1_dates = true;
+        next.preserved_v2_dates = self.schema == 2;
+        if self.schema == 2 {
+            next.native_edges.first_observed_unix_ms = self.native_edges.first_observed_unix_ms;
+            next.native_edges.through_unix_ms = self.native_edges.through_unix_ms;
+            // The imported component set is unchanged by retained-text ranges.
+            next.imported = self.imported.clone();
+        }
         next.first_oversized = self.first_oversized.clone();
         next.scalars.first_observed_unix_ms = self.scalars.first_observed_unix_ms;
         next.scalars.through_unix_ms = self.scalars.through_unix_ms;
@@ -182,6 +225,24 @@ impl ProjectionAuditProgress {
                 .physical_through_unix_ms
                 .or(next.native_facts.through_unix_ms);
         }
+        if self.schema == 2
+            && let Some(pending) = &self.pending
+        {
+            if let Some(edges) = &pending.native_edges {
+                next.native_edges.first_observed_unix_ms = next
+                    .native_edges
+                    .first_observed_unix_ms
+                    .or(edges.physical_first_unix_ms);
+                next.native_edges.through_unix_ms = edges
+                    .physical_through_unix_ms
+                    .or(next.native_edges.through_unix_ms);
+            } else if pending.native_edges_empty {
+                next.native_edges
+                    .first_observed_unix_ms
+                    .get_or_insert(pending.logical_certified_unix_ms);
+                next.native_edges.through_unix_ms = Some(pending.logical_certified_unix_ms);
+            }
+        }
         *self = next;
     }
     fn record(
@@ -190,12 +251,13 @@ impl ProjectionAuditProgress {
         scalars: bool,
         native: bool,
         edges: bool,
-        logical_now: u64,
-        physical_now: u64,
+        ranges: bool,
+        (logical_now, physical_now): (u64, u64),
     ) -> Result<()> {
         self.scalars.observe(scalars, logical_now)?;
         self.native_facts.observe(native, physical_now)?;
         self.native_edges.observe(edges, physical_now)?;
+        self.read_ranges.observe(ranges, physical_now)?;
         self.visited_files = self
             .visited_files
             .checked_add(1)
@@ -205,7 +267,7 @@ impl ProjectionAuditProgress {
     }
     fn validate(&self) -> Result<()> {
         ensure!(
-            matches!(self.schema, 0 | 2),
+            matches!(self.schema, 0 | 2 | 3),
             "unsupported projection continuation schema"
         );
         ensure!(
@@ -228,13 +290,23 @@ impl ProjectionAuditProgress {
                 !pending.native_edges_empty || pending.native_edges.is_none(),
                 "conflicting pending empty edge declaration"
             );
+            ensure!(
+                !pending.native_lines || pending.text_ranges.is_none(),
+                "conflicting pending read range components"
+            );
+            if let Some(text) = &pending.text_ranges {
+                text.validate()?;
+            }
             if let Some(edges) = &pending.native_edges {
                 edges.validate()?;
             }
         }
         let mut components = vec![&self.scalars, &self.native_facts];
-        if self.schema == 2 {
+        if self.schema >= 2 {
             components.push(&self.native_edges);
+        }
+        if self.schema >= 3 {
+            components.push(&self.read_ranges);
         }
         for (component_index, component) in components.into_iter().enumerate() {
             ensure!(
@@ -244,13 +316,14 @@ impl ProjectionAuditProgress {
                         && component.first_observed_unix_ms.is_none()
                         && component.through_unix_ms.is_none())
                         || ((component.checked_files > 0
-                            || (self.preserved_v1_dates && component_index < 2))
+                            || ((self.preserved_v1_dates && component_index < 2)
+                                || (self.preserved_v2_dates && component_index < 3)))
                             && component.first_observed_unix_ms.is_some()
                             && component.through_unix_ms.is_some())),
                 "invalid projection audit coverage counters"
             );
         }
-        if self.schema == 2 {
+        if self.schema >= 2 {
             ensure!(
                 self.imported
                     .coverage
@@ -288,7 +361,8 @@ impl ProjectionAuditProgress {
             if let Some(pending) = &self.imported.pending {
                 pending.validate()?;
                 ensure!(
-                    self.exhausted && imported.authoritative_digest.is_some(),
+                    (self.exhausted || self.preserved_v2_dates)
+                        && imported.authoritative_digest.is_some(),
                     "import continuation precedes component admission"
                 );
             }
@@ -298,7 +372,7 @@ impl ProjectionAuditProgress {
     /// Historical component coverage only, never private-root/query authority.
     pub fn complete_coverage(&self) -> bool {
         !self.coverage_skipped
-            && self.schema == 2
+            && self.schema == 3
             && self.exhausted
             && self.imported.evaluated
             && self.imported.coverage.missing_files == 0
@@ -308,6 +382,8 @@ impl ProjectionAuditProgress {
             && self.scalars.checked_files == self.visited_files
             && self.native_facts.checked_files == self.visited_files
             && self.native_edges.checked_files == self.visited_files
+            && self.read_ranges.missing_files == 0
+            && self.read_ranges.checked_files == self.visited_files
     }
 }
 
@@ -474,7 +550,10 @@ struct ProjectionReceipt {
 impl ProjectionReceipt {
     fn validate(&self, owner: Sha256Digest) -> Result<()> {
         ensure!(
-            matches!((self.version, self.progress.schema), (1, 0) | (2, 2)) && self.owner == owner,
+            matches!(
+                (self.version, self.progress.schema),
+                (1, 0) | (2, 2) | (3, 3)
+            ) && self.owner == owner,
             "foreign projection audit receipt"
         );
         self.progress.validate()
@@ -655,6 +734,25 @@ fn audit_pending_projection(
             "native edge continuation summary changed"
         );
     }
+    let declared_text = read.text_range_reference(path)?;
+    ensure!(
+        pending.native_lines == read.native_line_reference(path)?.is_some()
+            && pending
+                .text_ranges
+                .as_ref()
+                .map(|text| text.certificate.manifest)
+                == declared_text
+                    .as_ref()
+                    .map(|reference| reference.root.digest),
+        "read range continuation differs from selected components"
+    );
+    if let (Some(text), Some(reference)) = (&pending.text_ranges, &declared_text) {
+        ensure!(
+            text.certificate.pages == reference.pages
+                && text.certificate.data_bytes == reference.data_bytes,
+            "text range continuation summary changed"
+        );
+    }
     while pending.next_page < pending.certificate.pages && *pages < 128 {
         checkpoint()?;
         let size = native.header().pages[pending.next_page].resource.bytes as u64;
@@ -750,6 +848,72 @@ fn audit_pending_projection(
             return Ok(None);
         }
     }
+    if pending.next_page == pending.certificate.pages
+        && let Some(text) = pending.text_ranges.as_mut()
+        && text.next_page < text.certificate.pages
+    {
+        if *pages == 128 {
+            return Ok(None);
+        }
+        let reference = declared_text
+            .as_ref()
+            .context("pending text range disappeared")?;
+        let prefix = native.manifest_bytes() as u64;
+        let minimum = prefix
+            .checked_add(reference.root.bytes as u64)
+            .context("text audit size overflow")?;
+        if minimum > maximum {
+            return Ok(Some(minimum));
+        }
+        if used.saturating_add(reference.root.bytes as u64) > maximum {
+            return Ok(None);
+        }
+        let projection = read
+            .text_range_projection(store, path)?
+            .context("pending text range disappeared")?;
+        let turn = projection.audit_physical(
+            &text.certificate,
+            text.next_page,
+            128 - *pages,
+            maximum - *used,
+            &mut checkpoint,
+        )?;
+        *used = used
+            .checked_add(turn.checked_bytes)
+            .context("text audit size overflow")?;
+        *pages += turn.checked_pages;
+        progress.manifest_loads = progress
+            .manifest_loads
+            .checked_add(1)
+            .context("text audit count overflow")?;
+        progress.leaf_checked_pages = progress
+            .leaf_checked_pages
+            .checked_add(turn.checked_pages as u64)
+            .context("text audit count overflow")?;
+        progress.leaf_checked_bytes = progress
+            .leaf_checked_bytes
+            .checked_add(turn.data_bytes)
+            .context("text audit size overflow")?;
+        progress.physical_metadata_bytes = progress
+            .physical_metadata_bytes
+            .checked_add(turn.checked_bytes - turn.data_bytes)
+            .context("text audit metadata overflow")?;
+        text.next_page = turn.next_page;
+        if turn.checked_bytes > 0 {
+            text.through_unix_ms = now;
+        }
+        if let Some(required) = turn.required_bytes {
+            let required = prefix
+                .checked_add(required)
+                .context("text audit next turn overflow")?;
+            if required > maximum {
+                return Ok(Some(required));
+            }
+        }
+        if !turn.complete {
+            return Ok(None);
+        }
+    }
     if pending.next_page == pending.certificate.pages {
         let completed = progress
             .pending
@@ -759,26 +923,46 @@ fn audit_pending_projection(
             .after
             .clone()
             .context("pending projection path missing")?;
+        let previous_edge_first = progress.native_edges.first_observed_unix_ms;
+        let previous_range_first = progress.read_ranges.first_observed_unix_ms;
         progress.record(
             &path,
             completed.scalars,
             true,
             completed.native_edges.is_some() || completed.native_edges_empty,
-            completed.logical_certified_unix_ms,
-            completed.physical_first_unix_ms.unwrap_or(now),
+            completed.native_lines || completed.text_ranges.is_some(),
+            (
+                completed.logical_certified_unix_ms,
+                completed.physical_first_unix_ms.unwrap_or(now),
+            ),
         )?;
         progress.native_facts.through_unix_ms =
             Some(completed.physical_through_unix_ms.unwrap_or(now));
+        if completed.native_lines {
+            if progress.read_ranges.checked_files == 1 {
+                progress.read_ranges.first_observed_unix_ms =
+                    previous_range_first.or(Some(completed.logical_certified_unix_ms));
+            }
+            progress.read_ranges.through_unix_ms = Some(completed.logical_certified_unix_ms);
+        }
+        if let Some(text) = completed.text_ranges {
+            if progress.read_ranges.checked_files == 1 {
+                progress.read_ranges.first_observed_unix_ms =
+                    previous_range_first.or(Some(text.first_unix_ms));
+            }
+            progress.read_ranges.through_unix_ms = Some(text.through_unix_ms);
+        }
         if completed.native_edges_empty {
             if progress.native_edges.checked_files == 1 {
                 progress.native_edges.first_observed_unix_ms =
-                    Some(completed.logical_certified_unix_ms);
+                    previous_edge_first.or(Some(completed.logical_certified_unix_ms));
             }
             progress.native_edges.through_unix_ms = Some(completed.logical_certified_unix_ms);
         }
         if let Some(edges) = completed.native_edges {
             if progress.native_edges.checked_files == 1 {
-                progress.native_edges.first_observed_unix_ms = edges.physical_first_unix_ms;
+                progress.native_edges.first_observed_unix_ms =
+                    previous_edge_first.or(edges.physical_first_unix_ms);
             }
             progress.native_edges.through_unix_ms = edges.physical_through_unix_ms;
         }
@@ -1307,21 +1491,33 @@ impl IntegrityOwner<'_> {
                                 .context("projection manifest count overflow")?;
                         }
                         if let Some(certificate) = certified.native {
+                            let empty_native = certificate.pages == 0;
                             projection.after = Some(path.clone());
                             projection.pending = Some(ProjectionPendingFile {
                                 scalars: certified.scalars,
+                                native_lines: certified.native_lines,
+                                text_ranges: certified
+                                    .text_ranges
+                                    .map(|certificate| PendingTextRanges::new(certificate, now)),
                                 logical_certified_unix_ms: now,
                                 certificate,
                                 next_page: 0,
-                                physical_first_unix_ms: None,
-                                physical_through_unix_ms: None,
+                                physical_first_unix_ms: empty_native.then_some(now),
+                                physical_through_unix_ms: empty_native.then_some(now),
                                 native_edges: certified.native_edges.map(|certificate| {
                                     ProjectionPendingComponent::new(certificate, now)
                                 }),
                                 native_edges_empty: certified.native_edges_empty,
                             });
                         } else {
-                            projection.record(path, certified.scalars, false, false, now, now)?;
+                            projection.record(
+                                path,
+                                certified.scalars,
+                                false,
+                                false,
+                                certified.native_lines,
+                                (now, now),
+                            )?;
                         }
                         // The source/extraction checks above are also the historical
                         // object audit; do not reread them for this same file.
@@ -1536,7 +1732,7 @@ impl IntegrityOwner<'_> {
                 state.worker_epoch = fence.1;
                 write(self.collection, RECEIPT, &state)?;
                 let receipt = ProjectionReceipt {
-                    version: 2,
+                    version: 3,
                     owner: self.collection.binding,
                     namespace: fence.0,
                     job,
@@ -1642,7 +1838,7 @@ pub(crate) fn test_projection_receipt_value(
     job: Sha256Digest,
 ) -> Result<serde_json::Value> {
     serde_json::to_value(ProjectionReceipt {
-        version: 2,
+        version: 3,
         owner: collection.binding,
         namespace,
         job,

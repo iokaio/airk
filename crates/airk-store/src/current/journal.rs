@@ -1883,20 +1883,23 @@ impl CurrentWriter<'_> {
                 if let Some(roots) = admitted.roots {
                     ensure!(
                         admitted.edge_roots.len() == roots.len()
-                            && admitted.line_roots.len() == roots.len(),
+                            && admitted.line_roots.len() == roots.len()
+                            && admitted.text_roots.len() == roots.len(),
                         "native edge batch mismatch"
                     );
                     let mut references = metadata.to_vec();
-                    for (((reference, root), edges), lines) in references
+                    for ((((reference, root), edges), lines), text) in references
                         .iter_mut()
                         .zip(roots)
                         .zip(admitted.edge_roots)
                         .zip(admitted.line_roots)
+                        .zip(admitted.text_roots)
                     {
                         reference.native_facts = Some(root);
                         reference.native_edges_empty = edges.is_none();
                         reference.native_edges = edges;
                         reference.native_lines = lines;
+                        reference.text_ranges = text;
                         reference.native_facts_omission = None;
                     }
                     projected = Some(references);
