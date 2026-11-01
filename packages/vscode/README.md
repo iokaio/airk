@@ -1,8 +1,14 @@
 # AIRK: Local Search for Coding Agents
 
+**1.8.6 release candidate:** MCP `status` and `diagnostics` return `query_concurrency`, the configured evidence request limit observed at admission. It reuses the existing policy read, including for cached status; it is a capacity limit, not a count of free slots. This release includes the preceding unpublished MCP, Workbench and concurrent-request improvements. See the [1.8.6 release record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.6.md) for behavior and validation.
+
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
 
 AIRK builds a searchable local index of your project so you and your coding tools can retrieve relevant passages, definitions and document facts without loading entire files into every request. Use it with MCP clients such as Claude Code, Codex and GitHub Copilot, or work directly in VS Code with no coding agent required.
+
+**1.8.5 local candidate — configurable concurrent evidence requests.** Management → Service → **Concurrent requests…** sets one of **4, 8, 16, 32 or 64**, default **16**. MCP admission, a pool of independent native evidence channels and project-worker processing use the same setting, with one additional status/control slot. Changes apply to subsequent requests without restarting agents; accepted work drains when the value decreases. Sources, revision identity and typed retry rules remain authoritative. See the [1.8.5 candidate record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.5.md) for validation and manual installer identity.
+
+**Earlier 1.8.4 candidate:** Workbench Tool forms expose native evidence filters, explicit name matching, reference ordering/paging and count/file summaries with typed controls. Structured results show count precision, bounded definition pointers and qualified written method targets, with explicit follow-up buttons. Continuations retain their original publication and selectors, while JSON and Markdown exports retain discovery metadata. Brief contention has bounded admission waiting and reserved lightweight status capacity. These changes preserve local retrieval and read-only sources; performance and installed-platform qualification are tracked in the [1.8.4 record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.4.md).
 
 - **Find useful context:** search code and documents together, then narrow the scope to a file, folder or named definition.
 - **Inspect the evidence:** open cited sources, read surrounding context and keep source locations and indexed revisions with your results.
@@ -11,6 +17,14 @@ AIRK builds a searchable local index of your project so you and your coding tool
 **Version 1.8.2 improves installed responsiveness.** Normal-editor acceptance testing observed quicker loading and previously slow or timed-out requests returning promptly. Five measured fresh sessions through the installed launcher returned available first statuses with no status timeout; median initialization through confirmed status was 2.29 seconds, with a 7.31-second first-session outlier. The retained 1.7.6 example took about 5.5 seconds including a timeout and a second request; these are unmatched observations, not a guaranteed speedup percentage. Read the [performance improvements and causal analysis](https://github.com/iokaio/airk/blob/main/docs/performance-improvements-1.8.2.md) for complete evidence and remaining native regressions.
 
 **Workbench improvements:** readiness proceeds independently of saved-history loading; New/Clear reuses the selected connection, Save avoids a duplicate session scan, and scalar status/save updates preserve complete exports. Query-first reveal, retained reading position and linked Select all/Copy selected controls make evidence easier to inspect and copy. In the retained 200-turn fixture, scalar status messages are over 95% smaller than full-state messages; this measures transfer work, not an elapsed UI speedup.
+
+**Why 1.8.4:** a distinct extension directory and freshly compiled native pair remove ambiguity between repeated local 1.8.3 candidates. The installed 1.8.3 source digest differed from the tested checkout, and mixed-load status errors persisted. This candidate carries status supersession, concurrent cold-admission and Windows permission fixes; see [the issues, provenance and validation](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.4.md). Installed success is recorded separately from source tests.
+
+**1.8.4 developer-directory follow-up:** Windows native write-boundary checks accept ordinary read-only sharing and creator-owner inheritance; unsupported or foreign-writable layouts retain verified-read fallback. Configured write roots and read-only sources remain enforced.
+
+**1.8.4 status follow-up:** completed status observations retain their original publication and time when a concurrent read invalidates scalar state. An explicit supersession note accompanies the successful result; project and worker identity checks remain enforced. The concurrency limit is unchanged.
+
+**1.8.4 session choices:** each session retains its selected tool, per-tool inputs and shared Scope/Recipe. Saved history restores those choices. The **Reset this tool form** icon resets the active fields while keeping the selected operation and shared context; New, Clear and Fork use fresh defaults. Editing/resetting choices does not run a native query, and persistence follows the session privacy setting. See the [1.8.4 record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.4.md).
 
 ## Meet AIRK Workbench
 

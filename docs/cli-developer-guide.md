@@ -1,6 +1,6 @@
 # CLI developer guide
 
-Current command behavior for **AIRK 1.8.2**. This guide explains why each public command exists, how it behaves and where developers should follow its implementation. The generated [CLI reference](cli-reference.md) remains authoritative for every flag, default and complete parser help; [CLI workflows](cli.md) and [headless feature mapping](headless-cli.md) provide task-oriented walkthroughs.
+Current command behavior for the **AIRK 1.8.6 release candidate**. This guide explains why each public command exists, how it behaves and where developers should follow its implementation. The generated [CLI reference](cli-reference.md) remains authoritative for every flag, default and complete parser help; [CLI workflows](cli.md) and [headless feature mapping](headless-cli.md) provide task-oriented walkthroughs. Candidate qualification is tracked separately in the [1.8.6 record](releases/release-1.8.6.md).
 
 **Related developer reference: [MCP developer guide](mcp-developer-guide.md)** explains every unified MCP tool, inputs, examples, limitations and implementation/test ownership.
 
@@ -40,6 +40,27 @@ airk tools help airk_search --json
 ```
 
 parse prepares by default; inspect its plan before explicitly using --execute. Queue indexing separately with airk index, then observe its receipt/status until readiness is reported. For a guarded management change, prepare/preview â†’ review exact identities and bytes â†’ submit/confirm once â†’ reconcile the same saved receipt.
+
+## Identifier investigations and bounded discovery
+
+For a known type or function, start compact with `airk symbol`, inspect exact textual uses with scoped `airk refs`, and expand one chosen definition using `airk read` or `airk context`. Use `airk outline` for one unfamiliar file's structure in source order. It returns evidence; the similarly named Explorer navigation route is a UI suggestion. `airk search` complements these lookups for concepts, documentation and code passages.
+
+```console
+airk symbol Session --name-match suffix --path-prefix crates/ --limit 30 --include-count
+airk code-facts --name Owner --path-prefix crates/ --compact false
+airk refs Owner --language rust --order path --include-files --include-count
+airk search "ownership policy" --mode hybrid --evidence-kind document
+```
+
+These examples are invocation shapes, not claims about this repository's result counts. Search and refs accept exact indexed `--language`, `--evidence-kind code|document|configuration|unknown`, and a literal `--exclude-path-prefix`. Classification follows saved extraction metadata; mixed or unclassified extraction remains unknown. These query filters neither change saved indexing nor bypass scope authorization. Both search branches filter before top-k selection, with independent bounded candidate-discovery coverage.
+
+Symbol/code-facts matching stays exact when `--name-match` is omitted. Explicit suffix/contains compares simple or qualified names case-sensitively; opaque symbol IDs are not substring targets. `--include-count` requests qualified count metadata. Exact totals appear only when bounded work establishes them; otherwise inspect lower bound, completeness and count scope. Durable `--symbol-key` lookup excludes these matching/count options.
+
+References retain the preceding selection/response contract unless a new filter, cursor, order or summary/count option selects the paged contract. Paged `index` order is deterministic stable-ID order. Use the returned cursor with unchanged identifier, filters, ordering and representation; count/text budgets may increase within supported limits when a complete record needs more space. `--include-files` summarizes returned-page records in the native `count_unit`, not every matching file or every identifier occurrence. Summary metadata is additional to the text budget and capped at 16 rows/4 KiB. UTF-8 matches reconstruct complete original lines; extracted non-UTF-8 fragments remain explicitly qualified. A cursor cannot silently advance to a different publication. `--order code_first` is a presentation choice, not compiler-resolved impact analysis.
+
+Reference totals remain unknown for the whole query. A complete bounded scan can count only `verified_lexical_candidates`; partial count scope is `page_scan`. `page.coverage` states that token-boundary coverage is incomplete: an identifier split across indexed chunk tokenization may be missing from postings, even when zero candidates match. Candidate exhaustion is not proof of no uses. Use live verification or additional scoped source reads when completeness matters, and inspect line/fragment units and terminal coverage limits before interpreting counts.
+
+For a relationship investigation, a returned type/impl ID may provide bounded associated-method targets when retained owner/scope evidence supports them. Follow written targets such as `Owner::new` for incoming call candidates; a struct with no incoming edges does not prove no uses. Duplicate names and incomplete extraction remain qualified. Keep exact publication tokens, original locations and citations when copying CLI output; terse receipt suppression is not a replacement for that evidence identity.
 
 ## Command index
 
@@ -203,9 +224,9 @@ Usage: airk changes [OPTIONS]
 
 ## airk code-facts
 
-**Purpose:** List code facts (definitions, signatures, durable symbol keys) for a symbol or path, with continuation cursors
+**Purpose:** Inspect code facts and signatures with exact default name matching and bounded continuation.
 
-**Behavior and developer use:** The public parser selects the native project and dispatches to its owning service/kernel adapter. Evidence responses retain indexed revision identity and bounded extraction coverage; they do not establish live-file freshness or complete language semantics.
+**Behavior and developer use:** Use after compact discovery when signatures, scopes, IDs or call candidates matter. --name-match exact|suffix|contains and --include-count share the qualified discovery contract; every explicit matching mode, including exact, needs --name. --symbol-key retains exact identity and excludes textual matching/count flags. Compactness, byte budget and cursor remain independent of response mode.
 
 ```text
 Usage: airk code-facts [OPTIONS]
@@ -539,9 +560,9 @@ Usage: airk read [OPTIONS] --start-line <START_LINE> --end-line <END_LINE> <PATH
 
 ## airk refs
 
-**Purpose:** Find indexed references to a name under a path prefix
+**Purpose:** Find exact-case textual identifier uses; these are candidates, not resolved language references.
 
-**Behavior and developer use:** Returns indexed occurrences/candidates with their extraction limits. It does not prove compiler-resolved references or a complete call graph.
+**Behavior and developer use:** Returns matches verified within lexical candidates. Optional --language/--evidence-kind/--exclude-path-prefix scopes candidates; --cursor, --order index|path|code_first, --include-files and --include-count select bounded paging and qualified metadata. Repeat identifier, filters and ordering on continuation. Summaries cover this page; exact candidate-scoped counts are not whole-query totals because token seams can hide identifiers. UTF-8 lines are reconstructed; non-UTF-8 fragments retain explicit completeness/unit qualifiers. A record that fits the supported maximum but not the current text budget reports required bytes and a resumable cursor; records over 64 KiB and terminal scan/deduplication limits instead report incomplete coverage without usable continuation. An empty page never proves no uses by itself.
 
 ```text
 Usage: airk refs [OPTIONS] <NAME>
@@ -1045,7 +1066,7 @@ Usage: airk runtime uninstall [OPTIONS] --install-dir <INSTALL_DIR>
 
 **Purpose:** Search indexed evidence; results carry file, line and revision citations.
 
-**Behavior and developer use:** The public parser selects the native project and dispatches to its owning service/kernel adapter. Evidence responses retain indexed revision identity and bounded extraction coverage; they do not establish live-file freshness or complete language semantics.
+**Behavior and developer use:** Use for concepts and supplementary discovery; named definitions usually begin with symbol/code-facts. --language and --evidence-kind filter indexed extraction before lexical/vector candidate selection; --exclude-path-prefix is literal query scope. Preserve mode/readiness policy, lexical AND semantics, partial coverage and exact citations. Bounded definition pointers can aid the next lookup without changing ranking. Filters do not change indexing policy.
 
 ```text
 Usage: airk search [OPTIONS] <QUERY>
@@ -1371,6 +1392,8 @@ Usage: airk service requests --runtime-dir <RUNTIME_DIR> retry [OPTIONS] <NONCE>
 
 **Behavior and developer use:** Low-level bounded management JSON escape hatch. Prefer typed higher-level commands and retain instance/request guards when using it.
 
+In 1.8.5, `resources` and `configure_resources` expose the same concurrent evidence setting as Management → Service: **4, 8, 16 (default), 32 or 64**. Set `configuration.query_concurrency` while preserving the other resource fields. See the [PowerShell read/update example and propagation contract](service-resources.md#cli-access). There is no dedicated concurrency flag.
+
 ```text
 Usage: airk service rpc [OPTIONS] --runtime-dir <RUNTIME_DIR>
 ```
@@ -1427,6 +1450,8 @@ Usage: airk setup-model [OPTIONS]
 
 ## airk status
 
+In the 1.8.4 local candidate, a completed status query that overlaps ordinary scalar-cache invalidation returns its original snapshot successfully with `status_observation.superseded: true`, `reason: scalar_invalidation` and an explanatory message. Original publication and observation age are retained. The superseded snapshot does not repopulate the current cache or acknowledge an obsolete status receipt; the query is not replayed. Project/namespace changes, authenticated worker replacement, expired source authorization and shutdown retain their existing rejection behavior. Cached reuse still has its five-second limit, and 1.8.5 uses the configured evidence capacity plus one reserved status slot.
+
 **Purpose:** Print the project's publication, freshness, coverage and job status
 
 **Behavior and developer use:** Reads project publication/coverage and job observations. It differs from lightweight MCP status, whose scope excludes detailed job and process probes.
@@ -1439,9 +1464,9 @@ Usage: airk status [OPTIONS]
 
 ## airk symbol
 
-**Purpose:** Find symbol definitions by name, optionally filtered by language or path prefix
+**Purpose:** Find definitions by exact name by default; use --name-match for suffix/contains variants.
 
-**Behavior and developer use:** The public parser selects the native project and dispatches to its owning service/kernel adapter. Evidence responses retain indexed revision identity and bounded extraction coverage; they do not establish live-file freshness or complete language semantics.
+**Behavior and developer use:** Start compact, scope with --language/--path-prefix, and use --limit/--max-bytes before requesting rich detail. --name-match suffix|contains compares simple or qualified names case-sensitively; omitted mode keeps exact lookup. --include-count reports qualified count precision; bounded partial pages do not claim a full total. Matching and representation bind the cursor.
 
 ```text
 Usage: airk symbol [OPTIONS] <NAME>

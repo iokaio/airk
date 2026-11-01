@@ -1,10 +1,10 @@
 # Service resource admission and observations
 
-This describes implemented native 1.4.2 behavior, used by the default extension and public CLI. Installed-platform and workload qualification remain open. The [completion checklist](service-implementation-checklist.md) records those gates.
+This describes the service resource foundation introduced in 1.4.2 and the configured evidence capacity added in 1.8.5, used by the default extension and public CLI. Installed-platform and workload qualification remain open. The [completion checklist](service-implementation-checklist.md) records those gates.
 
 The service owns finite resident and work grants across registered projects and storage roots. Workers cannot claim a job without its exact identity-bound grant, or fall back to the old four execution slots per storage root. The legacy scheduler is not consulted for service work. A worker keeps its project lease until actual process exit. Each resident receives one concurrent direct query and 64 KiB of output credit, within the broker's 32-query/2 MiB global ceiling. Up to 32 residents are admitted subject to memory headroom; this replaces the fixed four-worker service scaffold.
 
-All service-bound MCP sessions now share one inner execution permit across evidence, status, rendering and usage accounting. Accepted native work retains that permit through client cancellation and local transport failure, even if its outer IPC grant becomes free. This prevents the standalone adapter’s four evidence plus two control slots from multiplying a resident’s query materializations. Shutdown drains the shared permit once; independent service health and cached observations do not acquire it. The queue remains finite (sixteen waiting, five seconds), and status reports that the execution budget is shared.
+All service-bound MCP sessions share one bounded inner execution budget across evidence, status, rendering and usage accounting. In 1.8.5 its finite ceiling is 65 materializations; the authenticated worker broker enforces the configured evidence allowance (4, 8, 16, 32 or 64) plus one reserved status/control slot across clients. Accepted native work retains its inner permit through transport cancellation, and its worker charge lasts through execution. Shutdown drains the shared budget once; independent service health and cached observations do not acquire it. The inner materialization queue remains finite (sixteen waiting, five seconds); outer bridge, channel and worker admission queues have 128 waiters and two-second deadlines.
 
 A resident reserves 512 MiB including its baseline and one bounded query materialization, the shared model 512 MiB and service overhead of 32 MiB plus a watcher reservation of 1/64 detected machine memory, clamped to 128–768 MiB (128 MiB when memory is unknown). Each source/verification/rebuild job reserves at least 768 MiB of working space; additional parallel extractors reserve their bounded result, transient encoding, source and parser overhead. Jobs receive 1–4 extraction threads from the shared source-thread limit. A single project can use four extraction threads when its grant permits; waiting projects share the source budget. These are admission reservations and library bounds, not OS memory or CPU quotas. Query native work and operating-system threads also consume resources. On a single CPU, source and inference execution time-share it.
 
@@ -45,3 +45,28 @@ The final resource refinement also passed on non-root Debian 12 x64: ten adapter
 Shared query admission development validation on October 24, 2026: all 27 MCP tests passed on Windows in lightweight and all-feature builds and on non-root Linux in a lightweight build. The new regression cancels an accepted service transport while its native task remains blocked, verifies both status and evidence queue behind the same retained permit, and proves shutdown waits for completion without double-acquiring shared capacity. A real local-client regression verifies per-client receipts and independent session close under the service policy. Windows passed seventeen native service process tests; Linux passed sixteen and lightweight all-target Clippy (image `93f9106c2c71b0cc367ee3e2c8b30fd2709fdbe4828107831d50b51deee4e83b`). Windows all-feature/all-target workspace Clippy and Python contracts (129 tests, four skips) passed. These checks establish admission/lifetime behavior; they do not establish a hard RSS limit or complete native workload/macOS qualification. No runtime pair or VSIX was built for this stage.
 
 Service source and semantic phases now return admission between bounded vector turns. Source publication and replacement building do not connect to the inference helper; one vector job handles at most 32 artifacts before saving continuation. Phase flags survive public queue saturation and prevent idle exit while eligible work remains. See [independent job phases](service-jobs.md#independent-source-and-semantic-phases). Identity-checked model stop/force-stop retains ownership through native process/job drain and never signals a caller-supplied PID.
+
+## Concurrent evidence requests in 1.8.5
+
+Management → Service → Concurrent requests… sets `query_concurrency`: default 16, choices 4, 8, 16, 32 and 64. Existing saved policies without the field use 16. The setting is service-host-wide; each project receives the same request allowance, shared across its callers. Each MCP frontend uses a matching native channel pool; independent clients cannot multiply the worker allowance. One additional status/control slot remains available alongside evidence capacity. Larger concurrency permits more simultaneous work and can increase memory/CPU demand; request bytes, grants, resource observations and bounded refusal contracts still apply. This is a concurrency setting, not a throughput guarantee or an OS hard memory limit.
+
+Native workers acknowledge changes before the service saves the new value. MCP frontends observe it on subsequent requests. Reductions retain accepted charges until completion and stop further admissions above the new value. Idle surplus frontend channels are retired on subsequent use. Each relevant waiting stage is finite (128 waiting requests); cancellation or EOF cannot refund accepted blocking work early or cause replay.
+
+The selector contains exactly **4, 8, 16 (default), 32 and 64 channels**. Other Management windows observe changes on their next resource refresh. Agent harnesses receive no broadcast: their AIRK frontend reads the shared policy before its next admission and channel lease. New workers load the saved setting, so it survives a service restart. This is a per-service-host setting, not a per-workspace preference.
+
+### CLI access
+
+The same setting is available through `airk service rpc`; there is no separate CLI-only value or dedicated convenience flag. Read the current resource configuration and change only `query_concurrency`. For example, in PowerShell:
+
+```powershell
+$control = 'C:\path\to\AIRK\service-runtime'
+$response = '"resources"' | airk service rpc --runtime-dir $control --stdin | ConvertFrom-Json
+if ($response.status -ne 'resources') { throw 'Resource configuration is unavailable.' }
+$configuration = $response.observation.configuration
+$configuration.query_concurrency = 32
+@{ configure_resources = @{ configuration = $configuration } } |
+    ConvertTo-Json -Depth 8 -Compress |
+    airk service rpc --runtime-dir $control --stdin
+```
+
+Use the selected installation's native control directory for `$control`. A successful response has `status: resources` and reports the saved configuration. Native validation accepts only the five listed choices. Preserve other settings as shown; submitting a fresh default configuration would replace other overrides. Transport failure or a failure response is not confirmation that the change applied; inspect resources before deciding what to do next.

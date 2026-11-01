@@ -142,3 +142,64 @@ for(const binding of ['pinned','source'] as const){
         }finally{for(const session of sessions)session.close();await fixture.dispose();}
     });
 }
+
+test('mixed four-call batches honor status snapshots and typed read admission',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async()=>{
+    const fixture=await NativeServiceFixture.create(process.env.AIRK_TEST_BINARY!);
+    const sessions:McpStdioSession[]=[];
+    const refusals:Array<{binding:string;round:number;tool:string;code:unknown;query_submitted:false}>=[];
+    try{
+        const spec=await fixture.register('mixed-status');
+        await fs.writeFile(path.join(spec.root,'session.rs'),'pub struct Session;\nimpl Session { pub fn new() -> Self { Session } }\nfn connect() -> Session { Session::new() }\n');
+        await fs.writeFile(path.join(spec.root,'session.md'),'# Session\nSession is a fictional local handle.\n');
+        await fixture.configure(spec,{operation:'vectors',enabled:false});await fixture.job(spec);
+        const {launchArgs}=await import('../model');
+        const expectedVersion=JSON.parse(await fs.readFile(path.resolve(__dirname,'../../package.json'),'utf8')).version;
+        for(const binding of ['pinned','source'] as const){
+            const args=binding==='pinned'?launchArgs(spec,'mcp',true):
+                ['runtime','launch','--install-dir',fixture.install,'--','--root',spec.root,'mcp'];
+            const session=(await McpStdioSession.open({command:fixture.launcher,args,cwd:fixture.owner,
+                clientName:`mixed-${binding}-status`,clientVersion:expectedVersion},60000)).session;
+            sessions.push(session);
+            const first=await quickStatus(session);assert.equal(first.version,expectedVersion);assert.equal(first.index_state,'available');
+            // Establish an evidence channel. Source-selector observations can
+            // still be superseded before submission, even on a warm channel.
+            // Measured reads below retain those refusals and use only the shared
+            // safe-retry contract; submitted status errors remain fatal.
+            const warmup=await requestWithReadRetry(session,'read_file',{path:'session.rs',start_line:1,end_line:3},30000);
+            assert.notEqual(warmup.isError,true,JSON.stringify(warmup));
+            assert.equal(JSON.parse(warmup.content[0].text).publication.token,first.publication.token,JSON.stringify(warmup));
+            for(let round=0;round<3;round++){
+                const workloads:Array<Array<[string,Record<string,unknown>]>>=[
+                    [['status',{response_mode:'full'}],...['Session','local','handle'].map(query=>['search',{query,mode:'lexical',path_prefix:'session.md',limit:3}] as [string,Record<string,unknown>])],
+                    [['status',{response_mode:'full'}],['symbols',{name:'Session',path_prefix:'session.rs'}],
+                        ['references',{name:'Session',path_prefix:'session.rs',order:'path',include_files:true,include_count:true}],
+                        ['read_file',{path:'session.rs',start_line:1,end_line:3}]],
+                ];
+                for(const workload of workloads){
+                    const replies=await Promise.allSettled(workload.map(([name,arguments_])=>requestWithReadRetry(session,name,arguments_,30000,reply=>{
+                        if(reply.isError!==true)return;
+                        const error=record(JSON.parse(reply.content[0].text).error);
+                        assert.equal(error.query_submitted,false,`${binding} round ${round} ${name}: ${JSON.stringify(reply)}`);
+                        refusals.push({binding,round,tool:name,code:error.code,query_submitted:false});
+                    })));
+                    for(const [index,reply]of replies.entries()){
+                        assert.equal(reply.status,'fulfilled',`${binding} round ${round} ${workload[index][0]}: ${reply.status==='rejected'?String(reply.reason):''}`);
+                        assert.notEqual(reply.value.isError,true,`${binding} round ${round} ${workload[index][0]}: ${JSON.stringify(reply.value)}`);
+                        const value=JSON.parse(reply.value.content[0].text),evidence=record(value.evidence??value);
+                        assert.equal(record(evidence.publication).token,first.publication.token,JSON.stringify(value));
+                        if(index===0){
+                            assert.equal(value.version,expectedVersion);assert.equal(value.index_state,'available',JSON.stringify(value));
+                            assert.ok(value.observed_unix_ms>=first.observed_unix_ms,JSON.stringify(value));
+                            if(value.status_observation!==undefined){
+                                assert.equal(value.status_observation.superseded,true,JSON.stringify(value));
+                                assert.equal(value.status_observation.reason,'scalar_invalidation',JSON.stringify(value));
+                                assert.equal(value.cached,false,JSON.stringify(value));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        process.stderr.write(`[native fixture] mixed batches: ${JSON.stringify({bindings:2,batches:12,logical_reads:48,unsubmitted_refusals:refusals})}\n`);
+    }finally{for(const session of sessions)session.close();await fixture.dispose();}
+});

@@ -27,6 +27,13 @@ fn check(path: &Path) -> Result<()> {
     }
     Ok(())
 }
+/// Reads only bounded service-owned scalar metadata; never opens a collection.
+pub(crate) fn query_concurrency(root: &Path) -> usize {
+    load(root).map_or(
+        airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY,
+        |c| c.query_concurrency,
+    )
+}
 pub fn load(root: &Path) -> Result<ResourceConfiguration> {
     let path = root.join("resources-1.4.json");
     check(&path)?;
@@ -69,17 +76,33 @@ mod tests {
         let root = directory.path().join("runtime");
         crate::local_ipc::prepare_root(&root)?;
         assert!(load(&root)?.memory_bytes.is_none());
+        assert_eq!(load(&root)?.query_concurrency, 16);
         let first = ResourceConfiguration {
             memory_bytes: Some(2 << 30),
             ..Default::default()
         };
         save(&root, &first)?;
         let second = ResourceConfiguration {
+            query_concurrency: 64,
             extraction_threads: Some(3),
             ..Default::default()
         };
         save(&root, &second)?;
         assert_eq!(load(&root)?.extraction_threads, Some(3));
+        assert_eq!(load(&root)?.query_concurrency, 64);
+        for query_concurrency in [0, 2, 5, 63, 66] {
+            assert!(
+                save(
+                    &root,
+                    &ResourceConfiguration {
+                        query_concurrency,
+                        ..Default::default()
+                    }
+                )
+                .is_err()
+            );
+            assert_eq!(load(&root)?.query_concurrency, 64);
+        }
         assert!(
             save(
                 &root,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One request gate for lexical selection, current DiskANN and exact citations.
 use super::{MAX_LEXICAL_VALIDATION_BYTES, open_selected_lexical};
-use airk_core::{Hit, SearchQuery, identity::Sha256Digest};
+use airk_core::{Hit, SearchFilters, SearchQuery, SearchResponse, identity::Sha256Digest};
 use airk_retrieval::{bounded::Charge, terms, truncate_utf8, vector::mutable::MutableDiskIndex};
 use airk_store::current::lexical::{CurrentLexicalCandidate, stable_id};
 use airk_store::{
@@ -24,6 +24,35 @@ const MAX_SCOPED_NODES: usize = 4096;
 const MAX_POINTERS: usize = 16_384;
 const MAX_MEMBERS: usize = 65_536;
 const MAX_POINTER_BYTES: usize = 64 << 20;
+const MAX_FILTER_PATH_BYTES: usize = 4 << 20;
+const MAX_HINT_FILES: usize = 4;
+const MAX_HINT_READ_BYTES: usize = 1 << 20;
+const MAX_HINT_OUTPUT_BYTES: usize = 4096;
+
+#[derive(Serialize)]
+pub struct SearchWithDefinitionsResponse {
+    #[serde(flatten)]
+    pub evidence: SearchResponse,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub definitions: Vec<DefinitionHint>,
+}
+
+#[derive(Serialize)]
+pub struct DefinitionHint {
+    pub name: String,
+    pub total_matches: Option<usize>,
+    pub lower_bound: usize,
+    pub complete: bool,
+    pub evidence_scope: &'static str,
+    pub suggested_tool: &'static str,
+    pub matches: Vec<DefinitionPointer>,
+}
+
+#[derive(Serialize)]
+pub struct DefinitionPointer {
+    pub citation: airk_core::Citation,
+    pub symbol_id: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -61,6 +90,11 @@ struct PointerBudget {
     pointers: usize,
     members: usize,
     bytes: usize,
+}
+
+pub(crate) struct SearchOptions<'a> {
+    pub snippet_bytes: Option<usize>,
+    pub filters: &'a SearchFilters,
 }
 
 impl PointerBudget {
@@ -124,7 +158,35 @@ pub(crate) fn search_current_read_with_snippets(
     _charge: Charge,
     snippet_bytes: Option<usize>,
 ) -> Result<CurrentSearchEvidence> {
+    search_current_read_with_filters(
+        store,
+        read,
+        expected,
+        mode,
+        query,
+        _charge,
+        SearchOptions {
+            snippet_bytes,
+            filters: &SearchFilters::default(),
+        },
+    )
+}
+
+pub(crate) fn search_current_read_with_filters(
+    store: &FileStore,
+    read: Arc<CurrentRead>,
+    expected: Option<&CurrentToken>,
+    mode: CurrentSearchMode,
+    query: &SearchQuery,
+    _charge: Charge,
+    options: SearchOptions<'_>,
+) -> Result<CurrentSearchEvidence> {
+    let SearchOptions {
+        snippet_bytes,
+        filters,
+    } = options;
     query.validate()?;
+    filters.validate()?;
     if let Some(expected) = expected {
         read.require_token(expected)?;
     }
@@ -174,6 +236,7 @@ pub(crate) fn search_current_read_with_snippets(
     } else {
         mode
     };
+    let scoped_paths = filtered_paths(&read, query, filters)?;
     let mut branches = Vec::new();
     if matches!(mode, CurrentSearchMode::Lexical | CurrentSearchMode::Hybrid) {
         let lexical = open_selected_lexical(store, &read)?;
@@ -183,7 +246,8 @@ pub(crate) fn search_current_read_with_snippets(
         } else {
             query.limit
         };
-        let candidates = lexical.search(&selection)?;
+        let candidates =
+            lexical.search_paths(&selection, scoped_paths.as_ref().map(|scope| &scope.paths))?;
         ensure!(
             candidates.manifest_digest == read.head().lexical_commit,
             "current lexical candidate manifest mismatch"
@@ -203,9 +267,15 @@ pub(crate) fn search_current_read_with_snippets(
         if matches!(mode, CurrentSearchMode::Hybrid) {
             selection.limit = BRANCH_CANDIDATES;
         }
-        branches.push(vector_candidates(store, &read, &selection)?);
+        branches.push(vector_candidates(
+            store,
+            &read,
+            &selection,
+            scoped_paths.as_ref(),
+        )?);
     }
     let mut incomplete = branches.iter().any(|branch| branch.incomplete)
+        || scoped_paths.as_ref().is_some_and(|scope| scope.incomplete)
         || discovery_readiness.state != airk_core::readiness::DiscoveryState::Ready;
     // The same lexical chunk receives one vote from each branch. Semantic
     // passages can span multiple chunks; their occurrence is emitted only once.
@@ -266,10 +336,184 @@ pub(crate) fn search_current_read_with_snippets(
     })
 }
 
+struct ScopedPaths {
+    paths: BTreeSet<String>,
+    incomplete: bool,
+}
+
+/// Classify saved metadata before either branch takes its bounded top-k. Limits
+/// describe visited roster work, not a promise that the filtered corpus is small.
+fn filtered_paths(
+    read: &CurrentRead,
+    query: &SearchQuery,
+    filters: &SearchFilters,
+) -> Result<Option<ScopedPaths>> {
+    if filters.is_empty() {
+        return Ok(None);
+    }
+    let lookup = filters
+        .language
+        .as_deref()
+        .map_or(Lookup::Files, Lookup::Language);
+    let roster = read.lookup_paths(
+        lookup,
+        query.path_prefix.as_deref().unwrap_or(""),
+        None,
+        MAX_SCOPED_PATHS,
+    )?;
+    let mut scope = ScopedPaths {
+        paths: BTreeSet::new(),
+        incomplete: roster.next_after.is_some(),
+    };
+    let mut bytes = 2usize;
+    for path in roster.paths {
+        let artifact = read
+            .artifact(&path)?
+            .context("filtered search artifact missing")?;
+        if !filters.matches(&artifact) {
+            continue;
+        }
+        let encoded = serde_json::to_string(&path)?.len() + 1;
+        if bytes.saturating_add(encoded) > MAX_FILTER_PATH_BYTES {
+            scope.incomplete = true;
+            break;
+        }
+        bytes += encoded;
+        scope.paths.insert(path);
+    }
+    Ok(Some(scope))
+}
+
+fn identifier_tokens(text: &str) -> Vec<&str> {
+    let words = text
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>();
+    let mut identifiers = BTreeSet::new();
+    for word in &words {
+        if word.len() > 128 || word.chars().next().is_none_or(|first| first.is_numeric()) {
+            continue;
+        }
+        if words.len() == 1 || word.contains('_') || word.chars().any(char::is_uppercase) {
+            identifiers.insert(*word);
+        }
+    }
+    if identifiers.len() > 4 {
+        Vec::new()
+    } else {
+        identifiers.into_iter().collect()
+    }
+}
+
+/// Navigation is supplemental native evidence, not a rewrite or a reranker.
+/// Reads, file visits and serialized pointers have independent small ceilings.
+pub(crate) fn definition_hints(
+    store: &FileStore,
+    read: &CurrentRead,
+    query: &SearchQuery,
+    filters: &SearchFilters,
+) -> Result<Vec<DefinitionHint>> {
+    let mut hints = Vec::new();
+    let mut files = 0usize;
+    let mut work = 0usize;
+    let mut output = 2usize;
+    for name in identifier_tokens(&query.text) {
+        let roster = read.lookup_paths(
+            Lookup::FactName(name),
+            query.path_prefix.as_deref().unwrap_or(""),
+            None,
+            MAX_HINT_FILES,
+        )?;
+        let mut complete = roster.next_after.is_none();
+        let mut matches = Vec::new();
+        let mut count = 0usize;
+        for path in roster.paths {
+            let artifact = read
+                .artifact(&path)?
+                .context("definition hint artifact missing")?;
+            if !filters.matches(&artifact) {
+                continue;
+            }
+            let retained = artifact
+                .retained
+                .as_ref()
+                .context("definition hint extraction missing")?;
+            let bytes = artifact
+                .bytes
+                .saturating_add(retained.object_bytes)
+                .saturating_add(read.file_metadata_bytes(&path)?);
+            if files == MAX_HINT_FILES || bytes > MAX_HINT_READ_BYTES.saturating_sub(work) {
+                complete = false;
+                break;
+            }
+            files += 1;
+            work += bytes;
+            // Supplemental navigation reads only this bounded native extraction,
+            // not a global imported-analysis merge whose work is outside this
+            // helper's small allowance. Source verification remains mandatory.
+            let native = read.observe_private_integrity((|| -> Result<_> {
+                let native =
+                    store.load_retained_bounded(&artifact, retained.object_bytes as u64)?;
+                store.verify_retained_source(&artifact)?;
+                Ok(native)
+            })())?;
+            for fact in native.facts {
+                let Some(code) = fact.code else { continue };
+                if fact.kind != "definition"
+                    || code.basis == airk_core::EvidenceBasis::Imported
+                    || (fact.name != name && code.qualified_name != name && code.symbol_id != name)
+                {
+                    continue;
+                }
+                count += 1;
+                if matches.len() < 4 {
+                    matches.push(DefinitionPointer {
+                        citation: airk_core::Citation {
+                            path: artifact.path.clone(),
+                            content_hash: artifact.content_hash.clone(),
+                            start_line: fact.start_line,
+                            end_line: fact.end_line,
+                            location: fact.location,
+                        },
+                        symbol_id: Some(code.symbol_id),
+                    });
+                }
+            }
+        }
+        if count == 0 {
+            continue;
+        }
+        let mut hint = DefinitionHint {
+            name: name.into(),
+            total_matches: complete.then_some(count),
+            lower_bound: count,
+            complete,
+            evidence_scope: "native_definition_records",
+            suggested_tool: "symbols",
+            matches,
+        };
+        // Dropping supplemental pointers does not falsify the verified count;
+        // counts describe the named native record scope, not returned pointers.
+        while !hint.matches.is_empty()
+            && output.saturating_add(serde_json::to_vec(&hint)?.len() + 1) > MAX_HINT_OUTPUT_BYTES
+        {
+            hint.matches.pop();
+        }
+        let bytes = serde_json::to_vec(&hint)?.len() + 1;
+        if output.saturating_add(bytes) > MAX_HINT_OUTPUT_BYTES {
+            break;
+        }
+        output += bytes;
+        hints.push(hint);
+    }
+    Ok(hints)
+}
+
 fn vector_candidates(
     store: &FileStore,
     read: &Arc<CurrentRead>,
     query: &SearchQuery,
+    filtered_paths: Option<&ScopedPaths>,
 ) -> Result<Branch> {
     let state = read
         .collection_state()?
@@ -287,15 +531,23 @@ fn vector_candidates(
     let mut budget = PointerBudget::default();
     let mut incomplete = false;
     let mut selected = Vec::<Arc<OccurrencePointer>>::new();
-    if let Some(prefix) = query
+    let scoped_paths = if let Some(scope) = filtered_paths {
+        incomplete |= scope.incomplete;
+        Some(scope.paths.iter().cloned().collect::<Vec<_>>())
+    } else if let Some(prefix) = query
         .path_prefix
         .as_deref()
         .filter(|prefix| !prefix.is_empty())
     {
-        let paths = read.lookup_paths(Lookup::Files, prefix, None, MAX_SCOPED_PATHS)?;
-        incomplete |= paths.next_after.is_some();
+        let roster = read.lookup_paths(Lookup::Files, prefix, None, MAX_SCOPED_PATHS)?;
+        incomplete |= roster.next_after.is_some();
+        Some(roster.paths)
+    } else {
+        None
+    };
+    if let Some(paths) = scoped_paths {
         let mut scoped = BTreeMap::<u32, Vec<Arc<OccurrencePointer>>>::new();
-        'paths: for path in paths.paths {
+        'paths: for path in paths {
             let Some(index) = read.path_occurrences(&path)? else {
                 continue;
             };

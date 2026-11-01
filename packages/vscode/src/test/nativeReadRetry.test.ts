@@ -129,6 +129,22 @@ test('MCP fixture reads repeat only typed rejections and report every other fail
     assert.equal(boundedReply({a:1}),'{"a":1}');assert.match(boundedReply('y'.repeat(3000),10),/^"y{9}\.\.\. \(3002 bytes\)$/);
 });
 
+test('MCP receipt observation retains unsubmitted retries and never replays submitted status errors',async()=>{
+    const refusal=(submitted:boolean)=>({isError:true,content:[{type:'text',text:JSON.stringify({error:{
+        code:submitted?'status_observation_superseded':'direct_query_setup',reason:'busy',query_submitted:submitted,
+        retryable:true,retry_after_ms:1,fresh_brokerage_required:true,
+    }})}]});
+    const unsubmitted=refusal(false),submitted=refusal(true),ok={content:[{type:'text',text:'{"index_state":"available"}'}]};
+    const seen:unknown[]=[],observed:unknown[]=[],replies=[unsubmitted,ok];
+    const session={request:async(method:string,params:unknown)=>{seen.push([method,params]);return replies.shift();}} as unknown as McpStdioSession;
+    assert.equal(await requestWithReadRetry(session,'status',{response_mode:'full'},1000,value=>observed.push(value)),ok);
+    assert.deepEqual(observed,[unsubmitted,ok]);assert.equal(seen.length,2);assert.deepEqual(seen[0],seen[1]);
+    seen.length=0;observed.length=0;replies.push(submitted,ok);
+    await assert.rejects(requestWithReadRetry(session,'status',{},1000,value=>observed.push(value)),/status failed: .*status_observation_superseded/);
+    assert.equal(seen.length,1,'A submitted status failure must remain fatal, even with retryable=true');
+    assert.deepEqual(observed,[submitted]);assert.deepEqual(replies,[ok]);
+});
+
 test('publication fixtures reject unhealthy, foreign and incomplete worker observations',()=>{
     const value={project:'a',index_state:'unavailable',publication:null,files:null,chunks:null,
         index_error:{code:'index_worker_unavailable',message:'No query submitted'},

@@ -38,6 +38,8 @@ With Docker available, use `docker build --target test -t airk:local-test .` for
 
 ## Changes and fixtures
 
+Native-owner fast-path tests require a supported write boundary. In a sandbox or shared temporary namespace with foreign write grants, set `AIRK_PRIVATE_CENSUS_BASE` to an isolated, owner-controlled test directory with inheritable owner permissions; both the store and actual-process fixtures support it. Do not change a user's existing directory ACL or accept foreign writes to obtain eligibility. Ordinary developer directories may use strict verified-read fallback. Windows read/execute sharing is compatible with the native write boundary; it does not establish per-object confidentiality. Record initial capability failures and the qualified fixture rerun separately.
+
 - Keep Rust source under `crates/`, extension source under `packages/vscode/`, and add an SPDX Apache-2.0 header to original Rust, TypeScript/JavaScript, TOML, Python, PowerShell and YAML files. Preserve third-party licenses.
 - Add meaningful tests for parsing, provenance, budgets, collection isolation, persistence or failure behavior. Use original tiny fictional fixtures.
 - Update support tables and documentation with behavior. Grammar loading alone does not establish complete language coverage; document partial extraction.
@@ -47,7 +49,7 @@ With Docker available, use `docker build --target test -t airk:local-test .` for
 
 ## Candidate and release versions
 
-Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch is synchronized at **1.8.2** across the Rust workspace/local lock entries, extension manifest and npm lock entries. Verify with `python scripts/release-version.py check --expected 1.8.2`. Do not repeat this bump for the same change or relabel tested binaries after qualification. Installer-only local testing does not waive full main CI before publishing.
+Follow [versioning](docs/versioning.md) before distributing a changed installable candidate or preparing a feature/fix PR. This branch is synchronized at **1.8.6** across the Rust workspace/local lock entries, extension manifest and npm lock entries. Verify with `python scripts/release-version.py check --expected 1.8.6`. Do not repeat this bump for the same change or relabel tested binaries after qualification. Installer-only local testing does not waive full main CI before publishing.
 
 ## Submitting
 

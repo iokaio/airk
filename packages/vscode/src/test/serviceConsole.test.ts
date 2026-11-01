@@ -200,6 +200,33 @@ function fixture(){
     return {controller,host,sent,values,copied,action,setTrusted:(value:boolean)=>{trusted=value;},setFail:(value:boolean)=>{fail=value;}};
 }
 
+test('Management Service concurrency action preserves other service policy and uses native resource configuration',async()=>{
+    for(const concurrency of [4,8,16,32,64]){
+        const f=fixture(),base=f.host.runtime.client({} as any);
+        let submitted:unknown;
+        f.host.resources=async(current,queryOnly)=>{
+            assert.equal(queryOnly,true);
+            assert.equal(current.preset,'balanced');
+            return {...current,query_concurrency:concurrency};
+        };
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            if(method==='resources'&&submitted)return {status:'resources',observation:{configuration:(submitted as any).configure_resources.configuration}};
+            if(method&&typeof method==='object'&&'configure_resources' in method){
+                submitted=method;
+                return {status:'resources',observation:{configuration:(method as any).configure_resources.configuration}};
+            }
+            return base.transport.request(method);
+        }});
+        try{
+            await f.controller.refresh();
+            assert.equal(managementView(f.controller.state).enabled.queryConcurrency,true);
+            await f.action('queryConcurrency');
+            assert.deepEqual(submitted,{configure_resources:{configuration:{preset:'balanced',query_concurrency:concurrency}}});
+            assert.ok(managementView(f.controller.state).resources.some(row=>row[0]==='Concurrent evidence requests'&&row[1]===String(concurrency)));
+        }finally{f.controller.dispose();}
+    }
+});
+
 test('unconfirmed receipts stay retained and logged without interrupting project observations',async()=>{
     for(const malformed of [false,true]){
         const f=fixture(),base=f.host.runtime.client({} as any),diagnostics:{operation:string;error:unknown}[]=[];

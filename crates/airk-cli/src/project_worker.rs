@@ -99,6 +99,9 @@ use tokio::{
     task::JoinSet,
 };
 
+#[path = "project_worker_admission.rs"]
+mod admission;
+
 struct State {
     control: std::path::PathBuf,
     identity: WorkerIdentity,
@@ -106,6 +109,7 @@ struct State {
     broker: Mutex<Broker>,
     tools: airk_mcp::local::LocalTools,
     closing: Arc<AtomicBool>,
+    admission: Arc<admission::QueryAdmission>,
 }
 
 #[derive(Default)]
@@ -246,11 +250,35 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 "invalid tool name"
             );
             state.storage.check()?;
-            let admission = state
-                .broker
-                .lock()
-                .map_err(|_| anyhow::anyhow!("query policy unavailable"))?
-                .begin_query(state.identity, session, MAX_FRAME_BYTES, Instant::now());
+            // This one received request has not been accepted by the broker.
+            // Wait briefly for its slot rather than making the agent replay it;
+            // authorization and ownership are rechecked on every attempt.
+            let received = tokio::time::Instant::now();
+            let query_deadline = received + Duration::from_secs(125);
+            let admission_deadline = (received + Duration::from_secs(2))
+                .min(tokio::time::Instant::from_std(authorized_until));
+            let Some(admission) = state.admission.while_open(&mut stream, admission_deadline, || {
+                use airk_core::service::AdmissionError;
+                if state.closing.load(Ordering::Acquire) {
+                    return Err(AdmissionError::Draining);
+                }
+                if Instant::now() >= authorized_until {
+                    return Err(AdmissionError::Expired);
+                }
+                if state.storage.check().is_err() {
+                    return Err(AdmissionError::OwnershipLost);
+                }
+                let mut policy = state.broker.lock().map_err(|_| AdmissionError::OwnershipLost)?;
+                let now = Instant::now();
+                if tokio::time::Instant::from_std(now) >= admission_deadline {
+                    return Err(AdmissionError::Busy);
+                }
+                policy.begin_query_with_control(state.identity, session, MAX_FRAME_BYTES, now, matches!(request.tool.as_str(), "airk_status" | "status"))
+            }).await? else { return Ok(()); };
+            let admission = if admission == Err(airk_core::service::AdmissionError::Busy)
+                && Instant::now() >= authorized_until {
+                Err(airk_core::service::AdmissionError::Expired)
+            } else { admission };
             let request_id = match admission {
                 Ok(request) => request,
                 Err(error) => {
@@ -264,7 +292,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             tools.restore_status_receipt(request.status_receipt);
             // The permit and revision materialization survive transport cancellation.
             let native_read = request.native.is_some();
-            let response = match tokio::time::timeout(Duration::from_secs(125), async {
+            let response = match tokio::time::timeout_at(query_deadline, async {
                 match request.native {
                     Some(native) => tools.read_native(native, state.identity.project).await,
                     None => {
@@ -295,6 +323,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 .lock()
                 .map_err(|_| anyhow::anyhow!("query policy unavailable"))?
                 .finish_query(state.identity, request_id)?;
+            state.admission.completed();
             result?;
         }
     }
@@ -472,7 +501,7 @@ pub async fn run() -> Result<()> {
     };
     ensure!(
         accepted == identity
-            && (1..=4).contains(&allowance.concurrent_queries)
+            && (1..=65).contains(&allowance.concurrent_queries)
             && allowance.response_bytes == allowance.concurrent_queries * MAX_FRAME_BYTES,
         "project activation identity or allowance mismatch"
     );
@@ -554,7 +583,13 @@ pub async fn run() -> Result<()> {
             },
         )?;
     }
-    let mut broker = Broker::new(init.service, BrokerLimits::default())?;
+    let mut broker = Broker::new(
+        init.service,
+        BrokerLimits {
+            reserved_status: allowance.concurrent_queries > 1,
+            ..BrokerLimits::service()
+        },
+    )?;
     broker.register(
         identity,
         allowance,
@@ -578,11 +613,13 @@ pub async fn run() -> Result<()> {
         )
         .await?,
         closing: closing.clone(),
+        admission: Default::default(),
     });
     service_ipc::write_frame(&mut std::io::stdout().lock(), &Reply::Activated)?;
     let (sender, mut commands) = mpsc::channel(8);
     let control_closing = closing.clone();
     let control_activity = activity.clone();
+    let control_admission = state.admission.clone();
     std::thread::Builder::new()
         .name("airk-project-control".into())
         .spawn(move || {
@@ -594,6 +631,7 @@ pub async fn run() -> Result<()> {
             }
             crate::embedding_pool_client::close();
             control_closing.store(true, Ordering::Release);
+            control_admission.close();
             control_activity.notify_one();
         })?;
     let job_closing = closing.clone();
@@ -1292,7 +1330,7 @@ pub async fn run() -> Result<()> {
         }
         Ok(registry)
     });
-    let permits = Arc::new(Semaphore::new(64));
+    let permits = Arc::new(Semaphore::new(1024));
     let mut connections = JoinSet::new();
     let mut idle = Instant::now();
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -1303,6 +1341,12 @@ pub async fn run() -> Result<()> {
         tokio::select! {
             command=commands.recv()=>{
                 match command {
+                    Some(Command::ConfigureQueries { identity:expected, concurrency }) => {
+                        let accepted = expected == identity && state.broker.lock().map_err(|_| anyhow::anyhow!("query policy unavailable"))?
+                            .configure_queries(identity, concurrency, Instant::now()).is_ok();
+                        state.admission.completed();
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &if accepted { Reply::QueriesConfigured } else { Reply::Failed })?;
+                    },
                     Some(Command::Renew{identity:expected})=>{
                         let renewed=expected==identity&&airk_kernel::service_execution::renew(identity).is_ok()&&state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.renew(identity,Instant::now(),Duration::from_secs(300)).is_ok();
                         service_ipc::write_frame(&mut std::io::stdout().lock(),&if renewed{Reply::Renewed}else{Reply::Failed})?;
@@ -1364,6 +1408,7 @@ pub async fn run() -> Result<()> {
     }
     crate::embedding_pool_client::close();
     closing.store(true, Ordering::Release);
+    state.admission.close();
     drop(work_sender);
     // Idle client reads must not hold an intentionally stopped owner open.
     // Blocking materialization retains its inner admission permit until actual

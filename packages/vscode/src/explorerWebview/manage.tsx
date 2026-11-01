@@ -388,6 +388,7 @@ export function ServiceScreen(props: ScreenProps) {
                     <Act actions={actions} action="restart" enabled={on('restart')} ghost>Restart service</Act>
                     <Act actions={actions} action="stop" enabled={on('stop')} ghost>Stop service</Act>
                     <Act actions={actions} action="resources" enabled={on('resources')} ghost>Resource settings…</Act>
+                    <Act actions={actions} action="queryConcurrency" enabled={on('queryConcurrency')} ghost>Concurrent requests…</Act>
                 </div>
                 {view.lifecycle === 'external' && <p class="muted">Startup, stop, restart, upgrades and rollback are controlled by the external service manager.</p>}
                 <div class="cards two">

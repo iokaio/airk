@@ -18,10 +18,13 @@ export function boundedReply(value:unknown,limit=2048):string{
 }
 
 /** Repeat one MCP read only after an explicit typed rejection, within its original budget. */
-export async function requestWithReadRetry(session:McpStdioSession,name:string,args:Record<string,unknown>={},timeout=120000):Promise<any>{
+export async function requestWithReadRetry(session:McpStdioSession,name:string,args:Record<string,unknown>={},timeout=120000,onReply?:(reply:any)=>void):Promise<any>{
     const deadline=performance.now()+timeout;
     while(true){
         const result=await session.request('tools/call',{name,arguments:args},Math.max(1,deadline-performance.now()));
+        // Test assertions and diagnostics see every receipt, including refusals;
+        // the shared native hint parser alone determines whether retry is safe.
+        onReply?.(result);
         const delay=readRetryDelay(result);
         if(delay!==undefined&&performance.now()+delay<deadline){await new Promise(resolve=>setTimeout(resolve,delay));continue;}
         assert.notEqual(result?.isError,true,`${name} failed: ${boundedReply(result)}`);

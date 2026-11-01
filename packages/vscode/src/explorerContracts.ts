@@ -400,7 +400,7 @@ export interface ManagementView {
 /** Console action names the Explorer may send; identical to the console's own allowlist (tested). */
 export const MANAGE_ACTIONS = [
     'reviewLegacyStartup', 'legacyStartupReceipts', 'removeLegacyStartup', 'copyLegacyStartup', 'registeredProjects', 'inactiveProjects', 'registerWorkspace',
-    'refresh', 'connect', 'start', 'stop', 'restart', 'repairRuntime', 'upgradeRuntime', 'rollbackRuntime', 'resumeActivation', 'logs', 'resources',
+    'refresh', 'connect', 'start', 'stop', 'restart', 'repairRuntime', 'upgradeRuntime', 'rollbackRuntime', 'resumeActivation', 'logs', 'resources', 'queryConcurrency',
     'responseMode', 'recoverLifecycle', 'abandonLifecycle', 'startEmbedding', 'stopEmbedding', 'forceEmbedding', 'firstPage', 'nextPage', 'morePlan',
     'refreshPlan', 'pausePlan', 'resumePlan', 'cancelPlan', 'approvePlan', 'previewReport', 'copyReport', 'openReport', 'saveReport', 'exportLogs', 'openRawLogs', 'saveRawLogs',
     'unregisterProject', 'previewCleanup', 'deleteDerived', 'inspect', 'index', 'pause', 'resume', 'restartProject', 'retryRecovery', 'watch', 'modelSetup', 'configureProject', 'copyConfiguration', 'enableSemantic', 'disableSemantic', 'configureDetail',

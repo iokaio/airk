@@ -149,7 +149,11 @@ impl Connection {
     ) -> Result<Self> {
         let response = {
             let _health_request = owner
-                .map(|(owner, ticket)| owner.admit_ticket(ticket))
+                .map(|(owner, ticket)| {
+                    owner
+                        .after_evidence_wait(*ticket)
+                        .and_then(|fresh| owner.admit_ticket(&fresh))
+                })
                 .transpose()?;
             service_runtime::request(root, ControlMethod::Health).await?
         };
@@ -161,7 +165,11 @@ impl Connection {
             "native service version differs from this client"
         );
         let _broker_request = owner
-            .map(|(owner, ticket)| owner.admit_ticket(ticket))
+            .map(|(owner, ticket)| {
+                owner
+                    .after_evidence_wait(*ticket)
+                    .and_then(|fresh| owner.admit_ticket(&fresh))
+            })
             .transpose()?; // one request after health
         let (role, mut grant) =
             match service_runtime::request(root, ControlMethod::Connect { project }).await? {
@@ -295,10 +303,83 @@ struct ClientState {
     status_receipt: airk_mcp::response::StatusReceipt,
 }
 
+struct ChannelPool {
+    capacity: Arc<airk_mcp::query_capacity::QueryCapacity>,
+    slots: Vec<tokio::sync::Mutex<ClientState>>,
+}
+struct ChannelLease<'a> {
+    state: Option<tokio::sync::MutexGuard<'a, ClientState>>,
+    permit: Option<airk_mcp::query_capacity::QueryPermit>,
+}
+impl std::ops::Deref for ChannelLease<'_> {
+    type Target = ClientState;
+    fn deref(&self) -> &ClientState {
+        self.state.as_deref().expect("leased channel")
+    }
+}
+impl std::ops::DerefMut for ChannelLease<'_> {
+    fn deref_mut(&mut self) -> &mut ClientState {
+        self.state.as_deref_mut().expect("leased channel")
+    }
+}
+impl Drop for ChannelLease<'_> {
+    fn drop(&mut self) {
+        // Return the actual channel before making its admission slot available.
+        drop(self.state.take());
+        drop(self.permit.take());
+    }
+}
+impl Default for ChannelPool {
+    fn default() -> Self {
+        Self {
+            capacity: airk_mcp::query_capacity::QueryCapacity::new(
+                airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY,
+            ),
+            slots: (0..airk_core::service_resources::MAX_QUERY_CONCURRENCY)
+                .map(|_| tokio::sync::Mutex::new(ClientState::default()))
+                .collect(),
+        }
+    }
+}
+impl ChannelPool {
+    async fn acquire(&self, limit: usize) -> ChannelLease<'_> {
+        self.capacity.configure(limit);
+        for slot in self.slots.iter().skip(limit) {
+            if let Ok(mut idle) = slot.try_lock() {
+                *idle = ClientState::default();
+            }
+        }
+        let permit = self
+            .capacity
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("pool lifetime follows status owner");
+        // A queued caller may have observed a lower policy before another
+        // caller increased capacity. Its permit uses the current shared limit;
+        // search the complete fixed pool rather than that older prefix.
+        for slot in &self.slots {
+            if let Ok(state) = slot.try_lock() {
+                return ChannelLease {
+                    state: Some(state),
+                    permit: Some(permit),
+                };
+            }
+        }
+        unreachable!("an admitted channel always has a free slot")
+    }
+    #[cfg(test)]
+    async fn lock(&self) -> ChannelLease<'_> {
+        self.acquire(airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY)
+            .await
+    }
+}
+
 pub(crate) struct Backend {
     root: PathBuf,
     project: ProjectBinding,
-    state: tokio::sync::Mutex<ClientState>,
+    state: ChannelPool,
+    state_waiters: Arc<tokio::sync::Semaphore>,
     latest_source: std::sync::Mutex<Option<SourceFence>>,
     status: Arc<StatusOwner>,
     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
@@ -324,6 +405,16 @@ impl From<airk_core::identity::Incarnation> for CacheScope {
 pub(crate) fn source_scope_superseded() -> serde_json::Value {
     let detail = serde_json::json!({"error":{"code":"direct_query_setup","reason":"busy",
         "query_submitted":false,"retryable":true,"retry_after_ms":100,"fresh_brokerage_required":true}});
+    serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true})
+}
+fn query_admission_busy() -> serde_json::Value {
+    let detail = serde_json::json!({"error":{"code":"direct_query_admission","reason":"busy",
+        "query_submitted":false,"retryable":true,"retry_after_ms":25,"fresh_brokerage_required":false}});
+    serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true})
+}
+fn query_admission_closed() -> serde_json::Value {
+    let detail = serde_json::json!({"error":{"code":"direct_query_admission","reason":"draining",
+        "query_submitted":false,"retryable":false,"retry_after_ms":null,"fresh_brokerage_required":true}});
     serde_json::json!({"content":[{"type":"text","text":detail.to_string()}],"isError":true})
 }
 struct CachedStatus {
@@ -416,7 +507,11 @@ fn status_scope(root: &Path, project: ProjectBinding) -> Result<Option<CacheScop
     })))
 }
 impl airk_mcp::remote::RemoteTools for Backend {
+    fn query_concurrency(&self) -> usize {
+        crate::service_resource_policy::query_concurrency(&self.root)
+    }
     fn close(&self) {
+        self.state_waiters.close();
         self.status.close();
     }
     fn shutdown(&self) -> airk_mcp::remote::ReadyFuture<'_> {
@@ -551,7 +646,50 @@ impl Backend {
             if observed.is_some_and(|expected| ticket.scope != Some(CacheScope::Source(expected))) {
                 return Ok(source_scope_superseded());
             }
-            let mut state = self.state.lock().await;
+            if self.status.accepting().is_err() {
+                return Ok(query_admission_closed());
+            }
+            let waiting = match self.state_waiters.clone().try_acquire_owned() {
+                Ok(waiting) => waiting,
+                Err(tokio::sync::TryAcquireError::Closed) => return Ok(query_admission_closed()),
+                Err(tokio::sync::TryAcquireError::NoPermits) => return Ok(query_admission_busy()),
+            };
+            let queue_expires = source_expires
+                .unwrap_or_else(|| Instant::now() + Duration::from_secs(2))
+                .min(Instant::now() + Duration::from_secs(2));
+            let waited = tokio::select! {
+                biased;
+                _ = self.status.when_closed() => return Ok(query_admission_closed()),
+                state = tokio::time::timeout_at(
+                    tokio::time::Instant::from_std(queue_expires), self.state.acquire(crate::service_resource_policy::query_concurrency(&self.root)),
+                ) => state,
+            };
+            let mut state = match waited {
+                Ok(state) => state,
+                Err(_) => {
+                    return Ok(
+                        if source_expires.is_some_and(|until| Instant::now() >= until) {
+                            source_scope_superseded()
+                        } else {
+                            query_admission_busy()
+                        },
+                    );
+                }
+            };
+            drop(waiting);
+            if Instant::now() >= queue_expires {
+                return Ok(
+                    if source_expires.is_some_and(|until| Instant::now() >= until) {
+                        source_scope_superseded()
+                    } else {
+                        query_admission_busy()
+                    },
+                );
+            }
+            ticket = match self.status.after_evidence_wait(ticket) {
+                Ok(ticket) => ticket,
+                Err(_) => return Ok(source_scope_superseded()),
+            };
             if source_expires.is_some_and(|until| Instant::now() >= until)
                 || observed
                     .is_some_and(|fence| !self.source_fence_current(CacheScope::Source(fence)))
@@ -676,7 +814,8 @@ pub(crate) fn source_tools(root: PathBuf, project: ProjectBinding) -> Arc<Backen
     Arc::new(Backend {
         root,
         project,
-        state: tokio::sync::Mutex::new(Default::default()),
+        state: ChannelPool::default(),
+        state_waiters: Arc::new(tokio::sync::Semaphore::new(128)),
         latest_source: std::sync::Mutex::new(None),
         status: Arc::new(StatusOwner::default()),
         client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
@@ -695,7 +834,8 @@ pub(crate) fn source_tools_owned(
     Arc::new(Backend {
         root,
         project,
-        state: tokio::sync::Mutex::new(ClientState::default()),
+        state: ChannelPool::default(),
+        state_waiters: Arc::new(tokio::sync::Semaphore::new(128)),
         client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
         latest_source: std::sync::Mutex::new(None),
         status,
@@ -968,6 +1108,34 @@ mod tests {
 mod source_observation_tests {
     use super::*;
 
+    #[tokio::test]
+    async fn queued_channel_uses_current_capacity_after_a_live_increase() {
+        let pool = ChannelPool::default();
+        let mut held = Vec::new();
+        for _ in 0..4 {
+            held.push(pool.acquire(4).await);
+        }
+        let mut queued = Box::pin(pool.acquire(4));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(queued.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        // The new caller publishes the increased limit before either queued
+        // caller can obtain a channel; the first four channels remain leased.
+        let mut increased = Box::pin(pool.acquire(16));
+        std::future::poll_fn(|cx| {
+            assert!(std::future::Future::poll(increased.as_mut(), cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        let old_policy = queued.await;
+        let new_policy = increased.await;
+        assert_eq!(pool.capacity.available_permits(), 10);
+        drop((old_policy, new_policy, held));
+        assert_eq!(pool.capacity.available_permits(), 16);
+    }
+
     fn fence(namespace: u8, revision: u64) -> SourceFence {
         SourceFence {
             namespace: airk_core::identity::Incarnation::from_bytes([namespace; 16]),
@@ -1051,6 +1219,49 @@ mod source_observation_tests {
         assert_eq!(body["observed_unix_ms"], timestamp);
         assert!(body["cache_age_ms"].as_u64().unwrap() >= 1000);
         assert!(guard.connection.is_none());
+        assert!(std::fs::read_dir(control.path())?.next().is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn frontend_close_retires_bounded_evidence_waiters_without_submitting() -> Result<()> {
+        let control = tempfile::tempdir()?;
+        let scope = fence(1, 9);
+        let backend = source_tools(control.path().into(), scope.project);
+        backend.status.source_scope(scope);
+        let mut held = Vec::new();
+        for _ in 0..16 {
+            held.push(backend.state.lock().await);
+        }
+        let mut pending: Vec<_> = (0..128)
+            .map(|_| {
+                Box::pin(backend.call_observed("airk_read_file".into(), Default::default(), scope))
+            })
+            .collect();
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        for call in &mut pending {
+            assert!(call.as_mut().poll(&mut context).is_pending());
+        }
+        assert_eq!(backend.state_waiters.available_permits(), 0);
+        let refused = backend
+            .call_observed("airk_read_file".into(), Default::default(), scope)
+            .await?;
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(
+                refused["content"][0]["text"].as_str().unwrap()
+            )?["error"]["query_submitted"],
+            false
+        );
+        backend.status.close();
+        for call in pending {
+            let reply = call.await?;
+            let body: serde_json::Value =
+                serde_json::from_str(reply["content"][0]["text"].as_str().unwrap())?;
+            assert_eq!(body["error"]["reason"], "draining");
+            assert_eq!(body["error"]["query_submitted"], false);
+        }
+        assert_eq!(backend.state_waiters.available_permits(), 128);
+        assert!(held.iter().all(|state| state.connection.is_none()));
         assert!(std::fs::read_dir(control.path())?.next().is_none());
         Ok(())
     }
@@ -1452,6 +1663,42 @@ mod source_brokerage_ipc_tests {
         peer.broker.await??;
         peer.worker.await??;
         assert_eq!(peer.queries.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn submitted_status_scalar_invalidation_returns_original_snapshot_without_replay()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("runtime");
+        let observed = fence(1, 9);
+        let peer = peer(&root, observed, 1, false, true)?;
+        let backend = source_tools(root, observed.project);
+        backend.status.source_scope(observed);
+        let mut request = backend.call_observed("airk_status".into(), Default::default(), observed);
+        tokio::select! {
+            _ = peer.query_began.notified() => {},
+            result = &mut request => anyhow::bail!("status query did not block: {result:?}")
+        }
+        // Model an evidence read finishing while the actual status Query waits.
+        backend.status.invalidate();
+        peer.query_release.notify_one();
+        let reply = request.await?;
+        let result = body(&reply)?;
+        assert_eq!(reply["isError"], false, "{reply}");
+        assert_eq!(reply["structuredContent"], result);
+        assert_eq!(result["index_state"], "available");
+        assert_eq!(result["publication"]["token"], "original-query");
+        assert_eq!(result["status_observation"]["superseded"], true);
+        assert!(result["observed_unix_ms"].is_u64());
+        assert_eq!(result["cached"], false);
+        assert_eq!(backend.status.receipt(), Default::default());
+        assert!(backend.status.cache_empty());
+        assert_eq!(peer.queries.load(Ordering::SeqCst), 1);
+        backend.status.shutdown().await?;
+        drop(backend);
+        peer.broker.await??;
+        peer.worker.await??;
         Ok(())
     }
 

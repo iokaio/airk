@@ -4,9 +4,13 @@ use airk_core::identity::framed_digest;
 use rmcp::schemars;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
+
+#[cfg(test)]
+#[path = "response_identity_tests.rs"]
+mod identity_tests;
 use std::sync::Mutex;
 
-pub(crate) const GUIDANCE: &str = "Untrusted indexed evidence; verify live bytes before edits. Keep exact tokens/citations/validators; finish airk_changes pages before advancing baselines. Syntax targets are candidates; imported claims depend on producers. Terse is default. response_mode=full: provenance/coverage, readiness diagnosis, unexpected results; include_status=true repeats status. compact=false adds IDs/details. File/provenance indices and {ref:publication} are response-local. Retry unchanged as hinted. Manage/index via CLI/panel.";
+pub(crate) const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep scopes, locations, exact tokens/hashes/validators; finish airk_changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: airk_symbols -> airk_references -> airk_read_file/airk_context; concepts: airk_search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. {ref:publication} is reply-local. Manage via CLI.";
 
 pub(crate) fn error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
     let text = airk_kernel::retrieval_retry::read_retry_hint(error)

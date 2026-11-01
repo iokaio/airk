@@ -11,15 +11,20 @@ use anyhow::{Context, Result, ensure};
 use serde::Serialize;
 use std::collections::BTreeSet;
 
+mod navigation;
+
 const MAX_FILES: usize = 256;
 const MAX_SYMBOLS: usize = 100;
 const MAX_EVIDENCE_BYTES: usize = 256 * 1024 * 1024;
+const MAX_NAVIGATION_EVIDENCE_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Serialize)]
 pub struct CurrentRelationships {
     pub revision: CurrentToken,
     pub collection: String,
     pub relationships: Vec<RelationshipHit>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub suggested_targets: Vec<airk_core::RelationshipTargetSuggestion>,
     pub truncated: bool,
     pub coverage: &'static str,
 }
@@ -83,6 +88,77 @@ fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
 }
 
 impl CurrentRead {
+    fn type_navigation(
+        &self,
+        store: &FileStore,
+        query: &RelationshipQuery,
+        private: bool,
+        files: &mut usize,
+        work: &mut usize,
+    ) -> Result<navigation::Navigation> {
+        if !query.symbol.starts_with("syntax:")
+            || ![":struct_item", ":enum_item", ":impl_item"]
+                .iter()
+                .any(|kind| query.symbol.ends_with(kind))
+        {
+            return Ok(Default::default());
+        }
+        // Resolve the exact returned symbol ID through authenticated postings;
+        // do not interpret a caller-supplied path inside the opaque symbol ID.
+        let paths =
+            self.lookup_paths(Lookup::FactName(&query.symbol), &query.path_prefix, None, 2)?;
+        if paths.paths.len() != 1 || paths.next_after.is_some() {
+            return Ok(navigation::Navigation {
+                truncated: !paths.paths.is_empty(),
+                ..Default::default()
+            });
+        }
+        let path = &paths.paths[0];
+        let compact = self
+            .artifact(path)?
+            .context("type navigation artifact missing")?;
+        if compact.language != "rust" {
+            return Ok(Default::default());
+        }
+        let retained = compact
+            .retained
+            .as_ref()
+            .context("type navigation extraction missing")?;
+        let bytes = compact
+            .bytes
+            .checked_add(retained.object_bytes)
+            .context("type navigation evidence size overflow")?;
+        if bytes > MAX_NAVIGATION_EVIDENCE_BYTES
+            || bytes > MAX_EVIDENCE_BYTES.saturating_sub(*work)
+            || *files == MAX_FILES
+        {
+            return Ok(navigation::Navigation {
+                truncated: true,
+                ..Default::default()
+            });
+        }
+        *files += 1;
+        *work += bytes;
+        let result = (|| {
+            let artifact = store.load_retained_bounded(&compact, retained.object_bytes as u64)?;
+            store.verify_retained_source(&compact)?;
+            let mut navigation = navigation::derive(&artifact, &query.symbol);
+            if artifact.facts.len() <= navigation::MAX_FACTS {
+                navigation.verified = Some(navigation::VerifiedSource {
+                    revision: self.token()?,
+                    source_hash: compact.content_hash.clone(),
+                    edges: edges(&artifact),
+                });
+            }
+            Ok(navigation)
+        })();
+        if private {
+            self.observe_private_integrity(result)
+        } else {
+            result
+        }
+    }
+
     /// Every candidate is reconstructed from retained native extraction under
     /// this request's gate. Budgets cap graph fan-out and source verification;
     /// omitted traversal is reported, never interpreted as absence.
@@ -116,8 +192,9 @@ impl CurrentRead {
             revision: self.token()?,
             collection: self.head().scope.collection.clone(),
             relationships: Vec::new(),
+            suggested_targets: Vec::new(),
             truncated: false,
-            coverage: "Native syntax candidates and source-bound producer assertions. Written targets and imported resolutions are not compiler-certified. Impact is incomplete.",
+            coverage: "Native syntax candidates and source-bound producer assertions. Written targets and imported resolutions are not compiler-certified. Type navigation uses only unambiguous same-file retained Rust declarations; aliases, unsupported generic headers and external impls may be absent. Impact is incomplete.",
         };
         let incoming = query.direction == "incoming";
         let mut pending = BTreeSet::from([query.symbol.clone()]);
@@ -126,6 +203,8 @@ impl CurrentRead {
         let mut files = 0;
         let mut work = self.resource_reference("analysis")?.map_or(0, |r| r.bytes);
         let mut remaining = query.max_bytes;
+        let navigation = self.type_navigation(store, query, private, &mut files, &mut work)?;
+        response.truncated |= navigation.truncated;
         for _ in 0..query.hops {
             let mut next = BTreeSet::new();
             for symbol in pending {
@@ -147,6 +226,9 @@ impl CurrentRead {
                     self.lookup_paths(lookup, &query.path_prefix, None, MAX_FILES - files)?;
                 response.truncated |= page.next_after.is_some();
                 let mut paths = page.paths;
+                if symbol == query.symbol && !navigation.path.is_empty() {
+                    paths.push(navigation.path.clone());
+                }
                 if let Some(imported) = &imported {
                     paths.extend(
                         imported
@@ -190,10 +272,30 @@ impl CurrentRead {
                         .retained
                         .as_ref()
                         .context("current relationship extraction missing")?;
-                    let bytes = compact
-                        .bytes
-                        .checked_add(retained.object_bytes)
-                        .context("current relationship evidence size overflow")?;
+                    let verified = navigation
+                        .verified
+                        .as_ref()
+                        .filter(|_| path == navigation.path);
+                    if let Some(verified) = verified {
+                        require_integrity(
+                            self,
+                            verified.revision == self.token()?
+                                && verified.source_hash == compact.content_hash,
+                            "request-local type navigation source expired",
+                        )?;
+                    }
+                    // Source proof and retained decoding were already charged
+                    // once for this exact path/hash/publication. Reuse only
+                    // inside this CurrentRead and this request; projection
+                    // validation below still runs normally.
+                    let bytes = if verified.is_some() {
+                        0
+                    } else {
+                        compact
+                            .bytes
+                            .checked_add(retained.object_bytes)
+                            .context("current relationship evidence size overflow")?
+                    };
                     if bytes > MAX_EVIDENCE_BYTES.saturating_sub(work) {
                         response.truncated = true;
                         self.token()?;
@@ -241,6 +343,15 @@ impl CurrentRead {
                         rows.into_values().collect()
                     } else if private && self.native_edges_declared_empty(&path)? {
                         Vec::new()
+                    } else if let Some(verified) = verified {
+                        verified
+                            .edges
+                            .iter()
+                            .filter(|edge| {
+                                (if incoming { &edge.target } else { &edge.source }) == &symbol
+                            })
+                            .cloned()
+                            .collect()
                     } else {
                         let result = (|| {
                             let artifact = store
@@ -295,6 +406,9 @@ impl CurrentRead {
                                 .cloned(),
                         );
                     }
+                    if symbol == query.symbol && path == navigation.path && !incoming {
+                        candidates.extend(navigation.contains.iter().cloned());
+                    }
                     for edge in candidates {
                         if (if incoming { &edge.target } else { &edge.source }) != &symbol
                             || query.kind.as_ref().is_some_and(|kind| kind != &edge.kind)
@@ -329,6 +443,17 @@ impl CurrentRead {
             if pending.is_empty() {
                 break;
             }
+        }
+        for suggestion in navigation.suggestions {
+            let bytes = serde_json::to_vec(&suggestion)?.len();
+            if response.relationships.len() + response.suggested_targets.len() == query.limit
+                || bytes > remaining
+            {
+                response.truncated = true;
+                break;
+            }
+            remaining -= bytes;
+            response.suggested_targets.push(suggestion);
         }
         self.token()?;
         Ok(response)

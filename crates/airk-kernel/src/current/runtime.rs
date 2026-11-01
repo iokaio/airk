@@ -245,6 +245,51 @@ impl Kernel {
         mode: super::CurrentSearchMode,
         snippet_bytes: Option<usize>,
     ) -> Result<SearchResponse> {
+        self.search_response_with_filters(
+            query,
+            mode,
+            snippet_bytes,
+            &airk_core::SearchFilters::default(),
+        )
+    }
+
+    /// Optional selectors apply to authenticated candidates before branch top-k.
+    pub fn search_response_with_filters(
+        &self,
+        query: &SearchQuery,
+        mode: super::CurrentSearchMode,
+        snippet_bytes: Option<usize>,
+        filters: &airk_core::SearchFilters,
+    ) -> Result<SearchResponse> {
+        self.search_response_on_read(query, mode, snippet_bytes, filters, self.current_reader()?)
+    }
+
+    /// Search and automatic definition pointers retain the same sealed reader.
+    pub fn search_response_with_navigation(
+        &self,
+        query: &SearchQuery,
+        mode: super::CurrentSearchMode,
+        snippet_bytes: Option<usize>,
+        filters: &airk_core::SearchFilters,
+    ) -> Result<super::SearchWithDefinitionsResponse> {
+        let read = self.current_reader()?;
+        let evidence =
+            self.search_response_on_read(query, mode, snippet_bytes, filters, read.clone())?;
+        let definitions = super::search::definition_hints(&self.store, &read, query, filters)?;
+        Ok(super::SearchWithDefinitionsResponse {
+            evidence,
+            definitions,
+        })
+    }
+
+    fn search_response_on_read(
+        &self,
+        query: &SearchQuery,
+        mode: super::CurrentSearchMode,
+        snippet_bytes: Option<usize>,
+        filters: &airk_core::SearchFilters,
+        read: Arc<CurrentRead>,
+    ) -> Result<SearchResponse> {
         if matches!(
             mode,
             super::CurrentSearchMode::Vector | super::CurrentSearchMode::Hybrid
@@ -260,14 +305,17 @@ impl Kernel {
             } else {
                 mode
             };
-        let evidence = super::search::search_current_read_with_snippets(
+        let evidence = super::search::search_current_read_with_filters(
             &self.store,
-            self.current_reader()?,
+            read,
             None,
             mode,
             query,
             Arc::new(|_| Ok(())),
-            snippet_bytes,
+            super::search::SearchOptions {
+                snippet_bytes,
+                filters,
+            },
         )?;
         Ok(SearchResponse {
             publication: Some(RevisionEnvelope::new(
@@ -506,7 +554,30 @@ impl Kernel {
         code_only: bool,
         options: &airk_core::discovery::DiscoveryOptions,
     ) -> Result<FactsResponse> {
-        let page = read.native_facts_page(&self.store, query, code_only, options)?;
+        self.current_facts_with_options(
+            read,
+            query,
+            code_only,
+            options,
+            &airk_core::discovery::FactDiscoveryOptions::default(),
+        )
+    }
+
+    pub(crate) fn current_facts_with_options(
+        &self,
+        read: &CurrentRead,
+        query: &airk_core::FactQuery,
+        code_only: bool,
+        options: &airk_core::discovery::DiscoveryOptions,
+        fact_options: &airk_core::discovery::FactDiscoveryOptions,
+    ) -> Result<FactsResponse> {
+        let page = read.native_facts_page_with_options(
+            &self.store,
+            query,
+            code_only,
+            options,
+            fact_options,
+        )?;
         let state = read
             .collection_state()?
             .context("current configuration missing")?;

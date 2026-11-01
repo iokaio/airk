@@ -2,7 +2,11 @@
 //! Finite read composition. No transport recursion, source writes or background jobs.
 use crate::{FactQuery, Kernel};
 use airk_core::{
-    SearchQuery, discovery::DiscoveryOptions, evidence::EvidenceReadOptions, workbench::*,
+    SearchFilters, SearchQuery,
+    discovery::{DiscoveryOptions, FactDiscoveryOptions},
+    evidence::EvidenceReadOptions,
+    references::ReferenceOptions,
+    workbench::*,
 };
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Map, Value, json};
@@ -967,6 +971,7 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
         "files" => "list_files",
         "info" => "file_info",
         "imports" => "imports",
+        "code-facts" | "code_facts" => "code_facts",
         "facts" => "document_facts",
         "changes" => "changes",
         "context" => "context",
@@ -1057,10 +1062,34 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
                 "--limit" => "limit",
                 "--since" => "since",
                 "--bytes" => "max_bytes",
+                "--language" => "language",
+                "--evidence-kind" => "evidence_kind",
+                "--exclude-path-prefix" => "exclude_path_prefix",
+                "--name-match" => "name_match",
+                "--include-count" => "include_count",
+                "--cursor" => "cursor",
+                "--order" => "order",
+                "--include-files" => "include_files",
+                "--compact" => "compact",
+                "--kind" => "kind",
                 _ => bail!("unknown command option"),
             };
+            if matches!(key, "include_count" | "include_files" | "compact") {
+                let explicit = words.get(i + 1).and_then(|value| match value.as_str() {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => None,
+                });
+                if explicit.is_some() {
+                    i += 1;
+                }
+                args.insert(key.into(), json!(explicit.unwrap_or(true)));
+                i += 1;
+                continue;
+            }
             i += 1;
             let value = words.get(i).context("option needs a value")?;
+            ensure!(!value.starts_with("--"), "option needs a value");
             args.insert(
                 key.into(),
                 if matches!(key, "limit" | "max_bytes") {
@@ -1079,7 +1108,7 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
         "search" => {
             args.insert("query".into(), json!(value));
         }
-        "symbols" | "references" | "imports" => {
+        "symbols" | "references" | "imports" | "code_facts" => {
             if !value.is_empty() {
                 args.insert("name".into(), json!(value));
             }
@@ -1136,7 +1165,16 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
 
 fn fields(tool: &str) -> &'static [&'static str] {
     match tool {
-        "search" => &["query", "mode", "path_prefix", "limit", "max_bytes"],
+        "search" => &[
+            "query",
+            "mode",
+            "path_prefix",
+            "language",
+            "evidence_kind",
+            "exclude_path_prefix",
+            "limit",
+            "max_bytes",
+        ],
         "symbols" | "imports" => &[
             "path",
             "name",
@@ -1145,8 +1183,11 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "limit",
             "max_bytes",
             "cursor",
+            "name_match",
+            "include_count",
+            "compact",
         ],
-        "code_facts" | "document_facts" => &[
+        "code_facts" => &[
             "path",
             "name",
             "kind",
@@ -1155,8 +1196,34 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "limit",
             "max_bytes",
             "cursor",
+            "name_match",
+            "include_count",
+            "compact",
         ],
-        "references" => &["name", "path_prefix", "limit", "max_bytes"],
+        "document_facts" => &[
+            "path",
+            "name",
+            "kind",
+            "language",
+            "path_prefix",
+            "limit",
+            "max_bytes",
+            "cursor",
+            "compact",
+        ],
+        "references" => &[
+            "name",
+            "path_prefix",
+            "language",
+            "evidence_kind",
+            "exclude_path_prefix",
+            "limit",
+            "max_bytes",
+            "cursor",
+            "order",
+            "include_files",
+            "include_count",
+        ],
         "read_file" => &[
             "path",
             "start_line",
@@ -1173,6 +1240,7 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "limit",
             "max_bytes",
             "cursor",
+            "compact",
         ],
         "context" => &[
             "path",
@@ -1201,13 +1269,54 @@ fn fields(tool: &str) -> &'static [&'static str] {
 pub fn operation_catalog() -> Value {
     let operations:Map<String,Value>=TOOLS.iter().map(|tool|{
         let properties:Map<String,Value>=fields(tool).iter().map(|key|{
-            let schema=if matches!(*key,"limit"|"max_bytes"|"start_line"|"end_line"|"line"|"before"|"after"|"hops") {json!({"type":"integer","minimum":if matches!(*key,"before"|"after"){0}else{1},"maximum":numeric_max(key)})}else if *key=="mode" {json!({"type":"string","enum":["lexical","vector","hybrid"]})}else if *key=="direction" {json!({"type":"string","enum":["incoming","outgoing"]})}else{json!({"type":"string","maxLength":4096})};
+            let schema = argument_schema(key);
             (key.to_string(),schema)
         }).collect();
         let required:Vec<&str>=match *tool {"search"=>vec!["query"],"references"=>vec!["name"],"read_file"=>vec!["path","start_line","end_line"],"file_info"|"outline"|"context"=>vec!["path"],"changes"=>vec!["since"],"relationships"=>vec!["symbol"],_=>vec![]};
         (tool.to_string(),json!({"type":"object","additionalProperties":false,"properties":properties,"required":required}))
     }).collect();
     json!({"catalog":CATALOG,"operations":operations,"selectors":["unique_definition_path","hit_locations","selected_symbol_ids"],"recipes":["definition","documents","impact","tests","component","readiness"],"classifier":"candidate suggestions only"})
+}
+
+fn argument_schema(key: &str) -> Value {
+    match key {
+        "limit" | "max_bytes" | "start_line" | "end_line" | "line" | "before" | "after"
+        | "hops" => {
+            json!({"type":"integer","minimum":if matches!(key,"before"|"after"){0}else{1},"maximum":numeric_max(key)})
+        }
+        "include_count" | "include_files" | "compact" => json!({"type":"boolean"}),
+        "mode" => json!({"type":"string","enum":["lexical","vector","hybrid"]}),
+        "direction" => json!({"type":"string","enum":["incoming","outgoing"]}),
+        "name_match" => json!({"type":"string","enum":["exact","suffix","contains"]}),
+        "evidence_kind" => {
+            json!({"type":"string","enum":["code","document","configuration","unknown"]})
+        }
+        "order" => json!({"type":"string","enum":["index","path","code_first"]}),
+        "cursor" => json!({"type":"string","minLength":1,"maxLength":32768}),
+        "language" => json!({"type":"string","minLength":1,"maxLength":128}),
+        "exclude_path_prefix" => json!({"type":"string","minLength":1,"maxLength":4096}),
+        _ => json!({"type":"string","maxLength":4096}),
+    }
+}
+
+fn search_filters(args: &Map<String, Value>) -> Result<SearchFilters> {
+    let filters = SearchFilters {
+        language: args
+            .get("language")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        evidence_kind: args
+            .get("evidence_kind")
+            .cloned()
+            .map(serde_json::from_value)
+            .transpose()?,
+        exclude_path_prefix: args
+            .get("exclude_path_prefix")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    };
+    filters.validate()?;
+    Ok(filters)
 }
 fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
     ensure!(
@@ -1242,11 +1351,14 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
             if key == "hops" {
                 ensure!(n <= 3, "hops exceeds 3");
             }
+        } else if matches!(key.as_str(), "include_count" | "include_files" | "compact") {
+            ensure!(value.is_boolean(), "boolean argument required");
         } else {
             ensure!(
                 value
                     .as_str()
-                    .is_some_and(|s| s.len() <= 4096 && !s.chars().any(char::is_control)),
+                    .is_some_and(|s| s.len() <= (if key == "cursor" { 32768 } else { 4096 })
+                        && !s.chars().any(char::is_control)),
                 "bounded text argument required"
             );
         }
@@ -1257,6 +1369,31 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
                 "path escapes plan scope"
             );
         }
+        if key == "exclude_path_prefix" {
+            ensure!(
+                safe_path(value.as_str().unwrap()),
+                "invalid excluded path prefix"
+            );
+        }
+        if key == "cursor" {
+            ensure!(!value.as_str().unwrap().is_empty(), "cursor is empty");
+        }
+    }
+    if matches!(step.tool.as_str(), "search" | "references") {
+        search_filters(&step.args)?;
+    }
+    if let Some(mode) = step.args.get("name_match") {
+        serde_json::from_value::<airk_core::discovery::NameMatch>(mode.clone())?;
+        ensure!(
+            step.args
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| !name.is_empty()),
+            "name_match requires a nonempty name"
+        );
+    }
+    if let Some(order) = step.args.get("order") {
+        serde_json::from_value::<airk_core::references::ReferenceOrder>(order.clone())?;
     }
     if let Some(mode) = step.args.get("mode") {
         ensure!(
@@ -1324,6 +1461,23 @@ fn digest(plan: &Plan) -> Result<String> {
     let mut value = serde_json::to_value(plan)?;
     value.as_object_mut().unwrap().remove("digest");
     Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(&value)?)))
+}
+
+fn has_revision_bound_symbol_inputs(plan: &Plan) -> bool {
+    plan.steps.iter().any(|step| {
+        ["name", "symbol"].iter().any(|field| {
+            step.args
+                .get(*field)
+                .and_then(Value::as_str)
+                .is_some_and(|value| {
+                    ["syntax:", "scip:", "ctags:", "lsp:"].iter().any(|prefix| {
+                        value
+                            .strip_prefix(prefix)
+                            .is_some_and(|tail| !tail.starts_with(':'))
+                    })
+                })
+        })
+    })
 }
 
 /// Extract rich kernel citations without flattening original document locations.
@@ -1561,6 +1715,25 @@ impl Kernel {
             }
             validate_step(step, &plan.path_prefix, step.bind.is_empty())?;
         }
+        // Syntax/provider IDs are selected under their ORIGINAL publication.
+        // Preparing pasted/saved byte-span IDs must not bless them by attaching
+        // today's token. Fresh binding outputs are absent from literal inputs.
+        let literal_symbols = has_revision_bound_symbol_inputs(&plan);
+        let unfenced_literal_symbols =
+            literal_symbols && plan.publication.as_deref().is_none_or(str::is_empty);
+        if literal_symbols && !unfenced_literal_symbols {
+            plan.publication
+                .as_deref()
+                .expect("checked publication")
+                .parse::<airk_core::identity::RevisionToken>()?;
+        }
+        if unfenced_literal_symbols {
+            choices.push(RequiredInput {
+                field: "publication".into(), step: None,
+                reason: "A literal revision-bound symbol ID needs its original publication. Use Inspect from retained evidence or an explicitly publication-bound plan; preparing an old ID cannot refresh its identity.".into(),
+                choices: vec![],
+            });
+        }
         let expected = request
             .expected_digest
             .or_else(|| (!plan.digest.is_empty()).then(|| plan.digest.clone()));
@@ -1574,7 +1747,7 @@ impl Kernel {
         let mut calls = 0;
         let mut resolution_bytes = 0;
         let mut stale = false;
-        if plan.steps.iter().any(|s| is_evidence(&s.tool)) {
+        if !unfenced_literal_symbols && plan.steps.iter().any(|s| is_evidence(&s.tool)) {
             calls += 1;
             let current =
                 publication(&self.status_summary()?).context("index publication unavailable")?;
@@ -1593,7 +1766,7 @@ impl Kernel {
         }) {
             stale = true;
         }
-        if text_request && !stale {
+        if text_request && !stale && !unfenced_literal_symbols {
             for step in &mut plan.steps {
                 let default_read = step.tool == "read_file"
                     && request
@@ -1766,6 +1939,9 @@ impl Kernel {
         plan.digest = digest(&plan)?;
         let mut result = ResultEnvelope {schema: RESULT_SCHEMA.into(), collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
         result.requires_input.extend(choices);
+        if unfenced_literal_symbols {
+            result.status = "needs_input".into();
+        }
         if request.text.as_deref().is_some_and(|text| {
             !text.trim_start().starts_with('/')
                 && tokens(text).is_ok_and(|words| {
@@ -2021,7 +2197,12 @@ impl Kernel {
                 .get("cursor")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
-            compact: false,
+            // Omission retains the original Workbench rich representation;
+            // compact is an explicit choice, independent of MCP defaults.
+            compact: args
+                .get("compact")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             minimal: false,
         };
         let evidence: EvidenceReadOptions = serde_json::from_value(
@@ -2044,12 +2225,12 @@ impl Kernel {
                 value
             }
             "help" => {
-                json!({"commands":"/search /symbols /refs /read /outline /files /info /imports /facts /changes --since /status /diagnostics /capabilities /context /relationships /help","recipes":["definition","documents","impact","tests","component","readiness"],"parser":"deterministic rules; unsupported phrasing returns needs_input"})
+                json!({"commands":"/search /symbols /code-facts /refs /read /outline /files /info /imports /facts /changes --since /status /diagnostics /capabilities /context /relationships /help","recipes":["definition","documents","impact","tests","component","readiness"],"parser":"deterministic rules; unsupported phrasing returns needs_input","navigation_options":"search/refs: --language, --evidence-kind, --exclude-path-prefix; symbols/imports/code-facts: --name-match, --include-count; refs: --cursor, --order, --include-files, --include-count; fact reads/outline: --compact. Boolean flags accept optional true/false. Workbench compact omission keeps rich facts; MCP compact discovery has its own default."})
             }
             "capabilities" => {
                 json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog()})
             }
-            "search" => serde_json::to_value(self.search_response(
+            "search" => serde_json::to_value(self.search_response_with_navigation(
                 &SearchQuery {
                     text: string(args, "query")?.into(),
                     path_prefix: Some(prefix.into()),
@@ -2063,6 +2244,7 @@ impl Kernel {
                     _ => crate::current::CurrentSearchMode::Default,
                 },
                 Some(768),
+                &search_filters(args)?,
             )?)?,
             "list_files" => serde_json::to_value(self.list_files_page(
                 args.get("prefix").and_then(Value::as_str).unwrap_or(""),
@@ -2071,7 +2253,49 @@ impl Kernel {
                 &options,
             )?)?,
             "references" => {
-                serde_json::to_value(self.references(string(args, "name")?, prefix, limit, max)?)?
+                let filters = search_filters(args)?;
+                let include_files = args
+                    .get("include_files")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let include_count = args
+                    .get("include_count")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if args.get("cursor").is_none()
+                    && args.get("order").is_none()
+                    && !include_files
+                    && !include_count
+                    && filters.is_empty()
+                {
+                    serde_json::to_value(self.references(
+                        string(args, "name")?,
+                        prefix,
+                        limit,
+                        max,
+                    )?)?
+                } else {
+                    serde_json::to_value(
+                        self.references_page(
+                            string(args, "name")?,
+                            prefix,
+                            limit,
+                            max,
+                            &ReferenceOptions {
+                                cursor: options.cursor.clone(),
+                                order: args
+                                    .get("order")
+                                    .cloned()
+                                    .map(serde_json::from_value)
+                                    .transpose()?
+                                    .unwrap_or_default(),
+                                include_files,
+                                include_count,
+                                filters,
+                            },
+                        )?,
+                    )?
+                }
             }
             "read_file" => serde_json::to_value(self.read_file_conditional(
                 string(args, "path")?,
@@ -2121,10 +2345,21 @@ impl Kernel {
                     path_exact: args.contains_key("path"),
                     document_only: tool == "document_facts",
                 };
+                let matching = FactDiscoveryOptions {
+                    name_match: args
+                        .get("name_match")
+                        .cloned()
+                        .map(serde_json::from_value)
+                        .transpose()?,
+                    include_count: args
+                        .get("include_count")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                };
                 serde_json::to_value(if tool == "code_facts" {
-                    self.code_facts_page(&query, &options)?
+                    self.code_facts_page_with_options(&query, &options, &matching)?
                 } else {
-                    self.facts_page(&query, &options)?
+                    self.facts_page_with_options(&query, &options, &matching)?
                 })?
             }
             "changes" => {
@@ -2225,6 +2460,472 @@ fn expand(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn navigation_catalog_and_slash_options_use_the_same_typed_validation() -> Result<()> {
+        let catalog = operation_catalog();
+        assert_eq!(
+            catalog["operations"]["symbols"]["properties"]["include_count"]["type"],
+            "boolean"
+        );
+        for tool in [
+            "symbols",
+            "imports",
+            "code_facts",
+            "document_facts",
+            "outline",
+        ] {
+            assert_eq!(
+                catalog["operations"][tool]["properties"]["compact"]["type"],
+                "boolean"
+            );
+        }
+        assert_eq!(
+            catalog["operations"]["references"]["properties"]["include_files"]["type"],
+            "boolean"
+        );
+        assert_eq!(
+            catalog["operations"]["references"]["properties"]["order"]["enum"],
+            json!(["index", "path", "code_first"])
+        );
+        assert_eq!(
+            catalog["operations"]["search"]["properties"]["evidence_kind"]["enum"],
+            json!(["code", "document", "configuration", "unknown"])
+        );
+        assert_eq!(
+            catalog["operations"]["symbols"]["properties"]["name_match"]["enum"],
+            json!(["exact", "suffix", "contains"])
+        );
+        assert!(
+            catalog["operations"]["document_facts"]["properties"]
+                .get("name_match")
+                .is_none()
+        );
+        for text in [
+            "/search Session --mode lexical --language rust --evidence-kind code --exclude-path-prefix docs/",
+            "/symbols Session --name-match suffix --include-count --compact",
+            "/code-facts Session --name-match contains --include-count true --kind definition",
+            "/imports Session --name-match exact --include-count false",
+            "/refs Session --language rust --evidence-kind code --exclude-path-prefix docs/ --order path --include-files --include-count",
+            "/outline src/session.rs --compact false",
+        ] {
+            let (steps, needs) = parse_text(text)?;
+            assert!(needs.is_empty(), "{text}: {needs:?}");
+            validate_step(&steps[0], "", true)?;
+        }
+        let (steps, _) = parse_text("/symbols Session --include-count false")?;
+        assert_eq!(steps[0].args["include_count"], false);
+        let (steps, _) = parse_text("/symbols --include-count Session")?;
+        assert_eq!(steps[0].args["include_count"], true);
+        assert_eq!(steps[0].args["name"], "Session");
+        for (tool, args) in [
+            ("symbols", json!({"name":"Session","include_count":"true"})),
+            ("symbols", json!({"name":"Session","compact":"true"})),
+            ("search", json!({"query":"Session","compact":true})),
+            ("symbols", json!({"name":"Session","name_match":"regex"})),
+            ("symbols", json!({"name_match":"suffix"})),
+            ("references", json!({"name":"Session","order":"score"})),
+            ("references", json!({"name":"Session","include_files":1})),
+            ("search", json!({"query":"Session","language":""})),
+            (
+                "search",
+                json!({"query":"Session","evidence_kind":"source"}),
+            ),
+            (
+                "search",
+                json!({"query":"Session","exclude_path_prefix":"../outside"}),
+            ),
+            (
+                "document_facts",
+                json!({"name":"Session","name_match":"suffix"}),
+            ),
+        ] {
+            assert!(
+                validate_step(&step("query", tool, args), "", true).is_err(),
+                "{tool}"
+            );
+        }
+        let within = step(
+            "query",
+            "search",
+            json!({
+                "query":"Session","path_prefix":"src/","exclude_path_prefix":"docs/"
+            }),
+        );
+        validate_step(&within, "src/", true)?;
+        let outside = step(
+            "query",
+            "search",
+            json!({"query":"Session","path_prefix":""}),
+        );
+        assert!(validate_step(&outside, "src/", true).is_err());
+        assert!(parse_text("/search Session --language --include-count").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn workbench_compact_discovery_keeps_ids_for_bindings_and_omitted_mode_rich() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("session.rs"), "pub struct Session;\n")?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let rich = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","text":"/symbols Session"
+        }))?)?;
+        assert!(
+            rich.steps[0].result.as_ref().context("rich result")?["facts"]
+                .as_array()
+                .context("rich facts")?
+                .iter()
+                .any(|fact| fact["code"]["symbol_id"].is_string())
+        );
+        let prepared = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"prepare","plan":{"steps":[
+                {"id":"find","tool":"symbols","args":{"name":"Session","compact":true}},
+                {"id":"links","tool":"relationships","args":{"direction":"incoming"},
+                    "bind":[{"arg":"symbol","from":"find","select":"selected_symbol_ids"}]}
+            ]}
+        }))?)?;
+        assert!(!prepared.executed);
+        assert_eq!(prepared.plan.steps[0].args["compact"], true);
+        let run = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","plan":prepared.plan
+        }))?)?;
+        assert!(run.executed);
+        for report in &run.steps {
+            assert_eq!(report.status, "complete", "{report:?}");
+        }
+        let compact = run.steps[0].result.as_ref().context("compact result")?;
+        assert!(
+            compact["facts"]
+                .as_array()
+                .context("rich facts absent")?
+                .is_empty()
+        );
+        let symbol = compact["outline"][0]["symbol_id"]
+            .as_str()
+            .context("compact symbol ID")?;
+        assert_eq!(run.steps[1].arguments["symbol"], symbol);
+        assert_eq!(rich.publication, run.publication);
+        assert!(run.payload_bytes <= run.plan.budgets.max_bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn preparing_literal_symbol_ids_never_assigns_a_new_publication_or_rebinds_old_spans()
+    -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("session.rs"), "pub struct First;\n")?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let query = FactQuery {
+            path_prefix: "session.rs".into(),
+            path_exact: true,
+            name: Some("First".into()),
+            kind: Some("definition".into()),
+            language: None,
+            exact_name: true,
+            limit: 100,
+            max_bytes: 65536,
+            document_only: false,
+        };
+        let first = kernel.code_facts(&query)?;
+        let id = first.facts[0]
+            .code
+            .as_ref()
+            .context("original symbol")?
+            .symbol_id
+            .clone();
+        let publication = first
+            .publication
+            .context("original publication")?
+            .token
+            .to_string();
+        let literal = json!({"steps":[{"id":"inspect","tool":"symbols","args":{"name":id,"path":"session.rs"}}]});
+        for mode in ["prepare", "execute"] {
+            let result = kernel.evidence_plan(serde_json::from_value(json!({
+                "schema":REQUEST_SCHEMA,"mode":mode,"plan":literal,
+            }))?)?;
+            assert!(!result.executed);
+            assert_eq!(result.status, "needs_input");
+            assert_eq!(result.calls, 0);
+            assert!(result.publication.is_none() && result.plan.publication.is_none());
+            assert_eq!(result.plan.steps[0].args["name"], id);
+            let replay = kernel.evidence_plan(serde_json::from_value(json!({
+                "schema":REQUEST_SCHEMA,"mode":"execute","plan":result.plan,
+            }))?)?;
+            assert!(!replay.executed && replay.plan.publication.is_none());
+            assert_eq!(replay.calls, 0);
+        }
+        for mode in ["prepare", "execute"] {
+            let result = kernel.evidence_plan(serde_json::from_value(json!({
+                "schema":REQUEST_SCHEMA,"mode":mode,"text":format!("/symbols {id}"),
+            }))?)?;
+            assert_eq!(result.status, "needs_input");
+            assert!(!result.executed && result.plan.publication.is_none());
+            assert_eq!(
+                result.calls, 0,
+                "parsing an old ID cannot query or bless the current index"
+            );
+        }
+        let pinned = json!({"publication":publication,"steps":[{"id":"inspect","tool":"symbols","args":{"name":id,"path":"session.rs"}}]});
+        let current = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","plan":pinned,
+        }))?)?;
+        assert!(current.executed);
+        assert_eq!(
+            current.steps[0].result.as_ref().context("pinned result")?["facts"][0]["name"],
+            "First"
+        );
+        // Equal-length replacement deliberately reuses the literal byte-span ID.
+        // Only the original publication keeps it from silently naming Other.
+        std::fs::write(root.join("session.rs"), "pub struct Other;\n")?;
+        kernel.index()?;
+        let mut changed_query = query;
+        changed_query.name = Some("Other".into());
+        assert_eq!(
+            kernel.code_facts(&changed_query)?.facts[0]
+                .code
+                .as_ref()
+                .unwrap()
+                .symbol_id,
+            id
+        );
+        let stale = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","plan":pinned,
+        }))?)?;
+        assert_eq!(stale.status, "publication_changed");
+        assert!(!stale.executed);
+        assert_eq!(
+            stale.plan.publication.as_deref(),
+            Some(publication.as_str())
+        );
+        let ordinary = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","text":"/symbols Other",
+        }))?)?;
+        assert!(ordinary.executed);
+        Ok(())
+    }
+
+    #[test]
+    fn workbench_executes_navigation_options_and_preserves_metadata_in_exports() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("docs"))?;
+        std::fs::write(
+            root.join("src/session.rs"),
+            "pub struct Session;\nimpl Session { pub fn new() -> Self { Self } }\n\
+             pub struct OwnerSession;\npub fn open() { let _ = Session::new(); }\n",
+        )?;
+        std::fs::write(
+            root.join("docs/guide.md"),
+            "# Session\nSession is written here too.\n",
+        )?;
+        // A pointer's file must remain exact, even when other indexed paths
+        // share its entire prefix and declare the same written name.
+        std::fs::write(root.join("src/session.rs.other"), "pub struct Session;\n")?;
+        std::fs::write(
+            root.join("src/session.rs.other.rs"),
+            "pub struct Session;\n",
+        )?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let declarations = kernel.code_facts(&FactQuery {
+            path_prefix: "src/session.rs".into(),
+            path_exact: true,
+            name: Some("Session".into()),
+            kind: Some("definition".into()),
+            language: None,
+            exact_name: true,
+            limit: 100,
+            max_bytes: 65536,
+            document_only: false,
+        })?;
+        let type_id = declarations
+            .facts
+            .iter()
+            .find(|fact| fact.syntax_kind == "struct_item")
+            .and_then(|fact| fact.code.as_ref())
+            .context("Session struct declaration")?
+            .symbol_id
+            .clone();
+        // The literal relationship ID was discovered under this publication;
+        // preparing the composite plan must retain that original fence.
+        let discovered_publication = declarations
+            .publication
+            .as_ref()
+            .context("declaration publication")?
+            .token
+            .to_string();
+        let symbols = json!({"name":"Session","name_match":"suffix","include_count":true});
+        let refs = json!({"name":"Session","language":"rust","evidence_kind":"code", "exclude_path_prefix":"docs/", "order":"path","include_files":true,"include_count":true,"limit":1});
+        let prepared = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"prepare","plan":{"path_prefix":"src/","publication":discovered_publication,"steps":[
+                {"id":"find","tool":"search","args":{"query":"Session","mode":"lexical","language":"rust","evidence_kind":"code","exclude_path_prefix":"docs/"}},
+                {"id":"types","tool":"symbols","args":symbols},
+                {"id":"facts","tool":"code_facts","args":{"name":"OwnerSession","name_match":"exact","include_count":true}},
+                {"id":"uses","tool":"references","args":refs},
+                {"id":"methods","tool":"relationships","args":{"symbol":type_id,"direction":"incoming"}}
+            ]}
+        }))?)?;
+        assert!(!prepared.executed);
+        assert_eq!(
+            prepared.plan.publication.as_deref(),
+            Some(discovered_publication.as_str())
+        );
+        assert_eq!(prepared.plan.steps[1].args["name_match"], "suffix");
+        assert_eq!(prepared.plan.steps[3].args["include_files"], true);
+        let executed = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","plan":prepared.plan
+        }))?)?;
+        assert!(executed.executed);
+        for report in &executed.steps {
+            assert_eq!(report.status, "complete", "{report:?}");
+        }
+        assert!(executed.calls <= executed.plan.budgets.calls);
+        assert!(executed.payload_bytes <= executed.plan.budgets.max_bytes);
+        let find = executed.steps[0].result.as_ref().context("search result")?;
+        assert!(
+            find["hits"]
+                .as_array()
+                .context("search hits")?
+                .iter()
+                .all(|hit| hit["citation"]["path"]
+                    .as_str()
+                    .is_some_and(|path| path.starts_with("src/")))
+        );
+        assert!(
+            !find["definitions"]
+                .as_array()
+                .context("automatic definition hints")?
+                .is_empty()
+        );
+        let pointer = find["definitions"][0]["matches"]
+            .as_array()
+            .context("retained definition pointers")?
+            .iter()
+            .find(|pointer| pointer["citation"]["path"] == "src/session.rs")
+            .context("exact session pointer")?;
+        let pointer_path = pointer["citation"]["path"]
+            .as_str()
+            .context("pointer path")?;
+        let pointer_id = pointer["symbol_id"].as_str().context("pointer symbol ID")?;
+        // The UI's Inspect action deliberately sends a symbol ID as `name`
+        // together with the exact `path`, original scope and publication.
+        let inspect = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"prepare","plan":{
+                "schema":PLAN_SCHEMA,"publication":executed.publication,
+                "collection":executed.plan.collection,"path_prefix":executed.plan.path_prefix,
+                "steps":[{"id":"followup","tool":"symbols","args":{"name":pointer_id,"path":pointer_path}}]
+            }
+        }))?)?;
+        assert!(!inspect.executed);
+        assert_eq!(inspect.plan.steps[0].args["path"], pointer_path);
+        assert_eq!(inspect.plan.publication, executed.publication);
+        let inspected = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","plan":inspect.plan
+        }))?)?;
+        assert_eq!(
+            inspected.steps[0].status, "complete",
+            "{:?}",
+            inspected.steps[0]
+        );
+        assert_eq!(inspected.publication, executed.publication);
+        let inspected_facts = inspected.steps[0]
+            .result
+            .as_ref()
+            .context("inspection result")?["facts"]
+            .as_array()
+            .context("inspected facts")?;
+        assert_eq!(inspected_facts.len(), 1);
+        assert!(
+            inspected_facts
+                .iter()
+                .all(|fact| fact["citation"]["path"] == pointer_path
+                    && fact["code"]["symbol_id"] == pointer_id)
+        );
+        let types = executed.steps[1].result.as_ref().context("symbol result")?;
+        assert!(
+            types["facts"]
+                .as_array()
+                .context("facts")?
+                .iter()
+                .any(|fact| fact["name"] == "OwnerSession")
+        );
+        assert_eq!(types["match_count"]["scope"], "query");
+        let facts = executed.steps[2]
+            .result
+            .as_ref()
+            .context("code fact result")?;
+        assert_eq!(facts["facts"][0]["name"], "OwnerSession");
+        let uses = executed.steps[3]
+            .result
+            .as_ref()
+            .context("reference result")?;
+        assert_eq!(uses["page"]["count_unit"], "matching_lines");
+        assert!(
+            !uses["page"]["files"]
+                .as_array()
+                .context("file summaries")?
+                .is_empty()
+        );
+        let cursor = uses["page"]["cursor"]
+            .as_str()
+            .context("reference continuation")?;
+        assert_eq!(uses["page"]["match_count"]["total_matches"], Value::Null);
+        let methods = executed.steps[4]
+            .result
+            .as_ref()
+            .context("relationship result")?;
+        assert!(
+            methods["relationships"]
+                .as_array()
+                .context("incoming relationships")?
+                .is_empty()
+        );
+        assert!(
+            methods["suggested_targets"]
+                .as_array()
+                .context("declared target suggestions")?
+                .iter()
+                .any(|suggestion| suggestion["target"] == "Session::new"
+                    && suggestion["resolution"] == "syntax_candidate")
+        );
+        let mut continued_args = refs.as_object().unwrap().clone();
+        continued_args.insert("cursor".into(), json!(cursor));
+        let continued = kernel.evidence_plan(serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","plan":{"path_prefix":"src/","steps":[
+                {"id":"uses","tool":"references","args":continued_args}
+            ]}
+        }))?)?;
+        let next = continued.steps[0]
+            .result
+            .as_ref()
+            .context("continued result")?;
+        assert_ne!(
+            uses["evidence"]["hits"][0]["citation"],
+            next["evidence"]["hits"][0]["citation"]
+        );
+        let export = serde_json::to_value(&executed)?;
+        assert_eq!(
+            export["steps"][0]["result"]["definitions"],
+            find["definitions"]
+        );
+        assert_eq!(export["steps"][3]["result"]["page"], uses["page"]);
+        assert_eq!(
+            export["steps"][4]["result"]["suggested_targets"],
+            methods["suggested_targets"]
+        );
+        Ok(())
+    }
 
     fn role_inventory_plan_report(source: &str) -> Result<Value> {
         let inventory: Value = serde_json::from_str(source)?;

@@ -1,5 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
+
+#[test]
+fn parallel_manifest_readers_exclude_replacement_until_every_reader_releases() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let mut readers = Vec::new();
+    for _ in 0..64 {
+        readers.push(super::super::acquire_shared_file(
+            root.path(),
+            "manifest.lock",
+        )?);
+    }
+    assert!(acquire_file(root.path(), "manifest.lock").is_err());
+    while readers.len() > 1 {
+        drop(readers.pop());
+    }
+    assert!(acquire_file(root.path(), "manifest.lock").is_err());
+    drop(readers);
+    drop(acquire_file(root.path(), "manifest.lock")?);
+    let writer = acquire_file(root.path(), "manifest.lock")?;
+    assert!(super::super::acquire_shared_file(root.path(), "manifest.lock").is_err());
+    drop(writer);
+    Ok(())
+}
 use crate::current::{CurrentHead, CurrentScope, lexical::LexicalManifest, map};
 #[cfg(windows)]
 use crate::service::ProjectLease;
@@ -3427,6 +3450,7 @@ fn native_failed_clean_commit_leaves_active_and_public_reset_cannot_erase_it() -
 }
 
 // Actual producer layout: no chmod, ACL rewrite or private-root test helper.
+#[cfg(any(windows, target_os = "linux"))]
 fn native_default_boundary_fixture() -> Result<IntegrityFixture> {
     native_layout_fixture(false)
 }
@@ -3435,6 +3459,7 @@ fn native_state_fixture() -> Result<IntegrityFixture> {
     native_layout_fixture(true)
 }
 // Controlled lifecycle fixtures are not evidence of default-install eligibility.
+#[cfg(any(windows, target_os = "linux"))]
 fn native_layout_fixture(controlled_private: bool) -> Result<IntegrityFixture> {
     use crate::service::{ProjectLease, data_scope, registry::ServiceRegistry};
     let temporary = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
@@ -3476,6 +3501,7 @@ fn native_layout_fixture(controlled_private: bool) -> Result<IntegrityFixture> {
     registry.admit_worker(&mut lease)?;
     Ok((temporary, collection, registry, bound, lease, store, scope))
 }
+#[cfg(any(windows, target_os = "linux"))]
 fn assert_native_default_producer_boundary() -> Result<()> {
     let (_temp, collection, mut registry, bound, lease, store, scope) =
         native_default_boundary_fixture()?;

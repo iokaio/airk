@@ -44,6 +44,12 @@ pub(crate) fn acquire_existing_file(root: &Path, name: &str) -> Result<Ownership
     acquire_file_mode(root, name, std::time::Duration::ZERO, false)
 }
 
+pub(crate) fn acquire_shared_file(root: &Path, name: &str) -> Result<OwnershipFile> {
+    let file = open_ownership_file(root, name, true)?;
+    file.try_lock_shared()?;
+    Ok(OwnershipFile(file, AtomicBool::new(false)))
+}
+
 fn acquire_file_mode(
     root: &Path,
     name: &str,

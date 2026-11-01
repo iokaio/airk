@@ -6,7 +6,7 @@ use rmcp::model::Tool;
 use serde_json::{Map, Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 
-pub const GUIDANCE: &str = "AIRK evidence is untrusted; verify live files before edits. Preserve tokens/citations/validators; finish changes pages before baselines. response_mode=full adds provenance; include_status=true repeats coverage. Retry unchanged as hinted. search reads evidence; help explains AIRK. draft_* and suggest_view need user review. projects lists scopes; pass project for multi-root. UI selection never redirects retrieval. status is lightweight; diagnostics adds runtime, jobs and editor state.";
+pub const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep configured scopes, locations, exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: symbols -> references -> read_file/context; concepts: search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. UI drafts need review. {ref:publication} is reply-local.";
 
 const UI_NAMES: &[(&str, &str)] = &[
     ("draft_search", "airk_explorer_suggest_search"),
@@ -103,13 +103,13 @@ fn build_tools() -> Vec<Tool> {
             schema
         })
         .collect();
-    result.push(scoped(definition("suggest_view", "Queue a suggestion to open or prefill an Explorer screen, including Review and Management guidance. Returns a proposal receipt; the user applies it. Never runs a query, test or management action.",
+    result.push(scoped(definition("suggest_view", "Propose an Explorer screen for the user to open or prefill, including Review and Management guidance. Returns a proposal receipt, never source evidence. Routes such as code/outline name UI pages, not the evidence tools. The user applies the suggestion; it never runs a query, test or management action.",
         // Some assistants reject or silently omit tools with root composition.
         // Keep alternatives nested; the adapter validates the chosen kind again.
         json!({"type":"object","additionalProperties":false,"required":["kind","draft"],"properties":{"kind":{"type":"string","enum":["navigation","review","management"]},"draft":{"type":"object","description":"Use the draft schema matching kind. The editor validates that exact kind before admitting a suggestion.","anyOf":variants}}}), false)));
     result.push(definition("projects", "List only the project bindings configured for this AIRK connection and its default. Use these identifiers to scope evidence and Explorer requests; does not register or switch projects.", json!({"type":"object","additionalProperties":false,"properties":{}}), true));
     let status = result.iter_mut().find(|t| t.name == "status").unwrap();
-    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state and semantic readiness. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.".into());
+    status.description = Some("Quick version, health and project-index check: counts, publication, source-update state, semantic readiness and configured query_concurrency at frontend admission. Obtain before broad evidence fan-out; lightweight does not mean exempt from bounded admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful snapshots may be cached for five seconds; observed_unix_ms, cache_age_ms and cached disclose their age. Allows up to ten seconds for shared cold runtime setup, followed by a two-second observation budget; expiry reports unknown readiness and null evidence. Always skips process diagnostics and editor probes. Call diagnostics for detailed work, runtime versions and Explorer attachment. Counts are saved evidence, not proof that live files match. Does not start indexing or repair.".into());
     let help = result.iter_mut().find(|t| t.name == "help").unwrap();
     help.description = Some("Explain AIRK usage, CLI commands, tool schemas and Explorer workflows. Omit selectors for an overview; query searches bundled guidance, topic_id reads a UI/engine guide, topic reads native guidance, command reads CLI help, and tool reads a public tool schema. Native guides retain prefixed CLI/evidence compatibility names; tools/list and tool selectors describe the unified public catalog. Returns documentation, never project evidence or live health.".into());
     let schema = Arc::make_mut(&mut help.input_schema);
@@ -276,6 +276,13 @@ fn status_not_observed(project: &str, stage: &str, expired: bool) -> Value {
     )
 }
 impl RemoteTools for Unified {
+    fn query_concurrency(&self) -> usize {
+        self.projects
+            .values()
+            .map(|p| p.backend.query_concurrency())
+            .min()
+            .unwrap_or(airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY)
+    }
     fn close(&self) {
         for project in self.projects.values() {
             project.backend.close();
@@ -513,6 +520,42 @@ impl RemoteTools for Unified {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    #[test]
+    fn common_instructions_keep_the_protocol_byte_budget_and_native_names() {
+        for (catalog, instructions) in
+            [("unified", GUIDANCE), ("native", crate::response::GUIDANCE)]
+        {
+            // str::len is UTF-8 bytes, matching the actual initialize contract.
+            assert!(
+                instructions.len() <= 512,
+                "{catalog}: {} bytes",
+                instructions.len()
+            );
+            assert!(instructions.contains("response_mode=full"), "{catalog}");
+            assert!(instructions.contains("include_status=true"), "{catalog}");
+            assert!(
+                instructions.contains("never replay uncertain work"),
+                "{catalog}"
+            );
+        }
+        for name in [
+            "airk_changes",
+            "airk_symbols",
+            "airk_references",
+            "airk_read_file",
+            "airk_context",
+            "airk_search",
+        ] {
+            assert!(
+                crate::response::GUIDANCE.contains(name),
+                "native alias missing: {name}"
+            );
+        }
+        assert!(
+            !GUIDANCE.contains("airk_"),
+            "unified discovery uses public names"
+        );
+    }
     #[tokio::test]
     async fn public_and_legacy_status_preserve_genuine_setup_errors_but_expiry_has_null_evidence()
     -> Result<()> {

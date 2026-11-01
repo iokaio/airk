@@ -103,6 +103,18 @@ pub struct RelationshipQuery {
     pub max_bytes: usize,
 }
 
+/// A declared method spelling to investigate next, not a resolved call target.
+/// The declaration's citation and symbol ID retain its exact indexed identity.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RelationshipTargetSuggestion {
+    pub target: String,
+    pub symbol_id: String,
+    pub citation: Citation,
+    pub resolution: String,
+    pub basis: EvidenceBasis,
+    pub coverage: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct RelationshipsResponse {
     #[serde(default)]
@@ -112,6 +124,8 @@ pub struct RelationshipsResponse {
     pub generation: u64,
     pub collection: String,
     pub relationships: Vec<RelationshipHit>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub suggested_targets: Vec<RelationshipTargetSuggestion>,
     pub truncated: bool,
     pub coverage: String,
 }

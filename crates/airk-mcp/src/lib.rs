@@ -19,8 +19,13 @@ use response::ResponseArgs;
 pub mod explorer_offline;
 pub mod help;
 pub mod local;
+pub mod query_capacity;
 pub mod remote;
 pub mod unified;
+
+#[cfg(test)]
+#[path = "optimization_tests.rs"]
+mod optimization_tests;
 
 #[cfg(test)]
 mod workbench_tests {
@@ -181,6 +186,12 @@ pub struct SearchArgs {
     pub semantic: bool,
     /// Optional literal collection-relative path prefix, not a glob.
     pub path_prefix: Option<String>,
+    /// Exact indexed extraction-language/profile label, as reported by airk_file_info.
+    pub language: Option<String>,
+    /// Indexed evidence category, based on extraction metadata rather than filename suffix.
+    pub evidence_kind: Option<EvidenceKind>,
+    /// Optional literal collection-relative prefix to exclude; does not change source authorization.
+    pub exclude_path_prefix: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default = "default_budget")]
@@ -196,6 +207,44 @@ pub enum SearchMode {
     Lexical,
     Vector,
     Hybrid,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceKind {
+    Code,
+    Document,
+    Configuration,
+    Unknown,
+}
+
+impl From<EvidenceKind> for airk_core::EvidenceKind {
+    fn from(value: EvidenceKind) -> Self {
+        match value {
+            EvidenceKind::Code => Self::Code,
+            EvidenceKind::Document => Self::Document,
+            EvidenceKind::Configuration => Self::Configuration,
+            EvidenceKind::Unknown => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NameMatch {
+    Exact,
+    Suffix,
+    Contains,
+}
+
+impl From<NameMatch> for airk_core::discovery::NameMatch {
+    fn from(value: NameMatch) -> Self {
+        match value {
+            NameMatch::Exact => Self::Exact,
+            NameMatch::Suffix => Self::Suffix,
+            NameMatch::Contains => Self::Contains,
+        }
+    }
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -280,8 +329,13 @@ pub struct FactArgs {
     /// Literal collection-relative path prefix, not a glob. Empty searches the active collection.
     #[serde(default)]
     pub path_prefix: String,
-    /// Definition name for symbols (exact); name substring for imports/document facts. Omit to list.
+    /// Definition name for symbols (exact by default); imports use case-insensitive substring by default. Omit to list.
     pub name: Option<String>,
+    /// Explicit case-sensitive matching of simple/qualified names. Omit for this tool's existing default.
+    pub name_match: Option<NameMatch>,
+    /// Request bounded count precision; an incomplete scan never supplies a fabricated total.
+    #[serde(default)]
+    pub include_count: bool,
     /// Optional indexed language/profile label; obtain the label from airk_file_info.
     pub language: Option<String>,
     #[serde(default = "default_limit")]
@@ -341,10 +395,44 @@ pub struct ReferenceArgs {
     pub name: String,
     #[serde(default)]
     pub path_prefix: String,
+    /// Exact indexed extraction-language/profile label.
+    pub language: Option<String>,
+    /// Indexed extraction category, not a filename-extension guess.
+    pub evidence_kind: Option<EvidenceKind>,
+    /// Literal indexed relative prefix to exclude from candidate selection.
+    pub exclude_path_prefix: Option<String>,
+    /// Continuation from references; repeat the same filters and ordering.
+    pub cursor: Option<String>,
+    /// Explicit bounded reference ordering; omit to preserve the legacy index order.
+    pub order: Option<ReferenceOrder>,
+    /// Include a bounded summary of matching lines per file from this page's scanned scope.
+    #[serde(default)]
+    pub include_files: bool,
+    /// Include count precision; incomplete scans report a lower bound, never a guessed full total.
+    #[serde(default)]
+    pub include_count: bool,
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default = "default_budget")]
     pub max_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReferenceOrder {
+    Index,
+    Path,
+    CodeFirst,
+}
+
+impl From<ReferenceOrder> for airk_core::references::ReferenceOrder {
+    fn from(value: ReferenceOrder) -> Self {
+        match value {
+            ReferenceOrder::Index => Self::Index,
+            ReferenceOrder::Path => Self::Path,
+            ReferenceOrder::CodeFirst => Self::CodeFirst,
+        }
+    }
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -382,6 +470,11 @@ pub struct CodeFactArgs {
     pub symbol_key: Option<String>,
     /// Exact written name, qualified name, symbol_id or terminal native call method name; case-sensitive. Omit to list.
     pub name: Option<String>,
+    /// Exact by default; suffix/contains match simple/qualified names case-sensitively, never symbol-ID substrings.
+    pub name_match: Option<NameMatch>,
+    /// Request bounded count precision; exact totals are returned only for a complete matching scan.
+    #[serde(default)]
+    pub include_count: bool,
     /// Exact category: definition, import, call, inherits, reference, route_registration, route_annotation, database_call, dependency_injection, test_registration, test_declaration or exception_handler.
     pub kind: Option<String>,
     pub language: Option<String>,
@@ -426,7 +519,7 @@ fn continuity_selector(
     };
     anyhow::ensure!(
         !has_filters,
-        "a continuity key cannot be combined with name, kind, language or path filters"
+        "a continuity key cannot be combined with name, kind, language, path, matching, count or continuation options"
     );
     Ok(Some(if symbol {
         airk_core::continuity::ContinuityKey::Symbol(key.parse()?)
@@ -505,7 +598,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_code_facts",
-        description = "Retrieve compact code evidence by exact name (including terminal native call method names), qualified name, symbol ID, or a durable symbol_key exclusive of textual filters. Includes scopes, signatures and written types, call/framework candidates, and optional hash-bound SCIP producer assertions. Check code.basis/coverage; syntax does not resolve targets or establish runtime behavior. Use symbol IDs with airk_relationships. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Retrieve code facts when definition navigation needs signatures, scopes, written types, call/framework candidates or symbol IDs for airk_relationships. Exact name is default, including qualified names and terminal native call method names; name_match=suffix/contains explicitly broadens case-sensitive simple/qualified names. A durable symbol_key is exclusive of filters, matching and count options. Compact discovery is the default under Agent Lean; expand selected candidates with compact=false. Cursors bind the exact query/publication; include_count reports bounded precision, not a guessed total. Check basis/coverage; native syntax and optional source-bound producer assertions do not prove resolved calls or runtime behavior. Use response_mode=full for provenance/coverage audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -522,6 +615,8 @@ impl AirkServer {
                 args.symbol_key.as_deref(),
                 true,
                 args.name.is_some()
+                    || args.name_match.is_some()
+                    || args.include_count
                     || args.kind.is_some()
                     || args.language.is_some()
                     || !args.path_prefix.is_empty()
@@ -529,7 +624,7 @@ impl AirkServer {
             )? {
                 return kernel.continuity_facts(key, args.limit, args.max_bytes);
             }
-            kernel.code_facts_page(
+            kernel.code_facts_page_with_options(
                 &FactQuery {
                     path_prefix: args.path_prefix,
                     name: args.name,
@@ -546,6 +641,10 @@ impl AirkServer {
                     cursor: args.cursor,
                     compact,
                 },
+                &airk_core::discovery::FactDiscoveryOptions {
+                    name_match: args.name_match.map(Into::into),
+                    include_count: args.include_count,
+                },
             )
         })
         .await
@@ -553,7 +652,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_relationships",
-        description = "Investigate available structural links and candidate impact through incoming/outgoing edges, scoped paths and 1..3 hops. Agent Lean and Rich Structure retain supported call occurrences, but written syntax targets remain unresolved candidates; SCIP assertions are not calls. Check coverage; absent edges do not prove no impact. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Investigate bounded incoming/outgoing structural candidates with path scope and 1..3 hops. Written targets such as Type::new or obj.method identify textual caller candidates; a struct symbol ID alone does not prove a complete caller set. Verified type/method suggestions, when available, are navigation candidates rather than resolved associations. Agent Lean/Rich Structure retain supported calls; SCIP assertions are not calls. Check coverage and truncation: absent edges never prove no impact. Use response_mode=full for provenance/coverage audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -584,7 +683,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_search",
-        description = "Find code or documents. Use path_prefix when the question concerns one project or component; a relevant document does not prove application behavior. Omitted mode uses hybrid, or lexical after vector opt-out. Lexical uses AND terms; vector/hybrid need an indexed local model. semantic=true aliases vector. Results default to focused snippets with exact citations; full_chunks requests complete indexed chunks. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Find concepts, code or documents; prose/comments and source can rank together. For a named type/function, prefer airk_symbols first, scoped airk_references for textual uses, then bounded airk_read_file; search supplements that investigation. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode retains saved hybrid/vector policy; explicit lexical uses AND terms. Vector/hybrid need the indexed local model. semantic=true aliases vector. Bounded native-definition pointers may accompany identifiers without changing ranking. Focused cited snippets are default; full_chunks requests whole indexed chunks. Check readiness/truncation and use response_mode=full for provenance audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -611,7 +710,16 @@ impl AirkServer {
                 None if args.semantic => CurrentSearchMode::Vector,
                 None => CurrentSearchMode::Default,
             };
-            kernel.search_response(&query, mode, (!args.full_chunks).then_some(768))
+            kernel.search_response_with_navigation(
+                &query,
+                mode,
+                (!args.full_chunks).then_some(768),
+                &airk_core::SearchFilters {
+                    language: args.language,
+                    evidence_kind: args.evidence_kind.map(Into::into),
+                    exclude_path_prefix: args.exclude_path_prefix,
+                },
+            )
         })
         .await
     }
@@ -665,7 +773,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_status",
-        description = "Quick AIRK version, basic health and project-index check: generation, counts, freshness and semantic coverage. Successful native snapshots may be cached for up to five seconds with explicit observation time and cache age. Reads scalar publication metadata without imported fact payloads, runtime/work probes or editor processes in every response mode. Use airk_diagnostics for process/version identities, detailed job state and diagnostic observations. Health is not progress; saved counts do not verify live source. response_mode=full retains the same lightweight scope. MCP does not manage jobs.",
+        description = "Quick AIRK version, basic health and project-index check: generation, counts, freshness and semantic coverage. The MCP frontend adds configured query_concurrency from admission. Completed same-authority observations superseded by scalar invalidation return successfully with status_observation.superseded and their original publication/time. Successful native snapshots may be cached for up to five seconds with explicit observation time and cache age. Reads scalar publication metadata without imported fact payloads, runtime/work probes or editor processes in every response mode. Use airk_diagnostics for process/version identities, detailed job state and diagnostic observations. Health is not progress; saved counts do not verify live source. response_mode=full retains the same lightweight scope. MCP does not manage jobs.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -680,7 +788,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_diagnostics",
-        description = "Troubleshoot AIRK: full published coverage, runtime versions and process identities, scoped job/queue state, worker progress, source watcher and sampled waits. Read-only; may be slower and larger than airk_status. Use airk_status for routine readiness checks. response_mode=full detail is always included; does not start indexing or repair.",
+        description = "Troubleshoot AIRK: full published coverage, runtime versions and process identities, scoped job/queue state, worker progress, source watcher and sampled waits. The MCP frontend adds configured query_concurrency from admission. Read-only; may be slower and larger than airk_status. Use airk_status for routine readiness checks. response_mode=full detail is always included; does not start indexing or repair.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -732,7 +840,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_outline",
-        description = "Understand a file's structure before reading broad text: bounded language-specific definitions, imports or structured document facts with locations. Takes one exact indexed file path. Check airk_file_info for partial syntax; no runtime or type resolution. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Read one indexed file's structure in file order: imports, definitions, call candidates and document facts with locations. This is read-only source evidence; suggest_view proposes an Explorer screen instead. Takes one exact path and pages with cursor; a first page may not reach a known definition, so prefer scoped airk_symbols/airk_code_facts for that. Compact minimal navigation is default; compact=false expands facts and IDs. Bounded or empty output is not a whole-file or complete-language claim. Use response_mode=full for provenance audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -758,7 +866,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_symbols",
-        description = "Locate function/class/type and other supported code definitions by exact name, language/profile or literal path prefix. Omit name to list grammar-derived definitions. Use airk_search for keyword discovery. Does not resolve dynamic or cross-file names. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Locate supported written code definitions before broad text search. Exact name is default: Session does not match OwnerSession. Explicit name_match=suffix/contains matches simple/qualified names case-sensitively; omit name to list within indexed language/profile or literal path_prefix. Keep compact discovery for candidates, then request compact=false on a selected scope for rich IDs/details. Consume cursor pages; include_count reports bounded count precision. Does not resolve dynamic/cross-file names. Use airk_code_facts for additional fact categories and response_mode=full for provenance audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -772,14 +880,22 @@ impl AirkServer {
                 cursor: args.cursor.clone(),
                 compact: false,
             };
-            kernel.facts_page(&args.query(Some("definition"), true, false), &options)
+            let matching = airk_core::discovery::FactDiscoveryOptions {
+                name_match: args.name_match.map(Into::into),
+                include_count: args.include_count,
+            };
+            kernel.facts_page_with_options(
+                &args.query(Some("definition"), true, false),
+                &options,
+                &matching,
+            )
         })
         .await
     }
 
     #[tool(
         name = "airk_imports",
-        description = "Inspect static code dependencies through grammar-derived import/use/include declarations. Filter by language/profile, literal path prefix and optional name substring. Returns syntax evidence, not a resolved dependency graph or transitive/dynamic dependencies. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Inspect written import/use/include declarations by indexed language/profile, literal path prefix and optional name. Omitted name_match keeps the existing case-insensitive substring behavior; explicit exact/suffix/contains is case-sensitive. Use cursor continuation and optional include_count for bounded count precision. These are syntax candidates, not a resolved, transitive or dynamic dependency graph. Use response_mode=full for provenance/coverage audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -793,7 +909,15 @@ impl AirkServer {
                 cursor: args.cursor.clone(),
                 compact: false,
             };
-            kernel.facts_page(&args.query(Some("import"), false, false), &options)
+            let matching = airk_core::discovery::FactDiscoveryOptions {
+                name_match: args.name_match.map(Into::into),
+                include_count: args.include_count,
+            };
+            kernel.facts_page_with_options(
+                &args.query(Some("import"), false, false),
+                &options,
+                &matching,
+            )
         })
         .await
     }
@@ -855,7 +979,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_references",
-        description = "Locate exact-case whole-identifier textual occurrences using indexed lexical candidates verified against retained source, including CamelCase. Includes definitions, strings and comments, never resolved semantic references. Check truncation before impact analysis and verify live source. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Locate exact-case whole-identifier matching lines in retained indexed text, including definitions, strings and comments. Markdown, HTML, scripts and source can all match; scope by path_prefix, exact indexed language or metadata-based evidence_kind for impact work. These are textual candidates, never resolved references. Omit new paging options for legacy index ordering; explicit order=index/path/code_first, filters, cursor, include_files or include_count select bounded pageable scanning. Page file summaries/counts disclose their scope and matching-line unit; incomplete scans never imply an exact corpus total. Consume continuation and check truncation/coverage before concluding no impact; verify live source before edits. Use response_mode=full for provenance/coverage audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -864,7 +988,37 @@ impl AirkServer {
     )]
     async fn references(&self, Parameters(args): Parameters<ReferenceArgs>) -> CallToolResult {
         self.execute_response(UsageOperation::References, args.response, move |kernel| {
-            kernel.references(&args.name, &args.path_prefix, args.limit, args.max_bytes)
+            let filters = airk_core::SearchFilters {
+                language: args.language,
+                evidence_kind: args.evidence_kind.map(Into::into),
+                exclude_path_prefix: args.exclude_path_prefix,
+            };
+            if args.cursor.is_none()
+                && args.order.is_none()
+                && !args.include_files
+                && !args.include_count
+                && filters.is_empty()
+            {
+                return kernel.references(
+                    &args.name,
+                    &args.path_prefix,
+                    args.limit,
+                    args.max_bytes,
+                );
+            }
+            kernel.references_page(
+                &args.name,
+                &args.path_prefix,
+                args.limit,
+                args.max_bytes,
+                &airk_core::references::ReferenceOptions {
+                    filters,
+                    cursor: args.cursor,
+                    order: args.order.map(Into::into).unwrap_or_default(),
+                    include_files: args.include_files,
+                    include_count: args.include_count,
+                },
+            )
         })
         .await
     }

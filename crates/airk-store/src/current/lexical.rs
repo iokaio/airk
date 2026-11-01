@@ -13,7 +13,9 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 pub(super) mod cache;
+mod reference;
 mod seal;
+pub use reference::LexicalReferencePosition;
 pub(crate) use seal::Snapshot;
 
 pub const ENGINE: &str = "sqlite-fts5/current-lexical-1";
@@ -223,6 +225,16 @@ impl CurrentRead {
         Ok(())
     }
     pub fn lexical_search(&self, query: &SearchQuery) -> Result<CurrentLexicalCandidates> {
+        self.lexical_search_paths(query, None)
+    }
+
+    /// The caller selects these paths from the same authenticated current reader.
+    /// Filtering precedes LIMIT; it must not discard only an unfiltered top-k.
+    pub fn lexical_search_paths(
+        &self,
+        query: &SearchQuery,
+        paths: Option<&std::collections::BTreeSet<String>>,
+    ) -> Result<CurrentLexicalCandidates> {
         query.validate()?;
         let query_terms = terms(&query.text);
         ensure!(
@@ -237,9 +249,14 @@ impl CurrentRead {
             .map(|term| format!("\"{}\"", token(term)))
             .collect::<Vec<_>>()
             .join(" AND ");
+        let paths = paths.map(serde_json::to_string).transpose()?;
+        ensure!(
+            paths.as_ref().is_none_or(|paths| paths.len() <= 4 << 20),
+            "filtered lexical path selector exceeds byte budget"
+        );
         let result = self.with_connection(|connection| {
-            let mut statement = connection.prepare("SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) ORDER BY d.stable_id LIMIT ?3")?;
-            let mut rows = statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64])?;
+            let mut statement = connection.prepare("SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?4 IS NULL OR d.path IN (SELECT value FROM json_each(?4))) ORDER BY d.stable_id LIMIT ?3")?;
+            let mut rows = statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64,paths])?;
             let mut values = Vec::new();
             let mut incomplete = false;
             while let Some(row) = rows.next()? {

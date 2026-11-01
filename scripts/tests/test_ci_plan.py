@@ -56,6 +56,74 @@ class PlanTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             plan.require_results(full, results)
 
+    def test_required_gate_preserves_pr_and_feature_refs_and_skips_only_main_cancellation(self):
+        workflow = (Path(__file__).parents[2] / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        required = workflow.split("\n  required:\n", 1)[1]
+        condition = next(line.strip() for line in required.splitlines() if line.startswith("    if:"))
+        # A skipped required job can satisfy branch protection. Preserve the
+        # original always() behavior for PRs, even when their work is canceled.
+        self.assertEqual(condition,
+                         "if: ${{ always() && (github.event_name == 'pull_request' || github.ref != 'refs/heads/main' || !cancelled()) }}")
+        self.assertIn("needs: [plan, quick, contracts, extension, native, container]", required)
+        self.assertIn("run: python scripts/ci-plan.py gate", required)
+        self.assertNotIn("continue-on-error", required)
+        protected_event = condition.split("github.event_name == '", 1)[1].split("'", 1)[0]
+        cancellation_ref = condition.split("github.ref != '", 1)[1].split("'", 1)[0]
+        results = {"plan": "success", "quick": "success", "native": "success",
+                   "container": "skipped", "extension": "skipped", "contracts": "skipped"}
+        for event, ref, cancelled, native, runs, accepts in (
+                ("pull_request", "refs/pull/54/merge", True, "cancelled", True, False),
+                ("pull_request", "refs/pull/54/merge", True, "failure", True, False),
+                ("pull_request", "refs/pull/54/merge", False, "failure", True, False),
+                ("pull_request", "refs/pull/54/merge", False, "success", True, True),
+                ("push", "refs/heads/main", True, "cancelled", False, False),
+                ("push", "refs/heads/main", False, "cancelled", True, False),
+                ("push", "refs/heads/main", False, "failure", True, False),
+                ("push", "refs/heads/main", False, "success", True, True),
+                ("workflow_dispatch", "refs/heads/main", True, "cancelled", False, False),
+                ("workflow_dispatch", "refs/heads/feature", True, "cancelled", True, False),
+                ("workflow_dispatch", "refs/heads/feature", False, "success", True, True)):
+            with self.subTest(event=event, ref=ref, cancelled=cancelled, native=native), \
+                    patch.object(plan, "require_results", wraps=plan.require_results) as gate:
+                should_run = event == protected_event or ref != cancellation_ref or not cancelled
+                self.assertEqual(should_run, runs)
+                if should_run:
+                    observed = {**results, "native": native}
+                    if accepts:
+                        gate(plan.promoted_plan(), observed)
+                    else:
+                        with self.assertRaises(ValueError):
+                            gate(plan.promoted_plan(), observed)
+                    gate.assert_called_once()
+                else:
+                    gate.assert_not_called()
+
+    def test_promoted_gate_still_rejects_interrupted_missing_and_failed_work(self):
+        selected = plan.promoted_plan()
+        results = {"plan": "success", "quick": "success", "native": "success",
+                   "container": "skipped", "extension": "skipped", "contracts": "skipped"}
+        for name in ("plan", "quick", "native"):
+            for wrong in ("failure", "cancelled", "skipped", "", None):
+                with self.subTest(name=name, wrong=wrong), self.assertRaises(ValueError):
+                    plan.require_results(selected, {**results, name: wrong})
+        for name in results:
+            missing = {key: value for key, value in results.items() if key != name}
+            with self.subTest(missing=name), self.assertRaises(ValueError):
+                plan.require_results(selected, missing)
+        with self.assertRaises(ValueError):
+            plan.require_results(selected, {**results, "unexpected_job": "success"})
+
+    def test_manually_invoked_gate_never_accepts_cancelled_native_as_success(self):
+        selected = plan.promoted_plan()
+        results = {"plan": "success", "quick": "success", "native": "cancelled",
+                   "container": "skipped", "extension": "skipped", "contracts": "skipped"}
+        needs = {name: {"result": result} for name, result in results.items()}
+        needs["plan"]["outputs"] = {"plan": json.dumps(selected)}
+        with patch.dict(plan.os.environ, {"AIRK_NEEDS": json.dumps(needs)}, clear=True), \
+                patch("sys.argv", ["ci-plan.py", "gate"]), \
+                self.assertRaisesRegex(ValueError, "Required check results differ"):
+            plan.main()
+
     def test_native_matrix_gates_three_hosts_on_prs_and_intel_only_after_promotion(self):
         targets = lambda *args: [row["target"] for row in plan.native_matrix(plan.native_targets(*args))["include"]]
         every = [row["target"] for row in plan.NATIVE_ROWS]

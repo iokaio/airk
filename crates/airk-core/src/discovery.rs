@@ -16,6 +16,39 @@ pub struct DiscoveryOptions {
     pub minimal: bool,
 }
 
+/// Explicit name matching is case-sensitive on written simple/qualified names.
+/// Omission preserves the calling tool's existing exact/substring semantics.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NameMatch {
+    Exact,
+    Suffix,
+    Contains,
+}
+
+/// Additive fact-discovery controls, separate from legacy continuation options.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactDiscoveryOptions {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_match: Option<NameMatch>,
+    #[serde(default)]
+    pub include_count: bool,
+}
+
+/// Counts logical matching records; the tool defines its record unit.
+/// Fact discovery counts fact records, not occurrences or distinct types.
+/// A page scan's lower bound is not a cumulative count across continuations.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MatchCount {
+    pub total_matches: Option<usize>,
+    pub lower_bound: usize,
+    pub complete: bool,
+    /// `query` for an exhausted first fact scan; references qualify exact
+    /// counts as `verified_lexical_candidates`. Otherwise `page_scan`.
+    pub scope: String,
+}
+
 /// The budget counts each complete serialized record; envelope/array framing is additional.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DiscoveryPage {
@@ -26,6 +59,9 @@ pub struct DiscoveryPage {
     pub required_record_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_bytes: Option<usize>,
+    /// Requested count information, obtained without additional query-wide scans.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub match_count: Option<MatchCount>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -286,6 +322,43 @@ pub fn paginate_facts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn optional_fact_controls_preserve_legacy_page_wire_and_reject_unknown_modes() -> Result<()> {
+        assert_eq!(
+            serde_json::to_value(DiscoveryPage::default())?,
+            serde_json::json!({})
+        );
+        assert_eq!(
+            serde_json::from_value::<FactDiscoveryOptions>(serde_json::json!({}))?,
+            FactDiscoveryOptions::default()
+        );
+        for (text, mode) in [
+            ("exact", NameMatch::Exact),
+            ("suffix", NameMatch::Suffix),
+            ("contains", NameMatch::Contains),
+        ] {
+            assert_eq!(serde_json::to_value(mode)?, text);
+            let options: FactDiscoveryOptions = serde_json::from_value(serde_json::json!({
+                "name_match": text, "include_count": true
+            }))?;
+            assert_eq!(options.name_match, Some(mode));
+            assert!(options.include_count);
+        }
+        assert!(
+            serde_json::from_value::<FactDiscoveryOptions>(
+                serde_json::json!({"name_match":"regex"})
+            )
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<FactDiscoveryOptions>(
+                serde_json::json!({"name_match":"exact", "case_insensitive":true})
+            )
+            .is_err()
+        );
+        Ok(())
+    }
 
     #[test]
     fn compact_documents_preserve_truncation_and_table_interpretation() -> Result<()> {

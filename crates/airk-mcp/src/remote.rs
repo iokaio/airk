@@ -8,7 +8,7 @@ use rmcp::{
     },
     service::RequestContext,
 };
-use std::{future::Future, pin::Pin, sync::Arc};
+use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 pub type RemoteFuture<'a> =
     Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send + 'a>>;
@@ -22,6 +22,9 @@ impl std::fmt::Display for PreparationExpired {
 }
 impl std::error::Error for PreparationExpired {}
 pub trait RemoteTools: Send + Sync + 'static {
+    fn query_concurrency(&self) -> usize {
+        airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY
+    }
     /// Static catalog/help/initialize never invokes this owned setup hook.
     fn prepare(&self) -> ReadyFuture<'_> {
         Box::pin(async { Ok(()) })
@@ -53,9 +56,124 @@ pub trait RemoteTools: Send + Sync + 'static {
 #[derive(Clone)]
 struct Bridge {
     backend: Arc<dyn RemoteTools>,
-    permits: Arc<tokio::sync::Semaphore>,
+    admission: Arc<Admission>,
     response_mode: crate::response::ResponseMode,
 }
+
+// Evidence dispatch can wait on a native owner for much longer than a scalar
+// status observation. Reserve the fourth executing slot for the exact status
+// aliases so admission cannot put status behind those evidence calls. Neither
+// diagnostics, help nor UI proposals are admitted through that reserved slot.
+struct Admission {
+    calls: Arc<crate::query_capacity::QueryCapacity>,
+    status: Arc<tokio::sync::Semaphore>,
+    waiting: Arc<tokio::sync::Semaphore>,
+}
+impl Default for Admission {
+    fn default() -> Self {
+        Self {
+            calls: crate::query_capacity::QueryCapacity::new(
+                airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY,
+            ),
+            status: Arc::new(tokio::sync::Semaphore::new(1)),
+            waiting: Arc::new(tokio::sync::Semaphore::new(128)),
+        }
+    }
+}
+#[derive(Debug)]
+#[allow(dead_code)] // Variants retain their owned permits until handler completion.
+enum BridgePermit {
+    Evidence(crate::query_capacity::QueryPermit),
+    Status(tokio::sync::OwnedSemaphorePermit),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum AdmissionFailure {
+    Busy,
+    Closed,
+    Canceled,
+}
+impl Admission {
+    fn close(&self) {
+        self.calls.close();
+        self.status.close();
+        self.waiting.close();
+    }
+
+    async fn acquire(
+        &self,
+        tool: &str,
+        canceled: impl Future<Output = ()>,
+        expires: tokio::time::Instant,
+    ) -> Result<BridgePermit, AdmissionFailure> {
+        let status = matches!(tool, "status" | "airk_status");
+        let lane = &self.calls;
+        let admitted = async {
+            if tokio::time::Instant::now() >= expires {
+                return Err(AdmissionFailure::Busy);
+            }
+            if status {
+                match self.status.clone().try_acquire_owned() {
+                    Ok(permit) => return Ok(BridgePermit::Status(permit)),
+                    Err(tokio::sync::TryAcquireError::Closed) => {
+                        return Err(AdmissionFailure::Closed);
+                    }
+                    Err(tokio::sync::TryAcquireError::NoPermits) => {}
+                }
+                // Identical status calls can share the existing StatusOwner
+                // observation. Let them reach that owner through an idle generic
+                // lane, but never queue behind evidence to do so.
+            }
+            match lane.clone().try_acquire_owned() {
+                Ok(permit) => return Ok(BridgePermit::Evidence(permit)),
+                Err(tokio::sync::TryAcquireError::Closed) => {
+                    return Err(AdmissionFailure::Closed);
+                }
+                Err(tokio::sync::TryAcquireError::NoPermits) if status => {
+                    // Status already owns a separate cold-setup and observation
+                    // deadline. Do not add a generic wait ahead of that budget.
+                    return Err(AdmissionFailure::Busy);
+                }
+                Err(tokio::sync::TryAcquireError::NoPermits) => {}
+            }
+            let _waiting = self.waiting.clone().try_acquire_owned().map_err(|error| {
+                if error == tokio::sync::TryAcquireError::Closed {
+                    AdmissionFailure::Closed
+                } else {
+                    AdmissionFailure::Busy
+                }
+            })?;
+            // Tokio's semaphore preserves FIFO order. The separate waiting
+            // permit bounds retained handlers, independently of executing work.
+            match tokio::time::timeout_at(expires, lane.clone().acquire_owned()).await {
+                Ok(Ok(permit)) if tokio::time::Instant::now() < expires => {
+                    Ok(BridgePermit::Evidence(permit))
+                }
+                Ok(Ok(_)) => Err(AdmissionFailure::Busy),
+                Ok(Err(_)) => Err(AdmissionFailure::Closed),
+                Err(_) => Err(AdmissionFailure::Busy),
+            }
+        };
+        tokio::select! {
+            biased;
+            _ = canceled => Err(AdmissionFailure::Canceled),
+            result = admitted => result,
+        }
+    }
+}
+
+fn admission_failure(error: AdmissionFailure) -> CallToolResult {
+    let busy = error == AdmissionFailure::Busy;
+    let detail = serde_json::json!({"error":{
+        "code":if error == AdmissionFailure::Canceled {"request_canceled"}else{"direct_query_admission"},
+        "reason":if busy {"busy"}else if error == AdmissionFailure::Canceled {"canceled"}else{"draining"},
+        "query_submitted":false,"retryable":busy,
+        "retry_after_ms":if busy {Some(25)}else{None},
+        "fresh_brokerage_required":error == AdmissionFailure::Closed
+    }});
+    CallToolResult::error(vec![ContentBlock::text(detail.to_string())])
+}
+
 impl ServerHandler for Bridge {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
@@ -86,11 +204,19 @@ impl ServerHandler for Bridge {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
-        let Ok(_permit) = self.permits.clone().try_acquire_owned() else {
-            return Ok(CallToolResult::error(vec![ContentBlock::text(
-                "AIRK bridge is busy; retry after outstanding requests complete.",
-            )])
-            .into());
+        let query_concurrency = self.backend.query_concurrency();
+        self.admission.calls.configure(query_concurrency);
+        let _permit = match self
+            .admission
+            .acquire(
+                &request.name,
+                context.ct.cancelled(),
+                tokio::time::Instant::now() + Duration::from_secs(2),
+            )
+            .await
+        {
+            Ok(permit) => permit,
+            Err(error) => return Ok(admission_failure(error).into()),
         };
         let mut arguments = request.arguments.unwrap_or_default();
         if request.name == "airk_help" && self.backend.local_help() {
@@ -111,8 +237,35 @@ impl ServerHandler for Bridge {
             .backend
             .call(request.name.to_string(), arguments)
             .await
-            .and_then(|value| Ok(serde_json::from_value::<CallToolResult>(value)?));
+            .and_then(|value| {
+                let mut result = serde_json::from_value::<CallToolResult>(value)?;
+                report_query_concurrency(&mut result, &request.name, query_concurrency);
+                Ok(result)
+            });
         Ok(result.unwrap_or_else(|_|CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])).into())
+    }
+}
+
+/// Reuse the admission observation even when the backend returns cached status.
+/// This describes configured capacity, not free slots or guaranteed admission.
+fn report_query_concurrency(result: &mut CallToolResult, tool: &str, limit: usize) {
+    if result.is_error == Some(true)
+        || !matches!(
+            tool,
+            "status" | "airk_status" | "diagnostics" | "airk_diagnostics"
+        )
+    {
+        return;
+    }
+    if let Some(body) = result
+        .structured_content
+        .as_mut()
+        .and_then(|v| v.as_object_mut())
+    {
+        body.insert("query_concurrency".into(), limit.into());
+        result.content = vec![ContentBlock::text(
+            serde_json::to_string(body).expect("JSON status body"),
+        )];
     }
 }
 
@@ -149,8 +302,13 @@ where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
     W: tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
+    let admission = Arc::new(Admission::default());
+    let close_admission = admission.clone();
     let signal = Arc::new(InputClosed {
-        callback: closed,
+        callback: Arc::new(move || {
+            close_admission.close();
+            closed();
+        }),
         fired: std::sync::atomic::AtomicBool::new(false),
     });
     let observed = signal.clone();
@@ -159,7 +317,7 @@ where
         future: Box::pin(async move {
             let bridge = Bridge {
                 backend,
-                permits: Arc::new(tokio::sync::Semaphore::new(4)),
+                admission,
                 response_mode: crate::response::ResponseMode::from_environment(),
             };
             rmcp::service::serve_directly(
@@ -285,6 +443,223 @@ mod tests {
     use super::*;
     use rmcp::ServiceExt;
     use tokio::io::{AsyncRead, AsyncReadExt};
+
+    fn pending<T>(future: Pin<&mut impl Future<Output = T>>) {
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(future.poll(&mut context).is_pending());
+    }
+    fn deadline() -> tokio::time::Instant {
+        tokio::time::Instant::now() + Duration::from_secs(1)
+    }
+
+    #[tokio::test]
+    async fn configured_evidence_capacity_keeps_independent_status_and_drains_on_decrease() {
+        for limit in [4, 8, 16, 32, 64] {
+            let admission = Admission::default();
+            admission.calls.configure(limit);
+            let mut held = Vec::new();
+            for _ in 0..limit {
+                held.push(
+                    admission
+                        .acquire("search", std::future::pending(), deadline())
+                        .await
+                        .unwrap(),
+                );
+            }
+            let status = admission
+                .acquire("status", std::future::pending(), deadline())
+                .await
+                .unwrap();
+            assert_eq!(admission.calls.available_permits(), 0);
+            admission.calls.configure(4);
+            let mut queued =
+                Box::pin(admission.acquire("search", std::future::pending(), deadline()));
+            pending(queued.as_mut());
+            while held.len() >= 4 {
+                drop(held.pop());
+            }
+            assert!(queued.await.is_ok());
+            drop(status);
+            drop(held);
+        }
+    }
+
+    #[tokio::test]
+    async fn admission_reserves_status_and_bounds_the_non_status_queue() {
+        let admission = Admission {
+            calls: crate::query_capacity::QueryCapacity::new(3),
+            status: Arc::new(tokio::sync::Semaphore::new(1)),
+            waiting: Arc::new(tokio::sync::Semaphore::new(8)),
+        };
+        let mut executing = Vec::new();
+        for name in ["airk_search", "draft_search", "diagnostics"] {
+            executing.push(
+                admission
+                    .acquire(name, std::future::pending(), deadline())
+                    .await
+                    .unwrap(),
+            );
+        }
+        let mut waiting: Vec<_> = (0..8)
+            .map(|_| Box::pin(admission.acquire("search", std::future::pending(), deadline())))
+            .collect();
+        for call in &mut waiting {
+            pending(call.as_mut());
+        }
+        assert_eq!(admission.waiting.available_permits(), 0);
+        assert_eq!(
+            admission
+                .acquire("help", std::future::pending(), deadline())
+                .await
+                .unwrap_err(),
+            AdmissionFailure::Busy
+        );
+        // A whole queue of long evidence/UI calls cannot consume status's lane.
+        let status = admission
+            .acquire("status", std::future::pending(), deadline())
+            .await
+            .unwrap();
+        assert_eq!(
+            admission
+                .acquire("airk_status", std::future::pending(), deadline())
+                .await
+                .unwrap_err(),
+            AdmissionFailure::Busy
+        );
+        drop(status);
+        assert!(
+            admission
+                .acquire("airk_status", std::future::pending(), deadline())
+                .await
+                .is_ok()
+        );
+        drop(waiting.pop());
+        assert_eq!(admission.waiting.available_permits(), 1);
+        drop(executing.pop());
+        let first = waiting.remove(0).await.unwrap();
+        drop(first);
+        for call in waiting {
+            drop(call.await.unwrap());
+        }
+        assert_eq!(admission.waiting.available_permits(), 8);
+    }
+
+    #[tokio::test]
+    async fn idle_generic_lanes_allow_concurrent_status_calls_to_reach_shared_owner() {
+        let admission = Admission {
+            calls: crate::query_capacity::QueryCapacity::new(3),
+            status: Arc::new(tokio::sync::Semaphore::new(1)),
+            waiting: Arc::new(tokio::sync::Semaphore::new(8)),
+        };
+        let mut held = Vec::new();
+        for name in ["status", "airk_status", "status", "airk_status"] {
+            held.push(
+                admission
+                    .acquire(name, std::future::pending(), deadline())
+                    .await
+                    .unwrap(),
+            );
+        }
+        assert_eq!(admission.status.available_permits(), 0);
+        assert_eq!(admission.calls.available_permits(), 0);
+        assert_eq!(admission.waiting.available_permits(), 8);
+        assert_eq!(
+            admission
+                .acquire("status", std::future::pending(), deadline())
+                .await
+                .unwrap_err(),
+            AdmissionFailure::Busy
+        );
+        drop(held);
+        assert_eq!(admission.calls.available_permits(), 3);
+    }
+
+    #[tokio::test]
+    async fn expired_canceled_and_closed_admission_never_take_execution_slots() {
+        let admission = Admission {
+            calls: crate::query_capacity::QueryCapacity::new(3),
+            status: Arc::new(tokio::sync::Semaphore::new(1)),
+            waiting: Arc::new(tokio::sync::Semaphore::new(8)),
+        };
+        assert_eq!(
+            admission
+                .acquire(
+                    "search",
+                    std::future::pending(),
+                    tokio::time::Instant::now()
+                )
+                .await
+                .unwrap_err(),
+            AdmissionFailure::Busy
+        );
+        assert_eq!(
+            admission
+                .acquire("search", std::future::ready(()), deadline())
+                .await
+                .unwrap_err(),
+            AdmissionFailure::Canceled
+        );
+        assert_eq!(admission.calls.available_permits(), 3);
+        let executing: Vec<_> = {
+            let mut held = Vec::new();
+            for _ in 0..3 {
+                held.push(
+                    admission
+                        .acquire("search", std::future::pending(), deadline())
+                        .await
+                        .unwrap(),
+                );
+            }
+            held
+        };
+        let (cancel, canceled) = tokio::sync::oneshot::channel();
+        let mut cancel_wait = Box::pin(admission.acquire(
+            "search",
+            async {
+                let _ = canceled.await;
+            },
+            deadline(),
+        ));
+        pending(cancel_wait.as_mut());
+        assert_eq!(admission.waiting.available_permits(), 7);
+        cancel.send(()).unwrap();
+        assert_eq!(cancel_wait.await.unwrap_err(), AdmissionFailure::Canceled);
+        assert_eq!(admission.waiting.available_permits(), 8);
+        let mut waiting = Box::pin(admission.acquire("search", std::future::pending(), deadline()));
+        pending(waiting.as_mut());
+        admission.close();
+        assert_eq!(waiting.await.unwrap_err(), AdmissionFailure::Closed);
+        assert_eq!(
+            executing.len(),
+            3,
+            "closing admission does not release accepted work"
+        );
+        assert_eq!(
+            admission
+                .acquire("status", std::future::pending(), deadline())
+                .await
+                .unwrap_err(),
+            AdmissionFailure::Closed
+        );
+    }
+
+    #[test]
+    fn admission_busy_receipt_is_typed_and_unsubmitted() {
+        let reply = admission_failure(AdmissionFailure::Busy);
+        let detail: serde_json::Value =
+            serde_json::from_str(&reply.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(detail["error"]["code"], "direct_query_admission");
+        assert_eq!(detail["error"]["query_submitted"], false);
+        assert_eq!(detail["error"]["retryable"], true);
+        assert_eq!(detail["error"]["fresh_brokerage_required"], false);
+        for failure in [AdmissionFailure::Canceled, AdmissionFailure::Closed] {
+            let reply = admission_failure(failure);
+            let detail: serde_json::Value =
+                serde_json::from_str(&reply.content[0].as_text().unwrap().text).unwrap();
+            assert_eq!(detail["error"]["query_submitted"], false);
+            assert_eq!(detail["error"]["retryable"], false);
+        }
+    }
 
     #[tokio::test]
     async fn input_close_observes_real_eof_once_and_ignores_zero_capacity() -> anyhow::Result<()> {
@@ -453,6 +828,139 @@ mod tests {
         });
     }
 
+    #[tokio::test]
+    async fn bridge_reports_live_query_concurrency_without_an_extra_policy_read()
+    -> anyhow::Result<()> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        struct Cached {
+            limit: AtomicUsize,
+            reads: AtomicUsize,
+        }
+        impl RemoteTools for Cached {
+            fn query_concurrency(&self) -> usize {
+                self.reads.fetch_add(1, Ordering::SeqCst);
+                self.limit.load(Ordering::SeqCst)
+            }
+            fn catalog(&self) -> Vec<Tool> {
+                [
+                    "status",
+                    "airk_status",
+                    "diagnostics",
+                    "airk_diagnostics",
+                    "airk_search",
+                ]
+                .into_iter()
+                .map(|name| {
+                    let mut tool = crate::local::tools()
+                        .into_iter()
+                        .find(|t| t.name == "airk_status")
+                        .unwrap();
+                    tool.name = name.to_string().into();
+                    tool
+                })
+                .collect()
+            }
+            fn call(
+                &self,
+                _: String,
+                arguments: serde_json::Map<String, serde_json::Value>,
+            ) -> RemoteFuture<'_> {
+                Box::pin(async move {
+                    if arguments.get("include_status") == Some(&serde_json::Value::Bool(true)) {
+                        return Ok(crate::unified::failure(
+                            "fixture_failure",
+                            "Retain error receipt",
+                        ));
+                    }
+                    Ok(crate::unified::success(serde_json::json!({
+                        "cached": true, "observed_unix_ms": 123, "cache_age_ms": 456,
+                        "publication": {"token": "fixture-publication"}, "query_concurrency": 8
+                    })))
+                })
+            }
+        }
+        let backend = Arc::new(Cached {
+            limit: AtomicUsize::new(16),
+            reads: AtomicUsize::new(0),
+        });
+        let (client_io, server_io) = tokio::io::duplex(65536);
+        let bridge = Bridge {
+            backend: backend.clone(),
+            admission: Arc::new(Admission::default()),
+            response_mode: crate::response::ResponseMode::Terse,
+        };
+        let (mut client, mut server) = tokio::try_join!(
+            async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },
+            async { Ok::<_, anyhow::Error>(bridge.serve(server_io).await?) }
+        )?;
+        for (request, (tool, mode, limit)) in [
+            ("status", "terse", 16),
+            ("airk_status", "full", 32),
+            ("diagnostics", "terse", 64),
+            ("airk_diagnostics", "full", 4),
+            ("status", "full", 8),
+            ("airk_search", "terse", 16),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            backend.limit.store(limit, Ordering::SeqCst);
+            let reply = client
+                .call_tool(
+                    CallToolRequestParams::new(tool).with_arguments(
+                        serde_json::json!({"response_mode": mode})
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    ),
+                )
+                .await?;
+            let body = reply.structured_content.as_ref().unwrap();
+            assert_eq!(
+                body["query_concurrency"],
+                if tool == "airk_search" { 8 } else { limit }
+            );
+            assert_eq!(body["cached"], true);
+            assert_eq!(body["observed_unix_ms"], 123);
+            assert_eq!(body["cache_age_ms"], 456);
+            assert_eq!(body["publication"]["token"], "fixture-publication");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(
+                    &reply.content[0].as_text().unwrap().text
+                )?,
+                *body
+            );
+            assert_eq!(backend.reads.load(Ordering::SeqCst), request + 1);
+        }
+        let reply = client
+            .call_tool(
+                CallToolRequestParams::new("status").with_arguments(
+                    serde_json::json!({"include_status":true})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await?;
+        assert_eq!(reply.is_error, Some(true));
+        assert_eq!(
+            reply.structured_content.as_ref().unwrap()["error"]["code"],
+            "fixture_failure"
+        );
+        assert!(
+            reply
+                .structured_content
+                .as_ref()
+                .unwrap()
+                .get("query_concurrency")
+                .is_none()
+        );
+        assert_eq!(backend.reads.load(Ordering::SeqCst), 7);
+        client.close().await?;
+        server.close().await?;
+        Ok(())
+    }
+
     struct Echo;
     impl RemoteTools for Echo {
         fn call(
@@ -478,7 +986,7 @@ mod tests {
             let (client_io, server_io) = tokio::io::duplex(65536);
             let bridge = Bridge {
                 backend: Arc::new(Echo),
-                permits: Arc::new(tokio::sync::Semaphore::new(4)),
+                admission: Arc::new(Admission::default()),
                 response_mode: default,
             };
             let (client, server) = tokio::try_join!(

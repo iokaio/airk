@@ -581,7 +581,13 @@ mod tests {
                 "{}",
                 tool.name
             );
-            assert!(tool.description.unwrap().contains("response_mode=full"));
+            assert!(
+                tool.description
+                    .as_deref()
+                    .is_some_and(|description| description.contains("response_mode=full")),
+                "{}: description must explain response_mode=full",
+                tool.name
+            );
         }
     }
 
@@ -852,7 +858,7 @@ mod tests {
         Ok(())
     }
     #[tokio::test]
-    async fn service_clients_inherit_one_materialization_budget_and_close_independently()
+    async fn service_clients_share_bounded_materialization_and_close_independently()
     -> anyhow::Result<()> {
         let owner = tempfile::tempdir()?;
         let root = owner.path().join("source");
@@ -868,7 +874,7 @@ mod tests {
         let mut second = tools.session().await?;
         for client in [&tools, &first, &second] {
             assert_eq!(client.admission.status()["shared_execution_budget"], true);
-            assert_eq!(client.admission.status()["evidence_workers"], 1);
+            assert_eq!(client.admission.status()["evidence_workers"], 65);
         }
         let args = serde_json::json!({"name":"copper"})
             .as_object()
