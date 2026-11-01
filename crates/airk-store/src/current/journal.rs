@@ -648,7 +648,7 @@ pub struct CurrentWriter<'a> {
         std::cell::RefCell<Option<(Sha256Digest, std::sync::Arc<super::lexical::Snapshot>)>>,
     lexical_committed: bool,
     preparation_grant: Option<crate::quota::CurrentGrant>,
-    optional_reservation: Option<crate::quota::Reservation>,
+    optional_reservations: Vec<crate::quota::Reservation>,
 }
 
 impl Drop for CurrentWriter<'_> {
@@ -790,7 +790,7 @@ impl FileStore {
             lexical_base: std::cell::RefCell::new(None),
             lexical_committed: false,
             preparation_grant: None,
-            optional_reservation: None,
+            optional_reservations: Vec::new(),
         };
         if let Some(bootstrap) = pending_bootstrap {
             ensure!(
@@ -1746,6 +1746,62 @@ impl CurrentWriter<'_> {
                 occurrences,
             )?);
         }
+        // Imported accelerators select one exact authoritative component. Any
+        // source change without a new producer snapshot invalidates them.
+        ensure!(
+            !resources
+                .iter()
+                .any(|resource| resource.key == "analysis-projection"),
+            "analysis projection is owned by the current producer"
+        );
+        let analysis_change = resources.iter().find(|resource| resource.key == "analysis");
+        let mut imported = None;
+        if analysis_change.is_some() || !changes.is_empty() {
+            if plan
+                .get(map::key(
+                    &self.scope,
+                    map::MapDomain::Metadata,
+                    b"analysis-projection",
+                )?)?
+                .is_some()
+            {
+                map_changes.extend(super::resources::prepare(
+                    &self.store,
+                    &self.scope,
+                    &mut plan,
+                    &[super::resources::ResourceChange {
+                        key: "analysis-projection".into(),
+                        reference: None,
+                    }],
+                )?);
+            }
+            if let Some(analysis) = analysis_change.and_then(|change| change.reference.as_ref()) {
+                let (evidence, languages) =
+                    self.store
+                        .analysis_for_projection(&plan, &self.scope, analysis)?;
+                let mode = self.store.compression_mode(&self.scope.root)?;
+                match self
+                    .store
+                    .prepare_import_projection(&evidence, analysis, &languages, mode)
+                {
+                    Ok(prepared) => {
+                        let native_memory =
+                            optional.iter().try_fold(0usize, |sum, projection| {
+                                sum.checked_add(projection.memory_bytes())
+                                    .context("projection batch memory overflow")
+                            })?;
+                        if native_memory.saturating_add(prepared.memory_bytes())
+                            <= super::native_projection::MAX_PREPARED_NATIVE_BYTES
+                        {
+                            imported = Some((prepared, evidence, languages, analysis.clone()));
+                        }
+                    }
+                    Err(error)
+                        if error.is::<super::native_projection::ProjectionPreparationLimit>() => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
         // A replaced path may retire and reattach one exact key. Replay only
         // its final afterimage, not both intermediate map changes.
         let mut final_changes = BTreeMap::new();
@@ -1792,26 +1848,20 @@ impl CurrentWriter<'_> {
                     .context("current capacity overflow")?,
             )?;
         }
-        // Optional map references may use existing admitted SQL slack. They
-        // must never force a capacity increase needed only by acceleration.
-        let optional_growth = (optional.len() as u64)
+        // Optional references use already admitted SQL slack. Acceleration may
+        // not force otherwise unnecessary database growth.
+        let optional_count = optional.len() + usize::from(imported.is_some());
+        let optional_growth = (optional_count as u64)
             .checked_mul(4096 * 8)
             .and_then(|extra| needed.checked_add(extra))
             .context("projection map bound overflow")?;
-        if !optional.is_empty() && optional_growth <= self.capacity {
+        if optional_count > 0 && optional_growth <= self.capacity {
             ensure!(
-                optional.len() == metadata.len(),
+                optional.is_empty() || optional.len() == metadata.len(),
                 "optional metadata batch mismatch"
             );
             self.release_orphan_grants()?;
-            let allowance = database::allowance(
-                self.connection
-                    .as_mut()
-                    .context("current database missing")?,
-                self.capacity,
-            )?;
-            // Protect mandatory SQL growth/journal capacity before the optional
-            // resource reservation. This durable grant survives process loss.
+            let allowance = self.required_publication_allowance()?;
             self.preparation_grant = Some(self.quota.reserve_current(
                 self.writer,
                 self.grant_scope(transaction_id(
@@ -1822,30 +1872,71 @@ impl CurrentWriter<'_> {
                 )?),
                 allowance,
             )?);
-            let admitted =
-                self.store
-                    .stage_optional_native_projections(self.writer, &self.quota, optional)?;
-            self.optional_reservation = admitted.reservation;
-            if let Some(roots) = admitted.roots {
-                let mut projected = metadata.to_vec();
-                for (reference, root) in projected.iter_mut().zip(roots) {
-                    reference.native_facts = Some(root);
-                    reference.native_facts_omission = None;
+            let mut projected = None;
+            if !optional.is_empty() {
+                let admitted = self.store.stage_optional_native_projections(
+                    self.writer,
+                    &self.quota,
+                    optional,
+                )?;
+                self.optional_reservations.extend(admitted.reservation);
+                if let Some(roots) = admitted.roots {
+                    ensure!(
+                        admitted.edge_roots.len() == roots.len(),
+                        "native edge batch mismatch"
+                    );
+                    let mut references = metadata.to_vec();
+                    for ((reference, root), edges) in
+                        references.iter_mut().zip(roots).zip(admitted.edge_roots)
+                    {
+                        reference.native_facts = Some(root);
+                        reference.native_edges_empty = edges.is_none();
+                        reference.native_edges = edges;
+                        reference.native_facts_omission = None;
+                    }
+                    projected = Some(references);
                 }
+            }
+            let mut import_root = None;
+            if let Some((prepared, evidence, languages, analysis)) = imported
+                && let Some((root, reservation)) =
+                    self.store
+                        .stage_query_projection(self.writer, &self.quota, &prepared)?
+            {
+                self.store
+                    .verify_import_projection(&root, &evidence, &analysis, &languages)?;
+                self.optional_reservations.extend(reservation);
+                import_root = Some(root);
+            }
+            if projected.is_some() || import_root.is_some() {
                 let mut plan =
                     map::MapPlan::new(self.connection()?, &self.scope, base.artifact_root)?;
                 for change in &map_changes {
                     plan.put(change.key(), change.value())?;
                 }
-                let additions = super::metadata::prepare(
-                    &self.store,
-                    &self.scope,
-                    &mut plan,
-                    changes,
-                    &projected,
-                    target.sequence,
-                )?;
-                let artifact_root = plan.root()?;
+                let mut additions = Vec::new();
+                if let Some(projected) = projected {
+                    additions.extend(super::metadata::prepare(
+                        &self.store,
+                        &self.scope,
+                        &mut plan,
+                        changes,
+                        &projected,
+                        target.sequence,
+                    )?);
+                }
+                if let Some(reference) = import_root {
+                    additions.extend(super::resources::prepare(
+                        &self.store,
+                        &self.scope,
+                        &mut plan,
+                        &[super::resources::ResourceChange {
+                            key: "analysis-projection".into(),
+                            reference: Some(reference),
+                        }],
+                    )?);
+                }
+                target.artifact_root = plan.root()?;
                 drop(plan);
                 let mut final_changes = map_changes
                     .into_iter()
@@ -1855,16 +1946,14 @@ impl CurrentWriter<'_> {
                     final_changes.insert(change.key(), change);
                 }
                 map_changes = final_changes.into_values().collect();
-                let projected_bytes = map_changes.iter().try_fold(0u64, |total, change| {
-                    total
-                        .checked_add(change.value().map_or(0, |v| v.len()) as u64 + 128)
+                let projected_bytes = map_changes.iter().try_fold(0u64, |sum, change| {
+                    sum.checked_add(change.value().map_or(0, |v| v.len()) as u64 + 128)
                         .context("projected map bound overflow")
                 })?;
                 ensure!(
-                    projected_bytes <= map_bytes + optional.len() as u64 * 4096,
+                    projected_bytes <= map_bytes + optional_count as u64 * 4096,
                     "projected metadata exceeds admitted map bound"
                 );
-                target.artifact_root = artifact_root;
             }
         }
         self.prepare_components(
@@ -2218,6 +2307,49 @@ impl CurrentWriter<'_> {
                 self.store
                     .read_current_resource(&super::resources::decode(&bytes)?)?;
             }
+        }
+        let mut plan =
+            map::MapPlan::new(self.connection()?, &self.scope, self.head()?.artifact_root)?;
+        let projection_key = map::key(
+            &self.scope,
+            map::MapDomain::Metadata,
+            b"analysis-projection",
+        )?;
+        let staged: Option<Option<Vec<u8>>> = self
+            .connection()?
+            .query_row(
+                "SELECT value FROM current_pending_map WHERE key=?1",
+                [projection_key.as_bytes().as_slice()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let projection = match staged {
+            Some(value) => value,
+            None => plan.get(projection_key)?,
+        };
+        if let Some(bytes) = projection {
+            visit_pending_map(self.connection()?, transaction, &mut |key, value| {
+                plan.put(key, value)
+            })?;
+            ensure!(
+                plan.root()? == transaction.target.artifact_root,
+                "pending projection map root mismatch"
+            );
+            let projection = super::resources::decode(&bytes)?;
+            let analysis = super::resources::decode(
+                &plan
+                    .get(map::key(
+                        &self.scope,
+                        map::MapDomain::Metadata,
+                        b"analysis",
+                    )?)?
+                    .context("projected analysis missing")?,
+            )?;
+            let (evidence, languages) =
+                self.store
+                    .analysis_for_projection(&plan, &self.scope, &analysis)?;
+            self.store
+                .verify_import_projection(&projection, &evidence, &analysis, &languages)?;
         }
         verify_model(&self.store, &transaction.model)
     }

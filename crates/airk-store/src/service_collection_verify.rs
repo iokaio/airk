@@ -2,6 +2,50 @@
 //! Off-query dated observations. No method in this module authorizes a query.
 use super::*;
 use crate::current::postings::Lookup;
+use crate::current::query_projection::QueryProducerCertificate;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectionPendingComponent {
+    certificate: QueryProducerCertificate,
+    next_page: usize,
+    logical_certified_unix_ms: u64,
+    physical_first_unix_ms: Option<u64>,
+    physical_through_unix_ms: Option<u64>,
+}
+impl ProjectionPendingComponent {
+    fn new(certificate: QueryProducerCertificate, now: u64) -> Self {
+        Self {
+            certificate,
+            next_page: 0,
+            logical_certified_unix_ms: now,
+            physical_first_unix_ms: Some(now),
+            physical_through_unix_ms: Some(now),
+        }
+    }
+    fn validate(&self) -> Result<()> {
+        self.certificate.validate()?;
+        ensure!(
+            self.next_page <= self.certificate.summary.pages
+                && self.physical_first_unix_ms.is_some() == self.physical_through_unix_ms.is_some(),
+            "invalid query projection continuation"
+        );
+        Ok(())
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportedProjectionAudit {
+    evaluated: bool,
+    #[serde(default)]
+    authoritative_digest: Option<Sha256Digest>,
+    #[serde(default)]
+    authoritative_first_unix_ms: Option<u64>,
+    #[serde(default)]
+    authoritative_through_unix_ms: Option<u64>,
+    coverage: ProjectionComponentCoverage,
+    pending: Option<ProjectionPendingComponent>,
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -40,6 +84,10 @@ pub struct ProjectionPendingFile {
     physical_first_unix_ms: Option<u64>,
     #[serde(default)]
     physical_through_unix_ms: Option<u64>,
+    #[serde(default)]
+    native_edges: Option<ProjectionPendingComponent>,
+    #[serde(default)]
+    native_edges_empty: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,12 +100,22 @@ pub struct ProjectionOversized {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectionAuditProgress {
+    #[serde(default)]
+    schema: u32,
+    #[serde(default)]
+    preserved_v1_dates: bool,
+    #[serde(skip)]
+    coverage_skipped: bool,
     pub artifact_root: Sha256Digest,
     pub started_unix_ms: u64,
     pub after: Option<String>,
     pub visited_files: u64,
     pub scalars: ProjectionComponentCoverage,
     pub native_facts: ProjectionComponentCoverage,
+    #[serde(default)]
+    pub native_edges: ProjectionComponentCoverage,
+    #[serde(default)]
+    imported: ImportedProjectionAudit,
     pub exhausted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pending: Option<ProjectionPendingFile>,
@@ -71,16 +129,23 @@ pub struct ProjectionAuditProgress {
     pub leaf_checked_bytes: u64,
     #[serde(default)]
     pub manifest_loads: u64,
+    #[serde(default)]
+    pub physical_metadata_bytes: u64,
 }
 impl ProjectionAuditProgress {
     fn new(root: Sha256Digest, now: u64) -> Self {
         Self {
+            schema: 2,
+            preserved_v1_dates: false,
+            coverage_skipped: false,
             artifact_root: root,
             started_unix_ms: now,
             after: None,
             visited_files: 0,
             scalars: Default::default(),
             native_facts: Default::default(),
+            native_edges: Default::default(),
+            imported: Default::default(),
             exhausted: false,
             pending: None,
             first_oversized: None,
@@ -88,18 +153,49 @@ impl ProjectionAuditProgress {
             leaf_checked_pages: 0,
             leaf_checked_bytes: 0,
             manifest_loads: 0,
+            physical_metadata_bytes: 0,
         }
+    }
+    fn upgrade(&mut self) {
+        if self.schema == 2 {
+            return;
+        }
+        let mut next = Self::new(self.artifact_root, self.started_unix_ms);
+        next.preserved_v1_dates = true;
+        next.first_oversized = self.first_oversized.clone();
+        next.scalars.first_observed_unix_ms = self.scalars.first_observed_unix_ms;
+        next.scalars.through_unix_ms = self.scalars.through_unix_ms;
+        next.native_facts.first_observed_unix_ms = self.native_facts.first_observed_unix_ms;
+        next.native_facts.through_unix_ms = self.native_facts.through_unix_ms;
+        if let Some(pending) = &self.pending {
+            if pending.scalars {
+                next.scalars
+                    .first_observed_unix_ms
+                    .get_or_insert(pending.logical_certified_unix_ms);
+                next.scalars.through_unix_ms = Some(pending.logical_certified_unix_ms);
+            }
+            next.native_facts.first_observed_unix_ms = next
+                .native_facts
+                .first_observed_unix_ms
+                .or(pending.physical_first_unix_ms);
+            next.native_facts.through_unix_ms = pending
+                .physical_through_unix_ms
+                .or(next.native_facts.through_unix_ms);
+        }
+        *self = next;
     }
     fn record(
         &mut self,
         path: &str,
         scalars: bool,
         native: bool,
+        edges: bool,
         logical_now: u64,
         physical_now: u64,
     ) -> Result<()> {
         self.scalars.observe(scalars, logical_now)?;
         self.native_facts.observe(native, physical_now)?;
+        self.native_edges.observe(edges, physical_now)?;
         self.visited_files = self
             .visited_files
             .checked_add(1)
@@ -108,6 +204,10 @@ impl ProjectionAuditProgress {
         Ok(())
     }
     fn validate(&self) -> Result<()> {
+        ensure!(
+            matches!(self.schema, 0 | 2),
+            "unsupported projection continuation schema"
+        );
         ensure!(
             self.after
                 .as_ref()
@@ -124,29 +224,90 @@ impl ProjectionAuditProgress {
                     && pending.next_page <= pending.certificate.pages,
                 "invalid pending projection audit"
             );
+            ensure!(
+                !pending.native_edges_empty || pending.native_edges.is_none(),
+                "conflicting pending empty edge declaration"
+            );
+            if let Some(edges) = &pending.native_edges {
+                edges.validate()?;
+            }
         }
-        for component in [&self.scalars, &self.native_facts] {
+        let mut components = vec![&self.scalars, &self.native_facts];
+        if self.schema == 2 {
+            components.push(&self.native_edges);
+        }
+        for (component_index, component) in components.into_iter().enumerate() {
             ensure!(
                 component.checked_files.checked_add(component.missing_files)
                     == Some(self.visited_files)
                     && ((component.checked_files == 0
                         && component.first_observed_unix_ms.is_none()
                         && component.through_unix_ms.is_none())
-                        || (component.checked_files > 0
+                        || ((component.checked_files > 0
+                            || (self.preserved_v1_dates && component_index < 2))
                             && component.first_observed_unix_ms.is_some()
                             && component.through_unix_ms.is_some())),
                 "invalid projection audit coverage counters"
             );
         }
+        if self.schema == 2 {
+            ensure!(
+                self.imported
+                    .coverage
+                    .checked_files
+                    .checked_add(self.imported.coverage.missing_files)
+                    .is_some_and(|count| count <= 1)
+                    && (!self.imported.evaluated || self.imported.pending.is_none()),
+                "invalid imported audit coverage"
+            );
+            let imported = &self.imported;
+            let records = imported
+                .coverage
+                .checked_files
+                .checked_add(imported.coverage.missing_files)
+                .context("import coverage count overflow")?;
+            ensure!(
+                (!imported.evaluated && records == 0)
+                    || (imported.evaluated
+                        && records == u64::from(imported.authoritative_digest.is_some())),
+                "imported coverage settled before component completion"
+            );
+            ensure!(
+                imported.authoritative_digest.is_some()
+                    == imported.authoritative_first_unix_ms.is_some()
+                    && imported.authoritative_digest.is_some()
+                        == imported.authoritative_through_unix_ms.is_some()
+                    && (imported.coverage.checked_files == 0
+                        || (imported.coverage.first_observed_unix_ms.is_some()
+                            && imported.coverage.through_unix_ms.is_some()))
+                    && (imported.coverage.checked_files > 0
+                        || (imported.coverage.first_observed_unix_ms.is_none()
+                            && imported.coverage.through_unix_ms.is_none())),
+                "invalid imported component dates"
+            );
+            if let Some(pending) = &self.imported.pending {
+                pending.validate()?;
+                ensure!(
+                    self.exhausted && imported.authoritative_digest.is_some(),
+                    "import continuation precedes component admission"
+                );
+            }
+        }
         Ok(())
     }
     /// Historical component coverage only, never private-root/query authority.
     pub fn complete_coverage(&self) -> bool {
-        self.exhausted
+        !self.coverage_skipped
+            && self.schema == 2
+            && self.exhausted
+            && self.imported.evaluated
+            && self.imported.coverage.missing_files == 0
             && self.scalars.missing_files == 0
             && self.native_facts.missing_files == 0
+            && self.native_edges.missing_files == 0
             && self.scalars.checked_files == self.visited_files
             && self.native_facts.checked_files == self.visited_files
+            && self.native_edges.checked_files == self.visited_files
     }
 }
 
@@ -313,7 +474,7 @@ struct ProjectionReceipt {
 impl ProjectionReceipt {
     fn validate(&self, owner: Sha256Digest) -> Result<()> {
         ensure!(
-            self.version == 1 && self.owner == owner,
+            matches!((self.version, self.progress.schema), (1, 0) | (2, 2)) && self.owner == owner,
             "foreign projection audit receipt"
         );
         self.progress.validate()
@@ -344,7 +505,11 @@ impl IntegrityOwner<'_> {
         Ok((receipt.job == job
             && receipt.incarnation == head.scope.incarnation
             && receipt.progress.artifact_root == head.artifact_root)
-            .then_some(receipt.progress))
+            .then_some(receipt.progress)
+            .map(|mut progress| {
+                progress.upgrade();
+                progress
+            }))
     }
 }
 impl RecoveryReceipt {
@@ -442,7 +607,7 @@ impl VerifyTurn {
                 .progress
                 .projections
                 .as_ref()
-                .is_some_and(|projection| projection.exhausted)
+                .is_some_and(|projection| projection.exhausted && projection.imported.evaluated)
     }
     pub fn projection_coverage_complete(&self) -> bool {
         self.progress
@@ -451,9 +616,12 @@ impl VerifyTurn {
             .is_some_and(ProjectionAuditProgress::complete_coverage)
     }
 }
+#[allow(clippy::too_many_arguments)]
 fn audit_pending_projection(
     progress: &mut ProjectionAuditProgress,
     native: &crate::current::native_projection::NativeFactRead<'_>,
+    read: &crate::current::CurrentRead,
+    store: &FileStore,
     used: &mut u64,
     maximum: u64,
     pages: &mut usize,
@@ -465,6 +633,28 @@ fn audit_pending_projection(
         .as_mut()
         .context("pending projection audit missing")?;
     native.check_certificate(&pending.certificate)?;
+    let path = progress
+        .after
+        .as_deref()
+        .context("pending projection path missing")?;
+    let declared_edges = read.native_edge_reference(path)?;
+    ensure!(
+        pending.native_edges_empty == read.native_edges_declared_empty(path)?
+            && pending
+                .native_edges
+                .as_ref()
+                .map(|component| component.certificate.manifest)
+                == declared_edges
+                    .as_ref()
+                    .map(|(reference, _)| reference.digest),
+        "native edge continuation differs from selected components"
+    );
+    if let (Some(component), Some((reference, _))) = (&pending.native_edges, &declared_edges) {
+        ensure!(
+            reference.projection.as_ref() == Some(&component.certificate.summary),
+            "native edge continuation summary changed"
+        );
+    }
     while pending.next_page < pending.certificate.pages && *pages < 128 {
         checkpoint()?;
         let size = native.header().pages[pending.next_page].resource.bytes as u64;
@@ -490,6 +680,76 @@ fn audit_pending_projection(
             .context("projection physical byte overflow")?;
         checkpoint()?;
     }
+    if pending.next_page == pending.certificate.pages
+        && let Some(edges) = pending.native_edges.as_mut()
+        && edges.next_page < edges.certificate.summary.pages
+    {
+        if *pages == 128 {
+            return Ok(None);
+        }
+        let path = progress
+            .after
+            .as_deref()
+            .context("pending native edge path missing")?;
+        let (reference, _) = read
+            .native_edge_reference(path)?
+            .context("pending native edge component disappeared")?;
+        let prefix = native.manifest_bytes() as u64;
+        let minimum = prefix
+            .checked_add(reference.bytes as u64)
+            .context("native edge audit size overflow")?;
+        if minimum > maximum {
+            return Ok(Some(minimum));
+        }
+        if used.saturating_add(reference.bytes as u64) > maximum {
+            return Ok(None);
+        }
+        let projection = read
+            .native_edge_projection(store, path)?
+            .context("pending native edge component disappeared")?;
+        let turn = projection.audit_physical(
+            &edges.certificate,
+            edges.next_page,
+            128 - *pages,
+            maximum - *used,
+            &mut checkpoint,
+        )?;
+        *used = used
+            .checked_add(turn.checked_bytes)
+            .context("projection physical bytes overflow")?;
+        *pages += turn.checked_pages;
+        progress.manifest_loads = progress
+            .manifest_loads
+            .checked_add(1)
+            .context("projection manifest count overflow")?;
+        progress.leaf_checked_pages = progress
+            .leaf_checked_pages
+            .checked_add(turn.checked_pages as u64)
+            .context("projection page count overflow")?;
+        progress.leaf_checked_bytes = progress
+            .leaf_checked_bytes
+            .checked_add(turn.data_bytes)
+            .context("projection leaf byte overflow")?;
+        progress.physical_metadata_bytes = progress
+            .physical_metadata_bytes
+            .checked_add(turn.checked_bytes - turn.data_bytes)
+            .context("projection metadata byte overflow")?;
+        edges.next_page = turn.next_page;
+        if turn.checked_bytes > 0 {
+            edges.physical_through_unix_ms = Some(now);
+        }
+        if let Some(required) = turn.required_bytes {
+            let required = prefix
+                .checked_add(required)
+                .context("projection next turn size overflow")?;
+            if required > maximum {
+                return Ok(Some(required));
+            }
+        }
+        if !turn.complete {
+            return Ok(None);
+        }
+    }
     if pending.next_page == pending.certificate.pages {
         let completed = progress
             .pending
@@ -503,11 +763,25 @@ fn audit_pending_projection(
             &path,
             completed.scalars,
             true,
+            completed.native_edges.is_some() || completed.native_edges_empty,
             completed.logical_certified_unix_ms,
             completed.physical_first_unix_ms.unwrap_or(now),
         )?;
         progress.native_facts.through_unix_ms =
             Some(completed.physical_through_unix_ms.unwrap_or(now));
+        if completed.native_edges_empty {
+            if progress.native_edges.checked_files == 1 {
+                progress.native_edges.first_observed_unix_ms =
+                    Some(completed.logical_certified_unix_ms);
+            }
+            progress.native_edges.through_unix_ms = Some(completed.logical_certified_unix_ms);
+        }
+        if let Some(edges) = completed.native_edges {
+            if progress.native_edges.checked_files == 1 {
+                progress.native_edges.first_observed_unix_ms = edges.physical_first_unix_ms;
+            }
+            progress.native_edges.through_unix_ms = edges.physical_through_unix_ms;
+        }
     }
     Ok(None)
 }
@@ -529,6 +803,177 @@ fn record_projection_oversized(
             observed_unix_ms: now,
         });
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn audit_imported_projection(
+    progress: &mut ProjectionAuditProgress,
+    read: &crate::current::CurrentRead,
+    store: &FileStore,
+    used: &mut u64,
+    maximum: u64,
+    pages: &mut usize,
+    now: u64,
+    mut checkpoint: impl FnMut() -> Result<()>,
+) -> Result<Option<u64>> {
+    if progress.imported.evaluated {
+        let analysis = read.resource_reference("analysis")?;
+        let projection = read.resource_reference("analysis-projection")?.is_some();
+        let coverage = &progress.imported.coverage;
+        ensure!(
+            (analysis.is_none()
+                && !projection
+                && coverage.checked_files == 0
+                && coverage.missing_files == 0
+                && progress.imported.authoritative_digest.is_none())
+                || (analysis.is_some()
+                    && progress.imported.authoritative_digest
+                        == analysis.as_ref().map(|reference| reference.digest)
+                    && ((projection
+                        && coverage.checked_files == 1
+                        && coverage.missing_files == 0)
+                        || (!projection
+                            && coverage.checked_files == 0
+                            && coverage.missing_files == 1))),
+            "imported audit coverage differs from selected components"
+        );
+        return Ok(None);
+    }
+    if progress.imported.pending.is_none() {
+        let Some(required) = read.import_certification_bytes()? else {
+            progress.imported.evaluated = true;
+            return Ok(None);
+        };
+        if required > maximum {
+            return Ok(Some(required));
+        }
+        if used.saturating_add(required) > maximum {
+            return Ok(None);
+        }
+        checkpoint()?;
+        let analysis = read
+            .resource_reference("analysis")?
+            .context("analysis disappeared during audit")?;
+        let certificate = if read.resource_reference("analysis-projection")?.is_some() {
+            Some(
+                read.certify_imported_projection(store, &mut checkpoint)?
+                    .context("import projection disappeared during certification")?,
+            )
+        } else {
+            // Compatible omission still audits the authoritative resource. Missing
+            // acceleration is incomplete coverage, never permission to skip bytes.
+            read.analysis(store)?
+                .context("analysis disappeared during audit")?;
+            None
+        };
+        *used = used
+            .checked_add(required)
+            .context("import certification byte overflow")?;
+        progress.logical_certification_bytes = progress
+            .logical_certification_bytes
+            .checked_add(required)
+            .context("projection logical byte overflow")?;
+        progress.imported.authoritative_digest = Some(analysis.digest);
+        progress
+            .imported
+            .authoritative_first_unix_ms
+            .get_or_insert(now);
+        progress.imported.authoritative_through_unix_ms = Some(now);
+        if let Some(certificate) = certificate {
+            progress.manifest_loads = progress
+                .manifest_loads
+                .checked_add(1)
+                .context("projection manifest count overflow")?;
+            progress.imported.pending = Some(ProjectionPendingComponent::new(certificate, now));
+        } else {
+            progress.imported.coverage.observe(false, now)?;
+            progress.imported.evaluated = true;
+            return Ok(None);
+        }
+    }
+    let pending = progress
+        .imported
+        .pending
+        .as_mut()
+        .context("import projection continuation missing")?;
+    let selected = read
+        .resource_reference("analysis-projection")?
+        .context("pending import projection missing")?;
+    ensure!(
+        selected.digest == pending.certificate.manifest
+            && selected.projection.as_ref() == Some(&pending.certificate.summary),
+        "import continuation differs from selected component"
+    );
+    if pending.next_page < pending.certificate.summary.pages {
+        if *pages == 128 {
+            return Ok(None);
+        }
+        let reference = read
+            .resource_reference("analysis-projection")?
+            .context("pending import projection missing")?;
+        if reference.bytes as u64 > maximum {
+            return Ok(Some(reference.bytes as u64));
+        }
+        if used.saturating_add(reference.bytes as u64) > maximum {
+            return Ok(None);
+        }
+        let projection = read
+            .imported_projection(store)?
+            .context("pending import projection missing")?;
+        let turn = projection.audit_physical(
+            &pending.certificate,
+            pending.next_page,
+            128 - *pages,
+            maximum - *used,
+            &mut checkpoint,
+        )?;
+        *used = used
+            .checked_add(turn.checked_bytes)
+            .context("projection physical byte overflow")?;
+        *pages += turn.checked_pages;
+        progress.manifest_loads = progress
+            .manifest_loads
+            .checked_add(1)
+            .context("projection manifest count overflow")?;
+        progress.leaf_checked_pages = progress
+            .leaf_checked_pages
+            .checked_add(turn.checked_pages as u64)
+            .context("projection page count overflow")?;
+        progress.leaf_checked_bytes = progress
+            .leaf_checked_bytes
+            .checked_add(turn.data_bytes)
+            .context("projection leaf byte overflow")?;
+        progress.physical_metadata_bytes = progress
+            .physical_metadata_bytes
+            .checked_add(turn.checked_bytes - turn.data_bytes)
+            .context("projection metadata byte overflow")?;
+        pending.next_page = turn.next_page;
+        if turn.checked_bytes > 0 {
+            pending.physical_through_unix_ms = Some(now);
+        }
+        if let Some(required) = turn.required_bytes
+            && required > maximum
+        {
+            return Ok(Some(required));
+        }
+        if !turn.complete {
+            return Ok(None);
+        }
+    }
+    let completed = progress
+        .imported
+        .pending
+        .take()
+        .context("completed import projection missing")?;
+    progress.imported.coverage.observe(
+        true,
+        completed
+            .physical_first_unix_ms
+            .unwrap_or(completed.logical_certified_unix_ms),
+    )?;
+    progress.imported.coverage.through_unix_ms = completed.physical_through_unix_ms;
+    progress.imported.evaluated = true;
+    Ok(None)
 }
 
 impl IntegrityOwner<'_> {
@@ -654,6 +1099,8 @@ impl IntegrityOwner<'_> {
             // Missing optional projections cannot strand a compatible legacy head.
             let mut skipped = ProjectionAuditProgress::new(head.artifact_root, now);
             skipped.exhausted = true;
+            skipped.coverage_skipped = true;
+            skipped.imported.evaluated = true;
             progress.projections = Some(skipped);
         }
         if observation.as_ref().is_some_and(|value| {
@@ -686,187 +1133,244 @@ impl IntegrityOwner<'_> {
             }
         };
         let work = (|| -> Result<()> {
-            if progress.lexical_observed_unix_ms.is_none() {
-                check()?;
-                // Existing v2 auxiliary SHA streams are indivisible; this can
-                // take longer than a turn. Never called once per object page.
-                read.verify_lexical_integrity()?;
-                progress.lexical_observed_unix_ms = Some(now);
-            }
-            check()?;
             let mut used = 0u64;
             let mut leaf_pages = 0usize;
-            // A fresh CurrentRead reauthenticates the immutable manifest once;
-            // only the fixed-size logical certificate/cursor survived the turn.
-            if progress
-                .projections
-                .as_ref()
-                .and_then(|projection| projection.pending.as_ref())
-                .is_some()
-            {
-                let pending_path = progress
+            (|| -> Result<()> {
+                if progress.lexical_observed_unix_ms.is_none() {
+                    check()?;
+                    // Existing v2 auxiliary SHA streams are indivisible; this can
+                    // take longer than a turn. Never called once per object page.
+                    read.verify_lexical_integrity()?;
+                    progress.lexical_observed_unix_ms = Some(now);
+                }
+                check()?;
+                let mut used = 0u64;
+                let mut leaf_pages = 0usize;
+                // A fresh CurrentRead reauthenticates the immutable manifest once;
+                // only the fixed-size logical certificate/cursor survived the turn.
+                if progress
                     .projections
                     .as_ref()
-                    .and_then(|p| p.after.clone())
-                    .context("pending projection path missing")?;
-                let manifest = read
-                    .native_fact_manifest_bytes(&pending_path)?
-                    .context("pending native projection disappeared")?
-                    as u64;
-                if manifest > max_bytes {
-                    blocked_large = true;
-                    required_bytes = Some(manifest);
-                    record_projection_oversized(
-                        progress
-                            .projections
-                            .as_mut()
-                            .context("projection progress missing")?,
-                        &pending_path,
-                        manifest,
-                        max_bytes,
-                        now,
-                    );
-                    return Ok(());
-                }
-                let native = read
-                    .native_fact_projection(&selected.store, &pending_path)?
-                    .context("pending native projection disappeared")?;
-                used = manifest;
-                let projection = progress
-                    .projections
-                    .as_mut()
-                    .context("projection progress missing")?;
-                projection.manifest_loads = projection
-                    .manifest_loads
-                    .checked_add(1)
-                    .context("projection manifest count overflow")?;
-                if let Some(required) = audit_pending_projection(
-                    projection,
-                    &native,
-                    &mut used,
-                    max_bytes,
-                    &mut leaf_pages,
-                    now,
-                    &mut check,
-                )? {
-                    blocked_large = true;
-                    required_bytes = Some(required);
-                    record_projection_oversized(
-                        projection,
-                        &pending_path,
-                        required,
-                        max_bytes,
-                        now,
-                    );
-                    return Ok(());
-                }
-                if projection.pending.is_some() {
-                    return Ok(());
-                }
-            }
-            let projection = progress
-                .projections
-                .as_ref()
-                .context("projection progress missing")?;
-            if progress.objects_complete && projection.exhausted {
-                return Ok(());
-            }
-            let cursor = match (progress.objects_complete, projection.exhausted) {
-                (true, false) => projection.after.clone(),
-                (false, true) => progress.after.clone(),
-                (false, false) => std::cmp::min(progress.after.clone(), projection.after.clone()),
-                (true, true) => return Ok(()),
-            };
-            let page = read.lookup_paths(Lookup::Files, "", cursor.as_deref(), max_files + 1)?;
-            let mut scanned = 0usize;
-            let mut historical_observed = false;
-            for path in page.paths.iter().take(max_files) {
-                check()?;
-                let historical = !progress.objects_complete
-                    && progress.after.as_ref().is_none_or(|after| path > after);
-                let projection_needed = {
-                    let projection = progress
+                    .and_then(|projection| projection.pending.as_ref())
+                    .is_some()
+                {
+                    let pending_path = progress
                         .projections
                         .as_ref()
-                        .context("projection progress missing")?;
-                    !projection.exhausted
-                        && projection.after.as_ref().is_none_or(|after| path > after)
-                };
-                if !historical && !projection_needed {
-                    scanned += 1;
-                    continue;
-                }
-                let artifact = read
-                    .artifact(path)?
-                    .context("verification artifact missing")?;
-                let retained = artifact
-                    .retained
-                    .as_ref()
-                    .context("verification extraction missing")?;
-                let object_size = (artifact.bytes as u64)
-                    .checked_add(retained.object_bytes as u64)
-                    .context("verification byte overflow")?;
-                let required = if projection_needed {
-                    read.projection_certification_bytes(path)?
-                } else {
-                    object_size
-                };
-                if required > max_bytes {
-                    blocked_large = true;
-                    required_bytes = Some(required);
-                    record_projection_oversized(
-                        progress
-                            .projections
-                            .as_mut()
-                            .context("projection progress missing")?,
-                        path,
-                        required,
-                        max_bytes,
-                        now,
-                    );
-                    break;
-                }
-                if used.saturating_add(required) > max_bytes {
-                    break;
-                }
-                if projection_needed {
-                    let native = read.native_fact_projection(&selected.store, path)?;
-                    let certified = read.certify_file_projections_with_native(
-                        &selected.store,
-                        path,
-                        native.as_ref(),
-                    )?;
-                    used += required;
+                        .and_then(|p| p.after.clone())
+                        .context("pending projection path missing")?;
+                    let manifest = read
+                        .native_fact_manifest_bytes(&pending_path)?
+                        .context("pending native projection disappeared")?
+                        as u64;
+                    if manifest > max_bytes {
+                        blocked_large = true;
+                        required_bytes = Some(manifest);
+                        record_projection_oversized(
+                            progress
+                                .projections
+                                .as_mut()
+                                .context("projection progress missing")?,
+                            &pending_path,
+                            manifest,
+                            max_bytes,
+                            now,
+                        );
+                        return Ok(());
+                    }
+                    let native = read
+                        .native_fact_projection(&selected.store, &pending_path)?
+                        .context("pending native projection disappeared")?;
+                    used = manifest;
                     let projection = progress
                         .projections
                         .as_mut()
                         .context("projection progress missing")?;
-                    projection.logical_certification_bytes = projection
-                        .logical_certification_bytes
-                        .checked_add(required)
-                        .context("projection logical byte overflow")?;
-                    if native.is_some() {
-                        projection.manifest_loads = projection
-                            .manifest_loads
-                            .checked_add(1)
-                            .context("projection manifest count overflow")?;
+                    projection.manifest_loads = projection
+                        .manifest_loads
+                        .checked_add(1)
+                        .context("projection manifest count overflow")?;
+                    if let Some(required) = audit_pending_projection(
+                        projection,
+                        &native,
+                        &read,
+                        &selected.store,
+                        &mut used,
+                        max_bytes,
+                        &mut leaf_pages,
+                        now,
+                        &mut check,
+                    )? {
+                        blocked_large = true;
+                        required_bytes = Some(required);
+                        record_projection_oversized(
+                            projection,
+                            &pending_path,
+                            required,
+                            max_bytes,
+                            now,
+                        );
+                        return Ok(());
                     }
-                    if let Some(certificate) = certified.native {
-                        projection.after = Some(path.clone());
-                        projection.pending = Some(ProjectionPendingFile {
-                            scalars: certified.scalars,
-                            logical_certified_unix_ms: now,
-                            certificate,
-                            next_page: 0,
-                            physical_first_unix_ms: None,
-                            physical_through_unix_ms: None,
-                        });
+                    if projection.pending.is_some() {
+                        return Ok(());
+                    }
+                }
+                let projection = progress
+                    .projections
+                    .as_ref()
+                    .context("projection progress missing")?;
+                if progress.objects_complete && projection.exhausted {
+                    return Ok(());
+                }
+                let cursor = match (progress.objects_complete, projection.exhausted) {
+                    (true, false) => projection.after.clone(),
+                    (false, true) => progress.after.clone(),
+                    (false, false) => {
+                        std::cmp::min(progress.after.clone(), projection.after.clone())
+                    }
+                    (true, true) => return Ok(()),
+                };
+                let page =
+                    read.lookup_paths(Lookup::Files, "", cursor.as_deref(), max_files + 1)?;
+                let mut scanned = 0usize;
+                let mut historical_observed = false;
+                for path in page.paths.iter().take(max_files) {
+                    check()?;
+                    let historical = !progress.objects_complete
+                        && progress.after.as_ref().is_none_or(|after| path > after);
+                    let projection_needed = {
+                        let projection = progress
+                            .projections
+                            .as_ref()
+                            .context("projection progress missing")?;
+                        !projection.exhausted
+                            && projection.after.as_ref().is_none_or(|after| path > after)
+                    };
+                    if !historical && !projection_needed {
+                        scanned += 1;
+                        continue;
+                    }
+                    let artifact = read
+                        .artifact(path)?
+                        .context("verification artifact missing")?;
+                    let retained = artifact
+                        .retained
+                        .as_ref()
+                        .context("verification extraction missing")?;
+                    let object_size = (artifact.bytes as u64)
+                        .checked_add(retained.object_bytes as u64)
+                        .context("verification byte overflow")?;
+                    let required = if projection_needed {
+                        read.projection_certification_bytes(path)?
                     } else {
-                        projection.record(path, certified.scalars, false, now, now)?;
+                        object_size
+                    };
+                    if required > max_bytes {
+                        blocked_large = true;
+                        required_bytes = Some(required);
+                        record_projection_oversized(
+                            progress
+                                .projections
+                                .as_mut()
+                                .context("projection progress missing")?,
+                            path,
+                            required,
+                            max_bytes,
+                            now,
+                        );
+                        break;
                     }
-                    // The source/extraction checks above are also the historical
-                    // object audit; do not reread them for this same file.
-                    if historical {
+                    if used.saturating_add(required) > max_bytes {
+                        break;
+                    }
+                    if projection_needed {
+                        let native = read.native_fact_projection(&selected.store, path)?;
+                        let certified = read.certify_file_projections_with_native(
+                            &selected.store,
+                            path,
+                            native.as_ref(),
+                        )?;
+                        used += required;
+                        let projection = progress
+                            .projections
+                            .as_mut()
+                            .context("projection progress missing")?;
+                        projection.logical_certification_bytes = projection
+                            .logical_certification_bytes
+                            .checked_add(required)
+                            .context("projection logical byte overflow")?;
+                        if native.is_some() {
+                            projection.manifest_loads = projection
+                                .manifest_loads
+                                .checked_add(1)
+                                .context("projection manifest count overflow")?;
+                        }
+                        if let Some(certificate) = certified.native {
+                            projection.after = Some(path.clone());
+                            projection.pending = Some(ProjectionPendingFile {
+                                scalars: certified.scalars,
+                                logical_certified_unix_ms: now,
+                                certificate,
+                                next_page: 0,
+                                physical_first_unix_ms: None,
+                                physical_through_unix_ms: None,
+                                native_edges: certified.native_edges.map(|certificate| {
+                                    ProjectionPendingComponent::new(certificate, now)
+                                }),
+                                native_edges_empty: certified.native_edges_empty,
+                            });
+                        } else {
+                            projection.record(path, certified.scalars, false, false, now, now)?;
+                        }
+                        // The source/extraction checks above are also the historical
+                        // object audit; do not reread them for this same file.
+                        if historical {
+                            progress.checked_files = progress
+                                .checked_files
+                                .checked_add(1)
+                                .context("verification count overflow")?;
+                            progress.checked_bytes = progress
+                                .checked_bytes
+                                .checked_add(object_size)
+                                .context("verification size overflow")?;
+                            progress.after = Some(path.clone());
+                            progress.through_unix_ms = now;
+                            historical_observed = true;
+                        }
+                        let projection = progress
+                            .projections
+                            .as_mut()
+                            .context("projection progress missing")?;
+                        if projection.pending.is_some() {
+                            if let Some(required) = audit_pending_projection(
+                                projection,
+                                native
+                                    .as_ref()
+                                    .context("native certification reader missing")?,
+                                &read,
+                                &selected.store,
+                                &mut used,
+                                max_bytes,
+                                &mut leaf_pages,
+                                now,
+                                &mut check,
+                            )? {
+                                blocked_large = true;
+                                required_bytes = Some(required);
+                                record_projection_oversized(
+                                    projection, path, required, max_bytes, now,
+                                );
+                                break;
+                            }
+                            if projection.pending.is_some() {
+                                break;
+                            }
+                        }
+                    } else {
+                        selected.store.verify_retained_source_deep(&artifact)?;
+                        selected.store.load_retained_bounded(&artifact, max_bytes)?;
+                        used += object_size;
                         progress.checked_files = progress
                             .checked_files
                             .checked_add(1)
@@ -879,74 +1383,85 @@ impl IntegrityOwner<'_> {
                         progress.through_unix_ms = now;
                         historical_observed = true;
                     }
+                    scanned += 1;
+                    check()?;
+                    if leaf_pages == 128 {
+                        break;
+                    }
+                }
+                if historical_observed {
+                    progress.through_unix_ms = now;
+                }
+                if scanned == page.paths.len() && page.next_after.is_none() {
+                    let last = page.paths.last();
+                    if !progress.objects_complete
+                        && last.is_none_or(|path| progress.after.as_ref() == Some(path))
+                    {
+                        progress.objects_complete = true;
+                        if page.paths.is_empty() && progress.checked_files == 0 {
+                            progress.through_unix_ms = now;
+                        }
+                    }
                     let projection = progress
                         .projections
                         .as_mut()
                         .context("projection progress missing")?;
-                    if projection.pending.is_some() {
-                        if let Some(required) = audit_pending_projection(
-                            projection,
-                            native
-                                .as_ref()
-                                .context("native certification reader missing")?,
-                            &mut used,
-                            max_bytes,
-                            &mut leaf_pages,
-                            now,
-                            &mut check,
-                        )? {
-                            blocked_large = true;
-                            required_bytes = Some(required);
-                            record_projection_oversized(projection, path, required, max_bytes, now);
-                            break;
-                        }
-                        if projection.pending.is_some() {
-                            break;
-                        }
+                    if projection.pending.is_none()
+                        && last.is_none_or(|path| projection.after.as_ref() == Some(path))
+                    {
+                        projection.exhausted = true;
                     }
-                } else {
-                    selected.store.verify_retained_source_deep(&artifact)?;
-                    selected.store.load_retained_bounded(&artifact, max_bytes)?;
-                    used += object_size;
-                    progress.checked_files = progress
-                        .checked_files
-                        .checked_add(1)
-                        .context("verification count overflow")?;
-                    progress.checked_bytes = progress
-                        .checked_bytes
-                        .checked_add(object_size)
-                        .context("verification size overflow")?;
-                    progress.after = Some(path.clone());
-                    progress.through_unix_ms = now;
-                    historical_observed = true;
                 }
-                scanned += 1;
-                check()?;
-                if leaf_pages == 128 {
-                    break;
-                }
-            }
-            if historical_observed {
-                progress.through_unix_ms = now;
-            }
-            if scanned == page.paths.len() && page.next_after.is_none() {
-                let last = page.paths.last();
-                if !progress.objects_complete
-                    && last.is_none_or(|path| progress.after.as_ref() == Some(path))
+                Ok(())
+            })()?;
+            if progress.objects_complete
+                && let Some(state) = read.collection_state()?
+            {
+                ensure!(
+                    progress.checked_files == state.counts.files,
+                    "baseline verification file coverage incomplete"
+                );
+                if audit_projections
+                    && let Some(projection) = &progress.projections
+                    && projection.exhausted
                 {
-                    progress.objects_complete = true;
-                    if page.paths.is_empty() && progress.checked_files == 0 {
-                        progress.through_unix_ms = now;
-                    }
+                    ensure!(
+                        projection.visited_files == state.counts.files,
+                        "projection verification file coverage incomplete"
+                    );
                 }
+            }
+            if audit_projections
+                && progress.objects_complete
+                && progress
+                    .projections
+                    .as_ref()
+                    .is_some_and(|projection| projection.exhausted)
+                && !blocked_large
+            {
                 let projection = progress
                     .projections
                     .as_mut()
                     .context("projection progress missing")?;
-                if projection.pending.is_none()
-                    && last.is_none_or(|path| projection.after.as_ref() == Some(path))
-                {
-                    projection.exhausted = true;
+                if let Some(required) = audit_imported_projection(
+                    projection,
+                    &read,
+                    &selected.store,
+                    &mut used,
+                    max_bytes,
+                    &mut leaf_pages,
+                    now,
+                    &mut check,
+                )? {
+                    blocked_large = true;
+                    required_bytes = Some(required);
+                    record_projection_oversized(
+                        projection,
+                        "<imported-analysis>",
+                        required,
+                        max_bytes,
+                        now,
+                    );
                 }
             }
             Ok(())
@@ -1021,7 +1536,7 @@ impl IntegrityOwner<'_> {
                 state.worker_epoch = fence.1;
                 write(self.collection, RECEIPT, &state)?;
                 let receipt = ProjectionReceipt {
-                    version: 1,
+                    version: 2,
                     owner: self.collection.binding,
                     namespace: fence.0,
                     job,
@@ -1127,7 +1642,7 @@ pub(crate) fn test_projection_receipt_value(
     job: Sha256Digest,
 ) -> Result<serde_json::Value> {
     serde_json::to_value(ProjectionReceipt {
-        version: 1,
+        version: 2,
         owner: collection.binding,
         namespace,
         job,

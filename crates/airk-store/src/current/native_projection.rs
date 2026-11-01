@@ -21,7 +21,7 @@ impl std::fmt::Display for ProjectionPreparationLimit {
     }
 }
 impl std::error::Error for ProjectionPreparationLimit {}
-fn bounded_encoding(value: &impl Serialize) -> Result<Vec<u8>> {
+pub(crate) fn bounded_encoding(value: &impl Serialize) -> Result<Vec<u8>> {
     struct Output {
         bytes: Vec<u8>,
         limited: bool,
@@ -31,6 +31,20 @@ fn bounded_encoding(value: &impl Serialize) -> Result<Vec<u8>> {
             if self.bytes.len().saturating_add(bytes.len()) > MAX_PREPARED_NATIVE_BYTES {
                 self.limited = true;
                 return Err(std::io::Error::other("projection preparation bound"));
+            }
+            let required = self.bytes.len() + bytes.len();
+            if self.bytes.capacity() < required {
+                let capacity = self
+                    .bytes
+                    .capacity()
+                    .max(256)
+                    .saturating_mul(2)
+                    .min(MAX_PREPARED_NATIVE_BYTES)
+                    .max(required);
+                if let Err(error) = self.bytes.try_reserve_exact(capacity - self.bytes.len()) {
+                    self.limited = true;
+                    return Err(std::io::Error::other(error));
+                }
             }
             self.bytes.extend_from_slice(bytes);
             Ok(bytes.len())
@@ -54,6 +68,7 @@ fn bounded_encoding(value: &impl Serialize) -> Result<Vec<u8>> {
 pub struct PreparedNativeProjection {
     resources: Vec<super::resources::PreparedResource>,
     root: ResourceReference,
+    edges: Option<ResourceReference>,
     memory: usize,
 }
 impl PreparedNativeProjection {
@@ -63,6 +78,7 @@ impl PreparedNativeProjection {
 }
 pub struct NativeProjectionAdmission {
     pub roots: Option<Vec<ResourceReference>>,
+    pub edge_roots: Vec<Option<ResourceReference>>,
     /// Caller retains this exact guard through Applying, commit or rollback.
     pub reservation: Option<Reservation>,
 }
@@ -386,9 +402,30 @@ impl FileStore {
         }
         let root = value.reference.clone();
         resources.push(value);
+        let edges = self.prepare_native_edge_projection(artifact, metadata, mode)?;
+        let edges = if edges
+            .root
+            .projection
+            .as_ref()
+            .context("native edge summary missing")?
+            .edges
+            == 0
+        {
+            None
+        } else {
+            memory = memory
+                .checked_add(edges.memory_bytes())
+                .context("projection memory overflow")?;
+            if memory > MAX_PREPARED_NATIVE_BYTES {
+                return Err(ProjectionPreparationLimit.into());
+            }
+            resources.extend(edges.resources);
+            Some(edges.root)
+        };
         Ok(PreparedNativeProjection {
             resources,
             root,
+            edges,
             memory,
         })
     }
@@ -423,6 +460,7 @@ impl FileStore {
                 Err(error) if crate::capacity::is_storage_pressure(&error) => {
                     return Ok(NativeProjectionAdmission {
                         roots: None,
+                        edge_roots: Vec::new(),
                         reservation: None,
                     });
                 }
@@ -437,6 +475,7 @@ impl FileStore {
         }
         Ok(NativeProjectionAdmission {
             roots: Some(plans.iter().map(|plan| plan.root.clone()).collect()),
+            edge_roots: plans.iter().map(|plan| plan.edges.clone()).collect(),
             reservation,
         })
     }
@@ -724,6 +763,8 @@ pub struct NativeProducerCertificate {
 pub struct FileProjectionCertification {
     pub scalars: bool,
     pub native: Option<NativeProducerCertificate>,
+    pub native_edges: Option<super::query_projection::QueryProducerCertificate>,
+    pub native_edges_empty: bool,
 }
 #[derive(Clone, Debug)]
 pub struct NativeLeafAuditTurn {
@@ -883,12 +924,27 @@ impl CurrentRead {
                 .checked_add(retained.object_bytes as u64)
                 .context("baseline certification size overflow");
         }
+        let edges = self
+            .native_edge_reference(path)?
+            .map(|(reference, _)| -> Result<u64> {
+                let summary = reference
+                    .projection
+                    .as_ref()
+                    .context("native edge admission summary missing")?;
+                summary.validate()?;
+                (reference.bytes as u64)
+                    .checked_add(summary.metadata_bytes as u64)
+                    .context("native edge certification size overflow")
+            })
+            .transpose()?
+            .unwrap_or(0);
         let manifest = native.map_or(0, |(reference, _)| reference.bytes as u64);
         let metadata = self.file_metadata_bytes(path)? as u64;
         (artifact.bytes as u64)
             .checked_add(retained.object_bytes as u64)
             .and_then(|bytes| bytes.checked_add(metadata))
             .and_then(|bytes| bytes.checked_add(manifest))
+            .and_then(|bytes| bytes.checked_add(edges))
             .context("projection certification size overflow")
     }
     /// One admitted source/payload/metadata pass for the historical object and
@@ -946,6 +1002,8 @@ impl CurrentRead {
             return Ok(FileProjectionCertification {
                 scalars: false,
                 native: None,
+                native_edges: None,
+                native_edges_empty: false,
             });
         }
         let lines = if selected.is_none() {
@@ -983,7 +1041,22 @@ impl CurrentRead {
         } else {
             None
         };
-        Ok(FileProjectionCertification { scalars, native })
+        let native_edges = self
+            .native_edge_reference(path)?
+            .map(|(reference, metadata)| {
+                store.certify_native_edges(&reference, &artifact, metadata)
+            })
+            .transpose()?;
+        let native_edges_empty = self.native_edges_declared_empty(path)?;
+        if native_edges_empty {
+            store.verify_empty_native_edges(&artifact)?;
+        }
+        Ok(FileProjectionCertification {
+            scalars,
+            native,
+            native_edges,
+            native_edges_empty,
+        })
     }
     pub fn certify_native_fact_projection(
         &self,

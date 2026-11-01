@@ -2030,6 +2030,13 @@ fn projection_fixture_artifact(
         options: Default::default(),
         configuration_inputs: Default::default(),
     };
+    let source_len = facts
+        .iter()
+        .map(|fact| fact.span.end)
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let text = "body".repeat(source_len.div_ceil(4));
     let payload = ExtractionPayload {
         semantic_projection: Default::default(),
         continuity_coverage: Default::default(),
@@ -2037,11 +2044,26 @@ fn projection_fixture_artifact(
         extraction_method: "utf8".into(),
         parse_status: "plain".into(),
         provenance: Vec::new(),
-        text: "body".into(),
+        text: text.clone(),
+        syntax_identities: facts
+            .iter()
+            .filter_map(|fact| {
+                fact.code
+                    .as_ref()
+                    .map(|code| airk_core::extraction::LocalSyntaxIdentity {
+                        id: code.syntax_id,
+                        span: fact.span.clone(),
+                        syntax_kind: fact.syntax_kind.clone(),
+                        region: None,
+                    })
+            })
+            .collect(),
         facts,
-        syntax_identities: Vec::new(),
         chunks: vec![LocalChunk {
-            span: LocalSpan { start: 0, end: 4 },
+            span: LocalSpan {
+                start: 0,
+                end: text.len(),
+            },
             start_line: 1,
             end_line: 1,
             location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
@@ -2058,8 +2080,8 @@ fn projection_fixture_artifact(
         &profile,
         airk_core::binding::ArtifactBinding {
             path: "one.txt",
-            source_hash: Sha256Digest::from_bytes(Sha256::digest(b"body").into()),
-            source_bytes: 4,
+            source_hash: Sha256Digest::from_bytes(Sha256::digest(text.as_bytes()).into()),
+            source_bytes: text.len(),
         },
     )?;
     let quota = Quota::open_service(store.managed_path()?.root)?;
@@ -2068,7 +2090,7 @@ fn projection_fixture_artifact(
         &artifact,
         &payload,
         &profile,
-        Some(b"body"),
+        Some(text.as_bytes()),
         Some(&reservation),
     )?;
     Ok(compact)
@@ -2122,7 +2144,7 @@ fn publish_projection_fixture(
     scope: &CurrentScope,
     artifact: airk_core::Artifact,
 ) -> Result<()> {
-    use crate::current::{ArtifactChange, CapturedInput, collection, graph, metadata, postings};
+    use crate::current::{ArtifactChange, ArtifactVectorChanges, CapturedInput, collection, graph};
     let input = CapturedInput::new(artifact);
     let read = store.current_read(scope)?;
     let base = read.head().clone();
@@ -2138,48 +2160,40 @@ fn publish_projection_fixture(
     )?;
     let sealed = graph::GraphOverlay::new(
         &reservation,
-        read.clone(),
+        read,
         graph::GraphOverlayLimits {
             maximum_bytes: 1 << 20,
             ..Default::default()
         },
     )?
     .seal()?;
-    let (changes, target) = read.with_connection(|connection| {
-        let mut plan = map::MapPlan::new(connection, scope, base.artifact_root)?;
-        let mut collection = collection::CollectionPlan::load(&plan, scope, None)?;
-        collection.update(None, Some(&input.artifact))?;
-        let mut postings = postings::PostingChanges::new(base.sequence == 0);
-        postings.update(&mut plan, scope, store, None, Some(&input))?;
-        let first = map::MapChange::new(
-            scope,
-            map::MapDomain::Artifact,
-            input.artifact.path.as_bytes(),
-            Some(serde_json::to_vec(&input)?),
-        )?;
-        plan.put(first.key(), first.value())?;
-        let mut changes = vec![first];
-        changes.extend(metadata::prepare(
-            store,
-            scope,
-            &mut plan,
-            &[ArtifactChange::Upsert(Box::new(input.clone()))],
-            &[reference],
-            base.sequence + 1,
-        )?);
-        changes.extend(postings.finish(&mut plan, scope)?);
-        changes.extend(collection.finish(&mut plan, scope)?);
-        changes.sort_by_key(map::MapChange::key);
-        let mut target = base.clone();
-        target.sequence += 1;
-        target.artifact_root = plan.root()?;
-        Ok((changes, target))
-    })?;
-    drop(read);
+    let configuration = collection::CollectionConfiguration {
+        roots: Default::default(),
+        extractor_version: "projection-test/1".into(),
+        extraction_policy_digest: Sha256Digest::from_bytes([67; 32]),
+        index_detail: Default::default(),
+        vector_selection: Default::default(),
+        model: None,
+    };
+    let mut target = base.clone();
+    target.sequence += 1;
+    target.lexical_sequence = target.sequence;
     let lock = store.lock()?;
     let mut writer = store.current_write(&lock, quota, scope, 8 << 20)?;
-    let pending =
-        writer.prepare_mapped(&base.token()?, target, &sealed, &[input], None, &changes)?;
+    let (pending, _) = writer.prepare_artifacts_with_fts(
+        &base.token()?,
+        target,
+        &sealed,
+        ArtifactVectorChanges {
+            artifacts: &[ArtifactChange::Upsert(Box::new(input))],
+            vector_inputs: None,
+            occurrences: &[],
+            configuration: Some(&configuration),
+        },
+        None,
+        &[reference],
+        &[],
+    )?;
     writer.mark_applying(&pending)?;
     writer.commit(&pending, pending.target.lexical_commit)?;
     Ok(())
@@ -2297,6 +2311,539 @@ fn verify_projected_leaf_resume_preserves_logical_certificate_through_canceled_t
         Some(crate::service::registry::AuditEvidence::Complete(&complete)),
     )?;
     assert!(registry.integrity_audit_veto(&lease)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn verify_native_edges_resume_without_recertifying_source_or_refreshing_fact_dates() -> Result<()> {
+    use airk_core::extraction::{LocalCodeEvidence, LocalFact, LocalSpan, LocalSyntaxId};
+    use airk_core::service::{JobKind, JobOutcome, RequestKey};
+    let (_temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    let facts = (0..300)
+        .map(|id| LocalFact {
+            id,
+            owner: None,
+            kind: "call".into(),
+            name: "written".into(),
+            span: LocalSpan {
+                start: id as usize * 4,
+                end: id as usize * 4 + 4,
+            },
+            syntax_kind: "call".into(),
+            start_line: 1,
+            end_line: 1,
+            location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
+            document: None,
+            code: Some(LocalCodeEvidence {
+                fingerprints: None,
+                syntax_id: LocalSyntaxId(id),
+                owner_id: None,
+                qualified_name: "written".into(),
+                scope: vec![],
+                signature: None,
+                span: None,
+                signature_span: None,
+                parameters: None,
+                return_type: None,
+                modifiers: vec![],
+                documentation: None,
+                target: Some(format!("target_{id}")),
+                basis: airk_core::EvidenceBasis::Syntax,
+                producer: "original-fixture".into(),
+                producer_version: "1".into(),
+                coverage: "written syntax".into(),
+                details_truncated: false,
+            }),
+            region: None,
+            attributes: Default::default(),
+        })
+        .collect();
+    let compact = projection_fixture_artifact(&store, &scope, facts)?;
+    let quota = Quota::open_service(store.managed_path()?.root)?;
+    publish_projection_fixture(&store, &quota, &scope, compact.clone())?;
+    let budget = {
+        let read = store.current_read(&scope)?;
+        let native = read
+            .native_fact_projection(&store, "one.txt")?
+            .context("native facts absent")?;
+        let edges = read
+            .native_edge_projection(&store, "one.txt")?
+            .context("native edges absent")?;
+        assert!(edges.header().pages >= 2);
+        let budget = read.projection_certification_bytes("one.txt")?
+            + native
+                .header()
+                .pages
+                .iter()
+                .map(|page| page.resource.bytes as u64)
+                .sum::<u64>()
+            + edges.reference().bytes as u64
+            + edges.header().roster[0].bytes as u64
+            + store.projection_leaf(edges.header(), 0)?.bytes as u64;
+        collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .anchor(&read)?;
+        budget
+    };
+    let (namespace, epoch) = registry.request_epoch()?;
+    let queued = registry.enqueue(
+        lease.identity().0,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([171; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    let job = registry
+        .claim_job_id(&lease, queued.id)?
+        .context("Verify not claimed")?
+        .id;
+    let first = collection
+        .integrity_owner(&registry, &lease, &bound)?
+        .verify_turn(&mut store.lock()?, job, 1, budget, 100, || Ok(()))?;
+    let first_coverage = first.progress.projection_coverage().unwrap();
+    let saved = serde_json::to_value(first_coverage)?;
+    assert_eq!(saved["pending"]["native_edges"]["next_page"], 1);
+    let logical_bytes = first_coverage.logical_certification_bytes;
+    let source = store
+        .directory()
+        .join("objects/sources")
+        .join(&compact.content_hash);
+    let held = source.with_extension("held");
+    fs::rename(&source, &held)?;
+    let resumed = collection
+        .integrity_owner(&registry, &lease, &bound)?
+        .verify_turn(&mut store.lock()?, job, 1, 2 << 20, 300, || Ok(()));
+    fs::rename(&held, &source)?;
+    let resumed = resumed?;
+    let coverage = resumed.progress.projection_coverage().unwrap();
+    assert!(resumed.work_complete());
+    assert!(resumed.projection_coverage_complete());
+    assert_eq!(coverage.logical_certification_bytes, logical_bytes);
+    assert_eq!(coverage.native_facts.through_unix_ms, Some(100));
+    assert_eq!(coverage.native_edges.first_observed_unix_ms, Some(100));
+    assert_eq!(coverage.native_edges.through_unix_ms, Some(300));
+    let complete = resumed
+        .completed
+        .context("edge physical completion proof missing")?;
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        job,
+        JobOutcome::Succeeded {
+            revision: Some(complete.revision()?),
+        },
+        301,
+        None,
+        Some(crate::service::registry::AuditEvidence::Complete(&complete)),
+    )?;
+    assert!(registry.integrity_audit_veto(&lease)?.is_none());
+    Ok(())
+}
+
+fn publish_import_projection_fixture(
+    store: &crate::FileStore,
+    quota: &Quota,
+    scope: &CurrentScope,
+) -> Result<crate::current::resources::ResourceReference> {
+    use crate::current::{
+        ArtifactVectorChanges, analysis::AnalysisEvidence, graph, resources::ResourceChange,
+    };
+    let read = store.current_read(scope)?;
+    let base = read.head().clone();
+    let state = read
+        .collection_state()?
+        .context("fixture configuration absent")?;
+    let source = read.artifact("one.txt")?.context("fixture source absent")?;
+    let citation = airk_core::Citation {
+        path: "one.txt".into(),
+        content_hash: source.content_hash.clone(),
+        start_line: 1,
+        end_line: 1,
+        location: airk_core::DocumentLocation::Lines { start: 1, end: 1 },
+    };
+    let evidence = AnalysisEvidence {
+        manifest: airk_core::AnalysisManifest {
+            version: 1,
+            root: scope.root.clone(),
+            collection: scope.collection.clone(),
+            extractor_version: state.configuration.extractor_version,
+            source_hashes: std::collections::BTreeMap::from([(
+                "one.txt".into(),
+                source.content_hash,
+            )]),
+            build_inputs: Default::default(),
+            producer: "original-import-fixture".into(),
+            producer_version: "1".into(),
+            index_sha256: None,
+        },
+        facts: (0..600)
+            .map(|ordinal| airk_core::FactHit {
+                candidate: false,
+                continuity_key: None,
+                name: format!("imported_{ordinal}"),
+                kind: "heading".into(),
+                syntax_kind: "heading".into(),
+                language: "producer-language".into(),
+                citation: citation.clone(),
+                document: None,
+                code: None,
+            })
+            .collect(),
+        relationships: vec![],
+    };
+    let reservation = quota.reserve(&scope.collection, 16 << 20)?;
+    let sealed = graph::GraphOverlay::new(
+        &reservation,
+        read,
+        graph::GraphOverlayLimits {
+            maximum_bytes: 1 << 20,
+            ..Default::default()
+        },
+    )?
+    .seal()?;
+    let lock = store.lock()?;
+    let reference =
+        store.retain_current_resource_owned(&lock, &evidence.canonical_bytes()?, &reservation)?;
+    let mut writer = store.current_write(&lock, quota, scope, 8 << 20)?;
+    let mut target = base.clone();
+    target.sequence += 1;
+    target.lexical_sequence = target.sequence;
+    let (pending, _) = writer.prepare_artifacts_with_fts(
+        &base.token()?,
+        target,
+        &sealed,
+        ArtifactVectorChanges {
+            artifacts: &[],
+            vector_inputs: None,
+            occurrences: &[],
+            configuration: None,
+        },
+        None,
+        &[],
+        &[ResourceChange {
+            key: "analysis".into(),
+            reference: Some(reference.clone()),
+        }],
+    )?;
+    let prepared_id = pending.id;
+    drop(writer);
+    drop(lock);
+    let lock = store.lock()?;
+    let mut writer = store.current_write(&lock, quota, scope, 8 << 20)?;
+    let pending = writer
+        .pending()?
+        .context("prepared import was lost on reopen")?;
+    assert_eq!(pending.id, prepared_id);
+    writer.mark_applying(&pending)?;
+    writer.commit(&pending, pending.target.lexical_commit)?;
+    Ok(reference)
+}
+
+#[test]
+fn verify_imported_pages_resume_without_reloading_authoritative_analysis() -> Result<()> {
+    use airk_core::service::{JobKind, JobOutcome, RequestKey};
+    let (_temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    let compact = projection_fixture_artifact(&store, &scope, vec![])?;
+    let quota = Quota::open_service(store.managed_path()?.root)?;
+    publish_projection_fixture(&store, &quota, &scope, compact.clone())?;
+    let analysis = publish_import_projection_fixture(&store, &quota, &scope)?;
+    let budget = {
+        let read = store.current_read(&scope)?;
+        let imported = read
+            .imported_projection(&store)?
+            .context("imported pages absent")?;
+        assert!(imported.header().pages >= 3);
+        let budget = read.projection_certification_bytes("one.txt")?
+            + read
+                .import_certification_bytes()?
+                .context("import footprint absent")?
+            + imported.reference().bytes as u64
+            + imported.header().roster[0].bytes as u64
+            + store.projection_leaf(imported.header(), 0)?.bytes as u64;
+        collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .anchor(&read)?;
+        budget
+    };
+    let (namespace, epoch) = registry.request_epoch()?;
+    let queued = registry.enqueue(
+        lease.identity().0,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([172; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    let job = registry
+        .claim_job_id(&lease, queued.id)?
+        .context("Verify not claimed")?
+        .id;
+    let first = collection
+        .integrity_owner(&registry, &lease, &bound)?
+        .verify_turn(&mut store.lock()?, job, 1, budget, 100, || Ok(()))?;
+    let first_coverage = first.progress.projection_coverage().unwrap();
+    assert_eq!(
+        serde_json::to_value(first_coverage)?["imported"]["pending"]["next_page"],
+        1
+    );
+    assert!(!first.work_complete());
+    let logical = first_coverage.logical_certification_bytes;
+    let analysis_path = store
+        .directory()
+        .join("current-resources")
+        .join(format!("{}.json", analysis.object_digest()?));
+    let held = analysis_path.with_extension("held");
+    fs::rename(&analysis_path, &held)?;
+    let resumed = collection
+        .integrity_owner(&registry, &lease, &bound)?
+        .verify_turn(&mut store.lock()?, job, 1, 1 << 20, 300, || Ok(()));
+    fs::rename(&held, &analysis_path)?;
+    let resumed = resumed?;
+    assert!(resumed.work_complete());
+    assert!(resumed.projection_coverage_complete());
+    let coverage = resumed.progress.projection_coverage().unwrap();
+    assert_eq!(coverage.logical_certification_bytes, logical);
+    let saved = serde_json::to_value(coverage)?;
+    assert_eq!(saved["imported"]["coverage"]["first_observed_unix_ms"], 100);
+    assert_eq!(saved["imported"]["coverage"]["through_unix_ms"], 300);
+    let complete = resumed
+        .completed
+        .context("import physical completion proof missing")?;
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        job,
+        JobOutcome::Succeeded {
+            revision: Some(complete.revision()?),
+        },
+        301,
+        None,
+        Some(crate::service::registry::AuditEvidence::Complete(&complete)),
+    )?;
+    assert!(registry.integrity_audit_veto(&lease)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn verify_v1_projection_upgrade_rechecks_before_old_cursor_and_preserves_dates() -> Result<()> {
+    use airk_core::service::{JobKind, JobOutcome, RequestKey};
+    let (temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    let compact = projection_fixture_artifact(&store, &scope, vec![])?;
+    let quota = Quota::open_service(store.managed_path()?.root)?;
+    publish_projection_fixture(&store, &quota, &scope, compact.clone())?;
+    {
+        let read = store.current_read(&scope)?;
+        collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .anchor(&read)?;
+    }
+    let (namespace, epoch) = registry.request_epoch()?;
+    let queued = registry.enqueue(
+        lease.identity().0,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([173; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    let job = registry
+        .claim_job_id(&lease, queued.id)?
+        .context("Verify not claimed")?
+        .id;
+    let first = collection
+        .integrity_owner(&registry, &lease, &bound)?
+        .verify_turn(&mut store.lock()?, job, 1, 1 << 20, 100, || Ok(()))?;
+    let old_complete = first.completed.context("initial proof absent")?;
+    let observation_path = collection.directory.join("integrity-observation.json");
+    let before: serde_json::Value = serde_json::from_slice(&fs::read(&observation_path)?)?;
+    let projection_path = collection.directory.join("integrity-projection.json");
+    let mut legacy: serde_json::Value = serde_json::from_slice(&fs::read(&projection_path)?)?;
+    legacy["version"] = serde_json::json!(1);
+    let progress = legacy["progress"].as_object_mut().unwrap();
+    for field in [
+        "schema",
+        "preserved_v1_dates",
+        "native_edges",
+        "imported",
+        "physical_metadata_bytes",
+    ] {
+        progress.remove(field);
+    }
+    integrity::verify::test_write_projection_receipt(&collection, legacy)?;
+    let source = store
+        .directory()
+        .join("objects/sources")
+        .join(&compact.content_hash);
+    let held = source.with_extension("held");
+    fs::rename(&source, &held)?;
+    let failed = collection
+        .integrity_owner(&registry, &lease, &bound)?
+        .verify_turn(&mut store.lock()?, job, 1, 1 << 20, 200, || Ok(()));
+    fs::rename(&held, &source)?;
+    assert!(
+        failed.is_err(),
+        "new component policy trusted the completed old cursor"
+    );
+    let after: serde_json::Value = serde_json::from_slice(&fs::read(&observation_path)?)?;
+    assert_eq!(after["verify"]["after"], before["verify"]["after"]);
+    assert_eq!(
+        after["verify"]["through_unix_ms"],
+        before["verify"]["through_unix_ms"]
+    );
+    let upgraded: serde_json::Value = serde_json::from_slice(&fs::read(&projection_path)?)?;
+    assert_eq!(upgraded["version"], 2);
+    assert_eq!(upgraded["progress"]["schema"], 2);
+    assert_eq!(
+        upgraded["progress"]["scalars"]["first_observed_unix_ms"],
+        100
+    );
+    assert_eq!(
+        upgraded["progress"]["native_facts"]["first_observed_unix_ms"],
+        100
+    );
+    assert!(
+        registry
+            .complete_job_with_maintenance_and_audit_at(
+                &lease,
+                job,
+                JobOutcome::Succeeded {
+                    revision: Some(old_complete.revision()?),
+                },
+                201,
+                None,
+                Some(crate::service::registry::AuditEvidence::Complete(
+                    &old_complete
+                ))
+            )
+            .is_err(),
+        "revoked pre-failure proof cleared the audit guard"
+    );
+    let registration = registry.get(lease.identity().0)?.registration;
+    let fresh_bound = crate::service::data_scope::bind(
+        Path::new(&registration.data_root),
+        &temporary.path().canonicalize()?.join("control"),
+        namespace,
+    )?;
+    let resumed = collection
+        .integrity_owner(&registry, &lease, &fresh_bound)?
+        .verify_turn(&mut store.lock()?, job, 1, 1 << 20, 300, || Ok(()))?;
+    assert!(resumed.work_complete());
+    let coverage = resumed.progress.projection_coverage().unwrap();
+    assert_eq!(coverage.scalars.first_observed_unix_ms, Some(100));
+    assert_eq!(coverage.native_facts.first_observed_unix_ms, Some(100));
+    assert_eq!(coverage.native_edges.first_observed_unix_ms, Some(300));
+    let complete = resumed
+        .completed
+        .context("fresh upgrade audit proof absent")?;
+    registry.complete_job_with_maintenance_and_audit_at(
+        &lease,
+        job,
+        JobOutcome::Succeeded {
+            revision: Some(complete.revision()?),
+        },
+        301,
+        None,
+        Some(crate::service::registry::AuditEvidence::Complete(&complete)),
+    )?;
+    assert!(registry.integrity_audit_veto(&lease)?.is_none());
+    Ok(())
+}
+
+#[test]
+fn verify_audits_authoritative_analysis_even_when_optional_import_pages_are_absent() -> Result<()> {
+    use crate::current::{
+        graph,
+        resources::{self, ResourceChange},
+    };
+    use airk_core::service::{JobKind, RequestKey};
+    let (_temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    let compact = projection_fixture_artifact(&store, &scope, vec![])?;
+    let quota = Quota::open_service(store.managed_path()?.root)?;
+    publish_projection_fixture(&store, &quota, &scope, compact)?;
+    let analysis = publish_import_projection_fixture(&store, &quota, &scope)?;
+    // Construct the supported compatible shape: authoritative assertions remain,
+    // while the optional component is absent. Authoritative bytes stay unchanged.
+    {
+        let read = store.current_read(&scope)?;
+        let base = read.head().clone();
+        let reservation = quota.reserve(&scope.collection, 1 << 20)?;
+        let (changes, target) = read.with_connection(|connection| {
+            let mut plan = map::MapPlan::new(connection, &scope, base.artifact_root)?;
+            let changes = resources::prepare(
+                &store,
+                &scope,
+                &mut plan,
+                &[ResourceChange {
+                    key: "analysis-projection".into(),
+                    reference: None,
+                }],
+            )?;
+            let mut target = base.clone();
+            target.sequence += 1;
+            target.artifact_root = plan.root()?;
+            Ok((changes, target))
+        })?;
+        let sealed = graph::GraphOverlay::new(
+            &reservation,
+            read,
+            graph::GraphOverlayLimits {
+                maximum_bytes: 1 << 20,
+                ..Default::default()
+            },
+        )?
+        .seal()?;
+        let lock = store.lock()?;
+        let mut writer = store.current_write(&lock, &quota, &scope, 8 << 20)?;
+        let pending =
+            writer.prepare_mapped(&base.token()?, target, &sealed, &[], None, &changes)?;
+        writer.mark_applying(&pending)?;
+        writer.commit(&pending, pending.target.lexical_commit)?;
+    }
+    {
+        let read = store.current_read(&scope)?;
+        assert!(read.imported_projection(&store)?.is_none());
+        collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .anchor(&read)?;
+    }
+    let analysis_path = store
+        .directory()
+        .join("current-resources")
+        .join(format!("{}.json", analysis.object_digest()?));
+    fs::write(&analysis_path, b"damaged")?;
+    let (namespace, epoch) = registry.request_epoch()?;
+    let queued = registry.enqueue(
+        lease.identity().0,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([174; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    let job = registry
+        .claim_job_id(&lease, queued.id)?
+        .context("Verify not claimed")?
+        .id;
+    assert!(
+        collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .verify_turn(&mut store.lock()?, job, 1, 1 << 20, 100, || Ok(()))
+            .is_err(),
+        "missing optional coverage suppressed physical analysis verification"
+    );
+    assert_eq!(
+        fs::read(&analysis_path)?,
+        b"damaged",
+        "Verify silently rewrote damaged data"
+    );
+    assert_eq!(registry.integrity_audit_veto(&lease)?, Some(job));
     Ok(())
 }
 

@@ -20,13 +20,15 @@ pub struct CurrentRelationships {
     pub coverage: &'static str,
 }
 
-fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
-    let mut edges = Vec::new();
+pub(crate) fn visit_edges(
+    artifact: &Artifact,
+    mut visit: impl FnMut(RelationshipHit) -> Result<()>,
+) -> Result<()> {
     for fact in &artifact.facts {
         let Some(code) = &fact.code else { continue };
         let citation = fact_hit(artifact, fact).citation;
         if let Some(owner) = &code.owner_id {
-            edges.push(RelationshipHit {
+            visit(RelationshipHit {
                 source: owner.clone(),
                 target: code.symbol_id.clone(),
                 kind: "contains".into(),
@@ -35,10 +37,10 @@ fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
                 producer: "airk-syntax-containment".into(),
                 producer_version: "native-facts/4".into(),
                 citation: citation.clone(),
-            });
+            })?;
         }
         if let Some(target) = &code.target {
-            edges.push(RelationshipHit {
+            visit(RelationshipHit {
                 source: code
                     .owner_id
                     .clone()
@@ -50,9 +52,12 @@ fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
                 producer: code.producer.clone(),
                 producer_version: code.producer_version.clone(),
                 citation,
-            });
+            })?;
         }
     }
+    Ok(())
+}
+pub(crate) fn sort_edges(edges: &mut [RelationshipHit]) {
     edges.sort_by(|a, b| {
         (a.citation.start_line, &a.source, &a.target, &a.kind).cmp(&(
             b.citation.start_line,
@@ -61,6 +66,15 @@ fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
             &b.kind,
         ))
     });
+}
+fn edges(artifact: &Artifact) -> Vec<RelationshipHit> {
+    let mut edges = Vec::new();
+    visit_edges(artifact, |edge| {
+        edges.push(edge);
+        Ok(())
+    })
+    .expect("infallible edge collector");
+    sort_edges(&mut edges);
     edges
 }
 

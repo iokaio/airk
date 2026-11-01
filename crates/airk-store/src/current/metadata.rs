@@ -36,15 +36,31 @@ pub struct FileMetadataRef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_facts: Option<super::resources::ResourceReference>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native_edges: Option<super::resources::ResourceReference>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub native_edges_empty: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_facts_omission: Option<ProjectionOmission>,
     #[serde(skip)]
     line_witness: Option<std::sync::Arc<IndexedLinesWitness>>,
+}
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 impl FileMetadataRef {
     fn validate_projection_declaration(&self) -> Result<()> {
         ensure!(
             self.native_facts.is_none() || self.native_facts_omission.is_none(),
             "conflicting native projection declaration"
+        );
+        ensure!(
+            (self.native_edges.is_none() && !self.native_edges_empty)
+                || self.native_facts.is_some(),
+            "native edge declaration lacks its native fact component"
+        );
+        ensure!(
+            !self.native_edges_empty || self.native_edges.is_none(),
+            "conflicting empty native edge declaration"
         );
         Ok(())
     }
@@ -238,6 +254,8 @@ impl FileStore {
             bytes: bytes.len(),
             scalars: Some(FileScalars::from_file(file)),
             native_facts: None,
+            native_edges: None,
+            native_edges_empty: false,
             native_facts_omission: None,
             line_witness: None,
         };
@@ -365,6 +383,23 @@ impl FileStore {
             mode,
             None,
         )?);
+        let edges =
+            self.prepare_native_edge_projection(prepared.artifact(), reference.digest, mode)?;
+        if edges
+            .root
+            .projection
+            .as_ref()
+            .context("native edge summary missing")?
+            .edges
+            == 0
+        {
+            reference.native_edges_empty = true;
+        } else {
+            for resource in &edges.resources {
+                self.retain_prepared_resource(resource, Some(reservation), None)?;
+            }
+            reference.native_edges = Some(edges.root);
+        }
         reference.line_witness = Some(prepared.witness.clone());
         Ok(reference)
     }
@@ -655,6 +690,12 @@ pub(super) fn verify_projected_metadata(
             reference.digest,
         )?;
     }
+    if let Some(edges) = &reference.native_edges {
+        store.verify_native_edges(edges, artifact, reference.digest)?;
+    }
+    if reference.native_edges_empty {
+        store.verify_empty_native_edges(artifact)?;
+    }
     Ok(())
 }
 
@@ -758,6 +799,22 @@ pub(crate) fn prepare(
                         .context("native producer materialization missing")?,
                     &file,
                     reference.digest,
+                )?;
+            }
+            if let Some(edges) = &reference.native_edges {
+                store.verify_native_edges(
+                    edges,
+                    materialized
+                        .as_ref()
+                        .context("native edge materialization missing")?,
+                    reference.digest,
+                )?;
+            }
+            if reference.native_edges_empty {
+                store.verify_empty_native_edges(
+                    materialized
+                        .as_ref()
+                        .context("native edge materialization missing")?,
                 )?;
             }
             for (domain, identity) in handles(&file)? {

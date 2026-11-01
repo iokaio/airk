@@ -31,7 +31,7 @@ mod tests {
         let value = serde_json::to_value(super::CURRENT).unwrap();
         assert_eq!(
             value,
-            serde_json::json!({"index":1,"service_state":1,"logs":1,"query_projection_records":1})
+            serde_json::json!({"index":1,"service_state":1,"logs":1,"query_projection_records":2})
         );
         assert_eq!(
             serde_json::from_value::<super::StorageFormats>(value).unwrap(),
@@ -53,5 +53,5 @@ mod tests {
 
 /// Optional current-owner JSON record capability; independent of index-v1 layout,
 /// SQLite user_version and executable version. Unknown capabilities refuse access.
-pub const NATIVE_QUERY_PROJECTION_VERSION: u32 = 1;
-pub const NATIVE_QUERY_PROJECTION_NAME: &str = "native-query-projections-v1";
+pub const NATIVE_QUERY_PROJECTION_VERSION: u32 = 2;
+pub const NATIVE_QUERY_PROJECTION_NAME: &str = "native-query-projections-v2";

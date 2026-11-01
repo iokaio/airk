@@ -109,3 +109,55 @@ pub fn read_current(store: &FileStore) -> Result<std::sync::Arc<airk_store::curr
     )?)?;
     store.current_read(&serde_json::from_value(owner["scope"].clone())?)
 }
+
+/// Uses actual published immutable pages after normal reclamation; no relaxed
+/// query route or artificial provider assertion replaces the original result.
+pub fn assert_import_projection_parity(store: &FileStore) -> Result<()> {
+    use airk_store::current::query_projection::ProjectionRow;
+    let read = read_current(store)?;
+    let analysis = read.analysis(store)?;
+    let projection = read.imported_projection(store)?;
+    match (analysis, projection) {
+        (Some(analysis), Some(projection)) => {
+            let paths = projection.lookup_paths(Lookup::Files, "", None, 100_000)?;
+            assert_eq!(
+                paths
+                    .into_iter()
+                    .map(|path| path.path)
+                    .collect::<std::collections::BTreeSet<_>>(),
+                analysis
+                    .facts
+                    .iter()
+                    .map(|hit| hit.citation.path.clone())
+                    .collect()
+            );
+            let mut facts = Vec::new();
+            let mut edges = Vec::new();
+            for page in 0..projection.header().pages {
+                for row in projection.page(page)? {
+                    match row {
+                        ProjectionRow::Fact { ordinal, hit, .. } => {
+                            assert_eq!(ordinal, facts.len());
+                            facts.push(hit);
+                        }
+                        ProjectionRow::Edge { ordinal, hit } => {
+                            assert_eq!(ordinal, edges.len());
+                            edges.push(hit);
+                        }
+                    }
+                }
+            }
+            assert_eq!(
+                serde_json::to_value(facts)?,
+                serde_json::to_value(analysis.facts)?
+            );
+            assert_eq!(
+                serde_json::to_value(edges)?,
+                serde_json::to_value(analysis.relationships)?
+            );
+        }
+        (None, None) => {}
+        _ => anyhow::bail!("small producer fixture unexpectedly lacks complete projection"),
+    }
+    Ok(())
+}

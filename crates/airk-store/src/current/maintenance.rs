@@ -116,6 +116,9 @@ impl CurrentRead {
                         .context("projection retention byte overflow")?;
                 }
 
+                if let Some(edges) = &reference.native_edges {
+                    store.retain_projection_paths(edges, &mut retained)?;
+                }
                 retained.insert(PathBuf::from("current-metadata").join(format!(
                         "{}.json",
                         reference
@@ -140,6 +143,9 @@ impl CurrentRead {
                     PathBuf::from("current-resources")
                         .join(format!("{}.json", reference.object_digest()?)),
                 );
+                if key == "analysis-projection" {
+                    store.retain_projection_paths(&reference, &mut retained)?;
+                }
                 if key == "embedding-cache" {
                     let manifest = crate::vector_cache::VectorCacheManifest::from_bytes(
                         &store.read_current_resource(&reference)?,

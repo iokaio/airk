@@ -133,9 +133,9 @@ fn read_owner_any(directory: &Path) -> Result<Owner> {
     let owner: Owner = serde_json::from_slice(&bytes)?;
     validate_capacity(owner.capacity)?;
     ensure!(
-        owner.query_projection_version.is_none_or(
-            |version| version == airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION
-        ),
+        owner.query_projection_version.is_none_or(|version| (1
+            ..=airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION)
+            .contains(&version)),
         "unsupported current query projection capability"
     );
     owner.scope.validate()?;
@@ -207,7 +207,9 @@ pub(crate) fn grow_owner(
 pub(crate) fn admit_query_projections(directory: &Path, scope: &CurrentScope) -> Result<()> {
     let mut owner = read_owner(directory)?;
     ensure!(owner.scope == *scope, "foreign current projection owner");
-    if owner.query_projection_version.is_some() {
+    if owner.query_projection_version
+        == Some(airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION)
+    {
         return Ok(());
     }
     owner.query_projection_version =

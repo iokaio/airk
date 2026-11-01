@@ -423,7 +423,10 @@ fn owner_capability_handoff_preserves_old_head_resize_and_refuses_unsupported() 
     }
     let read = fixture.store.current_read(&fixture.scope)?;
     assert_eq!(read.token()?, before);
-    assert_eq!(read.query_projection_version()?, Some(1));
+    assert_eq!(
+        read.query_projection_version()?,
+        Some(airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION)
+    );
     assert!(read.file_scalars("missing")?.is_none());
     drop(read);
     assert!(serde_json::from_slice::<LegacyOwner>(&fs::read(&path)?).is_err());
@@ -436,7 +439,10 @@ fn owner_capability_handoff_preserves_old_head_resize_and_refuses_unsupported() 
         writer.grow_capacity(CAPACITY * 2)?;
     }
     let grown: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-    assert_eq!(grown["query_projection_version"], 1);
+    assert_eq!(
+        grown["query_projection_version"],
+        airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION
+    );
     assert_eq!(grown["capacity"], CAPACITY * 2);
     let database = fixture.store.directory().join("current.sqlite3");
     let untouched = fs::read(&database)?;
@@ -564,6 +570,50 @@ fn optional_projection_admission_preserves_mandatory_budget_and_stages_exact_new
     );
     // The auxiliary guard remains alive through the actual publication above.
     assert!(admitted.reservation.is_some());
+    Ok(())
+}
+
+#[test]
+fn native_empty_edge_declaration_cannot_hide_actual_retained_relationships() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let input = retained_input_with_facts(
+        &fixture,
+        "call.txt",
+        "body",
+        vec![super::postings_tests::written_call("written_target")],
+    )?;
+    let full = fixture.store.load_projection_artifact(&input.artifact)?;
+    let file = inventory(&fixture, &input, 1)?;
+    let reservation = fixture.quota.reserve(&fixture.scope.collection, 4 << 20)?;
+    let mut forged = fixture.store.retain_current_metadata_with_facts_encoded(
+        "call.txt",
+        &file,
+        &full,
+        &reservation,
+        airk_core::compression::CompressionMode::Off,
+    )?;
+    assert!(forged.native_edges.is_some());
+    forged.native_edges = None;
+    forged.native_edges_empty = true;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let token = read.token()?;
+    let error = read
+        .with_connection(|connection| {
+            let mut plan =
+                map::MapPlan::new(connection, &fixture.scope, read.head().artifact_root)?;
+            metadata::prepare(
+                &fixture.store,
+                &fixture.scope,
+                &mut plan,
+                &[ArtifactChange::Upsert(Box::new(input))],
+                &[forged],
+                1,
+            )
+        })
+        .err()
+        .context("false empty declaration was accepted")?;
+    assert!(error.to_string().contains("empty native edge declaration"));
+    assert_eq!(read.token()?, token);
     Ok(())
 }
 
@@ -756,6 +806,7 @@ fn manifest_bound_covers_one_leaf_per_supported_fact_with_encoded_descriptors() 
             stored_bytes: u64::MAX,
             index_digest: digest.to_string(),
         }),
+        projection: None,
     };
     // This intentionally overstates valid aggregate byte counters and path escape
     // expansion, while covering the producer's maximum distinct leaf references.

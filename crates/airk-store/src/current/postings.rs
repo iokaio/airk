@@ -30,7 +30,7 @@ pub enum Lookup<'a> {
 }
 
 impl Lookup<'_> {
-    fn identity(self) -> Sha256Digest {
+    pub(crate) fn identity(self) -> Sha256Digest {
         let (kind, value) = match self {
             Self::Files => (b"files".as_slice(), ""),
             Self::FactName(value) => (b"fact-name".as_slice(), value),

@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 
 pub const MAX_RESOURCE_BYTES: usize = 256 << 20;
-pub const KEYS: [&str; 5] = [
+pub const KEYS: [&str; 6] = [
     "analysis",
+    "analysis-projection",
     "embedding-cache",
     "semantic-work",
     "semantic-policy",
@@ -26,8 +27,17 @@ pub struct ResourceReference {
     pub bytes: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub encoding: Option<airk_core::compression::EncodedObject>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projection: Option<super::query_projection::ProjectionSummary>,
 }
 impl ResourceReference {
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.encoding.as_ref().map_or(0, |encoding| {
+            encoding.logical_digest.capacity()
+                + encoding.stored_digest.capacity()
+                + encoding.index_digest.capacity()
+        })
+    }
     pub fn object_digest(&self) -> Result<Sha256Digest> {
         self.encoding
             .as_ref()
@@ -47,7 +57,7 @@ pub(crate) struct PreparedResource {
 }
 impl PreparedResource {
     pub(crate) fn memory_bytes(&self) -> usize {
-        self.stored.capacity() + std::mem::size_of::<Self>()
+        self.stored.capacity() + self.reference.heap_bytes() + std::mem::size_of::<Self>()
     }
 }
 pub(crate) fn prepare_resource(
@@ -63,6 +73,7 @@ pub(crate) fn prepare_resource(
         digest: framed_digest(b"current-resource/1", &[&bytes]),
         bytes: bytes.len(),
         encoding: encoded.as_ref().map(|(_, encoding)| encoding.clone()),
+        projection: None,
     };
     Ok(PreparedResource {
         reference,
@@ -224,6 +235,7 @@ impl FileStore {
             digest: framed_digest(b"current-resource/1", &[bytes]),
             bytes: bytes.len(),
             encoding: encoded.as_ref().map(|(_, encoding)| encoding.clone()),
+            projection: None,
         };
         let directory = self.directory().join("current-resources");
         if !directory.try_exists()? {
@@ -313,6 +325,9 @@ impl CurrentRead {
 
 pub(crate) fn decode(bytes: &[u8]) -> Result<ResourceReference> {
     let reference: ResourceReference = serde_json::from_slice(bytes)?;
+    if let Some(summary) = &reference.projection {
+        summary.validate()?;
+    }
     ensure!(
         reference.bytes <= MAX_RESOURCE_BYTES && serde_json::to_vec(&reference)? == bytes,
         "noncanonical current resource reference"

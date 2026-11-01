@@ -16,6 +16,7 @@ pub mod native_projection;
 pub mod postings;
 #[cfg(test)]
 mod publication_spike_tests;
+pub mod query_projection;
 mod read;
 mod rebuild;
 pub mod recent;

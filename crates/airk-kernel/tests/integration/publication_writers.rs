@@ -65,6 +65,7 @@ fn actual_ctags_lsp_and_ocr_writers_publish_reopenable_receipts() -> Result<()> 
                 paths: vec!["src/lib.rs".into()],
             },
         )?;
+        super::current_inspection::assert_import_projection_parity(&store)?;
         let catalog = store.current_test_catalog()?.unwrap();
         assert!(catalog.token.generation > parent.generation);
         assert_eq!(catalog.snapshot.imported_facts.len(), 1);
@@ -104,6 +105,7 @@ fn actual_ctags_lsp_and_ocr_writers_publish_reopenable_receipts() -> Result<()> 
             dpi: 150,
         },
     )?;
+    super::current_inspection::assert_import_projection_parity(&store)?;
     let catalog = store.current_test_catalog()?.unwrap();
     assert!(catalog.token.generation > parent.generation);
     let artifact = catalog.load_artifact("scan.png")?;

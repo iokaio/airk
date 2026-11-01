@@ -1709,3 +1709,173 @@ fn canonical_native_projection_preserves_partial_syntax_profiles_modes_and_curso
     }
     Ok(())
 }
+
+#[test]
+fn native_edge_pages_preserve_actual_strict_relationship_order_and_citations() -> Result<()> {
+    use airk_store::current::query_projection::ProjectionRow;
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let source = "pub fn called() {}\npub fn caller() { called(); called(); }\n";
+    std::fs::write(root.path().join("calls.rs"), source)?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let read = kernel.current_reader()?;
+    let projection = read
+        .native_edge_projection(&kernel.store, "calls.rs")?
+        .context("native edge pages missing")?;
+    let mut edges = Vec::new();
+    for page in 0..projection.header().pages {
+        for row in projection.page(page)? {
+            let ProjectionRow::Edge { ordinal, hit } = row else {
+                anyhow::bail!("unexpected native fact in edge page");
+            };
+            assert_eq!(ordinal, edges.len());
+            edges.push(hit);
+        }
+    }
+    assert!(!edges.is_empty());
+    for direction in ["incoming", "outgoing"] {
+        let symbols = edges
+            .iter()
+            .map(|edge| {
+                if direction == "incoming" {
+                    edge.target.clone()
+                } else {
+                    edge.source.clone()
+                }
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        for symbol in symbols {
+            let mut seen = std::collections::BTreeSet::new();
+            let expected = edges
+                .iter()
+                .filter(|edge| {
+                    (if direction == "incoming" {
+                        &edge.target
+                    } else {
+                        &edge.source
+                    }) == &symbol
+                })
+                .map(serde_json::to_value)
+                .collect::<std::result::Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter(|edge| seen.insert(edge.to_string()))
+                .collect::<Vec<_>>();
+            let strict = read.native_relationships(
+                &kernel.store,
+                &airk_core::RelationshipQuery {
+                    symbol,
+                    direction: direction.into(),
+                    kind: None,
+                    path_prefix: "calls.rs".into(),
+                    hops: 1,
+                    limit: 100,
+                    max_bytes: 65536,
+                },
+            )?;
+            assert!(!strict.truncated);
+            assert_eq!(
+                serde_json::to_value(strict.relationships)?,
+                serde_json::to_value(expected)?
+            );
+        }
+    }
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("calls.rs"))?,
+        source
+    );
+    Ok(())
+}
+
+#[test]
+fn optional_import_quota_refusal_preserves_authoritative_publication() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    let source = "pub fn source() {}\n";
+    std::fs::write(root.path().join("source.rs"), source)?;
+    std::fs::write(
+        root.path().join("Cargo.toml"),
+        "[package]\nname = \"fixture\"\nversion = \"0.0.0\"\n",
+    )?;
+    let kernel = Kernel::open(root.path(), Some(data.path().into()))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let manifest = kernel.prepare_analysis("quota-fixture", "1", &["Cargo.toml".into()])?;
+    let read = kernel.current_reader()?;
+    let mut snapshot = kernel.current_scan_projection(&read)?;
+    let mut fact = read
+        .native_facts_page(
+            &kernel.store,
+            &airk_core::FactQuery {
+                path_prefix: "source.rs".into(),
+                name: None,
+                kind: None,
+                language: None,
+                exact_name: false,
+                limit: 100,
+                max_bytes: 65536,
+                path_exact: true,
+                document_only: false,
+            },
+            true,
+            &Default::default(),
+        )?
+        .facts
+        .into_iter()
+        .next()
+        .context("native fixture fact missing")?;
+    if let Some(code) = &mut fact.code {
+        code.basis = airk_core::EvidenceBasis::Imported;
+    }
+    snapshot.analysis = Some(manifest.clone());
+    snapshot.imported_facts = (0..200)
+        .map(|ordinal| airk_core::FactHit {
+            name: format!("imported_{ordinal}"),
+            ..fact.clone()
+        })
+        .collect();
+    let analysis_bytes = airk_store::current::analysis::AnalysisEvidence {
+        manifest,
+        facts: snapshot.imported_facts.clone(),
+        relationships: vec![],
+    }
+    .canonical_bytes()?
+    .len() as u64;
+    drop(read);
+    let scope = kernel.current_scope()?.context("scope missing")?;
+    let quota = kernel.collection_quota()?;
+    let writer = kernel.store.lock()?;
+    let mandatory = kernel.publication_reservation()?;
+    let capacity = kernel.store.current_database_capacity(&scope)?;
+    let allowance = kernel
+        .store
+        .current_write(&writer, &quota, &scope, capacity)?
+        .required_publication_allowance()?;
+    let policy = quota.policy()?;
+    let status = quota.status()?;
+    let mut tight = policy.clone();
+    tight.root_bytes =
+        status.used_bytes + status.reserved_bytes + allowance + analysis_bytes + 16384;
+    quota.configure(tight)?;
+    let published = kernel.publish_current_projection(&writer, &snapshot, &mandatory);
+    quota.configure(policy)?;
+    published?;
+    drop(writer);
+    drop(mandatory);
+    let read = kernel.current_reader()?;
+    assert!(read.imported_projection(&kernel.store)?.is_none());
+    assert_eq!(
+        serde_json::to_value(
+            read.analysis(&kernel.store)?
+                .context("authoritative import missing")?
+                .facts
+        )?,
+        serde_json::to_value(snapshot.imported_facts)?
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("source.rs"))?,
+        source
+    );
+    Ok(())
+}

@@ -2486,3 +2486,6 @@ fn killed_capacity_growth_keeps_old_or_new_bound_and_releases_only_orphans() -> 
 
 #[path = "native_projection_tests.rs"]
 mod native_projection_tests;
+
+#[path = "query_projection_tests.rs"]
+mod query_projection_tests;
