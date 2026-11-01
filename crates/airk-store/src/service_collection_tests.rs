@@ -1912,7 +1912,7 @@ fn verify_projection_coverage_is_separate_dated_and_failed_source_does_not_advan
             .context("Verify not claimed")?
             .id)
     }
-    let (_temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    let (temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
     let compact = projection_fixture_artifact(&store, &scope, Vec::new())?;
     let quota = Quota::open_service(store.managed_path()?.root)?;
     let writer = store.lock()?;
@@ -1939,6 +1939,28 @@ fn verify_projection_coverage_is_separate_dated_and_failed_source_does_not_advan
     };
     assert!(first.progress.complete());
     assert!(first.work_complete());
+    assert!(
+        first.completed.is_none(),
+        "missing optional components became whole-Verify proof"
+    );
+    let retained = first
+        .retained_completed
+        .as_ref()
+        .context("actual declared retained-data proof absent")?;
+    assert_eq!(retained.observation().checked_files, 1);
+    assert_eq!(retained.observation().native_facts.missing_files, 1);
+    registry.record_retained_audit(&lease, retained)?;
+    assert_eq!(
+        registry.integrity_audit_veto(&lease)?,
+        Some(job),
+        "recording an observation cleared the audit guard"
+    );
+    let observed = serde_json::to_value(registry.retained_audit_observation(lease.identity().0)?)?;
+    let control_path = temporary
+        .path()
+        .canonicalize()?
+        .join("control/service-1.4.sqlite3");
+    let recorded_bytes = fs::read(&control_path)?;
     let coverage = first
         .progress
         .projection_coverage()
@@ -1961,6 +1983,21 @@ fn verify_projection_coverage_is_separate_dated_and_failed_source_does_not_advan
     assert_eq!(
         serde_json::to_value(first.progress.projection_coverage())?,
         serde_json::to_value(resumed.progress.projection_coverage())?
+    );
+    let retained_again = resumed
+        .retained_completed
+        .as_ref()
+        .context("resumed retained-data proof absent")?;
+    assert_eq!(
+        serde_json::to_value(Some(retained_again.observation()))?,
+        observed,
+        "reconstructing complete evidence refreshed physical dates"
+    );
+    registry.record_retained_audit(&lease, retained_again)?;
+    assert_eq!(
+        fs::read(&control_path)?,
+        recorded_bytes,
+        "unchanged observation rewrote control state"
     );
     registry.complete_job_with_maintenance_and_audit_at(
         &lease,
@@ -4185,5 +4222,77 @@ fn verify_text_ranges_resume_after_128_pages_without_source_or_payload_reparse()
             Some(crate::service::registry::AuditEvidence::Complete(&proof)),
         )?;
     }
+    Ok(())
+}
+
+#[test]
+fn retained_observation_and_full_verify_settlement_refuse_later_durable_damage() -> Result<()> {
+    use airk_core::service::{JobKind, JobOutcome, RequestKey};
+    let (_temporary, collection, mut registry, bound, lease, store, scope) = integrity_fixture()?;
+    {
+        let read = store.current_read(&scope)?;
+        collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .anchor(&read)?;
+    }
+    let (namespace, epoch) = registry.request_epoch()?;
+    let queued = registry.enqueue(
+        lease.identity().0,
+        namespace,
+        &RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([185; 16]),
+        },
+        JobKind::Verify,
+    )?;
+    let job = registry
+        .claim_job_id(&lease, queued.id)?
+        .context("Verify not claimed")?
+        .id;
+    let turn = collection
+        .integrity_owner(&registry, &lease, &bound)?
+        .verify_turn(&mut store.lock()?, job, 1, 1 << 20, 100, || Ok(()))?;
+    let retained = turn
+        .retained_completed
+        .as_ref()
+        .context("retained physical evidence missing")?;
+    registry.record_retained_audit(&lease, retained)?;
+    let observed = serde_json::to_value(registry.retained_audit_observation(lease.identity().0)?)?;
+    // Deliberately persist through the actual control adapter without revoking
+    // the old proof's live Arc: only the final SQL reread can reject it.
+    registry.persist_integrity_damage(
+        &lease,
+        scope.incarnation,
+        Sha256Digest::from_bytes([91; 32]),
+        101,
+    )?;
+    assert!(registry.record_retained_audit(&lease, retained).is_err());
+    assert_eq!(
+        serde_json::to_value(registry.retained_audit_observation(lease.identity().0)?)?,
+        observed
+    );
+    let full = turn
+        .completed
+        .as_ref()
+        .context("empty whole-Verify proof missing")?;
+    assert!(
+        registry
+            .complete_job_with_maintenance_and_audit_at(
+                &lease,
+                job,
+                JobOutcome::Succeeded {
+                    revision: Some(full.revision()?)
+                },
+                102,
+                None,
+                Some(crate::service::registry::AuditEvidence::Complete(full))
+            )
+            .is_err()
+    );
+    assert_eq!(registry.integrity_audit_veto(&lease)?, Some(job));
+    let (_other_root, _collection, _registry, _bound, foreign, _store, _scope) =
+        integrity_fixture()?;
+    assert!(registry.record_retained_audit(&foreign, retained).is_err());
     Ok(())
 }

@@ -6,6 +6,9 @@ use airk_core::service::{JobKind, ProjectBinding};
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, TransactionBehavior, params};
 
+#[path = "service_background_audit.rs"]
+pub(super) mod audit;
+
 pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS service_background(
  project TEXT PRIMARY KEY REFERENCES projects(binding),
  revision INTEGER NOT NULL CHECK(revision>=0),

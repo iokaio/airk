@@ -32,7 +32,7 @@ pub(super) fn migrate(connection: &mut Connection, version: i64) -> Result<()> {
         sql == SCHEMA.trim_end_matches(';'),
         "unexpected removal history schema"
     );
-    tx.pragma_update(None, "user_version", 10)?;
+    tx.pragma_update(None, "user_version", version.max(10))?;
     tx.commit()?;
     Ok(())
 }
@@ -157,6 +157,7 @@ impl ServiceRegistry {
             "service_watch",
             "service_inspections",
             "service_maintenance",
+            "service_background_audit",
             "service_background",
             "service_setup_pending",
             "service_semantic_review",

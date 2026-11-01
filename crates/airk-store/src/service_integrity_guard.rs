@@ -27,6 +27,10 @@ impl std::fmt::Display for AuditDrainProof {
 }
 impl std::error::Error for AuditDrainProof {}
 impl AuditDrainProof {
+    pub(crate) fn job(&self) -> Sha256Digest {
+        self.job
+    }
+
     pub(crate) fn new(
         registry: &ServiceRegistry,
         lease: &ProjectLease,
@@ -189,6 +193,9 @@ pub(super) fn completed(
             *revision == proof.revision()?,
             "physical audit publication mismatch"
         );
+        // Damage may be recorded by a sibling read after physical completion
+        // but before this SQL settlement, without revoking this proof's Arc.
+        require_no_owner_damage(transaction, job.project, revision.incarnation)?;
         // Only this exact admitted job may settle its veto. The service Verify
         // producer must require full physical completion and no sticky damage.
         // Partial/canceled work follows the distinct owned-drain branch below;

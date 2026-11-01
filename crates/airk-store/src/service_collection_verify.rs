@@ -470,8 +470,8 @@ impl VerifyProgress {
 
 /// Non-Clone/non-serializable: constructed only after this module actually
 /// verifies the declared lexical/retained-input components, drains owned reads
-/// and persists dated progress. This is not a certificate for future F13
-/// projections, graph/vector bytes or every file in a private data root.
+/// and persists dated progress, including the declared projection checks. This
+/// does not certify graph/vector quality or every file in a private data root.
 pub struct AuditCompletionProof {
     drained: crate::service::registry::AuditDrainProof,
     head: CurrentHead,
@@ -493,6 +493,96 @@ impl AuditCompletionProof {
         })
     }
 }
+/// Dated retained-data coverage. Missing optional components stay explicit;
+/// serializing this observation never serializes the physical authority below.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainedAuditObservation {
+    pub version: u32,
+    pub policy: Sha256Digest,
+    pub head: CurrentToken,
+    pub lexical_unix_ms: u64,
+    pub source_first_unix_ms: u64,
+    pub source_through_unix_ms: u64,
+    pub checked_files: u64,
+    pub checked_bytes: u64,
+    pub scalars: ProjectionComponentCoverage,
+    pub native_facts: ProjectionComponentCoverage,
+    pub native_edges: ProjectionComponentCoverage,
+    pub read_ranges: ProjectionComponentCoverage,
+    pub imported: ProjectionComponentCoverage,
+    pub authoritative_analysis: Option<Sha256Digest>,
+    pub analysis_first_unix_ms: Option<u64>,
+    pub analysis_through_unix_ms: Option<u64>,
+}
+impl RetainedAuditObservation {
+    pub(crate) fn validate(&self) -> Result<()> {
+        ensure!(self.version == 1, "unsupported retained audit observation");
+        for component in [
+            &self.scalars,
+            &self.native_facts,
+            &self.native_edges,
+            &self.read_ranges,
+        ] {
+            ensure!(
+                component.checked_files.checked_add(component.missing_files)
+                    == Some(self.checked_files)
+                    && component.first_observed_unix_ms.is_some()
+                        == component.through_unix_ms.is_some()
+                    && (component.checked_files == 0 || component.first_observed_unix_ms.is_some()),
+                "invalid retained audit component observation"
+            );
+        }
+        ensure!(
+            self.authoritative_analysis.is_some() == self.analysis_first_unix_ms.is_some()
+                && self.authoritative_analysis.is_some() == self.analysis_through_unix_ms.is_some()
+                && self
+                    .imported
+                    .checked_files
+                    .checked_add(self.imported.missing_files)
+                    == Some(u64::from(self.authoritative_analysis.is_some()))
+                && self.imported.first_observed_unix_ms.is_some()
+                    == self.imported.through_unix_ms.is_some()
+                && (self.imported.checked_files == 0
+                    || self.imported.first_observed_unix_ms.is_some()),
+            "invalid retained audit import observation"
+        );
+        Ok(())
+    }
+}
+/// The fixed retained/declared profile checks lexical representation, retained
+/// source/extraction and every declared projection. It does not certify graph,
+/// vector/posting completeness or confer native fast-query/recovery authority.
+/// No constructor, Clone or Deserialize exists for this physical evidence.
+pub struct RetainedAuditCompletionProof {
+    drained: crate::service::registry::AuditDrainProof,
+    observation: RetainedAuditObservation,
+}
+impl RetainedAuditCompletionProof {
+    pub fn observation(&self) -> &RetainedAuditObservation {
+        &self.observation
+    }
+    pub fn revision(&self) -> airk_core::identity::RevisionToken {
+        let head = self.observation.head;
+        airk_core::identity::RevisionToken {
+            incarnation: head.incarnation,
+            generation: head.sequence,
+            revision: head.digest,
+        }
+    }
+    pub(crate) fn job(&self) -> Sha256Digest {
+        self.drained.job()
+    }
+    pub(crate) fn matches(
+        &self,
+        connection: &rusqlite::Connection,
+        job: &airk_core::service::JobRecord,
+    ) -> Result<bool> {
+        Ok(self.observation.policy == declared_audit_policy()
+            && self.drained.matches(connection, job)?)
+    }
+}
+
 /// Fixed native consumer policy. Projected coverage cannot be minted by this
 /// baseline producer; F13 must add its actual predicates before enabling it.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -687,6 +777,7 @@ pub struct VerifyTurn {
     pub admitted_bytes: u64,
     pub drained: Option<crate::service::registry::AuditDrainProof>,
     pub blocked_input: Option<crate::current::audit_witness::AuditInputWitness>,
+    pub retained_completed: Option<RetainedAuditCompletionProof>,
 }
 impl VerifyTurn {
     // A completed campaign can honestly report unavailable projection coverage.
@@ -1831,6 +1922,48 @@ impl IntegrityOwner<'_> {
         } else {
             None
         };
+        let retained_completed = if audit_projections
+            && progress.complete()
+            && !blocked_large
+            && let Some(projection) = progress.projections.as_ref()
+            && !projection.coverage_skipped
+            && projection.schema == 3
+            && projection.exhausted
+            && projection.pending.is_none()
+            && projection.imported.evaluated
+        {
+            projection.validate()?;
+            Some(RetainedAuditCompletionProof {
+                drained: crate::service::registry::AuditDrainProof::new(
+                    self.registry,
+                    self.lease,
+                    self.bound,
+                    job,
+                )?,
+                observation: RetainedAuditObservation {
+                    version: 1,
+                    policy: declared_audit_policy(),
+                    head: state_head_for_completion.token()?,
+                    lexical_unix_ms: progress
+                        .lexical_observed_unix_ms
+                        .context("retained audit lexical observation missing")?,
+                    source_first_unix_ms: progress.started_unix_ms,
+                    source_through_unix_ms: progress.through_unix_ms,
+                    checked_files: progress.checked_files,
+                    checked_bytes: progress.checked_bytes,
+                    scalars: projection.scalars.clone(),
+                    native_facts: projection.native_facts.clone(),
+                    native_edges: projection.native_edges.clone(),
+                    read_ranges: projection.read_ranges.clone(),
+                    imported: projection.imported.coverage.clone(),
+                    authoritative_analysis: projection.imported.authoritative_digest,
+                    analysis_first_unix_ms: projection.imported.authoritative_first_unix_ms,
+                    analysis_through_unix_ms: projection.imported.authoritative_through_unix_ms,
+                },
+            })
+        } else {
+            None
+        };
         let recovery_completed = if progress.complete() && !blocked_large {
             if let Some(epoch) = recovery {
                 self.registry.require_recovery_epoch(self.lease, epoch)?;
@@ -1860,6 +1993,7 @@ impl IntegrityOwner<'_> {
             admitted_bytes: max_bytes,
             drained,
             recovery_completed,
+            retained_completed,
         })
     }
 }

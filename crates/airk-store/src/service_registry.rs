@@ -285,9 +285,11 @@ impl ServiceRegistry {
         connection.busy_timeout(scope::scope_remaining(deadline)?)?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && (2..=10).contains(&version),
+            application == APPLICATION && (2..=11).contains(&version),
             "unsupported saved service registry format"
         );
+        connection.busy_timeout(scope::scope_remaining(deadline)?)?;
+        background::audit::validate_existing(&connection, version >= 11)?;
         let registry = Self {
             root,
             connection,
@@ -365,7 +367,7 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=10).contains(&version),
+                    application == APPLICATION && (1..=11).contains(&version),
                     "unsupported service registry format"
                 );
                 schema_version = version;
@@ -379,6 +381,9 @@ impl ServiceRegistry {
                     "service registry ownership mismatch"
                 );
             }
+        }
+        if schema_version > 0 {
+            background::audit::validate_existing(&connection, schema_version >= 11)?;
         }
         let schemas = [
             jobs::SCHEMA,
@@ -638,6 +643,7 @@ impl ServiceRegistry {
             tx.commit()?;
         }
         project_removal::migrate(&mut registry.connection, schema_version)?;
+        background::audit::migrate(&mut registry.connection, schema_version)?;
         if !owner.ready {
             owner.complete(&registry.root)?;
         }
@@ -1178,7 +1184,7 @@ mod tests {
         let version: i64 = registry
             .connection
             .pragma_query_value(None, "user_version", |row| row.get(0))?;
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
         registry
             .connection
             .execute_batch("DROP TABLE service_watch_traversal")?;
