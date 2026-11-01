@@ -116,6 +116,9 @@ impl Kernel {
         let mut replacement =
             collection.begin_replacement(crate::service_broker::new_instance_id()?, job)?;
         let mut next = self.clone();
+        // The unpublished replacement is not the session's selected request
+        // store. Build and qualify it through ordinary strict readers.
+        next.native_owner = Arc::new(std::sync::Mutex::new(None));
         next.store = self.inherit_shared_models(replacement.store())?;
         next.service_selection = None;
         let settings = collection::copy_settings(
@@ -179,6 +182,10 @@ impl Kernel {
         );
         crate::service_execution::checkpoint()?;
         let token = replacement.commit(expected, settings)?;
+        self.retire_failed_native_owner_after_replacement(
+            scope.as_ref().map(|scope| scope.incarnation),
+            token,
+        )?;
         Ok(RevisionToken {
             incarnation: token.incarnation,
             generation: token.sequence,

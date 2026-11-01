@@ -22,6 +22,15 @@ pub use selectors::SelectedPath;
 pub(crate) use selectors::select_paths;
 use std::collections::BTreeMap;
 
+#[cfg(all(test, windows))]
+thread_local! {
+    static QUERY_PAGE_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+#[cfg(all(test, windows))]
+pub(crate) fn query_page_read_count() -> usize {
+    QUERY_PAGE_READS.get()
+}
+
 const ROWS: usize = 256;
 const PAGE_BYTES: usize = 256 << 10;
 const ROSTER_ROWS: usize = 256;
@@ -226,6 +235,11 @@ pub struct CurrentQueryProjection<'a> {
     reference: ResourceReference,
     header: ProjectionHeader,
     roster_cache: std::cell::RefCell<Option<(usize, Vec<ResourceReference>)>>,
+    // Request-local immutable pages. Imported selectors for multiple paths or
+    // traversal symbols often share a physical page; authenticate/decode once.
+    query_pages: std::cell::RefCell<BTreeMap<usize, std::sync::Arc<Vec<ProjectionRow>>>>,
+    query_bytes: std::cell::Cell<usize>,
+    query_limit: usize,
 }
 impl CurrentQueryProjection<'_> {
     pub fn header(&self) -> &ProjectionHeader {
@@ -253,6 +267,28 @@ impl CurrentQueryProjection<'_> {
         self.read.token()?;
         self.store
             .read_projection_page(&self.leaf_reference(page)?, page)
+    }
+    pub(crate) fn query_page(&self, page: usize) -> Result<std::sync::Arc<Vec<ProjectionRow>>> {
+        self.read.token()?;
+        if let Some(rows) = self.query_pages.borrow().get(&page).cloned() {
+            return Ok(rows);
+        }
+        let reference = self.leaf_reference(page)?;
+        let bytes = self
+            .query_bytes
+            .get()
+            .checked_add(reference.bytes)
+            .context("query projection page byte overflow")?;
+        ensure!(
+            bytes <= self.query_limit,
+            "query projection page preparation exceeds producer bound"
+        );
+        let rows = std::sync::Arc::new(self.page(page)?);
+        self.query_bytes.set(bytes);
+        self.query_pages.borrow_mut().insert(page, rows.clone());
+        #[cfg(all(test, windows))]
+        QUERY_PAGE_READS.set(QUERY_PAGE_READS.get() + 1);
+        Ok(rows)
     }
     pub fn check_certificate(&self, certificate: &QueryProducerCertificate) -> Result<()> {
         self.read.token()?;
@@ -482,12 +518,16 @@ impl super::CurrentRead {
             header.binding == binding && header.facts == 0,
             "native edge component expired"
         );
+        let query_limit = MAX_BYTES / 4 + (header.edges + header.pages) * 128;
         Ok(Some(CurrentQueryProjection {
             read: self,
             store,
             reference,
             header,
             roster_cache: Default::default(),
+            query_pages: Default::default(),
+            query_bytes: Default::default(),
+            query_limit,
         }))
     }
 
@@ -511,12 +551,20 @@ impl super::CurrentRead {
             matches!(header.binding, ProjectionBinding::Imported { analysis: digest, .. } if digest == analysis.digest),
             "import projection component expired"
         );
+        ensure!(
+            analysis.bytes <= MAX_BYTES,
+            "projected analysis exceeds producer bound"
+        );
+        let query_limit = analysis.bytes + (header.facts + header.edges + header.pages) * 128;
         Ok(Some(CurrentQueryProjection {
             read: self,
             store,
             reference,
             header,
             roster_cache: Default::default(),
+            query_pages: Default::default(),
+            query_bytes: Default::default(),
+            query_limit,
         }))
     }
 }
@@ -1114,10 +1162,12 @@ impl FileStore {
     ) -> Result<ProjectionHeader> {
         ensure!(
             reference.bytes <= MAX_HEADER,
-            "projection header exceeds bound"
+            anyhow::Error::new(super::PrivateIntegrityFailure)
+                .context("projection header exceeds bound")
         );
         let bytes = self.read_current_resource(reference)?;
-        let header: ProjectionHeader = serde_json::from_slice(&bytes)?;
+        let header: ProjectionHeader =
+            serde_json::from_slice(&bytes).context(super::PrivateIntegrityFailure)?;
         let counts_valid = match header.binding {
             ProjectionBinding::NativeEdges { .. } => header.facts == 0 && header.edges <= 20_000,
             ProjectionBinding::Imported { .. } => {
@@ -1134,7 +1184,7 @@ impl FileStore {
                 && header.selector_keys <= 2_000_000
                 && header.selectors.is_some() == (header.selector_keys > 0)
                 && serde_json::to_vec(&header)? == bytes,
-            "invalid projection header"
+            anyhow::Error::new(super::PrivateIntegrityFailure).context("invalid projection header")
         );
         ensure!(
             reference.projection.as_ref()
@@ -1146,7 +1196,8 @@ impl FileStore {
                     metadata_bytes: header.metadata_bytes,
                     metadata_objects: header.metadata_objects
                 }),
-            "projection admission summary mismatch"
+            anyhow::Error::new(super::PrivateIntegrityFailure)
+                .context("projection admission summary mismatch")
         );
         Ok(header)
     }
@@ -1172,17 +1223,19 @@ impl FileStore {
             .context("projection roster unavailable")?;
         ensure!(
             reference.bytes <= PAGE_BYTES,
-            "projection roster exceeds bound"
+            anyhow::Error::new(super::PrivateIntegrityFailure)
+                .context("projection roster exceeds bound")
         );
         let bytes = self.read_current_resource(reference)?;
-        let roster: Roster = serde_json::from_slice(&bytes)?;
+        let roster: Roster =
+            serde_json::from_slice(&bytes).context(super::PrivateIntegrityFailure)?;
         let start = block * ROSTER_ROWS;
         ensure!(
             roster.version == 1
                 && roster.start == start
                 && roster.leaves.len() == (header.pages - start).min(ROSTER_ROWS)
                 && serde_json::to_vec(&roster)? == bytes,
-            "invalid projection roster"
+            anyhow::Error::new(super::PrivateIntegrityFailure).context("invalid projection roster")
         );
         Ok(roster.leaves)
     }
@@ -1204,17 +1257,19 @@ impl FileStore {
     ) -> Result<Vec<ProjectionRow>> {
         ensure!(
             reference.bytes <= MAX_ROW + 128,
-            "projection leaf exceeds producer bound"
+            anyhow::Error::new(super::PrivateIntegrityFailure)
+                .context("projection leaf exceeds producer bound")
         );
         let bytes = self.read_current_resource(reference)?;
-        let value: Page<ProjectionRow> = serde_json::from_slice(&bytes)?;
+        let value: Page<ProjectionRow> =
+            serde_json::from_slice(&bytes).context(super::PrivateIntegrityFailure)?;
         ensure!(
             value.version == 1
                 && value.page == page
                 && !value.rows.is_empty()
                 && value.rows.len() <= ROWS
                 && serde_json::to_vec(&value)? == bytes,
-            "invalid projection page"
+            anyhow::Error::new(super::PrivateIntegrityFailure).context("invalid projection page")
         );
         Ok(value.rows)
     }

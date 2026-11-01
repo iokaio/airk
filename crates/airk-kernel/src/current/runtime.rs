@@ -123,7 +123,7 @@ impl Kernel {
         let scope = self
             .current_scope()?
             .context("workspace is not indexed; run airk index first")?;
-        self.store.current_read(&scope)
+        self.attach_private_read(self.store.current_read(&scope)?)
     }
 
     /// A bounded compact scan projection, never a persisted snapshot or a live-source read.
@@ -260,12 +260,9 @@ impl Kernel {
             } else {
                 mode
             };
-        let scope = self
-            .current_scope()?
-            .context("workspace is not indexed; run airk index first")?;
-        let evidence = super::search::search_current_with_snippets(
+        let evidence = super::search::search_current_read_with_snippets(
             &self.store,
-            &scope,
+            self.current_reader()?,
             None,
             mode,
             query,
@@ -318,6 +315,73 @@ impl Kernel {
         max_bytes: usize,
     ) -> Result<SearchResponse> {
         let compact = read.artifact(path)?.context("indexed file not found")?;
+        if read.private_query_eligible()? {
+            let selected = if let Some(lines) =
+                read.observe_private_integrity(read.native_line_projection(&self.store, path))?
+            {
+                let (start, end) = selection.range(lines.lines())?;
+                let selected = lines.read_private(start, end, max_bytes)?;
+                Some((
+                    start,
+                    end,
+                    airk_core::DocumentLocation::Lines { start, end },
+                    selected.text,
+                    selected.truncated,
+                ))
+            } else if let Some(lines) =
+                read.observe_private_integrity(read.text_range_projection(&self.store, path))?
+            {
+                let count = if matches!(
+                    selection,
+                    LineSelection::Context {
+                        maximum_end: true,
+                        ..
+                    }
+                ) {
+                    lines.maximum_line_end()
+                } else {
+                    lines.indexed_lines()
+                };
+                let (start, end) = selection.range(count)?;
+                // Context selection uses the maximum coordinate, but retained
+                // snapshot reads still enforce the final chunk end afterward.
+                ensure!(
+                    end <= lines.indexed_lines(),
+                    "line range exceeds indexed source"
+                );
+                let selected = lines.read_private(start, end, max_bytes)?;
+                Some((
+                    start,
+                    end,
+                    selected.location,
+                    selected.text,
+                    selected.truncated,
+                ))
+            } else {
+                None
+            };
+            if let Some((start, end, location, text, truncated)) = selected {
+                return Ok(SearchResponse {
+                    publication: Some(envelope(read)?),
+                    semantic_readiness: None,
+                    discovery_readiness: None,
+                    generation: read.head().sequence,
+                    collection: self.collection.clone(),
+                    hits: vec![airk_core::Hit {
+                        citation: airk_core::Citation {
+                            path: path.into(),
+                            content_hash: compact.content_hash,
+                            start_line: start,
+                            end_line: end,
+                            location,
+                        },
+                        text,
+                        truncated,
+                    }],
+                    truncated,
+                });
+            }
+        }
         let artifact = self.store.load_retained(&compact)?;
         let bytes = self.store.read_retained_source(&compact)?;
         let mut metadata = self.empty_snapshot();
@@ -394,10 +458,19 @@ impl Kernel {
             .collection_state()?
             .context("current configuration missing")?;
         let selection = &state.configuration.vector_selection;
-        let indexed_lines = read
-            .file_metadata(&self.store, path)?
-            .context("current file metadata missing")?
-            .indexed_lines;
+        let scalars = if read.private_query_eligible()? {
+            read.observe_private_integrity(read.file_scalars(path))?
+        } else {
+            None
+        };
+        let indexed_lines = match scalars {
+            Some(scalars) => scalars.indexed_lines,
+            None => {
+                read.file_metadata(&self.store, path)?
+                    .context("current file metadata missing")?
+                    .indexed_lines
+            }
+        };
         Ok(FileInfo {
             publication: Some(envelope(read)?),
             source: airk_store::roots::source_location(
@@ -454,3 +527,7 @@ impl Kernel {
 #[cfg(test)]
 #[path = "range_preparation_tests.rs"]
 mod range_preparation_tests;
+
+#[cfg(test)]
+#[path = "projected_consumer_tests.rs"]
+mod projected_consumer_tests;

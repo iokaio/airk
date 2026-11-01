@@ -209,52 +209,55 @@ impl FileStore {
     ) -> Result<Header> {
         reference.validate()?;
         let bytes = self.read_current_resource(&reference.root)?;
-        let header: Header = serde_json::from_slice(&bytes)?;
-        ensure!(
-            header.version == 1
-                && header.binding == binding(artifact)?
-                && applicable(artifact)
-                && serde_json::to_vec(&header)? == bytes,
-            "text range header binding mismatch"
-        );
-        let mut pages = 0usize;
-        let mut data_bytes = 0usize;
-        ensure!(
-            header.chunks.len() <= airk_core::extraction::MAX_EXTRACTION_CHUNKS,
-            "text range chunk bound exceeded"
-        );
-        for chunk in &header.chunks {
+        (|| -> Result<Header> {
+            let header: Header = serde_json::from_slice(&bytes)?;
             ensure!(
-                chunk.blocks.len() == chunk.bytes.div_ceil(BLOCK),
-                "text range block count mismatch"
+                header.version == 1
+                    && header.binding == binding(artifact)?
+                    && applicable(artifact)
+                    && serde_json::to_vec(&header)? == bytes,
+                "text range header binding mismatch"
             );
-            let mut newlines = 0usize;
-            for (index, block) in chunk.blocks.iter().enumerate() {
+            let mut pages = 0usize;
+            let mut data_bytes = 0usize;
+            ensure!(
+                header.chunks.len() <= airk_core::extraction::MAX_EXTRACTION_CHUNKS,
+                "text range chunk bound exceeded"
+            );
+            for chunk in &header.chunks {
                 ensure!(
-                    block.resource.bytes == (chunk.bytes - index * BLOCK).min(BLOCK)
-                        && block.resource.projection.is_none()
-                        && block.newlines <= block.resource.bytes,
-                    "text range block bound mismatch"
+                    chunk.blocks.len() == chunk.bytes.div_ceil(BLOCK),
+                    "text range block count mismatch"
                 );
-                newlines = newlines
-                    .checked_add(block.newlines)
-                    .context("text line count overflow")?;
-                data_bytes = data_bytes
-                    .checked_add(block.resource.bytes)
-                    .context("text data count overflow")?;
-                pages = pages.checked_add(1).context("text page count overflow")?;
+                let mut newlines = 0usize;
+                for (index, block) in chunk.blocks.iter().enumerate() {
+                    ensure!(
+                        block.resource.bytes == (chunk.bytes - index * BLOCK).min(BLOCK)
+                            && block.resource.projection.is_none()
+                            && block.newlines <= block.resource.bytes,
+                        "text range block bound mismatch"
+                    );
+                    newlines = newlines
+                        .checked_add(block.newlines)
+                        .context("text line count overflow")?;
+                    data_bytes = data_bytes
+                        .checked_add(block.resource.bytes)
+                        .context("text data count overflow")?;
+                    pages = pages.checked_add(1).context("text page count overflow")?;
+                }
+                ensure!(
+                    chunk.lines == newlines + usize::from(chunk.bytes > 0 && !chunk.final_newline)
+                        && (!chunk.final_newline || newlines > 0),
+                    "text range line count mismatch"
+                );
             }
             ensure!(
-                chunk.lines == newlines + usize::from(chunk.bytes > 0 && !chunk.final_newline)
-                    && (!chunk.final_newline || newlines > 0),
-                "text range line count mismatch"
+                pages == reference.pages && data_bytes == reference.data_bytes,
+                "text range summary mismatch"
             );
-        }
-        ensure!(
-            pages == reference.pages && data_bytes == reference.data_bytes,
-            "text range summary mismatch"
-        );
-        Ok(header)
+            Ok(header)
+        })()
+        .context(super::PrivateIntegrityFailure)
     }
     pub(crate) fn certify_text_ranges(
         &self,
@@ -481,6 +484,69 @@ impl TextRangeRead<'_> {
         self.store.verify_text_ranges(&self.reference, &artifact)?;
         self.read_selected(start, end, maximum)
     }
+    /// Materialize one original extraction chunk for an admitted lexical
+    /// candidate. Reading by ordinal preserves overlapping/document locations;
+    /// line-range concatenation would duplicate text from neighboring chunks.
+    pub fn chunk_private(&self, ordinal: usize) -> Result<airk_core::Chunk> {
+        ensure!(
+            self._read.private_query_eligible()?,
+            "private query authority unavailable"
+        );
+        let chunk = self
+            .header
+            .chunks
+            .get(ordinal)
+            .context("text range chunk unavailable")?;
+        let result = (|| -> Result<airk_core::Chunk> {
+            let mut bytes = Vec::with_capacity(chunk.bytes);
+            for block in &chunk.blocks {
+                bytes.extend(self.store.read_current_resource(&block.resource)?);
+            }
+            ensure!(
+                bytes.len() == chunk.bytes,
+                anyhow::Error::new(super::PrivateIntegrityFailure)
+                    .context("text range chunk byte mismatch")
+            );
+            let text = String::from_utf8(bytes).context(super::PrivateIntegrityFailure)?;
+            Ok(airk_core::Chunk {
+                start_line: chunk.start_line,
+                end_line: chunk.end_line,
+                text,
+                location: chunk.location.clone(),
+            })
+        })();
+        let chunk = self._read.observe_private_integrity(result)?;
+        self._read.token()?;
+        Ok(chunk)
+    }
+    /// Read selected authenticated pages only under this exact read's sealed owner policy.
+    pub fn read_private(
+        &self,
+        start: usize,
+        end: usize,
+        maximum: usize,
+    ) -> Result<SelectedTextRange> {
+        ensure!(
+            self._read.private_query_eligible()?,
+            "private query authority unavailable"
+        );
+        airk_core::validate_budget(1, maximum)?;
+        ensure!(start > 0 && end >= start, "invalid line range");
+        ensure!(
+            end <= self.indexed_lines(),
+            "line range exceeds indexed source"
+        );
+        // A cross-location request is a caller error, not damaged storage.
+        self.request_location(start, end)?;
+        let selected = self
+            ._read
+            .observe_private_integrity(self.read_selected(start, end, maximum))?;
+        ensure!(
+            self._read.private_query_eligible()?,
+            "private query authority revoked"
+        );
+        Ok(selected)
+    }
     pub(super) fn read_selected(
         &self,
         start: usize,
@@ -493,22 +559,7 @@ impl TextRangeRead<'_> {
             end <= self.indexed_lines(),
             "line range exceeds indexed source"
         );
-        let location = if self.artifact.extraction_method == "utf8" {
-            DocumentLocation::Lines { start, end }
-        } else {
-            let mut locations = self
-                .header
-                .chunks
-                .iter()
-                .filter(|chunk| chunk.end_line >= start && chunk.start_line <= end)
-                .map(|chunk| &chunk.location);
-            let first = locations.next().context("document location unavailable")?;
-            ensure!(
-                locations.all(|location| location == first),
-                "range crosses document locations; request one page/block/slide at a time"
-            );
-            first.clone()
-        };
+        let location = self.request_location(start, end)?;
         let mut text = String::new();
         let mut truncated = false;
         for chunk in &self.header.chunks {
@@ -543,7 +594,9 @@ impl TextRangeRead<'_> {
                 Err(error) if error.error_len().is_none() && through < finish => {
                     std::str::from_utf8(&bytes[..error.valid_up_to()])?
                 }
-                Err(error) => return Err(error.into()),
+                Err(error) => {
+                    return Err(anyhow::Error::new(error).context(super::PrivateIntegrityFailure));
+                }
             };
             let mut length = valid.len().min(allowance);
             while !valid.is_char_boundary(length) {
@@ -561,6 +614,25 @@ impl TextRangeRead<'_> {
             truncated,
         })
     }
+    fn request_location(&self, start: usize, end: usize) -> Result<DocumentLocation> {
+        let location = if self.artifact.extraction_method == "utf8" {
+            DocumentLocation::Lines { start, end }
+        } else {
+            let mut locations = self
+                .header
+                .chunks
+                .iter()
+                .filter(|chunk| chunk.end_line >= start && chunk.start_line <= end)
+                .map(|chunk| &chunk.location);
+            let first = locations.next().context("document location unavailable")?;
+            ensure!(
+                locations.all(|location| location == first),
+                "range crosses document locations; request one page/block/slide at a time"
+            );
+            first.clone()
+        };
+        Ok(location)
+    }
     fn block<'b>(
         &self,
         chunk: &TextChunk,
@@ -575,7 +647,8 @@ impl TextRangeRead<'_> {
             let bytes = self.store.read_current_resource(&block.resource)?;
             ensure!(
                 bytes.iter().filter(|byte| **byte == b'\n').count() == block.newlines,
-                "text page newline mismatch"
+                anyhow::Error::new(super::PrivateIntegrityFailure)
+                    .context("text page newline mismatch")
             );
             entry.insert(bytes);
         }
@@ -606,8 +679,14 @@ impl TextRangeRead<'_> {
                     }
                 }
             }
-            anyhow::bail!("text range line boundary missing");
+            anyhow::bail!(
+                anyhow::Error::new(super::PrivateIntegrityFailure)
+                    .context("text range line boundary missing")
+            );
         }
-        anyhow::bail!("text range line boundary outside chunk")
+        anyhow::bail!(
+            anyhow::Error::new(super::PrivateIntegrityFailure)
+                .context("text range line boundary outside chunk")
+        )
     }
 }

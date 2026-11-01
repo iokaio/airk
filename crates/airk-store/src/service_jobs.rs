@@ -46,6 +46,7 @@ struct EnqueueOptions {
     explicit: bool,
     configuration: Option<Box<airk_core::service_configuration::ConfigurationWork>>,
     background_revision: Option<u64>,
+    audit_revision: Option<(u64, u64)>,
     maintenance_now_ms: Option<u64>,
     source_request: Option<(u64, u64)>,
     manual_retry: Option<Sha256Digest>,
@@ -420,6 +421,7 @@ impl ServiceRegistry {
             explicit,
             configuration,
             background_revision,
+            audit_revision,
             maintenance_now_ms,
             source_request,
             manual_retry,
@@ -549,6 +551,7 @@ impl ServiceRegistry {
             || manual_retry.is_some()
             || planned_source
         {
+            super::background::audit::automatic::resume(&transaction, project)?;
             transaction.execute(
                 "DELETE FROM service_recovery_budget WHERE scope IN(?1,?2)",
                 params![format!("source:{project}"), format!("work:{project}")],
@@ -569,7 +572,7 @@ impl ServiceRegistry {
         }
         if maintenance_now_ms.is_some() || source_request.is_some() {
             let busy: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=?1 AND j.state IN('pending','running') AND (?2=0 OR NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')))",
+                "SELECT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=?1 AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=j.id AND a.manual=0 AND j.state='pending') AND (?2=0 OR NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')))",
                 params![project.to_string(), source_request.is_some()], |row| row.get(0))?;
             ensure!(!busy, "project already has admitted work");
         }
@@ -594,6 +597,10 @@ impl ServiceRegistry {
             })
             .transpose()?
             .flatten();
+        ensure!(
+            audit_revision.is_none() || pending.is_none(),
+            "foreground Verify already admitted"
+        );
         let id = if let Some(id) = pending.filter(|_| plan.is_none()) {
             id.parse()?
         } else {
@@ -617,6 +624,13 @@ impl ServiceRegistry {
             }
             id
         };
+        if let Some((revision, now)) = audit_revision {
+            ensure!(kind == JobKind::Verify, "invalid automatic audit kind");
+            ensure!(transaction.execute("UPDATE service_background_audit SET job=?1,parked=0,manual=0,campaign=campaign+1,revision=revision+1 WHERE project=?2 AND revision=?3 AND job IS NULL AND intent IS NOT NULL AND blocked IS NULL AND next_ms<=?4 AND campaign<9223372036854775807 AND NOT EXISTS(SELECT 1 FROM service_background b WHERE b.project=service_background_audit.project AND (b.source_pending=1 OR b.semantic_pending=1)) AND NOT EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=service_background_audit.project) AND EXISTS(SELECT 1 FROM projects p WHERE p.binding=service_background_audit.project AND p.paused=0 AND p.registered=1) AND NOT EXISTS(SELECT 1 FROM service_jobs busy WHERE busy.project=service_background_audit.project AND busy.id<>?1 AND busy.state IN('pending','running'))",params![id.to_string(),project.to_string(),i64::try_from(revision)?,i64::try_from(now)?])?==1,"automatic audit admission changed");
+        } else if explicit && kind == JobKind::Verify {
+            super::background::audit::automatic::resume(&transaction, project)?;
+            super::background::audit::automatic::promote(&transaction, id)?;
+        }
         transaction.execute(
             "INSERT INTO service_requests VALUES(?1,?2,?3,?4,?5)",
             params![
@@ -655,7 +669,7 @@ impl ServiceRegistry {
                 "SELECT m.retries FROM service_maintenance m JOIN projects p ON p.binding=m.project
                  WHERE m.project=?1 AND p.paused=0 AND (m.pending>0 OR m.failed=1)
                  AND m.retries<CASE WHEN m.failed=1 THEN 3 ELSE 7 END AND m.next_ms<=?2
-                 AND NOT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND id<>?3 AND state IN('pending','running'))",
+                 AND NOT EXISTS(SELECT 1 FROM service_jobs busy WHERE project=?1 AND id<>?3 AND state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=busy.id AND a.manual=0 AND busy.state='pending'))",
                 params![project.to_string(), i64::try_from(now_ms)?, id.to_string()],
                 |row| row.get(0),
             ).context("maintenance is no longer eligible")?;
@@ -753,7 +767,7 @@ impl ServiceRegistry {
         Ok(self.connection.query_row("SELECT EXISTS(SELECT 1 FROM service_maintenance m JOIN projects p ON p.binding=m.project WHERE m.project=?1 AND p.paused=0 AND (m.pending>0 OR m.failed=1) AND m.retries<CASE WHEN m.failed=1 THEN 3 ELSE 7 END)",[project.to_string()],|row|row.get(0))?)
     }
     pub fn due_maintenance(&self, now_ms: u64) -> Result<Vec<ProjectBinding>> {
-        let mut statement=self.connection.prepare("SELECT m.project FROM service_maintenance m JOIN projects p ON p.binding=m.project WHERE p.paused=0 AND (m.pending>0 OR m.failed=1) AND m.retries<CASE WHEN m.failed=1 THEN 3 ELSE 7 END AND m.next_ms<=?1 AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=m.project AND j.state IN('pending','running')) ORDER BY m.next_ms,m.project LIMIT 32")?;
+        let mut statement=self.connection.prepare("SELECT m.project FROM service_maintenance m JOIN projects p ON p.binding=m.project WHERE p.paused=0 AND (m.pending>0 OR m.failed=1) AND m.retries<CASE WHEN m.failed=1 THEN 3 ELSE 7 END AND m.next_ms<=?1 AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=m.project AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=j.id AND a.manual=0 AND j.state='pending')) ORDER BY m.next_ms,m.project LIMIT 32")?;
         let rows = statement.query_map([i64::try_from(now_ms)?], |row| row.get::<_, String>(0))?;
         rows.map(|row| row?.parse()).collect()
     }
@@ -908,6 +922,30 @@ impl ServiceRegistry {
             },
         )
     }
+    pub fn enqueue_automatic_audit(
+        &mut self,
+        project: ProjectBinding,
+        revision: u64,
+        caller: Incarnation,
+        nonce: Incarnation,
+        now_ms: u64,
+    ) -> Result<JobRecord> {
+        let (namespace, epoch) = self.request_epoch()?;
+        self.enqueue_impl(
+            project,
+            caller,
+            &RequestKey {
+                namespace,
+                epoch,
+                nonce,
+            },
+            JobKind::Verify,
+            EnqueueOptions {
+                audit_revision: Some((revision, now_ms)),
+                ..Default::default()
+            },
+        )
+    }
     pub fn recover_jobs_with_rebuild_receipt(
         &mut self,
         lease: &ProjectLease,
@@ -917,6 +955,7 @@ impl ServiceRegistry {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let epoch = worker_epoch(&transaction, &self.root, lease)?;
+        super::background::audit::automatic::recovered(&transaction, lease.binding, epoch)?;
         if let Some(receipt) = receipt {
             let outcome = serde_json::to_vec(&JobOutcome::Succeeded {
                 revision: Some(airk_core::identity::RevisionToken {
@@ -990,6 +1029,7 @@ impl ServiceRegistry {
             lease.binding,
             super::maintenance::clock_ms()?,
         )?;
+        super::background::audit::automatic::settle_terminal(&transaction, lease.binding)?;
         transaction.commit()?;
         Ok(())
     }
@@ -1042,8 +1082,12 @@ impl ServiceRegistry {
             derived == lease.derived && registered != derived,
             "project job belongs to a different worker role"
         );
-        transaction.execute("UPDATE service_jobs SET state='running',epoch=?1,attempts=attempts+1 WHERE id=?2 AND state='pending'",
+        transaction.execute("UPDATE service_jobs SET state='running',epoch=?1,attempts=attempts+CASE WHEN EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=service_jobs.id AND a.parked=1) THEN 0 ELSE 1 END WHERE id=?2 AND state='pending'",
             params![i64::try_from(epoch)?, id])?;
+        transaction.execute(
+            "UPDATE service_background_audit SET parked=0 WHERE job=?1",
+            [&id],
+        )?;
         let claimed = record(&transaction, id.parse()?)?;
         super::integrity_guard::claimed(&transaction, &claimed)?;
         if matches!(
@@ -1066,7 +1110,7 @@ impl ServiceRegistry {
         id: Sha256Digest,
         outcome: JobOutcome,
     ) -> Result<JobRecord> {
-        self.complete_job_observed(lease, id, outcome, None, None, None)
+        self.complete_job_observed(lease, id, outcome, None, None, (None, None))
     }
 
     pub fn complete_job_at(
@@ -1076,7 +1120,7 @@ impl ServiceRegistry {
         outcome: JobOutcome,
         now_ms: u64,
     ) -> Result<JobRecord> {
-        self.complete_job_observed(lease, id, outcome, Some(now_ms), None, None)
+        self.complete_job_observed(lease, id, outcome, Some(now_ms), None, (None, None))
     }
 
     pub fn complete_job_with_maintenance_at(
@@ -1087,7 +1131,7 @@ impl ServiceRegistry {
         now_ms: u64,
         maintenance: Option<&airk_core::service::MaintenanceObservation>,
     ) -> Result<JobRecord> {
-        self.complete_job_observed(lease, id, outcome, Some(now_ms), maintenance, None)
+        self.complete_job_observed(lease, id, outcome, Some(now_ms), maintenance, (None, None))
     }
 
     /// The supervisor may settle work that never started only while an exclusive
@@ -1119,6 +1163,7 @@ impl ServiceRegistry {
         );
         let bytes = serde_json::to_vec(&JobOutcome::Failed { code: code.into() })?;
         let failed=tx.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND state='pending'",params![bytes,lease.binding.to_string()])?;
+        super::background::audit::automatic::settle_terminal(&tx, lease.binding)?;
         super::maintenance::settle_project_jobs(
             &tx,
             lease.binding,
@@ -1137,7 +1182,39 @@ impl ServiceRegistry {
         maintenance: Option<&airk_core::service::MaintenanceObservation>,
         evidence: Option<super::AuditEvidence<'_>>,
     ) -> Result<JobRecord> {
-        self.complete_job_observed(lease, id, outcome, Some(now_ms), maintenance, evidence)
+        self.complete_job_observed(
+            lease,
+            id,
+            outcome,
+            Some(now_ms),
+            maintenance,
+            (evidence, None),
+        )
+    }
+
+    /// Settle the public whole-Verify outcome while retaining separate sealed
+    /// completion of the fixed actually declared query components.
+    pub fn complete_job_with_query_audit_at(
+        &mut self,
+        lease: &ProjectLease,
+        id: Sha256Digest,
+        outcome: JobOutcome,
+        now_ms: u64,
+        maintenance: Option<&airk_core::service::MaintenanceObservation>,
+        audits: (
+            Option<super::AuditEvidence<'_>>,
+            Option<&crate::service::collection::integrity::verify::QueryComponentAuditProof>,
+        ),
+    ) -> Result<JobRecord> {
+        let (evidence, query) = audits;
+        self.complete_job_observed(
+            lease,
+            id,
+            outcome,
+            Some(now_ms),
+            maintenance,
+            (evidence, query),
+        )
     }
 
     fn complete_job_observed(
@@ -1147,8 +1224,12 @@ impl ServiceRegistry {
         outcome: JobOutcome,
         now_ms: Option<u64>,
         maintenance: Option<&airk_core::service::MaintenanceObservation>,
-        evidence: Option<super::AuditEvidence<'_>>,
+        audits: (
+            Option<super::AuditEvidence<'_>>,
+            Option<&crate::service::collection::integrity::verify::QueryComponentAuditProof>,
+        ),
     ) -> Result<JobRecord> {
+        let (evidence, query) = audits;
         if let JobOutcome::Failed { code } = &outcome {
             ensure!(
                 !code.is_empty()
@@ -1170,7 +1251,65 @@ impl ServiceRegistry {
                 && current.state == JobState::Running,
             JobError::StaleWorker
         );
+        if let Some(proof) = query {
+            ensure!(
+                matches!(outcome, JobOutcome::Succeeded { .. })
+                    || matches!(&outcome, JobOutcome::Failed { code } if code == "integrity_coverage_incomplete"),
+                "query audit proof cannot settle this public outcome"
+            );
+            if let JobOutcome::Succeeded { revision } = &outcome {
+                ensure!(
+                    *revision == Some(proof.revision()),
+                    "query audit publication mismatch"
+                );
+            }
+            ensure!(
+                matches!(current.kind, JobKind::Verify | JobKind::Repair)
+                    && proof.matches(&transaction, &current)?,
+                "foreign query audit completion"
+            );
+            proof.observation().validate()?;
+            super::integrity_guard::require_no_owner_damage(
+                &transaction,
+                current.project,
+                proof.revision().incarnation,
+            )?;
+        }
+        let canceled_verify = current.kind == JobKind::Verify
+            && transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM service_job_cancellation WHERE job=?1)",
+                [id.to_string()],
+                |row| row.get::<_, bool>(0),
+            )?;
+        // A read-only Verify has no publication mutation to preserve after Stop.
+        // The same transaction observes cancellation, discards query scheduling
+        // authority and retains only safely drained evidence for its veto.
+        let outcome = if canceled_verify {
+            JobOutcome::Canceled
+        } else {
+            outcome
+        };
+        let evidence = if canceled_verify {
+            match query {
+                Some(proof) => Some(super::AuditEvidence::Drained(proof.drain())),
+                None => evidence,
+            }
+        } else {
+            evidence
+        };
+        let query = if canceled_verify { None } else { query };
         super::integrity_guard::completed(&transaction, &current, &outcome, evidence)?;
+        if query.is_some() {
+            // Actual declared-profile completion settles uncertainty even when
+            // truthful public whole-Verify coverage lacks legacy optional pages.
+            transaction.execute(
+                "DELETE FROM service_recovery_budget WHERE scope=?1 AND engine=?2",
+                params![
+                    format!("integrity:{}", current.project),
+                    current.id.to_string()
+                ],
+            )?;
+        }
         let state = match outcome {
             JobOutcome::Succeeded { .. } => "succeeded",
             JobOutcome::Failed { .. } => "failed",
@@ -1255,6 +1394,21 @@ impl ServiceRegistry {
                 super::background::set(&transaction, current.project, kind, false)?;
             }
         }
+        if let Some(proof) = query {
+            super::background::audit::automatic::finished_query(
+                &transaction,
+                &current,
+                proof,
+                now_ms.unwrap_or(super::maintenance::clock_ms()?),
+            )?;
+        } else {
+            super::background::audit::automatic::finished(
+                &transaction,
+                id,
+                matches!(outcome, JobOutcome::Succeeded { .. }),
+                now_ms.unwrap_or(super::maintenance::clock_ms()?),
+            )?;
+        }
         let completed = record(&transaction, id)?;
         super::maintenance::job_completed(
             &transaction,
@@ -1279,6 +1433,7 @@ impl ServiceRegistry {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let current = record(&transaction, id)?;
+        super::background::audit::automatic::canceled(&transaction, id)?;
         if current.kind == JobKind::Maintain
             && matches!(current.state, JobState::Pending | JobState::Running)
         {
@@ -1327,6 +1482,7 @@ impl ServiceRegistry {
             current.state == JobState::Pending,
             "running or completed job requires worker-aware cancellation"
         );
+        super::background::audit::automatic::canceled(&transaction, id)?;
         if current.kind == JobKind::Maintain {
             transaction.execute(
                 "UPDATE service_maintenance SET retries=7 WHERE project=?1",

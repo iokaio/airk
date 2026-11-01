@@ -181,13 +181,16 @@ impl FileStore {
             "native line index reference exceeds bound"
         );
         let bytes = self.read_current_resource(reference)?;
-        let index: NativeLineIndex = serde_json::from_slice(&bytes)?;
-        ensure!(
-            serde_json::to_vec(&index)? == bytes,
-            "noncanonical native line index"
-        );
-        index.validate(artifact)?;
-        Ok(index)
+        (|| -> Result<NativeLineIndex> {
+            let index: NativeLineIndex = serde_json::from_slice(&bytes)?;
+            ensure!(
+                serde_json::to_vec(&index)? == bytes,
+                "noncanonical native line index"
+            );
+            index.validate(artifact)?;
+            Ok(index)
+        })()
+        .context(super::PrivateIntegrityFailure)
     }
     /// Logical/source proof and physical verification of the entire bounded index
     /// occur together. There are no separately resumable line-index leaf objects.
@@ -278,6 +281,29 @@ impl NativeLineRead<'_> {
             .verify_native_line_projection(&self.reference, &self.artifact)?;
         self.read_selected(start, end, max_bytes)
     }
+    /// Read selected authenticated pages only under this exact read's sealed owner policy.
+    pub fn read_private(
+        &self,
+        start: usize,
+        end: usize,
+        max_bytes: usize,
+    ) -> Result<SelectedSourceLines> {
+        ensure!(
+            self._read.private_query_eligible()?,
+            "private query authority unavailable"
+        );
+        airk_core::validate_budget(1, max_bytes)?;
+        ensure!(start > 0 && end >= start, "invalid line range");
+        ensure!(end <= self.index.lines, "line range exceeds indexed source");
+        let selected = self
+            ._read
+            .observe_private_integrity(self.read_selected(start, end, max_bytes))?;
+        ensure!(
+            self._read.private_query_eligible()?,
+            "private query authority revoked"
+        );
+        Ok(selected)
+    }
     pub(super) fn read_selected(
         &self,
         start: usize,
@@ -311,7 +337,9 @@ impl NativeLineRead<'_> {
             Err(error) if error.error_len().is_none() && through < finish => {
                 std::str::from_utf8(&selected[..error.valid_up_to()])?
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => {
+                return Err(anyhow::Error::new(error).context(super::PrivateIntegrityFailure));
+            }
         };
         let mut length = valid.len().min(max_bytes);
         while !valid.is_char_boundary(length) {
@@ -341,7 +369,8 @@ impl NativeLineRead<'_> {
             )?;
             ensure!(
                 bytes.iter().filter(|byte| **byte == b'\n').count() == block.newlines,
-                "native line block newline mismatch"
+                anyhow::Error::new(super::PrivateIntegrityFailure)
+                    .context("native line block newline mismatch")
             );
             entry.insert(bytes);
         }
@@ -372,7 +401,10 @@ impl NativeLineRead<'_> {
                     }
                 }
             }
-            anyhow::bail!("native line boundary missing");
+            anyhow::bail!(
+                anyhow::Error::new(super::PrivateIntegrityFailure)
+                    .context("native line boundary missing")
+            );
         }
         anyhow::bail!("native line boundary exceeds indexed source")
     }

@@ -955,8 +955,104 @@ impl Kernel {
 }
 
 impl Kernel {
-    /// Explicit owning admission only; no current query path invokes this API.
-    /// Future F14 cutover must separately prove exact relaxed component coverage.
+    /// Only a live native owner can attach relaxed request authority. Public
+    /// Kernel instances and unsupported native roots keep ordinary strict reads.
+    fn attach_private_read(
+        &self,
+        read: Arc<airk_store::current::CurrentRead>,
+    ) -> Result<Arc<airk_store::current::CurrentRead>> {
+        let slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        match slot.as_ref() {
+            Some(owner) => owner.attach_read(read),
+            None => Ok(read),
+        }
+    }
+
+    fn retire_failed_native_owner_after_replacement(
+        &self,
+        replaced: Option<airk_core::identity::Incarnation>,
+        token: airk_store::current::CurrentToken,
+    ) -> Result<()> {
+        let mut slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        if let Some(owner) = slot.as_ref()
+            && owner.failed()
+        {
+            owner.require_owned_replacement(
+                replaced.context("failed owner replacement scope missing")?,
+                token,
+            )?;
+            // Dropping a failed capability leaves its durable Active marker.
+            // A later enrollment still requires explicit physical recovery.
+            slot.take();
+        }
+        Ok(())
+    }
+
+    /// Current-process failure observation used to choose a fresh accepted Verify
+    /// recovery epoch even when a query failed after the last worker status sample.
+    pub fn native_owner_requires_recovery(&self) -> Result<bool> {
+        Ok(self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
+            .as_ref()
+            .is_some_and(|owner| owner.failed()))
+    }
+
+    pub(crate) fn retire_failed_native_owner_after_recovery(
+        &self,
+        registry: &airk_store::service::registry::ServiceRegistry,
+        proof: &airk_store::service::collection::integrity::verify::EnabledComponentAuditProof,
+    ) -> Result<()> {
+        let mut slot = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?;
+        if let Some(owner) = slot.as_ref() {
+            owner.require_recovered_owner(registry, proof)?;
+            slot.take();
+        }
+        Ok(())
+    }
+
+    /// Native worker admission. Unsupported boundaries retain strict behavior;
+    /// inherited Active or policy/head mismatches remain explicit recovery errors.
+    pub fn try_arm_native_owner(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: Arc<airk_store::service::ProjectLease>,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        identity: airk_core::service::WorkerIdentity,
+    ) -> Result<bool> {
+        if let Some(owner) = self
+            .native_owner
+            .lock()
+            .map_err(|_| anyhow::anyhow!("native owner session unavailable"))?
+            .as_ref()
+        {
+            if owner.failed() {
+                return Err(anyhow::Error::new(airk_store::service::collection::integrity::native_owner::NativeOwnerRecoveryRequired));
+            }
+            return Ok(true);
+        }
+        if self.current_scope()?.is_none() {
+            return Ok(false);
+        }
+        match self.arm_native_owner(registry, lease, bound, identity) {
+            Ok(()) => Ok(true),
+            Err(error) if error.downcast_ref::<airk_store::service::collection::integrity::native_owner::NativeBoundaryUnavailable>().is_some() => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Explicit native-worker admission before sealed request readers are exposed.
+    /// The fixed recovery profile covers every component relaxed by those readers.
     pub fn arm_native_owner(
         &self,
         registry: &mut airk_store::service::registry::ServiceRegistry,

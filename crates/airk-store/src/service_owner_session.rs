@@ -3,7 +3,7 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 
-pub(crate) const POLICY: u32 = 1;
+pub(crate) const POLICY: u32 = 2;
 const MAX: usize = 4096;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -54,7 +54,7 @@ fn load(
         let state: OwnerSession = serde_json::from_str(&bytes)?;
         ensure!(
             state.version == 1
-                && state.policy == POLICY
+                && matches!(state.policy, 1 | POLICY)
                 && state.project == project
                 && state.epoch > 0,
             "unsupported owner session"
@@ -237,6 +237,40 @@ impl ServiceRegistry {
         Ok(())
     }
 }
+impl ServiceRegistry {
+    /// Failure-only native path. Opens an already authenticated registry read/write
+    /// without CREATE, migration, initialization, or receipt changes.
+    pub(crate) fn open_existing_for_integrity_damage(root: &Path) -> Result<Self> {
+        let saved = Self::open_saved(root)?;
+        let namespace = saved.incarnation()?;
+        let connection = Connection::open_with_flags(
+            saved.root.join("service-1.4.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )?;
+        connection.busy_timeout(Duration::from_secs(2))?;
+        let application: i64 =
+            connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
+        let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
+        ensure!(
+            application == APPLICATION && version == 11,
+            "integrity damage registry format changed"
+        );
+        background::audit::validate_existing(&connection, true)?;
+        let registry = Self {
+            root: saved.root.clone(),
+            connection,
+            registration_state: saved.registration_state,
+            watch_traversal_state: saved.watch_traversal_state,
+        };
+        ensure!(
+            registry.incarnation()? == namespace
+                && retained_namespace(&registry.root)? == namespace,
+            "integrity damage registry namespace changed"
+        );
+        Ok(registry)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

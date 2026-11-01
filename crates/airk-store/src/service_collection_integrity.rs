@@ -136,6 +136,29 @@ impl IntegrityOwner<'_> {
     pub fn anchor(&self, read: &CurrentRead) -> Result<IntegrityObservation> {
         self.publish(read, None, PrivacyEligibility::PlatformEvidenceUnavailable)
     }
+    /// Bootstrap only a genuinely missing ordinary receipt. Exceptional recovery
+    /// must preserve existing historical head, ages, privacy and sticky damage.
+    /// Existing malformed/foreign metadata is a refusal, never an absent anchor.
+    pub fn anchor_if_missing(&self, read: &CurrentRead) -> Result<()> {
+        // An attached reader may revalidate its owner through this manifest.
+        // Authorize it before taking the exclusion, then check snapshot liveness
+        // inside without recursively acquiring native query authority.
+        read.token()?;
+        let _lock = manifest_lock(&self.collection.directory)?;
+        let fence = self.check()?;
+        read.integrity_observation_token()?;
+        ensure!(
+            read.head().scope.root == self.collection.owner.root
+                && read.head().scope.collection == self.collection.owner.collection,
+            "foreign integrity head"
+        );
+        if self.load(fence.0)?.is_some() {
+            ensure!(self.check()? == fence, "integrity worker changed");
+            return Ok(());
+        }
+        self.publish_locked(read, None, PrivacyEligibility::PlatformEvidenceUnavailable)?;
+        Ok(())
+    }
     /// Bounded initial native metadata enrollment under the actual logical writer.
     /// Opens its own fresh read; accepts no retained pre-mutation snapshot. This
     /// owning operation may use existing collection lock creation. It creates no
@@ -199,7 +222,20 @@ impl IntegrityOwner<'_> {
         damage: Option<KnownDamage>,
         privacy: PrivacyEligibility,
     ) -> Result<IntegrityObservation> {
+        if damage.is_none() {
+            read.token()?;
+        }
         let _lock = manifest_lock(&self.collection.directory)?;
+        self.publish_locked(read, damage, privacy)
+    }
+    // Caller holds the collection manifest exclusion, including the missing-only
+    // bootstrap's existence decision. Never reacquire this lock recursively.
+    fn publish_locked(
+        &self,
+        read: &CurrentRead,
+        damage: Option<KnownDamage>,
+        privacy: PrivacyEligibility,
+    ) -> Result<IntegrityObservation> {
         let (namespace, epoch) = self.check()?;
         let selected = self.collection.manifest()?;
         let expected = FileStore::new(self.collection.slot(selected.active));
@@ -208,16 +244,15 @@ impl IntegrityOwner<'_> {
             expected.current_owned_scope()?.as_ref() == Some(&read.head().scope),
             "integrity selection changed"
         );
-        read.token()?;
+        // Normal publication authorized before the manifest exclusion; damage
+        // publication intentionally remains available after query revocation.
+        let token = read.integrity_observation_token()?;
         // Follow the existing reader's journal/WAL authentication; never turn a
         // stale in-memory head into an observation over an unsafe overlay.
         // A valid Applying transaction may still expose its authenticated base.
         {
             let current = expected.current_read(&read.head().scope)?;
-            ensure!(
-                current.token()? == read.token()?,
-                "integrity publication changed"
-            );
+            ensure!(current.token()? == token, "integrity publication changed");
         }
         let head = read.head().clone();
         head.validate()?;

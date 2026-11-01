@@ -262,7 +262,8 @@ fn bucket(
     };
     match bytes {
         Some(bytes) => {
-            let entries = decode(prefix, &bytes)?;
+            let entries = decode(prefix, &bytes)
+                .map_err(|error| error.context(super::PrivateIntegrityFailure))?;
             Ok((entries, leaf(scope, prefix, &bytes)))
         }
         None => Ok((Vec::new(), empty(scope, 0))),
@@ -284,7 +285,10 @@ fn node(
         |row| row.get(0),
     ).optional()?;
     let value = match row {
-        Some(None) => anyhow::bail!("invalid current map node digest"),
+        Some(None) => {
+            return Err(anyhow::anyhow!("invalid current map node digest")
+                .context(super::PrivateIntegrityFailure));
+        }
         Some(Some(bytes)) => Some(bytes),
         None => None,
     };
@@ -312,10 +316,12 @@ fn proof(
         index >>= 1;
         digest = branch(scope, height + 1, index, left, right)?;
     }
-    ensure!(
-        digest == root,
-        "current map membership or absence proof mismatch"
-    );
+    if digest != root {
+        return Err(
+            anyhow::anyhow!("current map membership or absence proof mismatch")
+                .context(super::PrivateIntegrityFailure),
+        );
+    }
     Ok(entries)
 }
 pub(crate) fn get(

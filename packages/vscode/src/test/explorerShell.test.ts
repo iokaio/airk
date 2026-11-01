@@ -553,7 +553,7 @@ function f08Deferred<T>() {
 function promptFeedbackHost(context:any,blockedMethod='resources',savedCounts=false) {
     const other='cd'.repeat(32),namespace='12'.repeat(16),instance='34'.repeat(16),version='1.8.0';
     let trusted=true,retained=0,current!:InstanceType<typeof ServiceConsoleController>;
-    let liveInstance=instance,liveNamespace=namespace,epochGate:ReturnType<typeof f08Deferred<void>>|undefined;
+    let liveInstance=instance,liveNamespace=namespace,namespaceGate:ReturnType<typeof f08Deferred<void>>|undefined;
     const changed=new Set<(state:any)=>void>(),specChanges=new Set<()=>void>(),values=new Map<string,unknown>();
     const clientSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],gates:Array<{entered:ReturnType<typeof f08Deferred<void>>;release:ReturnType<typeof f08Deferred<void>>}>=[];
     const evidenceSignals:Array<ReturnType<typeof f08Deferred<void>>>=[],evidence:Array<{tool:string;project:string;spec:any;result:ReturnType<typeof f08Deferred<any>>}>=[];
@@ -570,7 +570,8 @@ function promptFeedbackHost(context:any,blockedMethod='resources',savedCounts=fa
             return new ServiceClient({dispose(){},async request(method:any){
                 const name=typeof method==='string'?method:Object.keys(method)[0];
                 if(name===blockedMethod){gate.entered.resolve();await gate.release.promise;}
-                if(name==='request_epoch'&&epochGate)await epochGate.promise;
+                // Routine polls authenticate registry continuity through Events.
+                if(name==='events'&&namespaceGate)await namespaceGate.promise;
                 switch(name){
                     case 'health':return {status:'health',observation:{instance:liveInstance,version,policy:{accepting:true}}};
                     case 'resources':return {status:'resources',observation:{configuration:{preset:'balanced'}}};
@@ -624,13 +625,13 @@ function promptFeedbackHost(context:any,blockedMethod='resources',savedCounts=fa
             assert.ok(explorer.snapshot().status,'current identity needs its own completed observation');
         },
         settings(value:string){(page.projects[0] as any).inspection={observed_unix_ms:Date.now(),snapshot:{project,incarnation:'11'.repeat(16),settings_digest:value,vectors_enabled:true}};},
-        restartIdentity(){liveInstance='78'.repeat(16);liveNamespace='9a'.repeat(16);epochGate=f08Deferred<void>();},
-        releaseEpoch(){epochGate?.resolve();},
+        restartIdentity(){liveInstance='78'.repeat(16);liveNamespace='9a'.repeat(16);namespaceGate=f08Deferred<void>();},
+        releaseNamespace(){namespaceGate?.resolve();},
         poll(){return startPoll();},
         trust(value:boolean){trusted=value;},
         changeSpec(){specs=specs.map((spec,index)=>index?spec:{...spec,command:'/new-approved-launcher'});for(const listener of specChanges)listener();},
         reset(){current.dispose();current=new ServiceConsoleController(consoleHost);if(retained)void startPoll();},
-        async cleanup(){explorer.dispose();current.dispose();epochGate?.resolve();for(const gate of gates)gate.release.resolve();for(const request of evidence)request.result.resolve(unavailable);await Promise.all(polls);},
+        async cleanup(){explorer.dispose();current.dispose();namespaceGate?.resolve();for(const gate of gates)gate.release.resolve();for(const request of evidence)request.result.resolve(unavailable);await Promise.all(polls);},
     };
 }
 
@@ -809,7 +810,7 @@ test('actual Explorer fences same-spec diagnostics and saved counts across authe
         const oldIdentity=f.console.observationIdentity;
         f.restartIdentity();const poll=f.poll();await flush();
         assert.notEqual(f.console.observationIdentity,oldIdentity);
-        assert.equal(f.console.state.busy,true,'new epoch reply remains independently blocked');
+        assert.equal(f.console.state.busy,true,'new registry namespace reply remains independently blocked');
         assert.deepEqual(f.host.specs(),spec,'runtime and registry ownership can change under identical launch specs');
         const boundary=panel.posted.length;
         const current=panel.posted.filter((entry:any)=>entry.type==='state').at(-1).state;
@@ -822,7 +823,7 @@ test('actual Explorer fences same-spec diagnostics and saved counts across authe
         assert.ok(!panel.posted.slice(boundary).some((entry:any)=>entry.state?.status?.publication==='old-delayed-diagnostics'));
         const replacement=await f.requested(oldRequest+1);
         assert.deepEqual(replacement.spec,spec[0],'replacement is admitted for the same bytes under new ownership');
-        f.releaseEpoch();await poll;
+        f.releaseNamespace();await poll;
         f.finish(oldRequest+1);await f.settleStatus();
         assert.equal(f.explorer.snapshot().status?.indexState,'unavailable');
         assert.ok(!panel.posted.slice(boundary).some((entry:any)=>entry.state?.status?.files===777));
@@ -945,7 +946,7 @@ test('publication and control identity changes cannot relabel retained details o
         await oldScalar;
         const replacement=await f.requested(index+1);
         assert.equal(replacement.tool,'airk_status','old details demand cannot migrate to new ownership');
-        f.releaseEpoch();await poll;f.finish(index+1);await f.settleStatus();
+        f.releaseNamespace();await poll;f.finish(index+1);await f.settleStatus();
         assert.equal(f.explorer.snapshot().status?.versionsMatch,undefined);
         assert.equal(f.explorer.snapshot().status?.detailsObservedAt,undefined);
     }finally{await f.cleanup();context.mock.restoreAll();}

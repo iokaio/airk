@@ -1372,3 +1372,72 @@ fn audit_retry_witness_ignores_unrelated_publications_and_tracks_only_affected_v
     assert!(!read.audit_inputs_changed(&imports, policy, 64 << 20)?);
     Ok(())
 }
+
+#[test]
+fn staged_source_certificate_binds_exact_path_and_survives_unrelated_publication() -> Result<()> {
+    let fixture = Fixture::new()?;
+    let first = retained_input_with_facts(&fixture, "one.txt", "body", vec![])?;
+    publish(&fixture, "one.txt", Some(&first), false)?;
+    let source = fixture
+        .store
+        .current_read(&fixture.scope)?
+        .certify_projection_source(&fixture.store, "one.txt", 100)?;
+    let second = retained_input_with_facts(&fixture, "two.txt", "body", vec![])?;
+    publish(&fixture, "two.txt", Some(&second), false)?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let native = read.native_fact_projection(&fixture.store, "one.txt")?;
+    let certified = read.certify_file_projections_after_source(
+        &fixture.store,
+        "one.txt",
+        native.as_ref(),
+        &source,
+    )?;
+    assert!(certified.scalars);
+    let other_native = read.native_fact_projection(&fixture.store, "two.txt")?;
+    assert!(
+        read.certify_file_projections_after_source(
+            &fixture.store,
+            "two.txt",
+            other_native.as_ref(),
+            &source
+        )
+        .is_err(),
+        "another unchanged path borrowed source certification"
+    );
+    drop(read);
+    let changed = retained_input_with_facts(&fixture, "one.txt", "changed body", vec![])?;
+    publish(&fixture, "one.txt", Some(&changed), false)?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let native = read.native_fact_projection(&fixture.store, "one.txt")?;
+    assert!(
+        read.certify_file_projections_after_source(
+            &fixture.store,
+            "one.txt",
+            native.as_ref(),
+            &source
+        )
+        .is_err(),
+        "replaced source borrowed prior certification"
+    );
+    Ok(())
+}
+
+#[test]
+fn maximum_source_and_payload_fit_separate_existing_recovery_component_allowance() {
+    use super::super::native_projection::{MAX_MANIFEST_BYTES, MAX_PHYSICAL_AUDIT_TURN_BYTES};
+    // Format maxima, not allocated giant fixtures or a timing qualification.
+    // A combined valid input can exceed the existing API ceiling; each staged
+    // source/payload component must still fit it without reducing valid inputs.
+    let maximum = MAX_PHYSICAL_AUDIT_TURN_BYTES;
+    let source = airk_core::extraction::MAX_SOURCE_BYTES as u64
+        + super::super::native_range::MAX_LINE_INDEX_BYTES as u64;
+    let payload = airk_core::extraction::MAX_PAYLOAD_BYTES as u64
+        + super::super::metadata::MAX_METADATA_BYTES as u64
+        + MAX_MANIFEST_BYTES as u64
+        + (1 << 20) // native edge root header
+        + (64 << 20) // existing edge metadata summary maximum
+        + super::super::text_range::MAX_HEADER as u64;
+    assert!(source <= maximum);
+    assert!(payload <= maximum);
+    assert!(source + payload > maximum);
+}

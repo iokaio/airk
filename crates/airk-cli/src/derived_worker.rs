@@ -71,6 +71,7 @@ pub fn run() -> Result<()> {
     let status = Arc::new(Mutex::new(protocol::WorkObservation {
         waiting_for: None,
         failure: None,
+        integrity_observation_failure: None,
         active: None,
         finished: None,
         maintenance: None,

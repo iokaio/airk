@@ -9,6 +9,9 @@ use crate::service::{
 use airk_core::service::{JobKind, JobState, ProjectBinding};
 use anyhow::{Result, ensure};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
+#[path = "service_automatic_audit.rs"]
+pub(crate) mod automatic;
+pub use automatic::AutomaticAuditContext;
 const MAX_STATE: usize = 4096;
 pub(super) const SCHEMA: &str = "CREATE TABLE service_background_audit(
  project TEXT PRIMARY KEY REFERENCES projects(binding) ON DELETE CASCADE,

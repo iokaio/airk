@@ -84,7 +84,7 @@ fn retire(
         [project.to_string()],
     )?;
     connection.execute(
-        "UPDATE service_background_audit SET intent=NULL,blocked=NULL,parked=0 WHERE project=?1",
+        "UPDATE service_background_audit SET intent=NULL,blocked=NULL,parked=0,job=NULL,manual=0,next_ms=9223372036854775807,revision=revision+1 WHERE project=?1",
         [project.to_string()],
     )?;
     connection.execute(

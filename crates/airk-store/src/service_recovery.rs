@@ -19,8 +19,31 @@ CREATE TABLE IF NOT EXISTS service_job_recovery(
  waiting INTEGER NOT NULL CHECK(waiting IN(0,1)),next_ms INTEGER NOT NULL,started_ms INTEGER NOT NULL) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS service_semantic_review(
  project TEXT PRIMARY KEY REFERENCES projects(binding),signature TEXT NOT NULL CHECK(length(signature)<=129)) WITHOUT ROWID;";
-pub(super) const ELIGIBLE: &str =
-    "NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1)";
+// Automatic audits yield to runnable foreground work. A waiting helper, paused
+// plan or removed registration cannot indefinitely suppress other projects.
+pub(super) const ELIGIBLE: &str = "NOT EXISTS(
+ SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1)
+ AND NOT EXISTS(SELECT 1 FROM service_background_audit a
+ WHERE a.job=j.id AND a.manual=0 AND (a.blocked IS NOT NULL
+ OR a.next_ms>CAST(unixepoch('subsec')*1000 AS INTEGER)
+ OR EXISTS(SELECT 1 FROM service_jobs f JOIN projects fp ON fp.binding=f.project
+ WHERE f.state='pending'
+ AND (fp.paused=0 OR f.kind IN('inspect','plan_inspect') OR (f.kind='configure'
+   AND EXISTS(SELECT 1 FROM service_configuration fc WHERE fc.job=f.id
+   AND json_extract(CAST(fc.payload AS TEXT),'$.request.configuration.operation')
+       IN('unregister','prepare_derived_cleanup','delete_derived'))))
+ AND (fp.registered=1 OR (f.kind='configure' AND EXISTS(
+   SELECT 1 FROM service_configuration fc WHERE fc.job=f.id
+   AND json_extract(CAST(fc.payload AS TEXT),'$.request.configuration.operation')
+       IN('prepare_derived_cleanup','delete_derived'))))
+ AND NOT EXISTS(SELECT 1 FROM service_job_recovery fr WHERE fr.job=f.id AND fr.waiting=1)
+ AND (f.kind NOT IN('plan_inspect','repair') OR EXISTS(
+   SELECT 1 FROM service_plan_jobs fl JOIN service_plans p2 ON p2.id=fl.plan
+   JOIN service_plan_items fm ON fm.plan=fl.plan AND fm.project=fl.project
+   WHERE fl.job=f.id AND p2.paused=0 AND p2.canceled=0
+   AND ((f.kind='plan_inspect' AND p2.phase='planning' AND fm.phase IN('inspect_queued','inspecting'))
+     OR (f.kind='repair' AND p2.phase='running' AND fm.phase IN('action_queued','running')))))
+ AND NOT EXISTS(SELECT 1 FROM service_background_audit fa WHERE fa.job=f.id AND fa.manual=0))))";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]

@@ -102,8 +102,29 @@ pub(crate) fn search_current_with_snippets(
     _charge: Charge,
     snippet_bytes: Option<usize>,
 ) -> Result<CurrentSearchEvidence> {
+    search_current_read_with_snippets(
+        store,
+        store.current_read(scope)?,
+        expected,
+        mode,
+        query,
+        _charge,
+        snippet_bytes,
+    )
+}
+
+/// Kernel callers provide the exact sealed request reader; ordinary adapters
+/// above keep strict store reads and cannot manufacture native authority.
+pub(crate) fn search_current_read_with_snippets(
+    store: &FileStore,
+    read: Arc<CurrentRead>,
+    expected: Option<&CurrentToken>,
+    mode: CurrentSearchMode,
+    query: &SearchQuery,
+    _charge: Charge,
+    snippet_bytes: Option<usize>,
+) -> Result<CurrentSearchEvidence> {
     query.validate()?;
-    let read = store.current_read(scope)?;
     if let Some(expected) = expected {
         read.require_token(expected)?;
     }
@@ -236,7 +257,7 @@ pub(crate) fn search_current_with_snippets(
     }
     Ok(CurrentSearchEvidence {
         token: read.token()?,
-        collection: scope.collection.clone(),
+        collection: read.head().scope.collection.clone(),
         mode,
         semantic_readiness,
         discovery_readiness,
@@ -396,29 +417,56 @@ fn materialize(
     match candidate {
         Candidate::Vector(pointer) => read.occurrence_hit(store, &pointer),
         Candidate::Lexical(candidate) => {
+            let path = &candidate.citation.path;
             ensure!(
                 candidate.stable_id == stable_id(&compact.path, candidate.local)?,
                 "current lexical document identity mismatch"
             );
-            let full = store.load_retrieval_artifact(&compact)?.artifact;
-            store.verify_retained_source(&compact)?;
-            let chunk = full
-                .chunks
-                .get(usize::try_from(candidate.local)?)
-                .context("current lexical local chunk missing")?;
-            ensure!(
-                full.content_hash == candidate.citation.content_hash
-                    && chunk.start_line == candidate.citation.start_line
-                    && chunk.end_line == candidate.citation.end_line
-                    && chunk.location == candidate.citation.location,
-                "current lexical candidate differs from retained evidence"
-            );
+            let private = read.private_query_eligible()?;
+            let text = if private {
+                read.observe_private_integrity(read.text_range_projection(store, path))?
+            } else {
+                None
+            };
+            let chunk = if let Some(text) = text {
+                read.observe_private_integrity(
+                    text.chunk_private(usize::try_from(candidate.local)?),
+                )?
+            } else {
+                let result = (|| -> Result<_> {
+                    let full = store.load_retrieval_artifact(&compact)?.artifact;
+                    store.verify_retained_source(&compact)?;
+                    Ok(full
+                        .chunks
+                        .get(usize::try_from(candidate.local)?)
+                        .context("current lexical local chunk missing")?
+                        .clone())
+                })();
+                if private {
+                    read.observe_private_integrity(result)?
+                } else {
+                    result?
+                }
+            };
+            read.observe_private_integrity((|| -> Result<()> {
+                ensure!(
+                    compact.content_hash == candidate.citation.content_hash
+                        && chunk.start_line == candidate.citation.start_line
+                        && chunk.end_line == candidate.citation.end_line
+                        && chunk.location == candidate.citation.location,
+                    airk_store::current::PrivateIntegrityFailure
+                );
+                Ok(())
+            })())?;
             let wanted = terms(&query.text);
-            ensure!(
-                !wanted.is_empty()
-                    && wanted.is_subset(&terms(&format!("{} {}", full.path, chunk.text))),
-                "current lexical candidate does not match query"
-            );
+            read.observe_private_integrity((|| -> Result<()> {
+                ensure!(
+                    !wanted.is_empty()
+                        && wanted.is_subset(&terms(&format!("{} {}", compact.path, chunk.text))),
+                    airk_store::current::PrivateIntegrityFailure
+                );
+                Ok(())
+            })())?;
             Ok(Hit {
                 citation: candidate.citation,
                 text: chunk.text.clone(),

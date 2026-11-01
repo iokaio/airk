@@ -1421,16 +1421,18 @@ impl FileStore {
             .and_then(|r| r.source_encoding.as_ref())
             .is_some()
         {
-            self.read_retained_source_range(entry, range, 2 << 20)?
+            self.read_retained_source_range(entry, range, 2 << 20)
+                .map_err(crate::current::resources::authenticated_decode_error)?
         } else {
             let path = object_path(self.directory(), "sources", &entry.content_hash)?;
             retained_read_context(
                 (|| -> Result<Vec<u8>> {
                     let mut file = File::open(&path)?;
-                    ensure!(
-                        file.metadata()?.is_file() && file.metadata()?.len() == entry.bytes as u64,
-                        "retained source block length mismatch"
-                    );
+                    let metadata = file.metadata()?;
+                    if !metadata.is_file() || metadata.len() != entry.bytes as u64 {
+                        return Err(anyhow::anyhow!("retained source block length mismatch")
+                            .context(crate::current::PrivateIntegrityFailure));
+                    }
                     file.seek(SeekFrom::Start(range.start as u64))?;
                     let mut bytes = vec![0; range.len()];
                     file.read_exact(&mut bytes)?;
@@ -1441,11 +1443,11 @@ impl FileStore {
                 &entry.content_hash,
             )?
         };
-        ensure!(
-            airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(&bytes).into())
-                == expected,
-            "retained source block digest mismatch"
-        );
+        if airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(&bytes).into()) != expected
+        {
+            return Err(anyhow::anyhow!("retained source block digest mismatch")
+                .context(crate::current::PrivateIntegrityFailure));
+        }
         Ok(bytes)
     }
 

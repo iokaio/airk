@@ -10,6 +10,17 @@ use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 
+/// For a codec read whose bounds came from an authenticated reference, a
+/// non-I/O decode/identity failure is structural evidence. Filesystem errors
+/// remain uncertainty and never become a corruption claim.
+pub(crate) fn authenticated_decode_error(error: anyhow::Error) -> anyhow::Error {
+    if error.downcast_ref::<std::io::Error>().is_some() {
+        error
+    } else {
+        error.context(super::PrivateIntegrityFailure)
+    }
+}
+
 pub const MAX_RESOURCE_BYTES: usize = 256 << 20;
 pub const KEYS: [&str; 6] = [
     "analysis",
@@ -272,25 +283,29 @@ impl FileStore {
         );
         let directory = self.directory().join("current-resources");
         let metadata = std::fs::symlink_metadata(&directory)?;
-        ensure!(
-            metadata.is_dir() && !metadata.file_type().is_symlink(),
-            "linked current resource directory"
-        );
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(anyhow::anyhow!("linked current resource directory")
+                .context(super::PrivateIntegrityFailure));
+        }
         let path = directory.join(format!("{}.json", reference.object_digest()?));
         let metadata = std::fs::symlink_metadata(&path)?;
-        ensure!(
-            metadata.is_file()
-                && !metadata.file_type().is_symlink()
-                && metadata.len() == reference.stored_bytes(),
-            "invalid current resource size or ownership"
-        );
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.len() != reference.stored_bytes()
+        {
+            return Err(
+                anyhow::anyhow!("invalid current resource size or ownership")
+                    .context(super::PrivateIntegrityFailure),
+            );
+        }
         let bytes = if let Some(encoding) = &reference.encoding {
             crate::compression::read_all(
                 &path,
                 encoding,
                 &encoding.logical_digest,
                 reference.bytes as u64,
-            )?
+            )
+            .map_err(authenticated_decode_error)?
         } else {
             let mut bytes = Vec::new();
             std::fs::File::open(path)?
@@ -298,11 +313,12 @@ impl FileStore {
                 .read_to_end(&mut bytes)?;
             bytes
         };
-        ensure!(
-            bytes.len() == reference.bytes
-                && framed_digest(b"current-resource/1", &[&bytes]) == reference.digest,
-            "current resource digest mismatch"
-        );
+        if bytes.len() != reference.bytes
+            || framed_digest(b"current-resource/1", &[&bytes]) != reference.digest
+        {
+            return Err(anyhow::anyhow!("current resource digest mismatch")
+                .context(super::PrivateIntegrityFailure));
+        }
         Ok(bytes)
     }
 }

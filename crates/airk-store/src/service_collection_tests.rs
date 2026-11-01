@@ -8,6 +8,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+#[path = "service_private_authority_tests.rs"]
+mod private_authority_tests;
+
 #[test]
 fn retirement_inventory_is_bounded_by_deletion_batch_not_total_old_files() -> Result<()> {
     let owner = tempfile::tempdir()?;
@@ -2181,6 +2185,48 @@ fn publish_projection_fixture(
     scope: &CurrentScope,
     artifact: airk_core::Artifact,
 ) -> Result<()> {
+    publish_projection_fixture_mode(
+        store,
+        quota,
+        scope,
+        artifact,
+        airk_core::compression::CompressionMode::Off,
+    )
+}
+
+fn publish_projection_fixture_mode(
+    store: &crate::FileStore,
+    quota: &Quota,
+    scope: &CurrentScope,
+    artifact: airk_core::Artifact,
+    mode: airk_core::compression::CompressionMode,
+) -> Result<()> {
+    publish_projection_fixture_with_native_mode(store, quota, scope, artifact, true, mode)
+}
+fn publish_projection_fixture_with_native(
+    store: &crate::FileStore,
+    quota: &Quota,
+    scope: &CurrentScope,
+    artifact: airk_core::Artifact,
+    native: bool,
+) -> Result<()> {
+    publish_projection_fixture_with_native_mode(
+        store,
+        quota,
+        scope,
+        artifact,
+        native,
+        airk_core::compression::CompressionMode::Off,
+    )
+}
+fn publish_projection_fixture_with_native_mode(
+    store: &crate::FileStore,
+    quota: &Quota,
+    scope: &CurrentScope,
+    artifact: airk_core::Artifact,
+    native: bool,
+    mode: airk_core::compression::CompressionMode,
+) -> Result<()> {
     use crate::current::{ArtifactChange, ArtifactVectorChanges, CapturedInput, collection, graph};
     let input = CapturedInput::new(artifact);
     let read = store.current_read(scope)?;
@@ -2188,13 +2234,17 @@ fn publish_projection_fixture(
     let reservation = quota.reserve(&scope.collection, 16 << 20)?;
     let full = store.load_projection_artifact(&input.artifact)?;
     let file = projection_fixture_inventory(scope, &input, base.sequence + 1)?;
-    let reference = store.retain_current_metadata_with_facts_encoded(
-        &input.artifact.path,
-        &file,
-        &full,
-        &reservation,
-        airk_core::compression::CompressionMode::Off,
-    )?;
+    let reference = if native {
+        store.retain_current_metadata_with_facts_encoded(
+            &input.artifact.path,
+            &file,
+            &full,
+            &reservation,
+            mode,
+        )?
+    } else {
+        store.retain_current_metadata_encoded(&input.artifact.path, &file, &reservation, mode)?
+    };
     let sealed = graph::GraphOverlay::new(
         &reservation,
         read,
@@ -2216,7 +2266,8 @@ fn publish_projection_fixture(
     target.sequence += 1;
     target.lexical_sequence = target.sequence;
     let lock = store.lock()?;
-    let mut writer = store.current_write(&lock, quota, scope, 8 << 20)?;
+    let capacity = store.current_database_capacity(scope)?;
+    let mut writer = store.current_write(&lock, quota, scope, capacity)?;
     let (pending, _) = writer.prepare_artifacts_with_fts(
         &base.token()?,
         target,
@@ -2484,6 +2535,15 @@ fn publish_import_projection_fixture(
     quota: &Quota,
     scope: &CurrentScope,
 ) -> Result<crate::current::resources::ResourceReference> {
+    publish_import_projection_fixture_edges(store, quota, scope, Vec::new())
+}
+
+fn publish_import_projection_fixture_edges(
+    store: &crate::FileStore,
+    quota: &Quota,
+    scope: &CurrentScope,
+    relationships: Vec<airk_core::RelationshipHit>,
+) -> Result<crate::current::resources::ResourceReference> {
     use crate::current::{
         ArtifactVectorChanges, analysis::AnalysisEvidence, graph, resources::ResourceChange,
     };
@@ -2528,7 +2588,7 @@ fn publish_import_projection_fixture(
                 code: None,
             })
             .collect(),
-        relationships: vec![],
+        relationships,
     };
     let reservation = quota.reserve(&scope.collection, 16 << 20)?;
     let sealed = graph::GraphOverlay::new(
@@ -2543,7 +2603,8 @@ fn publish_import_projection_fixture(
     let lock = store.lock()?;
     let reference =
         store.retain_current_resource_owned(&lock, &evidence.canonical_bytes()?, &reservation)?;
-    let mut writer = store.current_write(&lock, quota, scope, 8 << 20)?;
+    let capacity = store.current_database_capacity(scope)?;
+    let mut writer = store.current_write(&lock, quota, scope, capacity)?;
     let mut target = base.clone();
     target.sequence += 1;
     target.lexical_sequence = target.sequence;
@@ -2568,7 +2629,8 @@ fn publish_import_projection_fixture(
     drop(writer);
     drop(lock);
     let lock = store.lock()?;
-    let mut writer = store.current_write(&lock, quota, scope, 8 << 20)?;
+    let capacity = store.current_database_capacity(scope)?;
+    let mut writer = store.current_write(&lock, quota, scope, capacity)?;
     let pending = writer
         .pending()?
         .context("prepared import was lost on reopen")?;
@@ -2766,8 +2828,8 @@ fn verify_legacy_projection_upgrade_rechecks_before_old_cursor_and_preserves_dat
             before["verify"]["through_unix_ms"]
         );
         let upgraded: serde_json::Value = serde_json::from_slice(&fs::read(&projection_path)?)?;
-        assert_eq!(upgraded["version"], 3);
-        assert_eq!(upgraded["progress"]["schema"], 3);
+        assert_eq!(upgraded["version"], 4);
+        assert_eq!(upgraded["progress"]["schema"], 4);
         assert_eq!(
             upgraded["progress"]["scalars"]["first_observed_unix_ms"],
             100
@@ -3237,6 +3299,24 @@ fn native_unclean_session_requires_actual_exact_verify_complete_not_partial() ->
     use crate::service::registry::AuditEvidence;
     use airk_core::service::{JobKind, JobOutcome, RequestKey};
     let (_temp, collection, mut registry, bound, lease, store, scope) = native_state_fixture()?;
+    // A compatible retained legacy file has no optional projection declaration.
+    // Projected recovery must certify its real baseline without fabricating
+    // whole-Verify optional coverage or demanding a rebuild.
+    let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+    {
+        let writer = store.lock()?;
+        let input = audit_retained_input(
+            &store,
+            &writer,
+            &quota,
+            &scope,
+            "legacy.txt",
+            "retained legacy input",
+        )?;
+        let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+        let token = current.head()?.token()?;
+        current.commit_artifact(&token, "legacy.txt", Some(&input))?;
+    }
     let lease = std::sync::Arc::new(lease);
     let identity = airk_core::service::WorkerIdentity {
         service: registry.incarnation()?,
@@ -3274,6 +3354,15 @@ fn native_unclean_session_requires_actual_exact_verify_complete_not_partial() ->
         let recovery_epoch =
             collection.begin_native_recovery(&registry, &lease, &bound, identity, job.id)?;
         let mut writer = store.lock()?;
+        assert!(
+            owner
+                .verify_recovery_turn(&mut writer, &recovery_epoch, 32, 64 << 20, 199, || Ok(()))
+                .is_err(),
+            "projected recovery ignored a malformed required continuation"
+        );
+        // A malformed owned continuation cannot confer coverage. This fixture
+        // removes it explicitly to exercise a fresh actual-declared audit.
+        fs::remove_file(&optional)?;
         let turn =
             owner
                 .verify_recovery_turn(&mut writer, &recovery_epoch, 32, 64 << 20, 200, || Ok(()))?;
@@ -3299,11 +3388,9 @@ fn native_unclean_session_requires_actual_exact_verify_complete_not_partial() ->
         Some(AuditEvidence::Drained(&proof.0)),
     )?;
 
-    assert_eq!(
-        fs::read(&optional)?,
-        b"{",
-        "baseline recovery consumed optional projection state"
-    );
+    let projection: serde_json::Value = serde_json::from_slice(&fs::read(&optional)?)?;
+    assert_eq!(projection["version"], 4);
+    assert_eq!(projection["progress"]["exhausted"], true);
     let owner = collection.arm_native_owner(&mut registry, lease, &bound, identity)?;
     owner.settle_after_owned_drain(&mut registry)?;
     Ok(())
@@ -3830,6 +3917,8 @@ fn owned_recovery_receipt_separates_8192_cursor_from_31_sticky_records_and_prese
     )?;
     drop(read);
     projected["progress"]["after"] = serde_json::json!("a".repeat(8192));
+    projected["progress"]["recent_observed_unix_ms"] = serde_json::json!(u64::MAX);
+    projected["progress"]["recent_checked_bytes"] = serde_json::json!((16 << 20) + 65_536);
     projected["progress"]["pending"] = serde_json::json!({
         "scalars":true,"logical_certified_unix_ms":1,"next_page":0,
         "certificate":{"version":1,"manifest":Sha256Digest::from_bytes([1;32]),
@@ -3857,6 +3946,26 @@ fn owned_recovery_receipt_separates_8192_cursor_from_31_sticky_records_and_prese
     let projection_bytes = fs::read(&projection_path)?;
     assert!(projection_bytes.len() <= MAX_METADATA);
     assert_eq!(fs::read(&ordinary_path)?, saved);
+    // Source certification and leaf continuation are mutually exclusive. The
+    // separate schema-4 source form must also fit with one maximum path and
+    // maximum numeric widths, without enlarging ordinary sticky history.
+    let mut staged_source = projected.clone();
+    staged_source["progress"]
+        .as_object_mut()
+        .unwrap()
+        .remove("pending");
+    staged_source["progress"]["source_pending"] = serde_json::json!({
+        "inputs":{"version":1,"scope":Sha256Digest::from_bytes([1;32]),
+            "keys":[Sha256Digest::from_bytes([2;32]),Sha256Digest::from_bytes([3;32])],
+            "values":Sha256Digest::from_bytes([4;32]),"policy":Sha256Digest::from_bytes([5;32]),
+            "allowance":1},
+        "raw_lines":256*1024*1024,"native_lines":true,"observed_unix_ms":u64::MAX
+    });
+    integrity::verify::test_write_projection_receipt(&collection, staged_source)?;
+    assert!(fs::metadata(&projection_path)?.len() <= MAX_METADATA as u64);
+    assert_eq!(fs::read(&ordinary_path)?, saved);
+    integrity::verify::test_write_projection_receipt(&collection, projected.clone())?;
+    assert_eq!(fs::read(&projection_path)?, projection_bytes);
     projected["progress"]["after"] = serde_json::json!("\n".repeat(8192));
     assert!(integrity::verify::test_write_projection_receipt(&collection, projected).is_err());
     assert_eq!(fs::read(&projection_path)?, projection_bytes);
@@ -4294,5 +4403,356 @@ fn retained_observation_and_full_verify_settlement_refuse_later_durable_damage()
     let (_other_root, _collection, _registry, _bound, foreign, _store, _scope) =
         integrity_fixture()?;
     assert!(registry.record_retained_audit(&foreign, retained).is_err());
+    Ok(())
+}
+
+#[test]
+fn projected_source_stage_resumes_without_source_and_preserves_first_observation() -> Result<()> {
+    use airk_core::service::JobKind;
+    for native in [false, true] {
+        let (_temporary, collection, mut registry, bound, lease, store, scope) =
+            integrity_fixture()?;
+        let compact = projection_fixture_artifact(&store, &scope, vec![])?;
+        let quota = Quota::open_service(store.managed_path()?.root)?;
+        publish_projection_fixture_with_native(&store, &quota, &scope, compact.clone(), native)?;
+        let budget = {
+            let read = store.current_read(&scope)?;
+            collection
+                .integrity_owner(&registry, &lease, &bound)?
+                .anchor(&read)?;
+            read.projection_certification_bytes("one.txt")? - 1
+        };
+        let job = registry.enqueue_internal(
+            lease.identity().0,
+            registry.incarnation()?,
+            JobKind::Verify,
+            Incarnation::from_bytes([192; 16]),
+        )?;
+        registry
+            .claim_job_id(&lease, job.id)?
+            .context("Verify claim")?;
+        let first = collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .verify_turn(&mut store.lock()?, job.id, 1, budget, 100, || Ok(()))?;
+        assert!(!first.blocked_large);
+        assert_eq!(first.verified_files, 0);
+        assert_eq!(
+            first.charged_bytes,
+            store
+                .current_read(&scope)?
+                .projection_source_audit_bytes("one.txt")?
+        );
+        assert!(first.charged_bytes < first.admitted_bytes);
+        assert!(first.query_completed.is_none());
+        let first_coverage = serde_json::to_value(first.progress.projection_coverage().unwrap())?;
+        assert_eq!(first_coverage["source_pending"]["observed_unix_ms"], 100);
+        // The new stage witness retains hashed keys, not a second original path.
+        // Exercise the longest valid path independently of actual query authority.
+        let mut encoded = integrity::verify::test_projection_receipt_value(
+            &collection,
+            store.current_read(&scope)?.head(),
+            registry.incarnation()?,
+            job.id,
+        )?;
+        encoded["progress"] = first_coverage.clone();
+        encoded["progress"]["after"] = serde_json::json!("a".repeat(8192));
+        encoded["progress"]["source_pending"]["observed_unix_ms"] = serde_json::json!(u64::MAX);
+        let _: integrity::verify::ProjectionAuditProgress =
+            serde_json::from_value(encoded["progress"].clone())?;
+        assert!(serde_json::to_vec(&encoded)?.len() <= MAX_METADATA);
+        let source = store
+            .directory()
+            .join("objects/sources")
+            .join(&compact.content_hash);
+        let held = source.with_extension("held");
+        fs::rename(&source, &held)?;
+        let resumed = collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .verify_turn(&mut store.lock()?, job.id, 1, budget, 200, || Ok(()));
+        fs::rename(&held, &source)?;
+        let resumed = resumed?;
+        assert!(!resumed.blocked_large);
+        assert_eq!(resumed.verified_files, 1);
+        assert!(resumed.charged_bytes <= resumed.admitted_bytes);
+        let final_turn = collection
+            .integrity_owner(&registry, &lease, &bound)?
+            .verify_turn(&mut store.lock()?, job.id, 1, budget, 300, || Ok(()))?;
+        let final_turn = if final_turn.query_completed.is_none() {
+            // The deliberately tiny source/payload allowance may be below the
+            // recent component itself, or its remaining bytes after resumed leaves.
+            // Neither case grants permission to skip required recent coverage.
+            let recent = store.current_read(&scope)?.recent_audit_bytes()?;
+            assert!(!final_turn.work_complete());
+            let coverage = final_turn.progress.projection_coverage().unwrap();
+            assert!(coverage.exhausted);
+            assert!(coverage.recent_observed_unix_ms.is_none());
+            assert_eq!(coverage.recent_checked_bytes, 0);
+            if recent > budget {
+                assert!(final_turn.blocked_large);
+                assert_eq!(final_turn.required_bytes, Some(recent));
+                assert!(final_turn.blocked_input.is_some());
+            } else {
+                assert!(!final_turn.blocked_large);
+                assert!(final_turn.required_bytes.is_none());
+                assert!(
+                    final_turn.charged_bytes + recent > budget,
+                    "recent continuation deferred despite enough remaining admission"
+                );
+            }
+            fs::rename(&source, &held)?;
+            let final_turn = collection
+                .integrity_owner(&registry, &lease, &bound)?
+                .verify_turn(
+                    &mut store.lock()?,
+                    job.id,
+                    1,
+                    budget.max(recent),
+                    400,
+                    || Ok(()),
+                );
+            fs::rename(&held, &source)?;
+            let final_turn = final_turn?;
+            assert_eq!(final_turn.charged_bytes, recent);
+            assert_eq!(
+                final_turn
+                    .progress
+                    .projection_coverage()
+                    .unwrap()
+                    .recent_observed_unix_ms,
+                Some(400)
+            );
+            final_turn
+        } else {
+            final_turn
+        };
+        assert!(
+            final_turn.query_completed.is_some(),
+            "final projected stage did not complete: {} blocked={:?}",
+            serde_json::to_string(final_turn.progress.projection_coverage().unwrap())?,
+            final_turn.required_bytes
+        );
+        let coverage = final_turn.progress.projection_coverage().unwrap();
+        assert_eq!(coverage.scalars.first_observed_unix_ms, Some(100));
+        assert_eq!(coverage.scalars.through_unix_ms, Some(200));
+        assert_eq!(
+            coverage.native_facts.first_observed_unix_ms,
+            native.then_some(200)
+        );
+        assert_eq!(coverage.native_facts.through_unix_ms, native.then_some(200));
+        assert_eq!(
+            coverage.logical_certification_bytes,
+            store
+                .current_read(&scope)?
+                .projection_certification_bytes("one.txt")?
+        );
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+#[path = "service_private_consumer_tests.rs"]
+mod private_consumer_tests;
+
+#[test]
+fn recovery_anchor_bootstraps_only_missing_and_preserves_existing_history_or_refusal() -> Result<()>
+{
+    let ((_temporary, collection, registry, bound, lease, store, scope), job) =
+        verify_inputs_fixture(&[("a.txt", "first retained input"), ("b.txt", "later input")])?;
+    let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+    let first = owner.verify_turn(&mut store.lock()?, job.id, 1, 1 << 20, 100, || Ok(()))?;
+    assert_eq!(first.verified_files, 1);
+    assert!(!first.work_complete());
+    let path = collection.directory.join("integrity-observation.json");
+    let mut dated: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+    dated["privacy"] =
+        serde_json::json!({"owner_census":{"version":1,"objects":123,"observed_unix_ms":55}});
+    dated["known_damage"] = serde_json::json!([{"incarnation":Incarnation::from_bytes([194;16]),
+        "component":Sha256Digest::from_bytes([194;32]),"observed_unix_ms":60}]);
+    let canonical_dated: integrity::IntegrityObservation = serde_json::from_value(dated.clone())?;
+    fs::write(&path, serde_json::to_vec(&canonical_dated)?)?;
+    let saved = fs::read(&path)?;
+    let read = store.current_read(&scope)?;
+    owner.anchor_if_missing(&read)?;
+    assert_eq!(
+        fs::read(&path)?,
+        saved,
+        "existing anchor's history, ages, privacy or damage was relabeled"
+    );
+    let mut foreign = dated;
+    foreign["namespace"] = serde_json::to_value(Incarnation::from_bytes([195; 16]))?;
+    let canonical_foreign: integrity::IntegrityObservation = serde_json::from_value(foreign)?;
+    fs::write(&path, serde_json::to_vec(&canonical_foreign)?)?;
+    let foreign = fs::read(&path)?;
+    assert!(owner.anchor_if_missing(&read).is_err());
+    assert_eq!(fs::read(&path)?, foreign);
+    fs::write(&path, b"{")?;
+    assert!(owner.anchor_if_missing(&read).is_err());
+    assert_eq!(fs::read(&path)?, b"{");
+    fs::remove_file(&path)?;
+    owner.anchor_if_missing(&read)?;
+    let bootstrap: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+    assert!(bootstrap.get("verify").is_none());
+    assert_eq!(bootstrap["known_damage"], serde_json::json!([]));
+    assert_eq!(bootstrap["physical_audit"], "unknown");
+    Ok(())
+}
+
+#[test]
+fn manual_legacy_optional_failure_retains_periodic_declared_audit_for_every_cohort_shape()
+-> Result<()> {
+    use crate::service::registry::AuditEvidence;
+    use airk_core::service::{JobKind, JobOutcome, JobState, RequestKey};
+    // No audit row, an enabled row without a job, promoted automatic work, and
+    // explicit manual Verify after Stop all retain the actual physical proof.
+    for shape in 0..4u8 {
+        let (temporary, collection, mut registry, bound, lease, store, scope) =
+            integrity_fixture()?;
+        let quota = Quota::open_service(Path::new(&collection.owner.data_root))?;
+        {
+            let writer = store.lock()?;
+            let input = audit_retained_input(
+                &store,
+                &writer,
+                &quota,
+                &scope,
+                "legacy.txt",
+                "actual retained legacy evidence",
+            )?;
+            let mut current = store.current_write(&writer, &quota, &scope, 8 << 20)?;
+            let token = current.head()?.token()?;
+            current.commit_artifact(&token, "legacy.txt", Some(&input))?;
+        }
+        let namespace = registry.incarnation()?;
+        if shape > 0 {
+            let read = store.current_read(&scope)?;
+            registry.observe_retained_audit_index(&lease, &read, 0, 64 << 20)?;
+        }
+        let automatic = if shape >= 2 {
+            let due = registry.due_automatic_audits(0, 8)?;
+            assert_eq!(due.len(), 1);
+            let job = registry.enqueue_automatic_audit(
+                lease.identity().0,
+                due[0].1,
+                namespace,
+                Incarnation::from_bytes([196; 16]),
+                0,
+            )?;
+            if shape == 3 {
+                assert_eq!(registry.cancel_pending(job.id)?.state, JobState::Canceled);
+                assert!(registry.due_automatic_audits(86_400_100, 8)?.is_empty());
+            }
+            Some(job)
+        } else {
+            None
+        };
+        let (request_namespace, request_epoch) = registry.request_epoch()?;
+        let manual = registry.enqueue(
+            lease.identity().0,
+            namespace,
+            &RequestKey {
+                namespace: request_namespace,
+                epoch: request_epoch,
+                nonce: Incarnation::from_bytes([197; 16]),
+            },
+            JobKind::Verify,
+        )?;
+        if shape == 2 {
+            assert_eq!(manual.id, automatic.as_ref().unwrap().id);
+        } else if shape == 3 {
+            assert_ne!(manual.id, automatic.as_ref().unwrap().id);
+        }
+        registry
+            .claim_job_id(&lease, manual.id)?
+            .context("manual legacy Verify claim")?;
+        let context = registry.automatic_audit_context(&lease, manual.id)?;
+        if shape == 2 {
+            assert!(
+                context
+                    .as_ref()
+                    .context("promoted automatic context missing")?
+                    .manual()
+            );
+        } else {
+            assert!(context.is_none());
+        }
+        let turn = {
+            let owner = collection.integrity_owner(&registry, &lease, &bound)?;
+            let read = store.current_read(&scope)?;
+            owner.anchor(&read)?;
+            let mut writer = store.lock()?;
+            if let Some(context) = &context {
+                owner.verify_automatic_turn(&mut writer, context, 32, 64 << 20, 100, || Ok(()))?
+            } else {
+                owner.verify_turn(&mut writer, manual.id, 32, 64 << 20, 100, || Ok(()))?
+            }
+        };
+        assert!(turn.work_complete());
+        assert!(
+            turn.completed.is_none(),
+            "legacy omission fabricated whole-Verify coverage"
+        );
+        let query = turn
+            .query_completed
+            .as_ref()
+            .context("actual declared legacy proof absent")?;
+        assert_eq!(query.observation().scalars.missing_files, 1);
+        let outcome = JobOutcome::Failed {
+            code: "integrity_coverage_incomplete".into(),
+        };
+        let expected_outcome = serde_json::to_vec(&outcome)?;
+        let record = registry.complete_job_with_query_audit_at(
+            &lease,
+            manual.id,
+            outcome,
+            200,
+            None,
+            (
+                Some(AuditEvidence::Drained(
+                    turn.drained
+                        .as_ref()
+                        .context("actual legacy drain absent")?,
+                )),
+                Some(query),
+            ),
+        )?;
+        assert_eq!(record.state, JobState::Failed);
+        assert!(registry.integrity_audit_veto(&lease)?.is_none());
+        let connection = rusqlite::Connection::open_with_flags(
+            temporary
+                .path()
+                .canonicalize()?
+                .join("control/service-1.4.sqlite3"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let saved_outcome: Vec<u8> = connection.query_row(
+            "SELECT outcome FROM service_jobs WHERE id=?1",
+            [manual.id.to_string()],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            saved_outcome, expected_outcome,
+            "public failed receipt changed"
+        );
+        let (enabled, next, job): (bool, i64, Option<String>) = connection.query_row(
+            "SELECT intent IS NOT NULL,next_ms,job FROM service_background_audit WHERE project=?1",
+            [lease.identity().0.to_string()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert!(enabled);
+        assert_eq!(
+            next, 86_400_100,
+            "physical due date did not preserve original observation"
+        );
+        assert!(job.is_none());
+        assert!(registry.due_automatic_audits(86_400_099, 8)?.is_empty());
+        assert_eq!(registry.due_automatic_audits(86_400_100, 8)?.len(), 1);
+        assert_eq!(
+            registry
+                .retained_audit_observation(lease.identity().0)?
+                .context("retained physical dates absent")?
+                .source_first_unix_ms,
+            100
+        );
+    }
     Ok(())
 }

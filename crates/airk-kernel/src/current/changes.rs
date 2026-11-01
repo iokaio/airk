@@ -30,12 +30,16 @@ impl Kernel {
         }
         let token = super::runtime::revision(read.token()?);
         let publication = RevisionEnvelope::new(self.collection.clone(), token);
-        let recent = match read.recent_changes(airk_store::current::recent::unix_seconds()) {
+        let private = read.private_query_eligible()?;
+        let recent = match read
+            .recent_changes_since(airk_store::current::recent::unix_seconds(), request.since)
+        {
             Ok(view) => view,
             Err(error)
-                if error
-                    .downcast_ref::<airk_store::current::recent::InvalidRecentChanges>()
-                    .is_some() =>
+                if !private
+                    && error
+                        .downcast_ref::<airk_store::current::recent::InvalidRecentChanges>()
+                        .is_some() =>
             {
                 let floor = CoverageFloor {
                     complete_after: token.generation,

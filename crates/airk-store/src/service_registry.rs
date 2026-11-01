@@ -71,6 +71,7 @@ mod provider_drains;
 pub use provider_drains::{MAX_PROVIDER_DRAINS, ProviderBoot, ProviderDrain};
 #[path = "service_background.rs"]
 mod background;
+pub use background::audit::AutomaticAuditContext;
 #[path = "service_recovery.rs"]
 mod recovery;
 pub use recovery::{RecoveryBudget, RecoveryCondition, WaitingRecovery};
@@ -764,6 +765,7 @@ impl ServiceRegistry {
             )? == 1
             {
                 newly_active = true;
+                background::audit::automatic::resume(&transaction, registration.binding)?;
                 bump(&transaction)?;
             }
         } else {
@@ -990,6 +992,9 @@ impl ServiceRegistry {
             )? == 1,
             "service project is not registered"
         );
+        if !paused {
+            background::audit::automatic::resume(&transaction, binding)?;
+        }
         bump(&transaction)?;
         transaction.commit()?;
         Ok(())

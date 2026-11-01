@@ -1343,6 +1343,13 @@ impl Supervisor {
                                 );
                             }
                         }
+                        if let Ok(due) = registry.due_automatic_audits(now_ms, 8) {
+                            for (project,revision) in due {
+                                if let Ok(nonce)=new_instance_id() {
+                                    let _=registry.enqueue_automatic_audit(project,revision,instance,nonce,now_ms);
+                                }
+                            }
+                        }
                         if let Ok(due) = registry.due_maintenance(now_ms) {
                             for project in due {
                                 if resources.running(project).is_none() {
@@ -1533,6 +1540,12 @@ impl Supervisor {
                         });
                         match worker.work_status(control, keep_for_maintenance, freshness) {
                             Ok(observation) => {
+                                if let Some(code) = observation.integrity_observation_failure.as_deref() {
+                                    log.record_code(
+                                        airk_core::service_logs::LogKind::MetadataUnavailable,
+                                        Some(*project), None, Some(code),
+                                    );
+                                }
                                 if let Some(progress) = observation.progress.as_ref()
                                     && let Some(grant) = resources.running(*project)
                                 {

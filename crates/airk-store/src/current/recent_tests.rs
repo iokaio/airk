@@ -501,3 +501,89 @@ fn recent_selected_materialization_skips_unselected_read_fault_but_strict_engine
     );
     Ok(())
 }
+
+#[test]
+fn recent_physical_admission_counts_every_partial_group_and_audits_expired_bytes() -> Result<()> {
+    let fixture = Fixture::new()?;
+    append(
+        &fixture,
+        recent::Observation {
+            events: vec![event(1)],
+            ..recent::Observation::empty()
+        },
+        1000,
+    )?;
+    append(
+        &fixture,
+        recent::Observation {
+            events: vec![event(2)],
+            ..recent::Observation::empty()
+        },
+        1001,
+    )?;
+    let read = fixture.store.current_read(&fixture.scope)?;
+    let bytes = read
+        .map_get(map::MapDomain::RecentChanges, b"manifest")?
+        .context("manifest absent")?;
+    let manifest: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let declared = manifest["groups"]
+        .as_array()
+        .context("groups absent")?
+        .iter()
+        .map(|group| group["bytes"].as_u64().unwrap())
+        .sum::<u64>();
+    assert_eq!(read.recent_audit_bytes()?, bytes.len() as u64 + declared);
+    let mut actual = bytes.len() as u64;
+    for generation in 1..=2 {
+        let group = read
+            .map_get(
+                map::MapDomain::RecentChanges,
+                format!("events/{generation}/0").as_bytes(),
+            )?
+            .context("event chunk absent")?;
+        actual += group.len() as u64;
+    }
+    assert_eq!(
+        read.recent_audit_bytes()?,
+        actual,
+        "each partial group is separately charged"
+    );
+    read.audit_recent_changes()?;
+    drop(read);
+    let key = map::key(&fixture.scope, map::MapDomain::RecentChanges, b"events/1/0")?;
+    let prefix = i64::from(u16::from_be_bytes(key.as_bytes()[..2].try_into()?));
+    for identity in [b"manifest".as_slice(), b"events/2/0".as_slice()] {
+        let key = map::key(&fixture.scope, map::MapDomain::RecentChanges, identity)?;
+        assert_ne!(
+            prefix,
+            i64::from(u16::from_be_bytes(key.as_bytes()[..2].try_into()?)),
+            "fixture unrelated bucket collision"
+        );
+    }
+    let connection = database::open_writer(
+        &fixture.store.directory().join("current.sqlite3"),
+        CAPACITY,
+        false,
+    )?;
+    assert_eq!(
+        connection.execute(
+            "UPDATE current_map_buckets SET content=zeroblob(length(content)) WHERE prefix=?1",
+            [prefix]
+        )?,
+        1
+    );
+    drop(connection);
+    let read = fixture.store.current_read(&fixture.scope)?;
+    assert_eq!(
+        read.recent_changes(1000 + recent::AGE_SECONDS)?
+            .events
+            .len(),
+        1,
+        "expired first group should not be read by ordinary recent view"
+    );
+    assert!(
+        read.audit_recent_changes().is_err(),
+        "physical maintenance omitted expired retained corruption"
+    );
+    Ok(())
+}

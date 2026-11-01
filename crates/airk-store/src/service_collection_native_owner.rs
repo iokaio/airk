@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Bounded native lifecycle enrollment only; ordinary readers remain strict.
+//! Native lifecycle enrollment and sealed request-scoped private read authority.
 use super::*;
 use crate::service::registry::{
     IntegrityAuditState,
@@ -143,8 +143,10 @@ impl IntegrityOwner<'_> {
             selection.store.directory().canonicalize()? == directory,
             "native selection changed before resume"
         );
-        let root = RootPin::open(Path::new(&self.collection.owner.data_root), true)?;
-        let selected = RootPin::open(&directory, false)?;
+        let root = RootPin::open(Path::new(&self.collection.owner.data_root), true)
+            .map_err(|error| error.context(NativeBoundaryUnavailable))?;
+        let selected = RootPin::open(&directory, false)
+            .map_err(|error| error.context(NativeBoundaryUnavailable))?;
         let root_id = root.id()?;
         let selected_id = selected.id()?;
         selected.require_under(root_id)?;
@@ -176,7 +178,19 @@ impl IntegrityOwner<'_> {
             !self.bound.native_integrity_revoked(),
             "native owner live integrity revoked"
         );
-        if let Some(state) = self.load(fence.0)? {
+        self.native_known_damage(head, fence.0)?;
+        ensure!(
+            recovery
+                || !matches!(
+                    self.registry.integrity_audit_state(self.lease)?,
+                    IntegrityAuditState::Unresolved { .. }
+                ),
+            "native collection audit is unresolved"
+        );
+        Ok(())
+    }
+    fn native_known_damage(&self, head: &CurrentHead, namespace: Incarnation) -> Result<()> {
+        if let Some(state) = self.load(namespace)? {
             ensure!(
                 state.known_damage.len() < MAX_DAMAGE
                     && !state
@@ -194,26 +208,21 @@ impl IntegrityOwner<'_> {
                     .any(|d| d.incarnation == head.scope.incarnation),
             "native collection has durable known damage"
         );
-        ensure!(
-            recovery
-                || !matches!(
-                    self.registry.integrity_audit_state(self.lease)?,
-                    IntegrityAuditState::Unresolved { .. }
-                ),
-            "native collection audit is unresolved"
-        );
         Ok(())
     }
 }
-/// Owns exact native worker and supported root handles, never a census/read bypass.
-/// No instance is installed by normal strict worker construction.
+/// Owns the exact native worker and supported root handles. Unsupported native
+/// boundaries keep strict readers without constructing this capability.
 pub struct NativeOwnerSession {
     collection: Collection,
     bound: BoundDataRoot,
     lease: std::sync::Arc<ProjectLease>,
     identity: WorkerIdentity,
     active: String,
-    _root: RootPin,
+    _root: std::sync::Arc<RootPin>,
+    live: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    damage_started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    failed_incarnation: std::sync::Arc<std::sync::Mutex<Option<Incarnation>>>,
 }
 impl Collection {
     /// Explicit positive capability admission. No source/object/FTS audit occurs;
@@ -234,20 +243,25 @@ impl Collection {
                 && identity.fencing_generation == fence.1,
             "foreign native worker admission"
         );
+        let previous = registry.load_owner_session(&lease)?;
+        if previous
+            .as_ref()
+            .is_some_and(|(_, old)| old.state != SessionState::Clean || old.policy != POLICY)
+        {
+            return Err(anyhow::Error::new(NativeOwnerRecoveryRequired));
+        }
         let locked = owner.locked_native()?;
         let root = digest(b"native-root/1", &locked.root.id()?)?;
         let selected = digest(b"native-selected/1", &locked.selected.id()?)?;
         let token = locked.head.token()?;
-        let previous = registry.load_owner_session(&lease)?;
-        if let Some((_, old)) = &previous {
-            ensure!(
-                old.state == SessionState::Clean
-                    && old.policy == POLICY
-                    && old.root == root
-                    && old.selected == selected
-                    && old.head == token,
-                "native owner requires exceptional physical verification"
-            );
+        if let Some((_, old)) = &previous
+            && !(old.state == SessionState::Clean
+                && old.policy == POLICY
+                && old.root == root
+                && old.selected == selected
+                && old.head == token)
+        {
+            return Err(anyhow::Error::new(NativeOwnerRecoveryRequired));
         }
         let next = OwnerSession {
             version: 1,
@@ -288,14 +302,16 @@ impl Collection {
             lease,
             identity,
             active,
-            _root: root,
+            _root: std::sync::Arc::new(root),
+            live: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
+            damage_started: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            failed_incarnation: std::sync::Arc::new(std::sync::Mutex::new(None)),
         })
     }
 }
 impl Collection {
     /// Exceptional inherited Active/Clean mismatch resolution; declared physical
-    /// coverage must match the exact selected head. F13 must extend this proof
-    /// predicate before projection fields can ever use relaxed reads.
+    /// coverage must match the exact selected head and fixed enabled-component profile.
     pub fn recover_native_owner(
         &self,
         registry: &mut ServiceRegistry,
@@ -353,6 +369,11 @@ impl NativeOwnerSession {
     /// Private owning adapter only. The worker calls this after jobs and actual
     /// LocalTools admission shutdown succeed. This API is NOT a query receipt.
     pub fn settle_after_owned_drain(self, registry: &mut ServiceRegistry) -> Result<()> {
+        ensure!(
+            self.live.load(std::sync::atomic::Ordering::Acquire)
+                && !self.bound.native_integrity_revoked(),
+            "failed native query owner cannot settle clean"
+        );
         let owner = self
             .collection
             .integrity_owner(registry, &self.lease, &self.bound)?;
@@ -384,6 +405,14 @@ impl NativeOwnerSession {
         clean.basis = EnrollmentBasis::OwnedDrain;
         ensure!(owner.check()? == fence, "native owner changed during drain");
         locked.revalidate()?;
+        // The owning caller has joined all accepted work and closed read admission.
+        // Recheck after filesystem/registry waits so an observed failure never
+        // converts the durable crash-recovery marker into Clean.
+        ensure!(
+            self.live.load(std::sync::atomic::Ordering::Acquire)
+                && !self.bound.native_integrity_revoked(),
+            "native query owner failed during drain"
+        );
         registry.compare_owner_session(&self.lease, Some(&self.active), &clean)?;
         drop(locked);
         Ok(())
@@ -428,6 +457,354 @@ impl Collection {
         Ok(super::verify::RecoveryEpoch { context })
     }
 }
+
+/// An inherited session or changed policy/head needs explicit physical recovery.
+#[derive(Debug)]
+pub struct NativeOwnerRecoveryRequired;
+impl std::fmt::Display for NativeOwnerRecoveryRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("native owner requires exceptional physical verification")
+    }
+}
+impl std::error::Error for NativeOwnerRecoveryRequired {}
+
+/// A lifecycle transition requires strict reads; it is not evidence damage and
+/// must not poison the owning session when it interrupts a selected-page read.
+#[derive(Debug)]
+struct PrivateMaintenanceUnavailable;
+impl std::fmt::Display for PrivateMaintenanceUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("private query maintenance was stopped, paused, or blocked")
+    }
+}
+impl std::error::Error for PrivateMaintenanceUnavailable {}
+
+/// Request-scoped, nonserializable authority minted only by an active native
+/// owner. It never owns a database snapshot and cannot outlive that owner.
+pub(crate) struct PrivateQueryAuthority {
+    collection: Collection,
+    bound: BoundDataRoot,
+    lease: std::sync::Arc<ProjectLease>,
+    identity: WorkerIdentity,
+    active: String,
+    root: std::sync::Arc<RootPin>,
+    selected: RootPin,
+    directory: PathBuf,
+    head: crate::current::CurrentToken,
+    live: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    damage_started: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    failed_incarnation: std::sync::Arc<std::sync::Mutex<Option<Incarnation>>>,
+}
+impl PrivateQueryAuthority {
+    pub(crate) fn recheck(&self, read: &CurrentRead) -> Result<()> {
+        use std::sync::atomic::Ordering;
+        ensure!(
+            self.live.load(Ordering::Acquire),
+            "native query owner has drained or failed"
+        );
+        ensure!(
+            !self.bound.native_integrity_revoked(),
+            "native query integrity revoked"
+        );
+        ensure!(
+            read.head().token()? == self.head
+                && read.native_directory().canonicalize()? == self.directory,
+            "foreign private request publication"
+        );
+        let root = self.root.id()?;
+        self.selected.id()?;
+        self.selected.require_under(root)?;
+        let registry = ServiceRegistry::open_saved(self.bound.native_control_root())?;
+        let owner = self
+            .collection
+            .integrity_owner(&registry, &self.lease, &self.bound)?;
+        ensure!(
+            owner.check()? == (self.identity.service, self.identity.fencing_generation),
+            "private query worker epoch changed"
+        );
+        let active = registry
+            .load_owner_session(&self.lease)?
+            .context("native query owner missing")?;
+        ensure!(
+            active.0 == self.active
+                && active.1.state == SessionState::Active
+                && active.1.policy == POLICY,
+            "private query owner changed"
+        );
+        owner.native_no_damage(read.head(), false)?;
+        if !registry.private_query_maintenance_enabled(&self.lease)? {
+            return Err(anyhow::Error::new(PrivateMaintenanceUnavailable));
+        }
+        let selection = self.collection.select_existing_locked()?;
+        ensure!(
+            selection.store.directory().canonicalize()? == self.directory,
+            "private query selected incarnation changed"
+        );
+        Ok(())
+    }
+    pub(crate) fn observe_failure(&self, read: &CurrentRead, error: &anyhow::Error) -> Result<()> {
+        // Contention is not uncertain evidence and must not poison a healthy owner.
+        if error
+            .downcast_ref::<crate::current::CurrentReadContention>()
+            .is_some()
+            || error
+                .downcast_ref::<crate::current::CurrentOpenContention>()
+                .is_some()
+            || error
+                .downcast_ref::<crate::current::CurrentRequestExpired>()
+                .is_some()
+            || error
+                .downcast_ref::<crate::service::collection::SelectionContention>()
+                .is_some()
+            || error
+                .downcast_ref::<PrivateMaintenanceUnavailable>()
+                .is_some()
+        {
+            return Ok(());
+        }
+        self.live.store(false, std::sync::atomic::Ordering::Release);
+        // A poisoned failure identity can only refuse later retirement; do not
+        // let it prevent the independent durable damage attempts below.
+        if let Ok(mut failed) = self.failed_incarnation.lock() {
+            failed.get_or_insert(read.head().scope.incarnation);
+        }
+        if error
+            .downcast_ref::<crate::current::PrivateIntegrityFailure>()
+            .is_some()
+            && !self
+                .damage_started
+                .swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            // The live veto precedes both independent persistence attempts.
+            self.bound.revoke_native_integrity();
+            // A failed writable open must not suppress the independent local
+            // receipt attempt. Saved read-only fencing can still establish owner
+            // identity; its control write then truthfully fails in record_damage.
+            let registry = ServiceRegistry::open_existing_for_integrity_damage(
+                self.bound.native_control_root(),
+            )
+            .or_else(|_| ServiceRegistry::open_saved(self.bound.native_control_root()))?;
+            let owner = self
+                .collection
+                .integrity_owner(&registry, &self.lease, &self.bound)?;
+            let component =
+                airk_core::identity::framed_digest(b"private-query-integrity-failure/1", &[]);
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis();
+            owner.record_damage(read, component, u64::try_from(now)?)?;
+        }
+        // Other errors keep durable Active. They never become known corruption.
+        Ok(())
+    }
+}
+impl NativeOwnerSession {
+    /// Failure retirement never writes Clean and never grants relaxed reads.
+    pub fn failed(&self) -> bool {
+        !self.live.load(std::sync::atomic::Ordering::Acquire)
+            || self.bound.native_integrity_revoked()
+    }
+
+    /// Retire only the failed in-memory capability whose inherited Active row
+    /// was actually replaced by this sealed physical recovery proof. This does
+    /// not reset its live flag or the shared known-damage veto.
+    pub fn require_recovered_owner(
+        &self,
+        registry: &ServiceRegistry,
+        proof: &super::verify::EnabledComponentAuditProof,
+    ) -> Result<()> {
+        ensure!(
+            self.failed() && !self.bound.native_integrity_revoked(),
+            "known-damage or healthy native owner cannot be retired by uncertain-read recovery"
+        );
+        let owner = self
+            .collection
+            .integrity_owner(registry, &self.lease, &self.bound)?;
+        let fence = owner.check()?;
+        ensure!(
+            fence == (self.identity.service, self.identity.fencing_generation)
+                && proof.epoch().worker == self.identity.worker
+                && proof.epoch().worker_epoch == self.identity.fencing_generation
+                && proof.epoch().inherited == digest(b"native-recovery-owner/1", &self.active)?,
+            "physical recovery belongs to another failed native owner"
+        );
+        let locked = owner.locked_native()?;
+        ensure!(
+            self._root.id()? == locked.root.id()?
+                && proof.exact_head() == &locked.head
+                && proof.epoch().root == digest(b"native-root/1", &locked.root.id()?)?
+                && proof.epoch().selected == digest(b"native-selected/1", &locked.selected.id()?)?,
+            "physical recovery publication or root changed before capability retirement"
+        );
+        let recovered = registry
+            .load_owner_session(&self.lease)?
+            .context("recovered native owner missing")?
+            .1;
+        ensure!(
+            recovered.state == SessionState::Clean
+                && recovered.policy == POLICY
+                && recovered.worker == self.identity.worker
+                && recovered.epoch == fence.1
+                && recovered.head == locked.head.token()?
+                && recovered.basis == EnrollmentBasis::PhysicalVerify,
+            "physical recovery did not commit matching Clean owner state"
+        );
+        locked.revalidate()?;
+        Ok(())
+    }
+
+    /// An explicitly accepted replacement may restore strict reads in the same
+    /// worker. The failed capability is retired only after its exact failed
+    /// incarnation has been replaced by the owned committed rebuild receipt.
+    pub fn require_owned_replacement(
+        &self,
+        replaced: Incarnation,
+        token: crate::current::CurrentToken,
+    ) -> Result<()> {
+        ensure!(
+            self.failed(),
+            "healthy native owner does not require retirement"
+        );
+        let failed = self
+            .failed_incarnation
+            .lock()
+            .map_err(|_| anyhow::anyhow!("failed native incarnation unavailable"))?;
+        ensure!(
+            replaced != token.incarnation
+                && failed.is_none_or(|failed| failed != token.incarnation),
+            "replacement retained the failed incarnation"
+        );
+        ensure!(
+            self.collection
+                .manifest()?
+                .retired
+                .iter()
+                .any(|old| old.incarnation == Some(replaced)),
+            "replacement did not retire the actual prior incarnation"
+        );
+        drop(failed);
+        self._root.id()?;
+        let registry = ServiceRegistry::open_saved(self.bound.native_control_root())?;
+        let owner = self
+            .collection
+            .integrity_owner(&registry, &self.lease, &self.bound)?;
+        ensure!(
+            owner.check()? == (self.identity.service, self.identity.fencing_generation),
+            "replacement worker epoch changed"
+        );
+        let receipt = self
+            .collection
+            .last_rebuild_receipt()?
+            .context("owned replacement receipt missing")?;
+        ensure!(
+            receipt.token == token,
+            "replacement receipt differs from committed head"
+        );
+        let job = registry.job(receipt.job)?;
+        ensure!(
+            job.project == self.identity.project
+                && matches!(
+                    job.kind,
+                    airk_core::service::JobKind::Rebuild | airk_core::service::JobKind::Repair
+                )
+                && matches!(
+                    job.state,
+                    airk_core::service::JobState::Running | airk_core::service::JobState::Succeeded
+                )
+                && job.fencing_generation == self.identity.fencing_generation,
+            "replacement lacks actual accepted native job"
+        );
+        let selection = self.collection.select_existing_locked()?;
+        let scope = selection
+            .store
+            .current_owned_scope()?
+            .context("replacement scope missing")?;
+        ensure!(
+            scope.incarnation == token.incarnation,
+            "replacement selection changed"
+        );
+        let read = selection.store.current_read(&scope)?;
+        ensure!(
+            read.token()? == token,
+            "replacement publication changed before retirement"
+        );
+        owner.native_known_damage(read.head(), self.identity.service)?;
+        let active = registry
+            .load_owner_session(&self.lease)?
+            .context("failed native owner missing")?;
+        ensure!(
+            active.0 == self.active && active.1.state == SessionState::Active,
+            "failed native owner changed before retirement"
+        );
+        // No session transition, damage deletion, audit-veto clearance, or new
+        // private authority is performed. New readers start from strict APIs.
+        Ok(())
+    }
+
+    /// Attach before handing the exact fresh request reader to consumers.
+    pub fn attach_read(
+        &self,
+        read: std::sync::Arc<CurrentRead>,
+    ) -> Result<std::sync::Arc<CurrentRead>> {
+        ensure!(
+            read.private_query.get().is_none(),
+            "private reader already attached"
+        );
+        ensure!(
+            self.live.load(std::sync::atomic::Ordering::Acquire)
+                && !self.bound.native_integrity_revoked(),
+            "failed native query owner cannot admit a reader"
+        );
+        let registry = ServiceRegistry::open_saved(self.bound.native_control_root())?;
+        let owner = self
+            .collection
+            .integrity_owner(&registry, &self.lease, &self.bound)?;
+        owner.native_no_damage(read.head(), false)?;
+        if !registry.private_query_maintenance_enabled(&self.lease)? {
+            return Ok(read);
+        }
+        // A prepared/applying snapshot stays strict until its owning writer settles.
+        if read.settled_native_head()?.is_none() {
+            return Ok(read);
+        }
+        let directory = read.native_directory().canonicalize()?;
+        let selected = RootPin::open(&directory, false)?;
+        let authority = std::sync::Arc::new(PrivateQueryAuthority {
+            collection: self.collection.clone(),
+            bound: self.bound.clone(),
+            lease: self.lease.clone(),
+            identity: self.identity,
+            active: self.active.clone(),
+            root: self._root.clone(),
+            selected,
+            directory,
+            head: read.head().token()?,
+            live: self.live.clone(),
+            damage_started: self.damage_started.clone(),
+            failed_incarnation: self.failed_incarnation.clone(),
+        });
+        authority.recheck(&read)?;
+        read.private_query
+            .set(authority)
+            .map_err(|_| anyhow::anyhow!("private reader already attached"))?;
+        Ok(read)
+    }
+}
+impl Drop for NativeOwnerSession {
+    fn drop(&mut self) {
+        self.live.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+/// Platform boundary unavailable; callers may retain all strict read checks.
+#[derive(Debug)]
+pub struct NativeBoundaryUnavailable;
+impl std::fmt::Display for NativeBoundaryUnavailable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("native private boundary is unavailable; strict reads required")
+    }
+}
+impl std::error::Error for NativeBoundaryUnavailable {}
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {

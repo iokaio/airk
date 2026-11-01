@@ -74,7 +74,8 @@ impl LexicalManifest {
     pub(crate) fn verify(&self, connection: &Connection) -> Result<()> {
         ensure!(
             capture(connection, self.updates)? == *self,
-            "current FTS5 physical index digest mismatch"
+            anyhow::Error::new(super::PrivateIntegrityFailure)
+                .context("current FTS5 physical index digest mismatch")
         );
         Ok(())
     }
@@ -228,13 +229,15 @@ impl CurrentRead {
             !query_terms.is_empty(),
             "query must contain a letter or number"
         );
-        self.verify_lexical()?;
+        if !self.private_query_eligible()? {
+            self.verify_lexical()?;
+        }
         let expression = query_terms
             .iter()
             .map(|term| format!("\"{}\"", token(term)))
             .collect::<Vec<_>>()
             .join(" AND ");
-        self.with_connection(|connection| {
+        let result = self.with_connection(|connection| {
             let mut statement = connection.prepare("SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) ORDER BY d.stable_id LIMIT ?3")?;
             let mut rows = statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64])?;
             let mut values = Vec::new();
@@ -252,7 +255,10 @@ impl CurrentRead {
                 values.push(CurrentLexicalCandidate { stable_id, local, citation });
             }
             Ok(CurrentLexicalCandidates { manifest_digest: self.head().lexical_commit, values, incomplete })
-        })
+        });
+        let result = self.observe_private_integrity(result)?;
+        self.token()?;
+        Ok(result)
     }
 }
 

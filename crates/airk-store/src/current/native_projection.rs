@@ -601,61 +601,66 @@ fn manifest(
     artifact: &Artifact,
     file_metadata: Sha256Digest,
 ) -> Result<NativeFactHeader> {
-    ensure!(
-        reference.bytes <= MAX_MANIFEST_BYTES,
-        "native projection manifest exceeds metadata bound"
-    );
+    if reference.bytes > MAX_MANIFEST_BYTES {
+        return Err(
+            anyhow::anyhow!("native projection manifest exceeds metadata bound")
+                .context(super::PrivateIntegrityFailure),
+        );
+    }
     let bytes = store.read_current_resource(reference)?;
-    let value: NativeFactHeader = serde_json::from_slice(&bytes)?;
-    let expected = base(artifact, file_metadata)?;
-    ensure!(
-        value.version == 1
-            && value.path == expected.path
-            && value.source == expected.source
-            && value.payload == expected.payload
-            && value.file_metadata == file_metadata
-            && value.profile == expected.profile
-            && value.facts == expected.facts
-            && value.pages.len() <= MAX_FACTS
-            && value.rank_by_ordinal.len() == value.facts
-            && serde_json::to_vec(&value)? == bytes,
-        "invalid native projection manifest binding"
-    );
-    let mut count = 0usize;
-    let mut leaf_bytes = 0u64;
-    let mut stored_bytes = 0u64;
-    for page in &value.pages {
+    (|| -> Result<NativeFactHeader> {
+        let value: NativeFactHeader = serde_json::from_slice(&bytes)?;
+        let expected = base(artifact, file_metadata)?;
         ensure!(
-            page.start == count
-                && (1..=ROWS).contains(&page.rows)
-                && page.resource.bytes <= super::resources::MAX_RESOURCE_BYTES,
-            "invalid native projection page bounds"
+            value.version == 1
+                && value.path == expected.path
+                && value.source == expected.source
+                && value.payload == expected.payload
+                && value.file_metadata == file_metadata
+                && value.profile == expected.profile
+                && value.facts == expected.facts
+                && value.pages.len() <= MAX_FACTS
+                && value.rank_by_ordinal.len() == value.facts
+                && serde_json::to_vec(&value)? == bytes,
+            "invalid native projection manifest binding"
         );
-        count = count
-            .checked_add(page.rows)
-            .context("native projection count overflow")?;
-        leaf_bytes = leaf_bytes
-            .checked_add(page.resource.bytes as u64)
-            .context("native projection bytes overflow")?;
-        stored_bytes = stored_bytes
-            .checked_add(page.resource.stored_bytes())
-            .context("native projection stored bytes overflow")?;
-    }
-    ensure!(
-        count == value.facts
-            && leaf_bytes == value.leaf_encoded_bytes
-            && stored_bytes == value.leaf_stored_bytes,
-        "native projection manifest count mismatch"
-    );
-    let mut seen = vec![false; value.facts];
-    for rank in &value.rank_by_ordinal {
+        let mut count = 0usize;
+        let mut leaf_bytes = 0u64;
+        let mut stored_bytes = 0u64;
+        for page in &value.pages {
+            ensure!(
+                page.start == count
+                    && (1..=ROWS).contains(&page.rows)
+                    && page.resource.bytes <= super::resources::MAX_RESOURCE_BYTES,
+                "invalid native projection page bounds"
+            );
+            count = count
+                .checked_add(page.rows)
+                .context("native projection count overflow")?;
+            leaf_bytes = leaf_bytes
+                .checked_add(page.resource.bytes as u64)
+                .context("native projection bytes overflow")?;
+            stored_bytes = stored_bytes
+                .checked_add(page.resource.stored_bytes())
+                .context("native projection stored bytes overflow")?;
+        }
         ensure!(
-            *rank < value.facts && !seen[*rank],
-            "invalid native projection ordinal ranks"
+            count == value.facts
+                && leaf_bytes == value.leaf_encoded_bytes
+                && stored_bytes == value.leaf_stored_bytes,
+            "native projection manifest count mismatch"
         );
-        seen[*rank] = true;
-    }
-    Ok(value)
+        let mut seen = vec![false; value.facts];
+        for rank in &value.rank_by_ordinal {
+            ensure!(
+                *rank < value.facts && !seen[*rank],
+                "invalid native projection ordinal ranks"
+            );
+            seen[*rank] = true;
+        }
+        Ok(value)
+    })()
+    .map_err(|error| error.context(super::PrivateIntegrityFailure))
 }
 pub struct NativeFactRead<'a> {
     read: &'a CurrentRead,
@@ -760,23 +765,27 @@ impl NativeFactRead<'_> {
             .get(number)
             .context("native projection page unavailable")?;
         let bytes = self.store.read_current_resource(&reference.resource)?;
-        let value: NativeFactPage = serde_json::from_slice(&bytes)?;
-        ensure!(
-            value.version == 1
-                && value.page == number
-                && value.rows.len() == reference.rows
-                && serde_json::to_vec(&value)? == bytes,
-            "native projection page binding mismatch"
-        );
-        for (offset, row) in value.rows.iter().enumerate() {
+        (|| -> Result<NativeFactPage> {
+            let value: NativeFactPage = serde_json::from_slice(&bytes)?;
             ensure!(
-                self.header.rank_by_ordinal.get(row.ordinal) == Some(&(reference.start + offset))
-                    && row.fact.start_line > 0
-                    && row.fact.end_line >= row.fact.start_line,
-                "native projection row ordinal mismatch"
+                value.version == 1
+                    && value.page == number
+                    && value.rows.len() == reference.rows
+                    && serde_json::to_vec(&value)? == bytes,
+                "native projection page binding mismatch"
             );
-        }
-        Ok(value)
+            for (offset, row) in value.rows.iter().enumerate() {
+                ensure!(
+                    self.header.rank_by_ordinal.get(row.ordinal)
+                        == Some(&(reference.start + offset))
+                        && row.fact.start_line > 0
+                        && row.fact.end_line >= row.fact.start_line,
+                    "native projection row ordinal mismatch"
+                );
+            }
+            Ok(value)
+        })()
+        .map_err(|error| error.context(super::PrivateIntegrityFailure))
     }
 }
 /// Existing off-query upper bound, not the normal 64 MiB admitted turn.
@@ -795,6 +804,31 @@ pub struct NativeProducerCertificate {
     pub facts: usize,
     pub pages: usize,
 }
+/// Content-bound continuation of a completed source-only audit. Saved data is
+/// never query authority; the owning receipt/campaign and exact map bindings
+/// must also match before its payload stage resumes.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SourceAuditWitness {
+    inputs: super::audit_witness::AuditInputWitness,
+    raw_lines: Option<usize>,
+    native_lines: bool,
+    pub(crate) observed_unix_ms: u64,
+}
+impl SourceAuditWitness {
+    pub(crate) fn validate(&self) -> Result<()> {
+        self.inputs.validate()?;
+        ensure!(
+            self.raw_lines
+                .is_none_or(|lines| lines <= airk_core::extraction::MAX_SOURCE_BYTES)
+                && (!self.native_lines || self.raw_lines.is_some()),
+            "invalid source audit line witness"
+        );
+        Ok(())
+    }
+}
+const SOURCE_AUDIT_POLICY: &[u8] = b"projection-source-stage/1";
+
 pub struct FileProjectionCertification {
     pub scalars: bool,
     pub native: Option<NativeProducerCertificate>,
@@ -992,6 +1026,17 @@ impl CurrentRead {
             .and_then(|bytes| bytes.checked_add(text_index))
             .context("projection certification size overflow")
     }
+    pub(crate) fn projection_source_audit_bytes(&self, path: &str) -> Result<u64> {
+        let artifact = self
+            .artifact(path)?
+            .context("source audit artifact missing")?;
+        (artifact.bytes as u64)
+            .checked_add(
+                self.native_line_reference(path)?
+                    .map_or(0, |r| r.bytes as u64),
+            )
+            .context("source audit size overflow")
+    }
     /// One admitted source/payload/metadata pass for the historical object and
     /// both logical projection components. No physical native leaves are read.
     pub fn certify_file_projections(
@@ -1008,6 +1053,73 @@ impl CurrentRead {
         path: &str,
         native: Option<&NativeFactRead<'_>>,
     ) -> Result<FileProjectionCertification> {
+        let source = self.certify_projection_source(store, path, 0)?;
+        self.certify_file_projections_after_source(store, path, native, &source)
+    }
+    pub(crate) fn certify_projection_source(
+        &self,
+        store: &FileStore,
+        path: &str,
+        now: u64,
+    ) -> Result<SourceAuditWitness> {
+        let compact = self
+            .artifact(path)?
+            .context("source audit artifact missing")?;
+        let retained = compact
+            .retained
+            .as_ref()
+            .context("source audit extraction missing")?;
+        let selected = self.file_scalars(path)?;
+        let utf8 = selected.is_some()
+            && retained
+                .profile
+                .as_ref()
+                .context("source audit profile missing")?
+                .contract_version
+                == 2
+            && compact.extraction_method == "utf8";
+        let native_lines = self.native_line_reference(path)?;
+        let raw_lines = (|| -> Result<Option<usize>> {
+            if let Some(reference) = &native_lines {
+                Ok(Some(
+                    store.verify_native_line_projection(reference, &compact)?,
+                ))
+            } else if utf8 {
+                Ok(Some(store.verify_retained_source_utf8_lines(&compact)?))
+            } else {
+                store.verify_retained_source_deep(&compact)?;
+                Ok(None)
+            }
+        })()
+        .with_context(|| format!("retained source audit failed for {path}"))?;
+        Ok(SourceAuditWitness {
+            inputs: self.file_audit_witness(
+                path,
+                airk_core::identity::framed_digest(SOURCE_AUDIT_POLICY, &[]),
+                1,
+            )?,
+            raw_lines,
+            native_lines: native_lines.is_some(),
+            observed_unix_ms: now,
+        })
+    }
+    pub(crate) fn certify_file_projections_after_source(
+        &self,
+        store: &FileStore,
+        path: &str,
+        native: Option<&NativeFactRead<'_>>,
+        source: &SourceAuditWitness,
+    ) -> Result<FileProjectionCertification> {
+        source.validate()?;
+        ensure!(
+            source.inputs
+                == self.file_audit_witness(
+                    path,
+                    airk_core::identity::framed_digest(SOURCE_AUDIT_POLICY, &[]),
+                    1
+                )?,
+            "projection source audit binding changed"
+        );
         match (self.native_fact_reference(path)?, native) {
             (None, None) => {}
             (Some((reference, metadata)), Some(native)) => ensure!(
@@ -1023,28 +1135,8 @@ impl CurrentRead {
         let compact = self
             .artifact(path)?
             .context("projection certification artifact missing")?;
-        let retained = compact
-            .retained
-            .as_ref()
-            .context("projection certification extraction missing")?;
         let selected = self.file_scalars(path)?;
-        let utf8 = selected.is_some()
-            && retained
-                .profile
-                .as_ref()
-                .context("projection certification profile missing")?
-                .contract_version
-                == 2
-            && compact.extraction_method == "utf8";
-        let native_lines = self.native_line_reference(path)?;
-        let raw_lines = if let Some(reference) = &native_lines {
-            Some(store.verify_native_line_projection(reference, &compact)?)
-        } else if utf8 {
-            Some(store.verify_retained_source_utf8_lines(&compact)?)
-        } else {
-            store.verify_retained_source_deep(&compact)?;
-            None
-        };
+        let raw_lines = source.raw_lines;
         let artifact = store.load_projection_artifact(&compact)?;
         if selected.is_none() && native.is_none() {
             return Ok(FileProjectionCertification {
@@ -1107,7 +1199,7 @@ impl CurrentRead {
             .transpose()?;
         Ok(FileProjectionCertification {
             scalars,
-            native_lines: native_lines.is_some(),
+            native_lines: source.native_lines,
             text_ranges,
             native,
             native_edges,

@@ -20,6 +20,9 @@ pub struct AuditInputWitness {
     allowance: u64,
 }
 impl AuditInputWitness {
+    pub(crate) fn allowance(&self) -> u64 {
+        self.allowance
+    }
     pub(crate) fn validate(&self) -> Result<()> {
         ensure!(
             self.version == 1
@@ -112,6 +115,17 @@ impl CurrentRead {
                 (MapDomain::Metadata, b"analysis"),
                 (MapDomain::Metadata, b"analysis-projection"),
             ],
+            policy,
+            allowance,
+        )
+    }
+    pub(crate) fn recent_audit_witness(
+        &self,
+        policy: Sha256Digest,
+        allowance: u64,
+    ) -> Result<AuditInputWitness> {
+        self.make_audit_witness(
+            &[(MapDomain::RecentChanges, b"manifest")],
             policy,
             allowance,
         )

@@ -234,6 +234,70 @@ fn group_events(
 }
 
 impl CurrentRead {
+    /// Admission for the complete retained recent component, independent of age.
+    /// Expired stored groups still consume bytes until publication retires them.
+    pub(crate) fn recent_audit_bytes(&self) -> Result<u64> {
+        let Some(bytes) = self.map_get(map::MapDomain::RecentChanges, HEADER)? else {
+            return Ok(0);
+        };
+        let value = manifest(&bytes, &self.head().scope, self.token()?.sequence)?;
+        Ok(bytes.len() as u64
+            + value
+                .groups
+                .iter()
+                .map(|group| group.bytes as u64)
+                .sum::<u64>())
+    }
+    /// Physical maintenance covers every retained group, including groups a
+    /// selected query or wall-clock expiry would omit. Call only after admission.
+    pub(crate) fn audit_recent_changes(&self) -> Result<()> {
+        let Some(bytes) = self.map_get(map::MapDomain::RecentChanges, HEADER)? else {
+            return Ok(());
+        };
+        let value = manifest(&bytes, &self.head().scope, self.token()?.sequence)?;
+        for group in &value.groups {
+            group_events(group, &mut |key| {
+                self.map_get(map::MapDomain::RecentChanges, key)
+            })?;
+        }
+        self.token()?;
+        Ok(())
+    }
+    /// Select only groups after an actually verified baseline. The sealed owner
+    /// profile requires complete recent maintenance; header/age identity remains
+    /// complete and unchanged even when no event pages need materialization.
+    pub fn recent_changes_since(
+        &self,
+        now_unix_seconds: u64,
+        baseline: Option<RevisionToken>,
+    ) -> Result<RecentChanges> {
+        if !self.private_query_eligible()? {
+            return self.recent_changes(now_unix_seconds);
+        }
+        let token = self.token()?;
+        let current = revision(token);
+        let result = read_recent(
+            &self.head().scope,
+            token,
+            now_unix_seconds,
+            |view| {
+                baseline
+                    .filter(|baseline| *baseline != current && view.verifies(*baseline))
+                    .map(|baseline| baseline.generation)
+            },
+            &mut |key| self.map_get(map::MapDomain::RecentChanges, key),
+        );
+        let result = result.map_err(|error| {
+            if error.downcast_ref::<InvalidRecentChanges>().is_some() {
+                error.context(super::PrivateIntegrityFailure)
+            } else {
+                error
+            }
+        });
+        let view = self.observe_private_integrity(result)?;
+        self.token()?;
+        Ok(view)
+    }
     pub fn recent_changes(&self, now_unix_seconds: u64) -> Result<RecentChanges> {
         // Ordinary queries/diagnostics retain full unexpired-group verification.
         // Selection is private preparation, not a caller-granted read authority.
@@ -248,8 +312,8 @@ impl CurrentRead {
 }
 
 /// Internal preparation engine. The public reader ALWAYS selects all groups.
-/// A future qualified native owner must bind the exact enabled recent-component
-/// policy/maintenance evidence before exposing selected materialization. This
+/// A sealed native owner binds the exact enabled recent-component
+/// policy/maintenance contract before exposing selected materialization. This
 /// crate-internal closure is not a public bypass or a serialized capability.
 pub(super) fn read_recent(
     scope: &CurrentScope,

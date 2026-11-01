@@ -104,6 +104,8 @@ impl ProjectionComponentCoverage {
 pub struct ProjectionPendingFile {
     scalars: bool,
     logical_certified_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_observed_unix_ms: Option<u64>,
     certificate: crate::current::native_projection::NativeProducerCertificate,
     next_page: usize,
     #[serde(default)]
@@ -152,6 +154,12 @@ pub struct ProjectionAuditProgress {
     imported: ImportedProjectionAudit,
     pub exhausted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_observed_unix_ms: Option<u64>,
+    #[serde(default)]
+    pub recent_checked_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_pending: Option<crate::current::native_projection::SourceAuditWitness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pending: Option<ProjectionPendingFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_oversized: Option<ProjectionOversized>,
@@ -169,7 +177,7 @@ pub struct ProjectionAuditProgress {
 impl ProjectionAuditProgress {
     fn new(root: Sha256Digest, now: u64) -> Self {
         Self {
-            schema: 3,
+            schema: 4,
             preserved_v1_dates: false,
             preserved_v2_dates: false,
             coverage_skipped: false,
@@ -183,6 +191,9 @@ impl ProjectionAuditProgress {
             read_ranges: Default::default(),
             imported: Default::default(),
             exhausted: false,
+            recent_observed_unix_ms: None,
+            recent_checked_bytes: 0,
+            source_pending: None,
             pending: None,
             first_oversized: None,
             logical_certification_bytes: 0,
@@ -193,17 +204,21 @@ impl ProjectionAuditProgress {
         }
     }
     fn upgrade(&mut self) {
-        if self.schema == 3 {
+        if self.schema == 4 {
             return;
         }
         let mut next = Self::new(self.artifact_root, self.started_unix_ms);
         next.preserved_v1_dates = true;
-        next.preserved_v2_dates = self.schema == 2;
-        if self.schema == 2 {
+        next.preserved_v2_dates = self.schema >= 2;
+        if self.schema >= 2 {
             next.native_edges.first_observed_unix_ms = self.native_edges.first_observed_unix_ms;
             next.native_edges.through_unix_ms = self.native_edges.through_unix_ms;
             // The imported component set is unchanged by retained-text ranges.
             next.imported = self.imported.clone();
+        }
+        if self.schema >= 3 {
+            next.read_ranges.first_observed_unix_ms = self.read_ranges.first_observed_unix_ms;
+            next.read_ranges.through_unix_ms = self.read_ranges.through_unix_ms;
         }
         next.first_oversized = self.first_oversized.clone();
         next.scalars.first_observed_unix_ms = self.scalars.first_observed_unix_ms;
@@ -225,7 +240,7 @@ impl ProjectionAuditProgress {
                 .physical_through_unix_ms
                 .or(next.native_facts.through_unix_ms);
         }
-        if self.schema == 2
+        if self.schema >= 2
             && let Some(pending) = &self.pending
         {
             if let Some(edges) = &pending.native_edges {
@@ -267,7 +282,7 @@ impl ProjectionAuditProgress {
     }
     fn validate(&self) -> Result<()> {
         ensure!(
-            matches!(self.schema, 0 | 2 | 3),
+            matches!(self.schema, 0 | 2 | 3 | 4),
             "unsupported projection continuation schema"
         );
         ensure!(
@@ -276,6 +291,16 @@ impl ProjectionAuditProgress {
                 .is_none_or(|path| !path.is_empty() && path.len() <= 8192 && !path.contains('\0')),
             "invalid projection audit continuation"
         );
+        if let Some(source) = &self.source_pending {
+            source.validate()?;
+            ensure!(
+                self.schema == 4
+                    && !self.exhausted
+                    && self.after.is_some()
+                    && self.pending.is_none(),
+                "invalid pending source audit"
+            );
+        }
         if let Some(pending) = &self.pending {
             ensure!(
                 !self.exhausted
@@ -317,7 +342,7 @@ impl ProjectionAuditProgress {
                         && component.through_unix_ms.is_none())
                         || ((component.checked_files > 0
                             || ((self.preserved_v1_dates && component_index < 2)
-                                || (self.preserved_v2_dates && component_index < 3)))
+                                || (self.preserved_v2_dates && component_index < 4)))
                             && component.first_observed_unix_ms.is_some()
                             && component.through_unix_ms.is_some())),
                 "invalid projection audit coverage counters"
@@ -369,12 +394,23 @@ impl ProjectionAuditProgress {
         }
         Ok(())
     }
+    fn declared_complete(&self) -> bool {
+        !self.coverage_skipped
+            && self.schema == 4
+            && self.exhausted
+            && self.pending.is_none()
+            && self.source_pending.is_none()
+            && self.imported.evaluated
+            && self.imported.pending.is_none()
+            && self.recent_observed_unix_ms.is_some()
+    }
     /// Historical component coverage only, never private-root/query authority.
     pub fn complete_coverage(&self) -> bool {
         !self.coverage_skipped
-            && self.schema == 3
+            && self.schema == 4
             && self.exhausted
             && self.imported.evaluated
+            && self.recent_observed_unix_ms.is_some()
             && self.imported.coverage.missing_files == 0
             && self.scalars.missing_files == 0
             && self.native_facts.missing_files == 0
@@ -502,6 +538,8 @@ pub struct RetainedAuditObservation {
     pub policy: Sha256Digest,
     pub head: CurrentToken,
     pub lexical_unix_ms: u64,
+    #[serde(default)]
+    pub recent_unix_ms: Option<u64>,
     pub source_first_unix_ms: u64,
     pub source_through_unix_ms: u64,
     pub checked_files: u64,
@@ -583,15 +621,51 @@ impl RetainedAuditCompletionProof {
     }
 }
 
-/// Fixed native consumer policy. Projected coverage cannot be minted by this
-/// baseline producer; F13 must add its actual predicates before enabling it.
+/// Actual fixed private-consumer coverage. Posting/graph/vector/occurrence reads remain
+/// strict and are intentionally outside this policy. Every declared projection
+/// is audited; absent optional legacy projections select strict fallback.
+/// Neither saved observations nor ordinary historical completion can mint this.
+pub struct QueryComponentAuditProof {
+    drained: crate::service::registry::AuditDrainProof,
+    observation: RetainedAuditObservation,
+}
+impl QueryComponentAuditProof {
+    pub fn observation(&self) -> &RetainedAuditObservation {
+        &self.observation
+    }
+    pub fn revision(&self) -> airk_core::identity::RevisionToken {
+        let head = self.observation.head;
+        airk_core::identity::RevisionToken {
+            incarnation: head.incarnation,
+            generation: head.sequence,
+            revision: head.digest,
+        }
+    }
+    pub(crate) fn drain(&self) -> &crate::service::registry::AuditDrainProof {
+        &self.drained
+    }
+    pub(crate) fn job(&self) -> Sha256Digest {
+        self.drained.job()
+    }
+    pub(crate) fn matches(
+        &self,
+        connection: &rusqlite::Connection,
+        job: &airk_core::service::JobRecord,
+    ) -> Result<bool> {
+        Ok(self.observation.policy == declared_audit_policy()
+            && self.drained.matches(connection, job)?)
+    }
+}
+
+/// Fixed private-consumer policy; posting/graph/vector/occurrence reads retain strict
+/// per-query checks. Missing optional projections select strict fallback.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RecoveryProfile {
     BaselineV1,
     ProjectedV1,
 }
-pub(crate) const NATIVE_RECOVERY_PROFILE: RecoveryProfile = RecoveryProfile::BaselineV1;
+pub(crate) const NATIVE_RECOVERY_PROFILE: RecoveryProfile = RecoveryProfile::ProjectedV1;
 
 /// Opaque owning recovery purpose. Serialized only as saved audit context, never
 /// accepted as authority from a caller. Its live instance comes from the owner.
@@ -614,6 +688,12 @@ pub(crate) struct RecoveryContext {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RecoveryEpoch {
     pub(crate) context: RecoveryContext,
+}
+impl RecoveryEpoch {
+    /// Actual durably admitted job; observing identity grants no recovery authority.
+    pub fn job(&self) -> Sha256Digest {
+        self.context.job
+    }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -642,7 +722,7 @@ impl ProjectionReceipt {
         ensure!(
             matches!(
                 (self.version, self.progress.schema),
-                (1, 0) | (2, 2) | (3, 3)
+                (1, 0) | (2, 2) | (3, 3) | (4, 4)
             ) && self.owner == owner,
             "foreign projection audit receipt"
         );
@@ -763,7 +843,7 @@ pub fn declared_audit_policy() -> Sha256Digest {
         b"declared-integrity-audit-policy/1",
         &[
             &airk_core::storage_format::NATIVE_QUERY_PROJECTION_VERSION.to_be_bytes(),
-            &3u32.to_be_bytes(),
+            &5u32.to_be_bytes(),
         ],
     )
 }
@@ -775,9 +855,14 @@ pub struct VerifyTurn {
     pub blocked_large: bool,
     pub required_bytes: Option<u64>,
     pub admitted_bytes: u64,
+    /// Bytes debited to this turn's retained/projection/recent admission. The
+    /// existing indivisible lexical integrity pass and fixed map observations
+    /// are separate; this is not a claim of total filesystem I/O.
+    pub charged_bytes: u64,
     pub drained: Option<crate::service::registry::AuditDrainProof>,
     pub blocked_input: Option<crate::current::audit_witness::AuditInputWitness>,
     pub retained_completed: Option<RetainedAuditCompletionProof>,
+    pub query_completed: Option<QueryComponentAuditProof>,
 }
 impl VerifyTurn {
     // A completed campaign can honestly report unavailable projection coverage.
@@ -789,7 +874,13 @@ impl VerifyTurn {
                 .progress
                 .projections
                 .as_ref()
-                .is_some_and(|projection| projection.exhausted && projection.imported.evaluated)
+                .is_some_and(|projection| {
+                    projection.exhausted
+                        && projection.imported.evaluated
+                        && projection.source_pending.is_none()
+                        && projection.pending.is_none()
+                        && projection.recent_observed_unix_ms.is_some()
+                })
     }
     pub fn projection_coverage_complete(&self) -> bool {
         self.progress
@@ -1039,14 +1130,32 @@ fn audit_pending_projection(
                 completed.physical_first_unix_ms.unwrap_or(now),
             ),
         )?;
+        if completed.scalars
+            && let Some(source_time) = completed.source_observed_unix_ms
+        {
+            progress.scalars.first_observed_unix_ms = Some(
+                progress
+                    .scalars
+                    .first_observed_unix_ms
+                    .unwrap_or(source_time)
+                    .min(source_time),
+            );
+        }
         progress.native_facts.through_unix_ms =
             Some(completed.physical_through_unix_ms.unwrap_or(now));
         if completed.native_lines {
             if progress.read_ranges.checked_files == 1 {
-                progress.read_ranges.first_observed_unix_ms =
-                    previous_range_first.or(Some(completed.logical_certified_unix_ms));
+                progress.read_ranges.first_observed_unix_ms = previous_range_first.or(Some(
+                    completed
+                        .source_observed_unix_ms
+                        .unwrap_or(completed.logical_certified_unix_ms),
+                ));
             }
-            progress.read_ranges.through_unix_ms = Some(completed.logical_certified_unix_ms);
+            progress.read_ranges.through_unix_ms = Some(
+                completed
+                    .source_observed_unix_ms
+                    .unwrap_or(completed.logical_certified_unix_ms),
+            );
         }
         if let Some(text) = completed.text_ranges {
             if progress.read_ranges.checked_files == 1 {
@@ -1277,7 +1386,48 @@ impl IntegrityOwner<'_> {
         now: u64,
         checkpoint: impl Fn() -> Result<()>,
     ) -> Result<VerifyTurn> {
-        self.verify_turn_inner(writer, job, (max_files, max_bytes), now, checkpoint, None)
+        self.verify_turn_inner(
+            writer,
+            (job, job),
+            (max_files, max_bytes),
+            now,
+            checkpoint,
+            None,
+        )
+    }
+    /// One bounded automatic campaign turn. Its opaque registry context owns
+    /// both the actual job and a crash-fresh continuation identity.
+    pub fn verify_automatic_turn(
+        &self,
+        writer: &mut crate::WriterLock,
+        context: &crate::service::registry::AutomaticAuditContext,
+        max_files: usize,
+        max_bytes: u64,
+        now: u64,
+        checkpoint: impl Fn() -> Result<()>,
+    ) -> Result<VerifyTurn> {
+        // Opaque context is a live cohort identity, not indefinitely reusable
+        // authority. Reobserve the fenced running job before selecting its
+        // continuation namespace; a crash or promotion invalidates old context.
+        let current = self
+            .registry
+            .automatic_audit_context(self.lease, context.job())?
+            .context("automatic audit cohort no longer current")?;
+        ensure!(
+            current.job() == context.job()
+                && current.epoch() == context.epoch()
+                && current.campaign() == context.campaign()
+                && current.manual() == context.manual(),
+            "stale automatic audit context"
+        );
+        self.verify_turn_inner(
+            writer,
+            (context.job(), context.progress_key()),
+            (max_files, max_bytes),
+            now,
+            checkpoint,
+            None,
+        )
     }
     /// Exceptional owner recovery only. Ordinary Verify retains its dated cursor.
     pub fn verify_recovery_turn(
@@ -1291,7 +1441,13 @@ impl IntegrityOwner<'_> {
     ) -> Result<VerifyTurn> {
         self.verify_turn_inner(
             writer,
-            epoch.context.job,
+            (
+                epoch.context.job,
+                airk_core::identity::framed_digest(
+                    b"projected-recovery-progress/1",
+                    &[&serde_json::to_vec(&epoch.context)?],
+                ),
+            ),
             (max_files, max_bytes),
             now,
             checkpoint,
@@ -1301,12 +1457,13 @@ impl IntegrityOwner<'_> {
     fn verify_turn_inner(
         &self,
         writer: &mut crate::WriterLock,
-        job: Sha256Digest,
+        identity: (Sha256Digest, Sha256Digest),
         limits: (usize, u64),
         now: u64,
         checkpoint: impl Fn() -> Result<()>,
         recovery: Option<&RecoveryEpoch>,
     ) -> Result<VerifyTurn> {
+        let (job, progress_key) = identity;
         let (max_files, max_bytes) = limits;
         let recovery = recovery.map(|epoch| &epoch.context);
         ensure!(
@@ -1374,20 +1531,31 @@ impl IntegrityOwner<'_> {
                 "unsupported or malformed Verify continuation"
             );
         }
-        let mut progress = VerifyProgress::reconcile(old, job, &head, now);
-        let audit_projections = recovery.is_none();
+        let mut progress = VerifyProgress::reconcile(
+            old,
+            if recovery.is_some() {
+                job
+            } else {
+                progress_key
+            },
+            &head,
+            now,
+        );
+        let audit_projections =
+            recovery.is_none_or(|epoch| epoch.profile == RecoveryProfile::ProjectedV1);
         if audit_projections {
             progress.projections = Some(
-                self.load_projection(fence.0, job, &head)?
+                self.load_projection(fence.0, progress_key, &head)?
                     .unwrap_or_else(|| ProjectionAuditProgress::new(head.artifact_root, now)),
             );
         } else {
-            // The sealed current native recovery policy requires baseline bytes.
-            // Missing optional projections cannot strand a compatible legacy head.
+            // Historical baseline recovery is supported only for strict readers.
+            // Projected recovery audits every actually declared component.
             let mut skipped = ProjectionAuditProgress::new(head.artifact_root, now);
             skipped.exhausted = true;
             skipped.coverage_skipped = true;
             skipped.imported.evaluated = true;
+            skipped.recent_observed_unix_ms = Some(now);
             progress.projections = Some(skipped);
         }
         if observation.as_ref().is_some_and(|value| {
@@ -1420,8 +1588,8 @@ impl IntegrityOwner<'_> {
                 Err(error)
             }
         };
+        let mut used = 0u64;
         let work = (|| -> Result<()> {
-            let mut used = 0u64;
             let mut leaf_pages = 0usize;
             (|| -> Result<()> {
                 if progress.lexical_observed_unix_ms.is_none() {
@@ -1527,8 +1695,19 @@ impl IntegrityOwner<'_> {
                     }
                     (true, true) => return Ok(()),
                 };
-                let page =
-                    read.lookup_paths(Lookup::Files, "", cursor.as_deref(), max_files + 1)?;
+                let source_path = progress
+                    .projections
+                    .as_ref()
+                    .filter(|projection| projection.source_pending.is_some())
+                    .and_then(|projection| projection.after.clone());
+                let page = if let Some(path) = source_path {
+                    crate::current::postings::PathPage {
+                        paths: vec![path.clone()],
+                        next_after: Some(path),
+                    }
+                } else {
+                    read.lookup_paths(Lookup::Files, "", cursor.as_deref(), max_files + 1)?
+                };
                 let mut scanned = 0usize;
                 let mut historical_observed = false;
                 for path in page.paths.iter().take(max_files) {
@@ -1541,7 +1720,8 @@ impl IntegrityOwner<'_> {
                             .as_ref()
                             .context("projection progress missing")?;
                         !projection.exhausted
-                            && projection.after.as_ref().is_none_or(|after| path > after)
+                            && (projection.source_pending.is_some()
+                                || projection.after.as_ref().is_none_or(|after| path > after))
                     };
                     if !historical && !projection_needed {
                         scanned += 1;
@@ -1557,11 +1737,49 @@ impl IntegrityOwner<'_> {
                     let object_size = (artifact.bytes as u64)
                         .checked_add(retained.object_bytes as u64)
                         .context("verification byte overflow")?;
-                    let required = if projection_needed {
+                    let combined = if projection_needed {
                         read.projection_certification_bytes(path)?
                     } else {
                         object_size
                     };
+                    let source_bytes = read.projection_source_audit_bytes(path)?;
+                    let source_pending = progress
+                        .projections
+                        .as_ref()
+                        .and_then(|projection| projection.source_pending.as_ref());
+                    let required = if source_pending.is_some() {
+                        combined
+                            .checked_sub(source_bytes)
+                            .context("source audit admission underflow")?
+                    } else {
+                        combined
+                    };
+                    if projection_needed
+                        && read.file_scalars(path)?.is_some()
+                        && source_pending.is_none()
+                        && required > max_bytes
+                        && source_bytes <= max_bytes
+                        && combined.saturating_sub(source_bytes) <= max_bytes
+                    {
+                        if used.saturating_add(source_bytes) > max_bytes {
+                            break;
+                        }
+                        let witness = read.certify_projection_source(&selected.store, path, now)?;
+                        used = used
+                            .checked_add(source_bytes)
+                            .context("source audit byte overflow")?;
+                        let projection = progress
+                            .projections
+                            .as_mut()
+                            .context("projection progress missing")?;
+                        projection.logical_certification_bytes = projection
+                            .logical_certification_bytes
+                            .checked_add(source_bytes)
+                            .context("projection logical byte overflow")?;
+                        projection.after = Some(path.clone());
+                        projection.source_pending = Some(witness);
+                        break;
+                    }
                     if required > max_bytes {
                         blocked_large = true;
                         required_bytes = Some(required);
@@ -1587,16 +1805,28 @@ impl IntegrityOwner<'_> {
                     }
                     if projection_needed {
                         let native = read.native_fact_projection(&selected.store, path)?;
-                        let certified = read.certify_file_projections_with_native(
-                            &selected.store,
-                            path,
-                            native.as_ref(),
-                        )?;
+                        let source_observed_unix_ms =
+                            source_pending.map(|source| source.observed_unix_ms);
+                        let certified = if let Some(source) = source_pending {
+                            read.certify_file_projections_after_source(
+                                &selected.store,
+                                path,
+                                native.as_ref(),
+                                source,
+                            )?
+                        } else {
+                            read.certify_file_projections_with_native(
+                                &selected.store,
+                                path,
+                                native.as_ref(),
+                            )?
+                        };
                         used += required;
                         let projection = progress
                             .projections
                             .as_mut()
                             .context("projection progress missing")?;
+                        projection.source_pending = None;
                         projection.logical_certification_bytes = projection
                             .logical_certification_bytes
                             .checked_add(required)
@@ -1617,6 +1847,7 @@ impl IntegrityOwner<'_> {
                                     .text_ranges
                                     .map(|certificate| PendingTextRanges::new(certificate, now)),
                                 logical_certified_unix_ms: now,
+                                source_observed_unix_ms,
                                 certificate,
                                 next_page: 0,
                                 physical_first_unix_ms: empty_native.then_some(now),
@@ -1635,6 +1866,27 @@ impl IntegrityOwner<'_> {
                                 certified.native_lines,
                                 (now, now),
                             )?;
+                            if let Some(source_time) = source_observed_unix_ms {
+                                if certified.scalars {
+                                    projection.scalars.first_observed_unix_ms = Some(
+                                        projection
+                                            .scalars
+                                            .first_observed_unix_ms
+                                            .unwrap_or(source_time)
+                                            .min(source_time),
+                                    );
+                                }
+                                if certified.native_lines {
+                                    projection.read_ranges.first_observed_unix_ms = Some(
+                                        projection
+                                            .read_ranges
+                                            .first_observed_unix_ms
+                                            .unwrap_or(source_time)
+                                            .min(source_time),
+                                    );
+                                    projection.read_ranges.through_unix_ms = Some(source_time);
+                                }
+                            }
                         }
                         // The source/extraction checks above are also the historical
                         // object audit; do not reread them for this same file.
@@ -1784,14 +2036,74 @@ impl IntegrityOwner<'_> {
                         Some(read.import_audit_witness(declared_audit_policy(), max_bytes)?);
                 }
             }
+            if audit_projections && !blocked_large {
+                let projection = progress
+                    .projections
+                    .as_mut()
+                    .context("projection progress missing")?;
+                if projection.exhausted
+                    && projection.imported.evaluated
+                    && projection.recent_observed_unix_ms.is_none()
+                {
+                    let required = read.recent_audit_bytes()?;
+                    if required > max_bytes {
+                        blocked_large = true;
+                        required_bytes = Some(required);
+                        blocked_input =
+                            Some(read.recent_audit_witness(declared_audit_policy(), max_bytes)?);
+                        record_projection_oversized(
+                            projection,
+                            "<recent-changes>",
+                            required,
+                            max_bytes,
+                            now,
+                        );
+                    } else if used.saturating_add(required) <= max_bytes {
+                        check()?;
+                        // Recent values are one bounded map-metadata component:
+                        // <=16 MiB plus a <=64 KiB header and <=191 data chunks. The 128-page
+                        // cursor above counts projection resource leaves, not
+                        // authenticated map values or lexical metadata streams.
+                        read.audit_recent_changes()?;
+                        used = used
+                            .checked_add(required)
+                            .context("recent audit byte overflow")?;
+                        ensure!(
+                            used <= max_bytes,
+                            "recent audit exceeded shared byte admission"
+                        );
+                        projection.recent_observed_unix_ms = Some(now);
+                        projection.recent_checked_bytes = required;
+                    }
+                }
+            }
             Ok(())
         })();
         // Partial successes precede the failing object; retain them, but never
         // turn an uncertain/failed turn into a complete clean audit.
-        if work.is_err() && !interrupted {
-            self.bound.revoke_native_integrity();
-            progress.unresolved = true;
-        }
+        let work = match work {
+            Err(primary) if !interrupted => {
+                self.bound.revoke_native_integrity();
+                progress.unresolved = true;
+                if primary.is::<crate::current::PrivateIntegrityFailure>() {
+                    // Only typed structural evidence is known damage. Busy,
+                    // permission and other uncertain I/O retain unresolved
+                    // continuation without manufacturing a corruption claim.
+                    // The actual publication digest is the existing bounded
+                    // component identity; both durable stores are attempted by
+                    // record_damage before ordinary progress reloads sticky state.
+                    match self.record_damage(&read, head.token()?.digest, now) {
+                        Ok(_) => Err(primary),
+                        Err(damage) => Err(primary.context(format!(
+                            "Verify corruption persistence also failed: {damage:#}"
+                        ))),
+                    }
+                } else {
+                    Err(primary)
+                }
+            }
+            other => other,
+        };
         drop(read);
         let persistence = (|| -> Result<()> {
             let _lock = manifest_lock(&self.collection.directory)?;
@@ -1834,7 +2146,7 @@ impl IntegrityOwner<'_> {
                 && progress
                     .projections
                     .as_ref()
-                    .is_some_and(ProjectionAuditProgress::complete_coverage)
+                    .is_some_and(ProjectionAuditProgress::declared_complete)
             {
                 // A partial new component cannot heal an earlier unresolved audit.
                 progress.unresolved = false;
@@ -1850,16 +2162,31 @@ impl IntegrityOwner<'_> {
                 };
                 receipt.validate(self.collection.binding)?;
                 write(self.collection, RECOVERY_RECEIPT, &receipt)?;
+                if audit_projections {
+                    let receipt = ProjectionReceipt {
+                        version: 4,
+                        owner: self.collection.binding,
+                        namespace: fence.0,
+                        job: progress_key,
+                        incarnation: head.scope.incarnation,
+                        progress: progress
+                            .projections
+                            .clone()
+                            .context("recovery projection progress missing")?,
+                    };
+                    receipt.validate(self.collection.binding)?;
+                    write(self.collection, PROJECTION_RECEIPT, &receipt)?;
+                }
             } else {
                 state.verify = Some(progress.clone());
                 state.head = head.clone();
                 state.worker_epoch = fence.1;
                 write(self.collection, RECEIPT, &state)?;
                 let receipt = ProjectionReceipt {
-                    version: 3,
+                    version: 4,
                     owner: self.collection.binding,
                     namespace: fence.0,
-                    job,
+                    job: progress_key,
                     incarnation: head.scope.incarnation,
                     progress: progress
                         .projections
@@ -1927,10 +2254,12 @@ impl IntegrityOwner<'_> {
             && !blocked_large
             && let Some(projection) = progress.projections.as_ref()
             && !projection.coverage_skipped
-            && projection.schema == 3
+            && projection.schema == 4
             && projection.exhausted
             && projection.pending.is_none()
+            && projection.source_pending.is_none()
             && projection.imported.evaluated
+            && projection.recent_observed_unix_ms.is_some()
         {
             projection.validate()?;
             Some(RetainedAuditCompletionProof {
@@ -1944,6 +2273,7 @@ impl IntegrityOwner<'_> {
                     version: 1,
                     policy: declared_audit_policy(),
                     head: state_head_for_completion.token()?,
+                    recent_unix_ms: projection.recent_observed_unix_ms,
                     lexical_unix_ms: progress
                         .lexical_observed_unix_ms
                         .context("retained audit lexical observation missing")?,
@@ -1964,7 +2294,34 @@ impl IntegrityOwner<'_> {
         } else {
             None
         };
-        let recovery_completed = if progress.complete() && !blocked_large {
+        let query_completed = retained_completed
+            .as_ref()
+            .filter(|_| {
+                progress
+                    .projections
+                    .as_ref()
+                    .is_some_and(ProjectionAuditProgress::declared_complete)
+            })
+            .map(|retained| -> Result<QueryComponentAuditProof> {
+                Ok(QueryComponentAuditProof {
+                    drained: crate::service::registry::AuditDrainProof::new(
+                        self.registry,
+                        self.lease,
+                        self.bound,
+                        job,
+                    )?,
+                    observation: retained.observation.clone(),
+                })
+            })
+            .transpose()?;
+        let recovery_completed = if progress.complete()
+            && !blocked_large
+            && (!audit_projections
+                || progress
+                    .projections
+                    .as_ref()
+                    .is_some_and(ProjectionAuditProgress::declared_complete))
+        {
             if let Some(epoch) = recovery {
                 self.registry.require_recovery_epoch(self.lease, epoch)?;
                 Some(EnabledComponentAuditProof {
@@ -1991,9 +2348,11 @@ impl IntegrityOwner<'_> {
             blocked_input,
             required_bytes,
             admitted_bytes: max_bytes,
+            charged_bytes: used,
             drained,
             recovery_completed,
             retained_completed,
+            query_completed,
         })
     }
 }
@@ -2006,7 +2365,7 @@ pub(crate) fn test_projection_receipt_value(
     job: Sha256Digest,
 ) -> Result<serde_json::Value> {
     serde_json::to_value(ProjectionReceipt {
-        version: 3,
+        version: 4,
         owner: collection.binding,
         namespace,
         job,

@@ -304,6 +304,7 @@ mod tests {
                 maintenance: None,
                 progress: None,
                 waiting_for: None,
+                integrity_observation_failure: None,
                 failure: Some(JobFailure {
                     job: Sha256Digest::from_bytes([2; 32]),
                     grant: Incarnation::from_bytes([1; 16]),

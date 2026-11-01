@@ -24,6 +24,11 @@ pub const CURRENT: StorageFormats = StorageFormats {
     query_projection_records: Some(NATIVE_QUERY_PROJECTION_VERSION),
 };
 
+/// Optional current-owner JSON record capability; independent of index-v1 layout,
+/// SQLite user_version and executable version. Unknown capabilities refuse access.
+pub const NATIVE_QUERY_PROJECTION_VERSION: u32 = 4;
+pub const NATIVE_QUERY_PROJECTION_NAME: &str = "native-query-projections-v4";
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -50,8 +55,3 @@ mod tests {
         );
     }
 }
-
-/// Optional current-owner JSON record capability; independent of index-v1 layout,
-/// SQLite user_version and executable version. Unknown capabilities refuse access.
-pub const NATIVE_QUERY_PROJECTION_VERSION: u32 = 4;
-pub const NATIVE_QUERY_PROJECTION_NAME: &str = "native-query-projections-v4";

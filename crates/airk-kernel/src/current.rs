@@ -159,7 +159,9 @@ pub fn open_selected_lexical<'a>(
             == Some(read.head().scope.clone()),
         "foreign selected current lexical collection"
     );
-    read.verify_lexical()?;
+    if !read.private_query_eligible()? {
+        read.verify_lexical()?;
+    }
     Ok(VerifiedCurrentLexical { read })
 }
 

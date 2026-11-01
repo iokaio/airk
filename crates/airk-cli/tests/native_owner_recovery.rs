@@ -286,7 +286,7 @@ fn native_owner_recovery_process() -> Result<()> {
             fault_armed.get()
                 && format!("{detection:#}").contains("b.txt")
                 && format!("{detection:#}").contains("persistence also failed"),
-            "real b detection/persistence failure boundary was not exercised"
+            "real b detection/persistence failure boundary was not exercised: {detection:#}"
         );
         let owner = collection.integrity_owner(&registry, &lease, &bound)?;
         let read = store.current_read(&scope)?;
@@ -392,10 +392,24 @@ fn native_owner_recovery_process() -> Result<()> {
         "fresh required EOF did not finish two physical inputs"
     );
     ensure!(
-        done.completed.is_none(),
-        "baseline recovery fabricated global projection coverage"
+        done.projection_coverage_complete(),
+        "projected recovery did not audit every declared producer component"
     );
-    let drained = done.drained.context("actual baseline drain")?;
+    let whole = done
+        .completed
+        .context("actual projected whole-Verify proof missing")?;
+    let query = done
+        .query_completed
+        .context("actual projected query-component proof missing")?;
+    ensure!(
+        query.observation().recent_unix_ms.is_some(),
+        "projected recovery skipped the required recent metadata component"
+    );
+    let revision = whole.revision()?;
+    ensure!(
+        query.revision() == revision,
+        "query and whole recovery publication differ"
+    );
     let required = done
         .recovery_completed
         .context("actual fresh required proof")?;
@@ -404,15 +418,15 @@ fn native_owner_recovery_process() -> Result<()> {
     registry.complete_job_with_maintenance_and_audit_at(
         &lease,
         job.id,
-        JobOutcome::Failed {
-            code: "integrity_coverage_incomplete".into(),
+        JobOutcome::Succeeded {
+            revision: Some(revision),
         },
         now + 2,
         None,
-        Some(AuditEvidence::Drained(&drained)),
+        Some(AuditEvidence::Complete(&whole)),
     )?;
     ensure!(
-        registry.job(job.id)?.state == JobState::Failed
+        registry.job(job.id)?.state == JobState::Succeeded
             && registry.integrity_audit_veto(&lease)?.is_none(),
         "fresh recovery failed actual settlement"
     );
@@ -426,7 +440,7 @@ fn native_owner_recovery_process() -> Result<()> {
     emit(
         "completed",
         Some(job.id),
-        serde_json::json!({"first_fresh_checked":1,"complete_checked":2,"epoch":identity.fencing_generation,"ordinary_unchanged":true}),
+        serde_json::json!({"first_fresh_checked":1,"complete_checked":2,"epoch":identity.fencing_generation,"ordinary_unchanged":true,"full_projection_proof":true}),
     )?;
     Ok(())
 }
@@ -615,6 +629,7 @@ fn native_owner_second_process_death_rechecks_required_first_page_in_third_epoch
         c["job"] == a["job"]
             && c["data"]["first_fresh_checked"] == 1
             && c["data"]["complete_checked"] == 2
+            && c["data"]["full_projection_proof"] == true
             && c["data"]["epoch"] != b["data"]["epoch"],
         "third epoch did not produce fresh complete coverage"
     );

@@ -232,6 +232,50 @@ impl Kernel {
 }
 
 impl Kernel {
+    /// Observe only an existing retained index for the native maintenance owner.
+    /// Empty registrations never create an audit or initialize an index here.
+    pub fn observe_service_audit_index(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+    ) -> Result<()> {
+        self.observe_service_audit_index_inner(registry, lease, None)
+    }
+
+    pub fn observe_service_audit_index_with_limit(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+        max_bytes: u64,
+    ) -> Result<()> {
+        self.observe_service_audit_index_inner(registry, lease, Some(max_bytes))
+    }
+
+    fn observe_service_audit_index_inner(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+        max_bytes: Option<u64>,
+    ) -> Result<()> {
+        let collection = self
+            .service_collection
+            .as_ref()
+            .context("audit observation requires service collection")?;
+        let selected = collection.selected_store()?;
+        let Some(scope) = selected.current_scope(&self.root_id(), &self.collection)? else {
+            return Ok(());
+        };
+        let read = selected.current_read(&scope)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_millis()
+            .try_into()?;
+        match max_bytes {
+            Some(max_bytes) => registry.observe_retained_audit_index(lease, &read, now, max_bytes),
+            None => registry.observe_retained_audit_index_before_grant(lease, &read, now),
+        }
+    }
+
     /// Service-owned off-query Verify only. Ordinary diagnostics/read APIs keep
     /// their existing strict behavior and never consume the saved continuation.
     pub fn verify_service_turn(
@@ -241,6 +285,78 @@ impl Kernel {
         bound: &airk_store::service::data_scope::BoundDataRoot,
         job: airk_core::identity::Sha256Digest,
     ) -> Result<airk_store::service::collection::integrity::verify::VerifyTurn> {
+        self.verify_service_turn_with_limit(registry, lease, bound, job, 64 << 20)
+    }
+
+    /// The native worker may admit one larger indivisible component after the
+    /// ordinary turn refuses it, within the existing physical-audit ceiling.
+    pub fn verify_service_turn_with_limit(
+        &self,
+        registry: &airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        job: airk_core::identity::Sha256Digest,
+        max_bytes: u64,
+    ) -> Result<airk_store::service::collection::integrity::verify::VerifyTurn> {
+        self.verify_service_turn_inner(registry, lease, bound, job, max_bytes, None)
+    }
+
+    pub fn begin_service_native_recovery(
+        &self,
+        registry: &airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        identity: airk_core::service::WorkerIdentity,
+        job: airk_core::identity::Sha256Digest,
+    ) -> Result<airk_store::service::collection::integrity::verify::RecoveryEpoch> {
+        self.service_collection
+            .as_ref()
+            .context("recovery requires service collection")?
+            .begin_native_recovery(registry, lease, bound, identity, job)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn recover_service_native_owner(
+        &self,
+        registry: &mut airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        identity: airk_core::service::WorkerIdentity,
+        job: airk_core::identity::Sha256Digest,
+        proof: &airk_store::service::collection::integrity::verify::EnabledComponentAuditProof,
+    ) -> Result<()> {
+        self.service_collection
+            .as_ref()
+            .context("recovery requires service collection")?
+            .recover_native_owner(registry, lease, bound, identity, job, proof)?;
+        self.retire_failed_native_owner_after_recovery(registry, proof)
+    }
+
+    pub fn verify_native_recovery_service_turn(
+        &self,
+        registry: &airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        epoch: &airk_store::service::collection::integrity::verify::RecoveryEpoch,
+        max_bytes: u64,
+    ) -> Result<airk_store::service::collection::integrity::verify::VerifyTurn> {
+        self.verify_service_turn_inner(registry, lease, bound, epoch.job(), max_bytes, Some(epoch))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn verify_service_turn_inner(
+        &self,
+        registry: &airk_store::service::registry::ServiceRegistry,
+        lease: &airk_store::service::ProjectLease,
+        bound: &airk_store::service::data_scope::BoundDataRoot,
+        job: airk_core::identity::Sha256Digest,
+        max_bytes: u64,
+        recovery: Option<&airk_store::service::collection::integrity::verify::RecoveryEpoch>,
+    ) -> Result<airk_store::service::collection::integrity::verify::VerifyTurn> {
+        ensure!(
+            (64 << 20..=512 << 20).contains(&max_bytes),
+            "invalid native Verify turn allowance"
+        );
         let collection = self
             .service_collection
             .as_ref()
@@ -253,20 +369,56 @@ impl Kernel {
                 .current_scope(&self.root_id(), &self.collection)?
                 .context("Verify scope missing")?;
             let read = selected.current_read(&scope)?;
-            owner.anchor(&read)?;
+            if recovery.is_some() {
+                // Exceptional recovery owns its separate continuation. Existing
+                // ordinary observations and dated history remain byte-identical.
+                owner.anchor_if_missing(&read)?;
+            } else {
+                owner.anchor(&read)?;
+            }
         }
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis()
             .try_into()?;
-        let turn = owner.verify_turn(
-            &mut writer,
-            job,
-            32,
-            64 << 20,
-            now,
-            crate::service_execution::checkpoint,
-        )?;
+        let mut turn = if let Some(epoch) = recovery {
+            owner.verify_recovery_turn(
+                &mut writer,
+                epoch,
+                32,
+                max_bytes,
+                now,
+                crate::service_execution::checkpoint,
+            )?
+        } else if let Some(context) = registry.automatic_audit_context(lease, job)? {
+            owner.verify_automatic_turn(
+                &mut writer,
+                &context,
+                32,
+                max_bytes,
+                now,
+                crate::service_execution::checkpoint,
+            )?
+        } else {
+            owner.verify_turn(
+                &mut writer,
+                job,
+                32,
+                max_bytes,
+                now,
+                crate::service_execution::checkpoint,
+            )?
+        };
+        drop(writer);
+        // Charge the verifier's admitted work to the same native I/O pacing
+        // grant after its read tasks drain and publication/writer exclusion ends.
+        // Admission bytes are conservative work accounting, not a syscall count.
+        if let Err(error) = crate::service_execution::source_bytes(turn.charged_bytes) {
+            return Err(match turn.drained.take() {
+                Some(drained) => error.context(drained),
+                None => error,
+            });
+        }
         crate::service_execution::progress_verified(turn.verified_files);
         Ok(turn)
     }

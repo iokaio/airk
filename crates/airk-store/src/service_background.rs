@@ -90,7 +90,7 @@ pub(super) fn debit(
         expected < i64::MAX,
         "background continuation revision exhausted"
     );
-    let eligible:bool=connection.query_row(&format!("SELECT EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project WHERE b.project=?1 AND b.revision=?2 AND {predicate} AND p.paused=0 AND p.registered=1 AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=b.project AND j.id<>?3 AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')))"),params![project.to_string(),expected,job.to_string()],|row|row.get(0))?;
+    let eligible:bool=connection.query_row(&format!("SELECT EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project WHERE b.project=?1 AND b.revision=?2 AND {predicate} AND p.paused=0 AND p.registered=1 AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=b.project AND j.id<>?3 AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=j.id AND a.manual=0 AND j.state='pending') AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')))"),params![project.to_string(),expected,job.to_string()],|row|row.get(0))?;
     ensure!(eligible, "background continuation is no longer eligible");
     set(connection, project, kind, false)?;
     Ok(())
@@ -127,7 +127,7 @@ impl ServiceRegistry {
             (1..=32).contains(&limit),
             "invalid background continuation page bound"
         );
-        let mut statement=self.connection.prepare("SELECT b.project,b.revision,b.source_pending,EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=b.project) FROM service_background b JOIN projects p ON p.binding=b.project WHERE b.project>?1 AND p.paused=0 AND p.registered=1 AND (b.source_pending=1 OR b.semantic_pending=1 OR EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=b.project)) AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=b.project AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')) ORDER BY b.project LIMIT ?2")?;
+        let mut statement=self.connection.prepare("SELECT b.project,b.revision,b.source_pending,EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=b.project) FROM service_background b JOIN projects p ON p.binding=b.project WHERE b.project>?1 AND p.paused=0 AND p.registered=1 AND (b.source_pending=1 OR b.semantic_pending=1 OR EXISTS(SELECT 1 FROM service_setup_pending s WHERE s.project=b.project)) AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=b.project AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=j.id AND a.manual=0 AND j.state='pending') AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')) ORDER BY b.project LIMIT ?2")?;
         let rows = statement.query_map(
             params![
                 after.map(|id| id.to_string()).unwrap_or_default(),

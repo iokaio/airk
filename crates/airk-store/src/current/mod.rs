@@ -40,7 +40,9 @@ pub use journal::{
 };
 mod admission;
 pub use admission::{CurrentOpenContention, with_work_admission};
-pub use read::{CurrentRead, CurrentReadContention};
+pub use read::{
+    CurrentRead, CurrentReadContention, CurrentRequestExpired, PrivateIntegrityFailure,
+};
 /// Protect retained assets used by a helper without opening its project database.
 pub struct CurrentObjectLease {
     _gate: gate::Gate,
