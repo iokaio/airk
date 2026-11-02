@@ -2,6 +2,7 @@
 """Keep installer smoke expectations aligned with platform login ownership."""
 import importlib.util
 from pathlib import Path
+import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location(
@@ -32,6 +33,13 @@ class ServiceInstallCheckTests(unittest.TestCase):
                                {"arguments": ["runtime", "login-foreground", "--channel", "stable"]}):
                     with self.subTest(change=change), self.assertRaises(RuntimeError):
                         smoke.check_login_plan({**plan, **change}, install, platform)
+
+    def test_fixture_parent_is_created_without_a_prior_native_build(self):
+        with tempfile.TemporaryDirectory(prefix="airk-install-root-") as root:
+            parent = smoke.fixture_parent(Path(root))
+            self.assertEqual(parent, Path(root) / "target")
+            self.assertTrue(parent.is_dir())
+            self.assertEqual(smoke.fixture_parent(Path(root)), parent)
 
 
 if __name__ == "__main__":
