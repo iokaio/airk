@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Replay bounded identifier discovery on an explicitly prepared isolated project.
 
-This harness never registers/indexes projects, installs runtimes or stops a shared
-service. Fixture creation and read-only replay are separate commands. Prepare the
-fixture using a reviewed native installation before running. Use two configurations
+The run command never registers/indexes projects or installs/stops a shared
+service. The owned command prepares and drains only disposable original fixtures
+with an exact staged pair. Use two configurations
 for approved baseline/candidate launchers, bound to the same frozen source bytes.
 Reports contain counts, hashes, timings and response classifications, not source
 text, absolute paths, command arguments or arbitrary server error strings.
@@ -15,6 +15,7 @@ reused cohort retains one serial warmup batch separately from measured samples.
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
+import importlib.util
 import json
 import math
 import os
@@ -23,6 +24,7 @@ import queue
 import re
 import statistics
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -451,7 +453,12 @@ def load_configuration(path, source):
         raise ValueError("explicit_mcp_arguments_required")
     # No re-use of a normal project by accident. A fresh fixture registration is
     # prepared externally; this script only proves its requested source binding.
-    if args.count("--root") != 1 or Path(args[args.index("--root")+1]).resolve() != source:
+    try:
+        same_source = (args.count("--root") == 1
+                       and Path(args[args.index("--root")+1]).resolve(strict=True).samefile(source))
+    except (OSError, IndexError):
+        same_source = False
+    if not same_source:
         raise ValueError("configuration_fixture_scope_mismatch")
     if any(option in args for option in ("--additional-root", "--additional-project", "--explorer-descriptor")):
         raise ValueError("single_native_fixture_only")
@@ -472,7 +479,7 @@ def run(args):
             "This deterministic read-only replay does not measure a model's reasoning or proprietary client UI.",
             "Setup/queue/execution split requires separately correlated content-free native diagnostics; end-to-end times are measured here.",
             "A launcher hash and protocol version do not authenticate selected running image/source identity; the caller must independently verify and retain approved runtime provenance.",
-            "No runtime is installed and no project is registered/indexed by this harness."]}
+            "The replay phase installs no runtime and registers/indexes no project; owned setup, when selected, prepares only disposable fixtures."]}
     if args.record:
         report["retained_record_reconciliation"] = reconcile_record(args.record)
     report["workload_task_ids"] = list(TASK_IDS)
@@ -533,6 +540,45 @@ def run(args):
     return report["status"] == "complete" and report["source_unchanged"] and all(c.get("coverage_complete", False) and c.get("cleanup_clean", False) for c in report["cohorts"])
 
 
+def owned(args):
+    """Prepare only disposable sources/state, then reuse the unchanged replay owner."""
+    spec = importlib.util.spec_from_file_location("investigation_clients", Path(__file__).with_name("check-service-clients.py"))
+    clients = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(clients)
+    runtime = clients.runtime_root(args.runtime_dir)
+    output = Path(args.output).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    result = False
+    with tempfile.TemporaryDirectory(prefix="airk-mcp-owned-", dir=os.environ.get("AIRK_PRIVATE_CENSUS_BASE")) as temporary:
+        owner = Path(temporary).resolve()
+        fixture = owner / "fixture"
+        create_fixture(fixture)
+        root, _ = load_fixture(fixture)
+        state = owner / "state"
+        state.mkdir()
+        with clients.Fixture(runtime, owner) as service:
+            service.register("investigation", root, state)
+            service.configure("investigation", {"operation": "vectors", "enabled": False})
+            service.configure("investigation", {"operation": "detail", "level": "agent_lean"})
+            service.configure("investigation", {"operation": "usage", "mode": "disabled"})
+            service.job("investigation", "index")
+            service.published_status("investigation", time.monotonic() + 90)
+            config = {"command": str(service.binary), "args": [*service.arguments("investigation"), "mcp"],
+                      "launcher_sha256": digest_bytes(service.binary.read_bytes()),
+                      "expected_version": json.loads((runtime / "airk-runtime.json").read_text())["version"],
+                      "route": "isolated-approved-runtime", "cwd": str(runtime)}
+            configuration = output / "configuration.json"
+            configuration.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+            replay_args = argparse.Namespace(**vars(args))
+            replay_args.fixture, replay_args.configuration = fixture, configuration
+            replay_args.output = output / "replay"
+            result = run(replay_args)
+        # Written only after the existing service owner has drained successfully.
+        (output / "lifecycle.json").write_text(json.dumps({"owned_service_drained": True,
+            "normal_installation_changed": False, "replay_passed": result}) + "\n", encoding="utf-8")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="operation", required=True)
@@ -540,15 +586,20 @@ def main():
     fixture.add_argument("--destination", type=Path, required=True)
     audit = commands.add_parser("audit-record")
     audit.add_argument("--record", type=Path, required=True)
-    replay = commands.add_parser("run")
-    replay.add_argument("--configuration", type=Path, required=True)
-    replay.add_argument("--fixture", type=Path, required=True)
-    replay.add_argument("--output", type=Path, required=True)
-    replay.add_argument("--label", choices=("baseline", "candidate"), required=True)
-    replay.add_argument("--samples", type=int, default=30)
-    replay.add_argument("--concurrency", type=int, nargs="+", choices=(1, 4, 6, 8), default=[1, 4, 6, 8])
-    replay.add_argument("--timeout", type=float, default=30)
-    replay.add_argument("--record", type=Path, help="Optional retained investigation to reconcile without editing it")
+    for operation in ("run", "owned"):
+        replay = commands.add_parser(operation)
+        if operation == "run":
+            replay.add_argument("--configuration", type=Path, required=True)
+            replay.add_argument("--fixture", type=Path, required=True)
+        else:
+            replay.add_argument("--runtime-dir", type=Path, required=True,
+                                help="Exact staged pair; create/drain only a private disposable service, not an installation")
+        replay.add_argument("--output", type=Path, required=True)
+        replay.add_argument("--label", choices=("baseline", "candidate"), required=True)
+        replay.add_argument("--samples", type=int, default=30)
+        replay.add_argument("--concurrency", type=int, nargs="+", choices=(1, 4, 6, 8), default=[1, 4, 6, 8])
+        replay.add_argument("--timeout", type=float, default=30)
+        replay.add_argument("--record", type=Path, help="Optional retained investigation to reconcile without editing it")
     args = parser.parse_args()
     if args.operation == "fixture":
         result = create_fixture(args.destination)
@@ -558,7 +609,7 @@ def main():
     else:
         if not 1 <= args.samples <= 1000 or not 0 < args.timeout <= 120:
             parser.error("samples must be 1..1000 and timeout >0..120 seconds")
-        raise SystemExit(0 if run(args) else 1)
+        raise SystemExit(0 if (owned(args) if args.operation == "owned" else run(args)) else 1)
 
 
 if __name__ == "__main__":

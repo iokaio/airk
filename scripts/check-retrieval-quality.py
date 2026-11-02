@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Binary/source-bound synthetic retrieval receipts through persistent stdio MCP.
+"""Binary/source-bound retrieval receipts through persistent stdio MCP.
 
-Fixed judgments are outside indexed sources. Original static vectors exercise the
-adapter and ranking contracts; they do not qualify pretrained semantic relevance.
+Default static vectors exercise adapter contracts; --corpus with --model-dir
+measures a small original graded corpus using a catalog-pinned offline model.
+Judgments stay outside indexed sources. Neither path proves general relevance.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
@@ -23,6 +24,9 @@ import time
 fixture_spec = importlib.util.spec_from_file_location("airk_service_fixture", Path(__file__).with_name("check-service-clients.py"))
 clients = importlib.util.module_from_spec(fixture_spec)
 fixture_spec.loader.exec_module(clients)
+judgments_spec = importlib.util.spec_from_file_location("retrieval_judgments", Path(__file__).with_name("retrieval_judgments.py"))
+judgments = importlib.util.module_from_spec(judgments_spec)
+judgments_spec.loader.exec_module(judgments)
 
 
 CASES = [
@@ -119,9 +123,9 @@ class Session:
             if time.monotonic() > deadline:
                 raise TimeoutError("MCP qualification deadline")
 
-    def search(self, case):
+    def query(self, case, limit):
         arguments = {key: case[key] for key in ("query", "mode", "path_prefix") if key in case}
-        arguments.update(limit=5, max_bytes=65536, response_mode="full")
+        arguments.update(limit=limit, max_bytes=65536, response_mode="full")
         start = time.perf_counter_ns()
         retry_deadline = time.monotonic() + 15
         params = {"name": "airk_search", "arguments": arguments}
@@ -134,6 +138,11 @@ class Session:
         if self.publication is not None and publication != self.publication:
             raise AssertionError("fixed fixture publication changed during session")
         self.publication = publication
+        return value, elapsed, attempt
+
+    def search(self, case):
+        value, elapsed, attempt = self.query(case, 5)
+        publication = self.publication
         paths = [hit["citation"]["path"] for hit in value["hits"]]
         rank = next((index + 1 for index, hit in enumerate(value["hits"])
                      if hit["citation"]["path"] == case["expected"]
@@ -144,6 +153,48 @@ class Session:
             raise AssertionError(f"fixture citation hash differs: {case['name']}")
         return {"case": case["name"], "latency_ms": elapsed, "admission_retries": attempt, "recall_at_5": 1,
                 "reciprocal_rank_at_5": 1 / rank, "publication": publication}
+
+    def judged_search(self, case, source_hashes):
+        value, elapsed, attempt = self.query(case, 10)
+        paths = []
+        for hit in value["hits"]:
+            citation = hit["citation"]
+            path = citation["path"]
+            if (path not in source_hashes or not path.startswith(case.get("path_prefix", ""))
+                    or citation["content_hash"] != source_hashes[path]):
+                raise AssertionError("relevance citation source or scope differs")
+            paths.append(path)
+        return {"status": "ok", "latency_ms": elapsed, "admission_retries": attempt,
+                "response_json_bytes": len(json.dumps(value, separators=(",", ":"), ensure_ascii=False).encode()),
+                "truncated": value.get("truncated", False),
+                **judgments.score(paths, case["grades"])}
+
+    def compact_plan_probe(self, probe):
+        """Retain the known compact/rich workflow comparison independently of rankings."""
+        catalog = self.request("tools/list", {})
+        parse = next(tool for tool in catalog["tools"] if tool["name"] in ("airk_parse", "parse"))
+        probes = []
+        for compact in (True, False):
+            arguments = {"schema": "airk.parse.request/1", "mode": "execute", "response_mode": "full",
+                         "plan": {"steps": [
+                             {"id": "find", "tool": "symbols", "args": {
+                                 "name": probe["name"], "path": probe["path"],
+                                 "compact": compact, "limit": 5, "max_bytes": 8192}},
+                             {"id": "structure", "tool": "file_info", "args": {}, "bind": [
+                                 {"arg": "path", "from": "find", "select": "unique_definition_path"}]}]}}
+            envelope, _ = clients.read_envelope(
+                lambda until: self.request("tools/call", {"name": parse["name"], "arguments": arguments}, until),
+                time.monotonic() + 15, 601)
+            if envelope.get("isError"):
+                probes.append({"compact": compact, "status": "error"})
+                continue
+            value = json.loads(envelope["content"][0]["text"])
+            probes.append({"compact": compact, "status": value.get("status"),
+                           "calls": value.get("calls"), "evidence_count": len(value.get("evidence", [])),
+                           "steps": [{"id": step.get("id"), "status": step.get("status")}
+                                     for step in value.get("steps", [])]})
+        return {"plan_input_schema": parse["inputSchema"].get("properties", {}).get("plan"),
+                "workflows": probes}
 
     def close(self):
         try:
@@ -251,6 +302,114 @@ def fixture(binary, base, count, trials, metrics_module, detail="balanced"):
                 "modes": modes, "usage": json.loads(service.run(*service.arguments("qualification"), "usage", "report").stdout)["report"]}
 
 
+def index_controls(service, root, source_hashes, publication, control):
+    """Explicit owned-fixture jobs; never include this work in query latency."""
+    def index():
+        started = time.perf_counter_ns()
+        job = service.job("relevance", "index")
+        elapsed = (time.perf_counter_ns() - started) / 1_000_000
+        page = service.rpc({"console": {"after": None, "revision": None, "limit": 32}})["page"]
+        rows = [row for row in page["projects"]
+                if row["project"]["registration"]["binding"] == service.projects["relevance"]["binding"]]
+        progress = rows[0].get("progress") if len(rows) == 1 else None
+        observed = progress.get("progress") if isinstance(progress, dict) else None
+        if not isinstance(observed, dict) or observed.get("job") != job["id"]:
+            observed = None
+        return {"job_ms": elapsed, "publication": job["outcome"]["revision"],
+                "source_progress": ({key: observed.get(key) for key in (
+                    "captured_files", "extracted_files", "committed_changes", "publications", "phase_totals_ms")}
+                    if observed is not None else None)}
+    unchanged = index()
+    assert unchanged["publication"] == publication, "No-op indexing changed the publication"
+    if unchanged["source_progress"] is not None:
+        assert unchanged["source_progress"]["extracted_files"] == 0, "No-op indexing repeated extraction"
+        assert unchanged["source_progress"]["publications"] == 0, "No-op indexing repeated publication"
+    # Change only generated fixture bytes and bind every expected post-edit hash.
+    path = control["path"]
+    original = (root / path).read_bytes()
+    (root / path).write_bytes(original + control["append"].encode("utf-8"))
+    expected = {**source_hashes, path: digest(root / path)}
+    edited = index()
+    assert edited["publication"] != publication, "Changed fixture failed to publish"
+    if edited["source_progress"] is not None:
+        assert edited["source_progress"]["extracted_files"] == 1, "One-file edit re-extracted unrelated sources"
+    assert expected == {name: digest(root / name) for name in expected}, "Undeclared fixture source mutation"
+    return {"unchanged": unchanged, "one_file_edit": edited, "edited_path": path,
+            "before_hash": source_hashes[path], "after_hash": expected[path],
+            "basis": "Explicit source-job elapsed time and exact-job native progress, after query samples. Semantic drain time is separate; no inference or physical-I/O claim."}
+
+
+def representative_fixture(binary, base, corpus, corpus_hash, trials, detail, model, measurement=None):
+    """Measure actual pinned-model results; misses remain measurements, not test failures."""
+    root, state = base / "root", base / "state"
+    root.mkdir(parents=True)
+    state.mkdir()
+    for name, text in corpus["sources"].items():
+        path = root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+    source_hashes = {name: digest(root / name) for name in corpus["sources"]}
+    service = clients.Fixture(binary.parent, base)
+    records = []
+    measurement = measurement if measurement is not None else {}
+    measurement.update(schema="airk.relevance-measurement/1", corpus_sha256=corpus_hash,
+                       source_hashes=source_hashes, attempts=records, complete=False)
+    with service:
+        service.register("relevance", root, state)
+        # Use the paired helper's canonical default object identity. Reimporting
+        # an equivalent manifest with different JSON bytes is a custom identity,
+        # which the existing semantic-upgrade guard deliberately does not adopt.
+        print("Relevance fixture: prepare paired offline model", flush=True)
+        service.job("relevance", "setup-model")
+        service.configure("relevance", {"operation": "detail", "level": detail})
+        service.configure("relevance", {"operation": "usage", "mode": "disabled"})
+        service.job("relevance", "index")
+        print("Relevance fixture: wait for complete semantic publication", flush=True)
+        deadline = time.monotonic() + 300
+        while True:
+            status = service.published_status("relevance", deadline)
+            readiness = clients.semantic_readiness(status)
+            assert readiness["state"] != "failed", "Pinned-model semantic work failed"
+            if readiness["state"] == "ready" and readiness["completed_artifacts"] == len(source_hashes):
+                break
+            assert time.monotonic() < deadline, readiness
+            time.sleep(0.05)
+        session = Session([str(binary), *service.arguments("relevance")])
+        try:
+            print("Relevance fixture: compact/rich plans and graded queries", flush=True)
+            plan_probe = (session.compact_plan_probe(corpus["compact_plan_probe"])
+                          if corpus.get("compact_plan_probe") else {"state": "not_configured"})
+            for trial in range(trials):
+                for case in corpus["queries"]:
+                    for mode in case["modes"]:
+                        record = {"case": case["id"], "mode": mode, "split": case["split"],
+                                  "family": case["family"], "trial": trial}
+                        try:
+                            record.update(session.judged_search({**case, "mode": mode}, source_hashes))
+                        except (AssertionError, RuntimeError, TimeoutError, OSError, ValueError, KeyError, TypeError) as error:
+                            # Keep every failed attempt; never export raw sources/error strings.
+                            record.update(status="error", failure_class=type(error).__name__)
+                        records.append(record)
+        finally:
+            session.close()
+        assert source_hashes == {name: digest(root / name) for name in source_hashes}, "Relevance sources changed"
+        controls = (index_controls(service, root, source_hashes, session.publication, corpus["index_control"])
+                    if corpus.get("index_control") else {"state": "not_configured"})
+    measurement.update({"schema": "airk.relevance-measurement/1", "corpus_sha256": corpus_hash,
+            "source_hashes": source_hashes, "publication": session.publication,
+            "verification_manifest_sha256": digest(model / "model.json"),
+            "model_manifest": json.loads((model / "model.json").read_text(encoding="utf-8")),
+            "model_source": "Paired helper bundled default; --model-dir independently verifies the same catalog-pinned manifest and assets, not a reimported model identity.",
+            "ranking_unit": corpus["ranking_unit"], "judgment_scope": corpus["judgment_scope"],
+            "limit": 10, "max_bytes": 65536, "attempts": records,
+            "compact_plan_probe": plan_probe,
+            "index_controls": controls,
+            "cache_conditions": "One reused frontend after indexing and the compact/rich probes; these are warm observations, not cold startup timings.",
+            "scores": judgments.summarize(records),
+            "complete": all(record["status"] == "ok" for record in records)})
+    return measurement
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", type=Path, required=True)
@@ -258,10 +417,31 @@ def main():
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--detail", choices=("balanced", "agent_lean", "essential", "detailed"),
                         default="balanced", help="Explicit evidence mode under test")
+    parser.add_argument("--corpus", type=Path, help="Original graded corpus; separate from synthetic static-vector qualification")
+    parser.add_argument("--model-dir", type=Path, help="Verified pinned offline model directory, required with --corpus")
     args = parser.parse_args()
     if not 2 <= args.trials <= 30:
         parser.error("trials must be 2..30")
+    if bool(args.corpus) != bool(args.model_dir):
+        parser.error("--corpus and --model-dir must be supplied together")
+    corpus, corpus_hash, model = None, None, None
+    if args.corpus:
+        corpus, corpus_hash = judgments.load(args.corpus)
+        provisioner_spec = importlib.util.spec_from_file_location("pinned_model", Path(__file__).with_name("provision-local-model.py"))
+        provisioner = importlib.util.module_from_spec(provisioner_spec)
+        provisioner_spec.loader.exec_module(provisioner)
+        model = args.model_dir.resolve(strict=True)
+        manifest = json.loads((model / "model.json").read_text(encoding="utf-8"))
+        profile = next((p for p in provisioner.CATALOG["profiles"] if p["manifest"] == manifest), None)
+        if profile is None:
+            parser.error("--model-dir must contain one catalog-pinned MiniLM profile")
+        provisioner.provision(model, profile=profile)
     binary = args.binary.resolve(strict=True)
+    if corpus:
+        runtime_catalog = json.loads(subprocess.check_output(
+            [str(binary), "model-catalog"], text=True, encoding="utf-8", timeout=15))
+        if runtime_catalog["bundled_model"]["manifest"] != manifest:
+            parser.error("--model-dir must match this runtime's selected bundled profile")
     spec = importlib.util.spec_from_file_location("scale_metrics", Path(__file__).with_name("benchmark-scale.py"))
     metrics = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(metrics)
@@ -275,19 +455,32 @@ def main():
         "process_cleanup": "Owned MCP children must exit successfully after stdin closes; each owned service must drain. Static vectors use the shared helper. No external provider or source deletion.",
         "scope": "Original synthetic static vectors and fixed judgments outside indexed sources. No production semantic-quality, larger-than-memory, physical-I/O, installed-editor or power-loss qualification.",
         "workloads": []}
-    with tempfile.TemporaryDirectory(prefix="airk-retrieval-qualification-") as temporary:
-        base = Path(temporary).resolve()
-        for count in (32, 256):
-            report["workloads"].append(fixture(binary, base / str(count), count, args.trials, metrics, args.detail))
+    if corpus:
+        report.update(judgments_sha256=corpus_hash, ranking_units=corpus["ranking_unit"],
+                      cache_conditions="Reused frontend after indexing and compact/rich plan probes; OS caches uncontrolled. No cold-start claim.")
+    try:
+        with tempfile.TemporaryDirectory(prefix="airk-retrieval-qualification-", dir=os.environ.get("AIRK_PRIVATE_CENSUS_BASE")) as temporary:
+            base = Path(temporary).resolve()
+            if corpus:
+                report["scope"] = "Small original file-judged corpus using the pinned offline model; lexical/vector/hybrid measured separately. No installed-editor or general relevance claim."
+                report["representative"] = {}
+                representative_fixture(binary, base, corpus, corpus_hash, args.trials, args.detail, model, report["representative"])
+            else:
+                for count in (32, 256):
+                    report["workloads"].append(fixture(binary, base / str(count), count, args.trials, metrics, args.detail))
+    except (AssertionError, RuntimeError, TimeoutError, OSError, ValueError, KeyError, TypeError) as error:
+        report["failure_class"] = type(error).__name__
     report["source_after"] = source_identity()
     report["binary_sha256_after"] = digest(binary)
-    report["passed"] = (report["source"] == report["source_after"]
-                        and report["binary_sha256"] == report["binary_sha256_after"])
+    report["passed"] = ("failure_class" not in report and report["source"] == report["source_after"]
+                        and report["binary_sha256"] == report["binary_sha256_after"]
+                        and (not corpus or report["representative"]["complete"]))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps({"passed": report["passed"], "receipt": str(args.output), "workloads": 2, "cases": len(CASES)}))
+    print(json.dumps({"passed": report["passed"], "receipt": str(args.output),
+                      "workloads": 1 if corpus else len(report["workloads"]), "cases": len(corpus["queries"]) if corpus else len(CASES)}))
     if not report["passed"]:
-        raise SystemExit("Source or binary changed during qualification; rebuild and rerun on a stable checkout")
+        raise SystemExit("Retrieval qualification failed; inspect the retained source/binary identities and failure/attempt receipts")
 
 
 if __name__ == "__main__":

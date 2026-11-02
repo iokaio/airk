@@ -2,6 +2,8 @@
 
 **1.8.7:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](docs/releases/release-1.8.7.md) for current behavior and dated validation.
 
+**1.9.0 development:** implementation of the approved [delivery plan](docs/research/plan-v190.md) begins with source-bound 1.8.7 controls and original relevance judgments. The [implementation ledger](docs/research/implementation-v190.md) records accepted phases, tests and remaining gates. Native and extension versions remain 1.8.7 until the planned candidate increment.
+
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
 
 AIRK builds a searchable local index of your project so you and your coding tools can retrieve relevant passages, definitions and document facts without loading entire files into every request. Use it with MCP clients such as Claude Code, Codex and GitHub Copilot, or work directly in VS Code with no coding agent required.

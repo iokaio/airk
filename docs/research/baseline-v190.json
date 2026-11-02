@@ -1,0 +1,278 @@
+{
+  "schema": "airk.v190-baseline/1",
+  "license": "Apache-2.0",
+  "date": "2026-11-02",
+  "entry_commit": "6d00d42eb56d459055383ed64f743332030ba6d3",
+  "native_source": {
+    "sha256": "72f9c7a33d882d9e9911161e64a6b94d026f82790698191814ce04c56d5c2b61",
+    "files": 750
+  },
+  "runtime": {
+    "schema": 1,
+    "version": "1.8.7",
+    "os": "windows",
+    "arch": "x86_64",
+    "airk_sha256": "bb8d02336a2f8ef4db9e90f628b9972a809c6320b3757757af61b3d27f93ad76",
+    "embed_sha256": "ebf02003ccf5076e01c3aaf842c896633f1a393ece7b359fd647d2895a515016"
+  },
+  "profile": "release",
+  "conditions": {
+    "host": "local Windows x64",
+    "logical_cpus": 64,
+    "cpu_affinity": "not enforced",
+    "concurrent_work": "no concurrent build, test or other measurement campaign; other applications and OS caches uncontrolled",
+    "route": "isolated approved native runtime, not installed VS Code"
+  },
+  "mcp_fixture_sha256": "5c0ddbe2197afd930d64d6f3dbef844e3247fb52ebb2b35175ca9597397da256",
+  "relevance_corpus_sha256": "c890e995908188285a0ebd572638bf57977e940d812422629234907a94ab9820",
+  "model_manifest": {
+    "schema": 2,
+    "name": "sentence-transformers/all-MiniLM-L6-v2",
+    "license": "Apache-2.0",
+    "source": "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2",
+    "revision": "10dbd2f06a8baf40ad285b037edda610c1b9a57c",
+    "model_sha256": "b941bf19f1f1283680f449fa6a7336bb5600bdcd5f84d10ddc5cd72218a0fd21",
+    "tokenizer_sha256": "be50c3628f2bf5bb5e3a7f17b1f74611b2561a3a27eeab05e5aa30f411572037",
+    "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "dimensions": 384,
+    "max_tokens": 256,
+    "pooling": "attention-mask-mean-l2",
+    "input_ids": "input_ids",
+    "attention_mask": "attention_mask",
+    "token_type_ids": "token_type_ids",
+    "output": "last_hidden_state"
+  },
+  "mcp_measured_trials": 270,
+  "mcp_measured_tool_calls": 2430,
+  "mcp_measured_errors": 0,
+  "mcp_cohorts": [
+    {
+      "concurrency": 1,
+      "connection": "fresh-frontend-status-first",
+      "samples": 30,
+      "task_ms": {
+        "samples": 30,
+        "median": 950.0399499665946,
+        "p95": 1066.9380000326782
+      },
+      "task_with_connection_ms": {
+        "samples": 30,
+        "median": 1031.5219500334933,
+        "p95": 1159.8145999014378
+      }
+    },
+    {
+      "concurrency": 1,
+      "connection": "fresh-frontend-unprimed",
+      "samples": 30,
+      "task_ms": {
+        "samples": 30,
+        "median": 986.4848500583321,
+        "p95": 1032.9662000294775
+      },
+      "task_with_connection_ms": {
+        "samples": 30,
+        "median": 1037.8285000333562,
+        "p95": 1094.3736000917852
+      }
+    },
+    {
+      "concurrency": 1,
+      "connection": "reused-connection-status-first",
+      "samples": 30,
+      "task_ms": {
+        "samples": 30,
+        "median": 951.5928499167785,
+        "p95": 1039.8871002253145
+      },
+      "task_with_connection_ms": {
+        "samples": 30,
+        "median": 951.5928499167785,
+        "p95": 1039.8871002253145
+      }
+    },
+    {
+      "concurrency": 4,
+      "connection": "fresh-frontend-status-first",
+      "samples": 30,
+      "task_ms": {
+        "samples": 30,
+        "median": 391.64599997457117,
+        "p95": 438.9669999945909
+      },
+      "task_with_connection_ms": {
+        "samples": 30,
+        "median": 474.8933499213308,
+        "p95": 521.1408999748528
+      }
+    },
+    {
+      "concurrency": 4,
+      "connection": "fresh-frontend-unprimed",
+      "samples": 30,
+      "task_ms": {
+        "samples": 30,
+        "median": 368.9043000340462,
+        "p95": 401.4155000913888
+      },
+      "task_with_connection_ms": {
+        "samples": 30,
+        "median": 419.86289992928505,
+        "p95": 449.32810007594526
+      }
+    },
+    {
+      "concurrency": 4,
+      "connection": "reused-connection-status-first",
+      "samples": 30,
+      "task_ms": {
+        "samples": 30,
+        "median": 374.1245500277728,
+        "p95": 418.58300007879734
+      },
+      "task_with_connection_ms": {
+        "samples": 30,
+        "median": 374.1245500277728,
+        "p95": 418.58300007879734
+      }
+    },
+    {
+      "concurrency": 8,
+      "connection": "fresh-frontend-status-first",
+      "samples": 30,
+      "task_ms": {
+        "samples": 30,
+        "median": 360.8962498838082,
+        "p95": 424.97180006466806
+      },
+      "task_with_connection_ms": {
+        "samples": 30,
+        "median": 444.0523497760296,
+        "p95": 517.7847999148071
+      }
+    },
+    {
+      "concurrency": 8,
+      "connection": "fresh-frontend-unprimed",
+      "samples": 30,
+      "task_ms": {
+        "samples": 30,
+        "median": 338.5104000335559,
+        "p95": 397.7840000297874
+      },
+      "task_with_connection_ms": {
+        "samples": 30,
+        "median": 389.00954998098314,
+        "p95": 451.2936999090016
+      }
+    },
+    {
+      "concurrency": 8,
+      "connection": "reused-connection-status-first",
+      "samples": 30,
+      "task_ms": {
+        "samples": 30,
+        "median": 381.5981999505311,
+        "p95": 415.6092000193894
+      },
+      "task_with_connection_ms": {
+        "samples": 30,
+        "median": 381.5981999505311,
+        "p95": 415.6092000193894
+      }
+    }
+  ],
+  "relevance_scores": {
+    "lexical/development": {
+      "attempts": 15,
+      "failures": 0,
+      "scored_queries": 15,
+      "negative_queries": 0,
+      "ndcg_at_10": 0.9247174346811574,
+      "recall_at_10": 0.9333333333333333,
+      "negative_empty_rate": null
+    },
+    "vector/development": {
+      "attempts": 15,
+      "failures": 0,
+      "scored_queries": 15,
+      "negative_queries": 0,
+      "ndcg_at_10": 0.9447097556761208,
+      "recall_at_10": 1.0,
+      "negative_empty_rate": null
+    },
+    "hybrid/development": {
+      "attempts": 15,
+      "failures": 0,
+      "scored_queries": 15,
+      "negative_queries": 0,
+      "ndcg_at_10": 0.9338878002907577,
+      "recall_at_10": 1.0,
+      "negative_empty_rate": null
+    },
+    "lexical/held_out": {
+      "attempts": 12,
+      "failures": 0,
+      "scored_queries": 9,
+      "negative_queries": 3,
+      "ndcg_at_10": 0.5559941549320991,
+      "recall_at_10": 0.6666666666666666,
+      "negative_empty_rate": 1.0
+    },
+    "vector/held_out": {
+      "attempts": 9,
+      "failures": 0,
+      "scored_queries": 9,
+      "negative_queries": 0,
+      "ndcg_at_10": 0.8868673229903331,
+      "recall_at_10": 1.0,
+      "negative_empty_rate": null
+    },
+    "hybrid/held_out": {
+      "attempts": 9,
+      "failures": 0,
+      "scored_queries": 9,
+      "negative_queries": 0,
+      "ndcg_at_10": 0.8868673229903331,
+      "recall_at_10": 1.0,
+      "negative_empty_rate": null
+    }
+  },
+  "index_work_controls": {
+    "noop_extracted_files": 0,
+    "noop_publications": 0,
+    "noop_same_publication": true,
+    "one_file_edit_extracted_files": 1,
+    "one_file_edit_committed_changes": 1,
+    "noop_observed_job_ms": 709.8207,
+    "edit_observed_job_ms": 1310.2975,
+    "timing_limitations": "Single source-job observations only; timing is descriptive. Repeated indexing/resource controls are required before accepting phases that change indexing."
+  },
+  "frozen_gates": {
+    "median_allowance_relative": 0.1,
+    "median_allowance_ms": 25,
+    "p95_allowance_relative": 0.15,
+    "p95_allowance_ms": 50,
+    "latency_rule": "candidate <= reference + max(absolute allowance, reference * relative allowance), independently against frozen baseline and previous accepted phase for each matched cohort",
+    "noise_rule": "Initial split-half median drift was below 7%; breaches require a matched control investigation, not silent threshold or timeout changes",
+    "relevance_rule": "No nDCG@10 or Recall@10 regression in any mode/split beyond 1e-12 arithmetic tolerance; all declared negative cases empty",
+    "optional_ranking_improvement_minimum": 0.02,
+    "optional_ranking_rule": "S1 needs at least +0.02 held-out lexical nDCG@10, with recall guards and no mandatory evidence loss; otherwise retain current ranker",
+    "correctness_rule": "Every source/hash/scope/coverage/cleanup guard and declared work-count invariant passes. Zero unexplained failures, changed defaults or hidden truncation.",
+    "default_reply_rule": "Preserve no-new-argument representation and complete evidence; exclude only documented runtime/transport identities and timing from comparisons"
+  },
+  "unavailable": [
+    "whole-service CPU/peak RSS",
+    "physical storage I/O",
+    "installed-editor elapsed time",
+    "other-platform measurements",
+    "stable p99 estimates",
+    "repeated index-job latency distributions"
+  ],
+  "unavailable_gate": "Unavailable metrics are not passing evidence. Add instrumentation/baselines before accepting the phase that materially affects that path.",
+  "raw_receipt_sha256": {
+    "mcp": "b93116a3e085876af50276b5956f30175003faa0054c4ad602993938b6c85d8f",
+    "relevance": "0f73018661bdbb0f1de5ac52825a31fffbc882c345f59b95cd1d71b903371e07",
+    "runtime_build": "9496da8e50047a808a761b43389df95012bda926b175e26d6e452c2dc24bd8c9"
+  }
+}

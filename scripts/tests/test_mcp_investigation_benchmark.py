@@ -121,6 +121,24 @@ class InvestigationBenchmarkTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "non_read_tool_refused"):
                     session.tool(("draft_search",{}))
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows extended native path identity")
+    def test_native_extended_root_matches_only_the_same_frozen_directory(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary).resolve() / "source"
+            source.mkdir()
+            configuration = source.parent / "config.json"
+            value = {"command": str(Path(sys.executable).resolve()),
+                     "args": ["--root", "\\\\?\\" + str(source), "mcp"],
+                     "launcher_sha256": BENCH.digest_bytes(Path(sys.executable).read_bytes()),
+                     "route": "isolated-approved-runtime", "expected_version": "fixture"}
+            configuration.write_text(json.dumps(value), encoding="utf-8")
+            accepted, _ = BENCH.load_configuration(configuration, source)
+            self.assertEqual(accepted, value)
+            other = source.parent / "other"
+            other.mkdir()
+            with self.assertRaisesRegex(ValueError, "configuration_fixture_scope_mismatch"):
+                BENCH.load_configuration(configuration, other)
+
     def test_quantiles_use_even_median_and_nearest_rank_p95(self):
         self.assertEqual(BENCH.distribution([4,1,3,2]), {"samples":4,"median":2.5,"p95":4})
 

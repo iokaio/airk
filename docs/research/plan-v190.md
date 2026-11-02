@@ -2,9 +2,18 @@
 
 **Assessment date:** 2 November 2026. **Baseline:** AIRK 1.8.7.
 **Status:** recommended scope and implementation gates, not implemented behavior or
-a release announcement. This plan synthesizes **five primary research inputs**:
+a release announcement. **Implementation authorized:** 2 November 2026; follow the
+[implementation ledger](implementation-v190.md) for actual progress, tests and
+commits. The implementation
+target is **1.9.0 on the existing `feat/finetuning` branch**, with tested, reviewed
+commits for each accepted phase. This plan synthesizes **five primary research inputs**:
 the three original notes, the fourth research area within this document, and
 the separate cross-project feature design. Dated observations retain their limits.
+
+Review in this order: [phase schedule](#implementation-path-on-the-current-branch),
+[performance gates](#performance-protection-throughout-implementation),
+[Indexing recommendations](#indexing-recommendations-and-agent-query-scope),
+[decision map](#decision-map), then the detailed research and package contracts.
 
 | Input | Assessment / location |
 | --- | --- |
@@ -21,34 +30,204 @@ a competing delivery plan.
 ## Recommended direction
 
 Make 1.9.0 a release about **intentional indexing and dependable, useful evidence**.
-Repair the reported compact-plan failure first. Then prevent accidental duplicate
-and container indexing, separate reply detail from retained evidence, and improve
-ranking against a reproducible baseline. These changes reinforce one another:
-avoiding duplicate collections reduces unnecessary work, file-aware retention
-preserves useful facts, and ranking helps callers find those facts within budgets.
+Protect the existing startup, retrieval and UI improvements before adding work to
+their paths. Repair the reported compact-plan failure first, then deliver complete
+read contracts, intentional Project/index management and useful scope guidance.
+Keep retained-profile changes and relevance experiments separately measurable.
 
 Recommended order for addressing the research as implementation work:
 
-1. [Two-tier indexing](two-tier-indexing.md), correctness slice only: compact
-   evidence consumers and nested-plan schema agreement.
-2. [User-managed indexes and cross-project queries](cross-project-indexing.md),
-   superseding the folder-driven setup design: native index definitions, explicit
-   source assignments, reusable Projects above indexes, the new Explorer Indexing
-   screen and queries scoped to one or more Projects. Include the SQLite schema
-   upgrade and client migration as required feature work. Retain the original
-   [folder/workspace scenarios](vs-code-folders-workspaces.md) as acceptance inputs.
-3. Return to **two-tier indexing** for independent replies, family availability,
-   versioned file-aware profiles and explicit migration.
-4. Add **returned-reference source verification**, described below: one bounded
-   native check shared across interfaces, with explicit refresh when files differ.
-5. [Copilot search comparison](copilot-search-analysis.md), measured ranking and
-   diversity improvements, with consistent missing-evidence guidance.
+1. Freeze the current performance/quality baseline; then synchronize the future
+   implementation branch to 1.9.0 and repair compact-plan consumers.
+2. Separate reply detail from retention, establish missing-evidence vocabulary,
+   and implement opt-in single-index verification with complete interface parity.
+   Settle the Project/index and split/trim contracts before freezing schemas.
+3. Deliver safe metadata upgrade, the **Indexing** screen and enforced window
+   grants, then expose combined queries only when their consumers are complete.
+4. Add **Recommendations** for useful index subsets, combinations and reuse,
+   with copyable agent-harness scope instructions. Deliver permanent trimming
+   before splitting; connect recommendations to those reviewed operations.
+5. Introduce versioned file-aware profiles and explicit refresh/requery. Evaluate
+   ranking and diversity independently; include them only if measured gains
+   justify their cost. Finish combined upgrade, recovery and release qualification.
 
-Start the search evaluation baseline alongside the first correctness work; it
-does not need to wait for workspace changes. This order prioritizes demonstrated
-task failure and unwanted resource use before speculative relevance improvements.
-It is deliberately a sequence of slices across the papers rather than completing
-every proposal in one paper before opening the next.
+The phase schedule below is the execution order. Existing W/E/X/M/T/V/S/G package
+IDs remain traceable design workstreams, not separate parallel implementation
+plans. New R packages own Indexing recommendations. This revision takes precedence
+over the older delivery ordering in [cross-project indexing](cross-project-indexing.md);
+reconcile that design and the ADRs during implementation before activating changes.
+
+## Implementation path on the current branch
+
+Complete one phase at a time. A phase begins from the preceding accepted commit,
+keeps unrelated work intact, and ends with behavior, tests, documentation and
+review evidence in a human DCO-signed commit. A substantial phase may have small
+buildable internal commits, but its public capability must remain unavailable
+until its complete native/CLI/MCP/Workbench contract passes. Do not count an
+internal scaffold as a delivered phase or distribute intermediate gated builds.
+
+### Ordered phases and acceptance checkpoints
+
+The tests in this table are the distinctive acceptance cases, in addition to the
+shared checks and performance gates below. This table defines planned acceptance;
+the linked ledger records completion. A row alone asserts no passing tests.
+
+| Phase / packages | Concrete outcome and commit boundary | Required evidence before acceptance |
+| --- | --- | --- |
+| P0a — E0 baseline | Record the clean starting commit, native/extension versions, build/model/configuration identities and current failures. Extend original fixtures and measurement tooling before changing behavior. | Reproduce the compact-plan issue; freeze representative relevance judgments and matched installed/native/UI performance cohorts, budgets and noise tolerance. Record unavailable cohorts instead of inventing a baseline. Commit fixtures and sanitized evidence. |
+| P0b — 1.9.0 candidate identity | Bump the workspace, local Cargo lock entries, extension and npm lock entries together; regenerate versioned MCP catalogs, add/test the supported 1.9 forward runtime line and start a dated candidate release record. This separate commit enables no new registry or collection migration. | `release-version.py check --expected 1.9.0`, extension compilation/catalog agreement, version/installer compatibility tests and repository checks. Preserve P0a's exact 1.8.7 comparison artifacts. |
+| P1 — W0 correctness | Repair compact shared bindings/locations and native nested-plan schema agreement. | Actual native/CLI/MCP compact and rich dependent plans, negative guard cases and bounded outputs; convert the captured invariants to meaningful regressions. Confirm ordinary reads do not gain extra queries or source reads. |
+| P2a — T1 replies | Expose independent reply projection everywhere, preserving absent-argument compatibility and existing Workbench defaults. | Actual transport and consumer parity, conflicting-argument errors, copies/exports, equivalent useful evidence and unchanged default work/bytes apart from documented identity/timing. |
+| P2b — T2a/G1 guidance | Adopt shared existing-observation reasons and bounded next-read guidance without changing storage profiles. | Unsupported, not-retained, pending, failed, stale, excluded and truncated fixtures; no full coverage scan or repeated diagnostics to explain an empty result. |
+| P3 — X0/M0/V0 and T2b design gates | Complete ADR 002/003, source/workspace fixtures, profile-family inventory, permanent-policy/partition ownership, scope enums and receipt schemas. Reconcile the feature design, registry-versus-collection versions and recommendation inputs. T2b reporting implementation remains P11a. | Resolve every schema/authorization/performance decision needed by P4–P10; reviewed migration and fault matrices, bounded algorithms and budgets. No live migration or new profile selection. |
+| P4 — V1/V2 verification | Deliver opt-in single-index source verification end to end, with future member identity slots. | All receipt states, source races, large-file budgets, unsaved-buffer limits and real transport/export parity. `off` adds no hashing; unchanged matches start no extraction, model, writer or indexing job. |
+| P5 — X1 and U0–U6 safety foundation | Implement normalized catalogs, compatibility mappings, bounded overlap observations and the complete upgrade admission/backup/migration/import/readiness/recovery path in isolated fixtures. Design and guard collection policy formats separately. | Real predecessor/candidate activation and fault tests prove the safety-critical U0–U6 path, old-reader/writer refusal, idempotent imports, backup validity and no implicit rebuild. Keep production activation of the new schema disabled until P6 is ready; X6 later expands qualification, not basic safety. |
+| P6 — X2/X3 management and grants | Deliver Indexing library/detail/source/Project flows, reviewed window associations and native grants/revocation. Activate the qualified upgrade and explicit-setup cutover together; retain complete legacy single-index retrieval. | The mapped workspace scenarios, direct CLI and actual agent scope tests, empty/untrusted/manual/remote cases, stale reviews and no automatic folder scans or regrant. Run P5 upgrade tests against the complete UI/connection path before enabling it. |
+| P7 — X4/X5 combined retrieval | Expose multi-Project queries with optional index subsets, canonical prefix unions, unique-index execution and complete UI/parse/session/export/verification support in the same accepted phase. | Shared-index attribution and scoring, partial/failed members, cursor/publication/grant expiry, all input catalogs and actual transports. Compare one-index routing with the legacy path; prove unselected indexes are untouched and total budgets stay bounded. |
+| P8 — R1 recommendations and harness guidance | Add bounded Recommendations, temporary scope selection and explicit saved defaults; copy live-capability-checked MCP instructions for one or several selected indexes. | All recommendation decision rows, stale/incomplete data, inaccessible members, narrow-to-broader user choices, no hidden queries/mutations and UI/CLI/MCP advisory parity. Smoke-test generated examples through actual transport fixtures. Splitting guidance explains pending capability until P10. |
+| P9 — M1 permanent trim | Add reviewed permanent deny admission, all-read fences, removal publication and resumable reclamation with honest status. | Direct CLI and every read family reject blocked evidence, including graph endpoints/caches; restart/rebuild/alias/upgrade invariants, active-read races, quota failure and source-byte preservation. Empty-policy reads retain their fast path. |
+| P10 — M2/R2 split and management advice | Add two independent partitions, staged destination build, reviewed Project cutover and resumable recovery; enable recommendation links to qualified split/trim previews. | Fail/cancel at every stage; inherit denies; no overlap/loss in effective partition rules, premature grants or shared-object ownership. Measure peak disk/CPU, query contention, cancellation and cleanup. No recommendation starts a job. |
+| P11a — T2b effective-profile reporting | Implement the P3 inventory's bounded family/effective-profile read contract and complete native/CLI/MCP/Workbench parity before adding new profiles. | Distinguish unsupported, not retained and reply-omitted families on all legacy profiles; status/input/export parity and no extraction or corpus scan for reporting. |
+| P11b — T3 retained profiles | Introduce file-aware Lean/Rich through explicit migration, one selected payload per file, independently of reply modes or ranking. | Cross profile/reply matrix; manifest/prose/table evidence, legacy policy continuity, no-op/edit indexing reuse, quota/fault recovery and measured storage/model costs. Leave unqualified adapter families on their documented behavior. |
+| P12 — V3 refresh | Deliver explicit selected-reference refresh/requery through existing management admission, including selected member indexes where supported. | Full-scan fallback review, exact saved operation recovery, pause/manual/quota behavior, publication churn and bounded requery; never turn read verification into hidden indexing. |
+| P13a / P13b — S1 / S2 conditional | Evaluate lexical ranking first, optional diversity in a separate commit/experiment. Retain current behavior if gates fail. | Frozen held-out nDCG@10/Recall@10, resource budgets, scope filtering before limits, stable ties, complete subsets/exports and any independently qualified lexical-format upgrade. No simultaneous model or semantic-unit change. |
+| P14 — X6/Q0 final qualification | Review the combined diff, expand installed upgrade/platform/fault coverage and run the selected end-to-end resource/task campaigns. Finalize current docs and 1.9.0 release-candidate evidence. | No unexplained cumulative performance regression, scope leak, incomplete migration or missing parity; observed failures/skips and platform limits recorded. Release, push, PR, merge and publication remain separate authorized actions. |
+
+P6 can be implemented as inert library/review commits followed by the grant and
+activation commit, but no intermediate build may migrate normal user state or
+advertise the new hierarchy. Similarly, X4's implementation may precede X5
+internally; **public combined reads activate only with X5 parity in P7**. The
+single-index V2 receipt is complete at P4 and gains Project/member associations
+in P7. These boundaries avoid a partially usable schema or API between phases.
+
+### Tests, review, commits and resuming work
+
+For each phase, record its entry commit, acceptance cases, exact test commands,
+pass/fail/skip counts, artifact identities, benchmark comparisons, known limits,
+documentation changes and recovery boundary in a dated implementation ledger
+linked from the future 1.9.0 candidate record. Record the resulting commit ID in
+the next ledger update; do not attempt a self-referential commit hash. Keep raw
+private corpora/indexes outside Git and publish only sanitized original fixtures
+and evidence summaries. Update the ledger before moving to the next phase.
+
+Run focused behavioral tests while developing. Before accepting a code phase,
+run the formatting, Clippy, workspace tests, repository and whitespace checks
+required by [CONTRIBUTING.md](../../CONTRIBUTING.md), plus affected extension,
+Python, native-transport and installer checks. Provision the pinned offline model
+and runtime inputs when required. UI mocks are supplementary. A missing tool or
+skipped required gate is recorded as **unqualified**, never a pass; do not accept
+the phase as complete until its required gate is resolved. Documentation-only
+checkpoints use repository/link/whitespace checks without rerunning runtime suites.
+
+Review the complete phase diff and relevant earlier changes before committing;
+fix root causes and sibling paths, not just the last failing assertion. Use
+`git commit -s` with the configured authorized contributor, verify its trailer,
+and use a focused message such as `feat(indexing): add reviewed project grants`.
+Preserve the user's branch and history; no per-phase branch/PR churn or automatic
+push. Tests and documentation belong with their behavior. Large hosted matrices
+are not a per-commit debugging loop; preserve the repository's routine CI policy
+and request broad hosted qualification only for a concrete release need.
+
+An ordinary code revert is sufficient only before new persistent state is
+accepted. After a schema/policy change or split/trim cutover, follow the recorded
+upgrade/operation recovery boundary: a Git revert cannot restore a database or
+undo an exclusion safely. Use disposable fixtures for intermediate checkpoints,
+not a user's active index as the migration test bed.
+
+**Version discipline:** the requested 1.9.0 bump occurs once in P0b, after baseline
+capture; it does not repeat for each phase. Local development uses isolated
+source/runtime test environments with exact commit/payload identities. Withhold
+distribution of installable candidates until the chosen release gate. If changed
+VSIXs must be distributed earlier, revisit the version schedule: existing
+[versioning policy](../versioning.md) requires a new unused numeric patch for each
+changed distributed candidate, not different bytes labeled 1.9.0. Never relabel
+tested binaries or weaken the existing same-version replacement protection.
+
+## Performance protection throughout implementation
+
+Performance is an acceptance condition for every phase, not a late optimization
+pass. P0a records the current 1.8.7 branch baseline and any differences from the
+verified installed or published comparison build, if available, including
+pre-existing failures. Compare each phase with both
+that frozen baseline and the preceding accepted phase; a chain of small slowdowns
+must not evade the cumulative gate. Historical results in
+[the 1.8.2 performance report](../performance-improvements-1.8.2.md) identify work
+to preserve, not universal speedup claims or numerical thresholds for 1.9.0.
+
+### Baselines and budgets
+
+Use the same source hashes, model/profile, budgets, build mode, concurrency,
+machine/CPU limits and readiness state for matched comparisons. Separate cold
+setup, first useful response and warm reads; installed launcher/editor observations
+are distinct from isolated native measurements. Include unchanged scans, one-file
+edits, indexing under query load, cancellation, timeouts and failures. Keep all
+attempts and outliers. Choose sample counts, warmup, repetitions and ordering
+before candidate runs; do not claim a stable p95/p99 from a tiny sample.
+Keep unrelated builds and other measurement campaigns out of matched timing runs;
+contention belongs only in the explicitly defined load cohort.
+
+P0a must fill a budget sheet for each cohort: baseline median/tail latency,
+throughput, failure rate, CPU, peak RSS, disk reads/writes, retained/peak disk,
+response/IPC bytes and relevant work counters. Set numerical absolute and
+relative allowances from observed noise **before** candidate measurements, with
+a total-baseline ceiling as well as a per-phase ceiling. The default target is
+no material regression for unchanged behavior. Correctness-required overhead
+must be quantified and reviewed; never hide it by widening a timeout, dropping
+evidence, lowering sample counts or rewriting the baseline. A missing/noisy
+baseline remains an open gate for that path, not a fabricated improvement.
+
+Record a metric as **unavailable/not instrumented** when the harness cannot
+observe it; existing runners do not measure every field above. P0a must establish
+the critical legacy startup/read/indexing controls and freeze the evaluation
+method, without building every later feature's instrumentation first. Add the
+missing phase-specific counters and freeze its limits before that phase's
+candidate comparison. Unaffected work can proceed, but a missing required metric
+cannot qualify the affected phase. For a new behavior with no 1.8.7 equivalent,
+declare a same-work control or mark the comparison inapplicable; report its
+absolute resource budget separately and still protect unchanged legacy paths.
+
+| Cohort / contract | Measurements and deterministic protection |
+| --- | --- |
+| Legacy single-index reads, verification off | Cold/warm search, symbols, references, reads, plans and first status through actual CLI/MCP. No extra source hashing, model initialization, full catalog walk, coverage audit or writer work; grant/policy validation stays bounded. |
+| Status and editor responsiveness | Preserve independent status admission/deadlines, fenced reuse of healthy connections and observations, scalar status/save updates, single delivery of full results and retained view state. Opening Recommendations or changing a picker must not trigger diagnostics, reindexing or repeat full history/result transfer. |
+| Indexing and storage | No-op generation/reuse, localized edits, vector reuse, admission, cleanup and retention plateau. Project/member/name/default changes do not rebuild indexes, duplicate watchers or load models. Profile/source changes disclose their separate indexing cost. |
+| Combined reads | Test 1, 2, 4 and the supported maximum unique indexes, including shared members and slow/unavailable ones. Aggregate byte/result/deadline budgets and bounded service admission apply; N members cannot create N unrestricted nested requests. Unselected members perform no evidence/model/source work. |
+| Verification report/require | Measure distinct files and total raw bytes, with large documents and slow/remote sources separated. Charge hashing to explicit file/byte/time/concurrency limits; deduplicate within the request and keep the `off` path free of verification I/O. |
+| Split/trim | Measure foreground read impact as well as job duration, peak storage and cleanup debt. Reuse service scheduling/quotas; bounded resumable turns, cancellation and persisted progress must not starve ordinary queries or status. |
+| Recommendations | Bound rows, prefix comparisons, response bytes and runtime independently of corpus bytes. Use saved metadata/observations, revision-keyed caches and explicit refresh; no per-query advisor or background corpus scan. Large/incomplete libraries return partial advice with limits. |
+
+Use deterministic work assertions in routine tests: unique member executions,
+zero hashing when verification is off, zero model loads on metadata-only paths,
+zero generation changes on no-op indexing, no duplicate response payloads and
+no unselected-index access. Put noisy elapsed-time comparisons in controlled
+campaigns, not brittle unit-test wall-clock assertions. Preserve current cache,
+certificate, admission and invalidation safety; do not bypass them for a score.
+Resolve grants once per bounded request and revalidate their revision fences;
+do not scan every Project or every deny rule for every returned chunk. Compile or
+index canonical prefix policies at policy revision, bound policy size and retain
+an empty-policy fast path. Cache keys include service/registry, grant, membership,
+policy and relevant publication revisions; revocation and exclusions always fence
+stale entries. No cache entry becomes fresh source-verification authority.
+
+Reuse existing measurement owners before adding a runner:
+
+- `scripts/benchmark-mcp-investigation.py`: cold status-first, unprimed and reused
+  task cohorts; extend its current concurrency choices to exercise the configured
+  16/32/64 limits and selected-index fan-out, without claiming that coverage today.
+- `scripts/benchmark-service.py`: synthetic multi-project/client and concurrent
+  indexing waves; distinguish successful latency, rejection and retry outcomes.
+- `scripts/benchmark-v2.py` and the existing vector performance target: reuse,
+  no-op/edit work and model/cache behavior under qualified fixture ownership.
+- `scripts/benchmark-real-corpora.py`: separate isolated-native corpus costs;
+  it does not establish installed-launcher or editor latency.
+- E0's original relevance corpus and existing UI/native transport fixtures:
+  completed useful tasks, nDCG@10/Recall@10, exported completeness and IPC work.
+
+First add only the missing observations needed for the active phase. Re-run its
+affected cohorts and the cheap legacy single-index/status sentinel; run the wider
+cumulative campaign at P7, P10 and P14. Keep routine CI lean and all failures
+visible. An opt-in feature may consume additional work within its declared budget;
+it must not impose that cost on users who leave it off or query a smaller scope.
 
 ## Assessment of the five research inputs
 
@@ -150,9 +329,9 @@ repair remains first; T1–T3, V0–V3 and relevance work remain applicable.
   preserve source files and require durable jobs, publication fences and recovery.
   See the management contract below and the synchronized feature design.
 - **Provide the Indexing screen:** This window, Index library, Index detail,
-  Sources, Project definitions/membership and a review drawer replace folder-driven
-  setup. Keep service/storage/
-  recovery operations in Management with targeted links. Preserve manual agent
+  Sources, Project definitions/membership, **Recommendations** and a review drawer
+  replace folder-driven setup. Keep service/storage/recovery operations in
+  Management with targeted links. Preserve manual agent
   configurations and show pending connection updates separately from active scope.
 - **Support multi-Project reads:** new `project_ids` selects one or more metadata
   Projects; optional `index_ids` narrows their permitted index union. Shared indexes
@@ -170,12 +349,152 @@ repair remains first; T1–T3, V0–V3 and relevance work remain applicable.
   Workbench consumer, parse binding, session, copy and export retains member identity
   and complete readiness/continuation/retry data. Test actual transports.
 
-Implement catalog/review and the Indexing screen first (X0–X2), enforce active
-connection scopes next (X3), then shared combined reads and consumers (X4–X5),
-and complete migration/fault/platform qualification (X6). An index picker alone
-does not satisfy this feature. This is a material expansion of 1.9.0 scope;
-estimate after X0/X1, prioritize it over optional ranking experiments, and report
-any reduced release scope explicitly.
+Follow P3/P5/P6 for contracts, safe catalog/upgrade and complete Indexing/grant
+activation; expose shared combined reads and consumers together at P7. R1/R2 add
+recommendations and management links. X6 expands migration/fault/platform
+qualification after the safety-critical path already works. An index picker alone
+does not satisfy this feature. Prioritize it over optional ranking experiments;
+any reduced release scope requires a maintainer decision.
+
+#### Indexing recommendations and agent query scope
+
+Add a visible **Recommendations** section in Indexing, with contextual links from
+This window, Project and Index detail. Its purpose is to help the user decide
+**what to index, what to reuse and what to query for a particular task**. It uses
+local deterministic rules and user choices, without agent reasoning, a model,
+external services or retained query/source text. Suggestions are advice; the
+native review and authorization rules remain authoritative.
+
+Show **Available to this connection** separately from **Selected for this query**.
+A window may make several indexes available while a query selects just one or a
+useful combination. Display the effective deduplicated index count, source/prefix
+boundaries, selected Projects and omitted members. Selecting all is an explicit
+choice with cost and coverage tradeoffs, never an automatic response to empty
+results or an unavailable member. Recommendations must also offer **Keep this
+layout** when splitting or narrowing has no demonstrated benefit.
+
+| User situation / observed evidence | Recommendation and value | Tradeoff and next action |
+| --- | --- | --- |
+| An existing index covers the intended sources with suitable policy | Reuse it with reviewed Project membership/prefix scope; avoid another watcher, scan and embedding set | Verify actual roots, readiness and permitted scope. Offer **Review reuse**, not inferred ownership from folder names. |
+| A task concerns one application or package | Select its index, or a supported prefix inside that index, as the starting scope | Lower fan-out and less unrelated evidence are expected, not guaranteed latency/quality gains. Show omitted dependencies/specs and offer deliberate widening. |
+| Implementation depends on shared code or specifications | Select a purposeful combination, such as application + shared library + specifications, leaving unrelated indexes out | Show deduplicated members, readiness and total query limits. **Use this query scope** changes a selection, not grants or indexing policy. |
+| One index contains distinct source groups with different lifecycle/profile needs or frequent narrow use | Offer a split preview to obtain independent policy/budgets and reusable memberships | Prefer existing scope filters if sufficient. Splitting costs a destination build, temporary space and future jobs; querying both may add overhead. Size alone is not a reason to split. |
+| Two distinct indexes overlap the same sources | Review reuse or query only one where its profile/coverage suffices | They may intentionally differ. Membership removal is distinct from index deletion; no automatic merge, pruning or data removal. |
+| A path should remain indexed but is irrelevant to this task | Narrow the query or change the Project's selected defaults | Do not recommend permanent denial merely to reduce a query's scope; other Projects may need the evidence. |
+| The user explicitly identifies a path that should never be in this index | Offer **Review permanent removal** with all affected Projects and any other indexes covering it | Explain immediate exclusion, cleanup stages and separately reviewed unblock. It removes eligibility for every user of that index, not the source files. |
+| Saved observations are missing, stale, partial or conflicting | Explain the limitation; offer bounded metadata refresh or manual selection | Do not claim savings, completeness or a safe split from unknown counts. Any deeper inventory is a separate disclosed management operation. |
+
+Each card gives the observed reason, source/time of that observation, proposed
+selection or management action, affected indexes/Projects, expected benefit and
+cost/uncertainty. Distinguish **observed**, **estimated** and **unknown** values;
+never manufacture a savings percentage or claim that fewer indexes necessarily
+improve recall. A library index can be large yet appropriate; a split can make
+combined work slower. Use existing bounded counts/root relationships and declared
+policies to identify candidate source groups, not a new semantic clustering pass.
+
+**Controls and persistence.** Provide **Use this query scope**, **Save as Project
+default**, **Copy agent scope instructions**, **Review reuse/split/removal** and
+**Dismiss** where applicable. Query selection is temporary; a saved Project
+default is a separately reviewed metadata change affecting the displayed set of
+users and future selections. Neither expands an active grant. Never silently
+replace a restored session's explicit selection. A recommendation requiring a
+new index, membership or wider grant opens its existing review flow; active and
+pending connection scope stay visibly distinct. Revalidate IDs, revisions,
+eligibility and grants before acting on a stale card. Unsupported actions remain
+explanatory until their phase is qualified; R2 enables split/trim action links.
+
+**Bounded implementation.** R1 adds one canonical native advisory read over
+authorized metadata; CLI, Workbench and MCP expose the same bounded fields and
+supported inputs. Registry management visibility and agent query grants are
+different: an agent receives advice only about its permitted scope, never the
+machine-wide library. The extension renders advice and generates copy text from
+that result plus the advertised tool catalog; it does not implement an alternative
+scope resolver. Reuse current aggregate observations if available, without adding
+query logging or a database to infer intent. A user may state an intended source
+group/task category; that choice is a filter, not permission to discover content.
+
+Bound catalog pages, candidates, prefix comparisons, bytes and elapsed work.
+Avoid all-pairs library comparisons; selected-candidate overlap checks can refine
+a proposal during review. Key cached advice by service/catalog/membership/policy
+revisions, authorized-scope/grant fingerprint, selection/filters and saved
+observation version/expiry. Readiness can change without a new publication;
+expired observations produce stale/unknown advice rather than a current claim.
+Do not share advice across different authorized scopes. Show observation age;
+grant revocation still invalidates authority immediately. No source hashes,
+coverage scan, evidence query, model load or new
+watcher is permitted merely to open the screen. Refresh uses existing observation
+ownership, coalesces events and stops view-only work when hidden; it introduces
+no recommendation polling loop. Scalar updates do not resend full catalogs or
+retrieval results. Defer automatic scope benchmarking and learned recommendations;
+E0/P7 can evaluate selected combinations in controlled contributor fixtures.
+
+**Agent-harness instructions.** Copy a self-contained plain-text/Markdown block
+with the chosen Project/index names and stable IDs, effective prefix restrictions,
+generation time, scope revision/fingerprint and active-versus-pending connection
+state. Include tested JSON examples for the actual installed catalog. Keep
+configuration edits separate: copying must not write AGENTS.md, CLAUDE.md, client
+configuration or sources, and copied text is not a transferable access grant.
+
+The generated instructions teach the harness to:
+
+1. Discover the current permitted scope and supported inputs, then confirm that
+   the copied IDs still resolve. Discovery tool names come from the live catalog;
+   proposed `query_scope` is not assumed to exist on today's server.
+2. Send explicit `project_ids` **and** `index_ids` for the chosen subset where
+   supported. Index IDs narrow the authorized union of the selected Projects;
+   they never grant access independently. Use one combined request for a useful
+   set rather than one request per Project that re-queries a shared index.
+3. Preserve the originating index, exact publication, source hash/location and
+   valid handle for follow-up reads. Same-named paths in different indexes are
+   different evidence; a follow-up selects its explicit origin.
+4. Inspect member outcomes, readiness, truncation, total budgets, continuations
+   and verification receipts. `member_availability=require` and
+   `verification=require` solve different problems; neither certifies whole-scope
+   completeness. Continue only using returned valid continuations and typed retries.
+5. Treat zero results as **no matches returned** under the selected publications,
+   readiness, filters and budgets, not proof of absence or completeness even
+   within that scope. A broader query is a deliberate, reported selection change
+   within current grants; never silently select all indexes, drop failed members
+   or request broader access.
+6. On an old catalog, use the supported legacy single-index `project` binding and
+   clearly report that combined selection is unavailable. Never send future
+   fields to 1.8.7 or reinterpret legacy bindings as new Project IDs. Do not
+   synthesize a merged result with lost provenance as a compatibility shortcut.
+
+Illustrative future `search` arguments for **Payments** plus **Platform** Projects,
+querying only **Payments code** and **Product specifications** (the shared
+Platform code index remains omitted). These IDs are fictional and the fields are
+proposals; the actual copy action substitutes validated IDs and only advertised
+arguments:
+
+```json
+{
+  "project_ids": ["payments-project", "platform-project"],
+  "index_ids": ["payments-code-index", "specifications-index"],
+  "query": "refund policy",
+  "mode": "lexical",
+  "limit": 12,
+  "max_bytes": 8192,
+  "member_availability": "report",
+  "verification": "off"
+}
+```
+
+Omitting `index_ids` may resolve every permitted member of the selected Projects;
+the generated subset recipe must therefore retain it. An explicit empty or
+invalid selection is a validation failure, never an alias for all indexes. Saved
+defaults that are no longer permitted require review rather than fallback to a
+larger scope. Discovery/capability failures produce unavailable instructions with
+an actionable reason, not guessed valid IDs or inputs.
+
+R1/P8 tests cover every decision row, missing observations, disjoint prefix grants,
+duplicate shared memberships, partial pages, stale reviews, dismiss/default/session
+behavior and large-library work bounds. Parse generated examples against actual
+tool schemas and exercise canonical CLI/MCP paths; prove unselected/ungranted
+indexes are untouched, same-path follow-ups retain origin, and copied text does
+not leak unauthorized roots. R2/P10 adds split/trim previews, inherited exclusions,
+affected-Project disclosure and post-operation scope regeneration. UI interaction,
+keyboard/accessibility and narrow-layout tests supplement native/transport tests.
 
 #### Index management: split and permanent path removal
 
@@ -306,6 +625,8 @@ Every choice must preserve source identity, bounded reads and interface parity.
 | Container handling | Automatically index whole tree; recursive discovery; explicit separate/combined assignments | Review selected sources in the new Indexing screen | Understandable source boundaries and shared-versus-separate budgets | Medium / setup admission | No silent discovery or registration; aliases/provider limits disclosed |
 | Window access and connections | Derive from folders; expose machine catalog; grants for selected Projects | One or more open Projects per window, stable native grants | Reusable scope across windows including unopened same-host sources | Large / scope and configuration | Project/member/alias changes, independent windows and manual-entry scenarios tested |
 | Cross-project queries | One Project only; client loops; canonical union across Projects | Explicit one-or-more Project scope, optional index narrowing, deduplicated execution | Investigate code/specs across Projects while reusing shared indexes | Large / budgets, ranking and partial failure | Shared-index scopes/attribution and scoring correct; actual parity; complete errors/vectors/cursors |
+| Indexing recommendations | Always query all; opaque automatic optimizer; bounded explanatory advice | User-selected focused index or useful combination, reuse and reviewed split/trim suggestions | Clearer choices and lower unnecessary work without hidden coverage changes | Medium / stale metadata and authority | Explicit selected/omitted members, bounded metadata-only computation, current grants and no autonomous mutation |
+| Agent scope instructions | Hardcoded examples; edit harness files automatically; capability-checked copy | Generate explicit Project/index subset recipes from active grants and canonical schemas | Agents use the intended scope and preserve provenance in follow-ups | Medium / catalog compatibility | Actual transport examples pass; old runtimes receive supported legacy guidance; no silent all-index fallback |
 | SQLite upgrade | Rename old project rows in place; rebuild indexes; additive normalized metadata migration | New Project/index join plus compatibility mappings, U0–U6 upgrade path | Preserve existing data/settings while introducing the new hierarchy | Large / database and mixed-version safety | Consistent backup, atomic backfill/version, idempotent imports, crash recovery and post-write downgrade refusal |
 | Split index | Copy entire databases; defer splitting; reviewed captured rebuild into two partitions | Retain original ID for the remainder and create an independent second index, with explicit membership cutover | Separate unrelated sources/budgets without losing Project control | Large / multi-index operation and peak disk | Disjoint complete partitions, inherited denies, staged destination, resumable fenced cutover and no premature grants |
 | Trim and permanent path block | Delete current records only; source ignore edit; native index-owned deny plus cleanup | Durable deny first, then remove evidence and reclaim owned storage | Remove unwanted material and prevent future reintroduction | Large / policy enforcement and reclamation | Every capture/read path honors the deny across restarts/rebuilds/aliases; physical cleanup reported separately |
@@ -316,27 +637,31 @@ Every choice must preserve source identity, bounded reads and interface parity.
 | Diversity | Hidden display cap; explicit optional selection; always-on file cap | Explicit optional selection, judged separately | More distinct useful files when results repeat | Medium / recall tradeoff | Disclose subset; preserve concentrated-result option; no hidden export loss |
 | Missing evidence | Empty results; new status subsystem; reuse canonical coverage plus actionable reasons | Extend existing observations only where necessary | Distinguish absence from unavailable evidence and choose a next step | Medium / shared contract | Separate unsupported, omitted, pending, failed, stale and truncated outcomes |
 | Certainty of returned references | Reindex every hit; metadata-only checks; hash distinct returned sources; re-extract every source | Bounded full-source hash verification, separate explicit refresh on mismatch | Evidence of saved-source agreement at a stated time, usable by people and agents | Medium–large / file races, scope and latency | Every referenced source accounted for; stable captured bytes match the exact result hash; failures cannot receive a verified label |
+| Performance acceptance | End-only benchmark; per-phase relative checks; frozen baseline plus phase checks | Deterministic no-extra-work gates and matched resource/quality budgets against both references | Preserve responsive existing paths and expose new feature costs | Medium / measurement noise and cumulative drift | Freeze thresholds before candidate runs; keep failures and tail observations; no cost when the feature is off |
 | Advanced optimization | Reranker/model swap; unit tuning; cross-collection cache | Defer; retain measured experiment backlog | Avoid new resource/lifecycle cost without demonstrated benefit | Large / qualification | Revisit only with baseline misses and measured task/resource gains |
 
 ## Work packages and review boundaries
 
-Use separate PRs with one behavior and its complete native/interface contract per
-review. Do not land native fields and leave parity to a later cleanup PR. The
-package identifiers below describe dependencies, not a requirement to create one
-large PR per row; split extensive packages by the indicated acceptance boundary.
+Use the ordered same-branch phase commits above, with one behavior and its complete
+native/interface contract per acceptance boundary. Do not expose native fields
+and leave parity to a later cleanup. The package identifiers below describe
+design dependencies; they are not an alternative order or a requirement for a
+separate PR per package. Keep internal scaffolding inert until its public gate.
 
 | Package / order | Deliverable and boundaries | Depends on | Completion evidence and value |
 | --- | --- | --- | --- |
 | W0 — first | Repair compact locations/aggregation/bindings and trace nested-plan schema mismatch. Convert the two-tier battery's 35 post-run invariants into appropriate deterministic regressions, retaining negative cases and the compact-plan task assertion. | None | Actual compact/rich native/CLI/MCP paths preserve citations, identity, guard failures, budgets and dependent reads; captured checks are not mistaken for passing workflow qualification. |
 | E0 — start with W0 | Extend tooling with original versioned code/manifest/prose/table queries and graded expected ranges. Use nDCG@10 as the primary relevance metric and Recall@10 as the recall guard, scored separately for lexical/vector/hybrid at fixed budgets. | None | Frozen judgments, negative-query outcomes, bytes/expansions and cold/warm latency; synthetic harness cases are not the production relevance baseline. |
-| X0–X1 — replaces W1 | X0 records current workspace fixtures/limitations and produces ADR 002 for Project above Index. X1 implements new bounded native `relationships` (same/contains/contained_by), `repository_markers` and broad-root observations with parity, catalogs/join/scopes/grants and U0–U3 migration including M0 policy metadata. | W0 for consumers; X0 design can start earlier; M0 before X1 schema freeze | Source-to-source observations are new work; preserve old isolation. Metadata bounds, permanent-policy ownership, stale review, SQL/backup/backfill/recovery and actual transport parity pass. |
+| X0–X1 — replaces W1 | X0 records workspace fixtures/limitations and ADR 002. X1 adds bounded native `relationships` (same/contains/contained_by), `repository_markers`, broad-root observations, catalogs/join/scopes/grants and M0 metadata. Implement the complete safety-critical U0–U6 path at P5 before P6 activation. | W0 for consumers; X0 design can start earlier; M0 before X1 schema freeze | Preserve old isolation. Bounded observations and actual parity; SQL/backup/backfill/import/readiness/recovery/mixed-version gates pass before live migration, not first at X6. |
 | X2–X3 — replaces W2/W3 setup | New Indexing screen, Project membership/source assignment, opening Projects per window and enforced grants/revocation. | X1 | No unrequested folder indexing; shared indexes reused; Project/member/window scope and actual transport tests pass. |
-| X4 — combined reads | Multi-Project resolution, unique-index execution, qualified follow-ups, vectors/errors/cursors and canonical input catalogs. | X3, T1; no dependency on V2/X5 | Actual parity; shared membership cannot duplicate scoring, jobs or counts; per-Project attribution and scopes preserved. |
-| X5 — combined consumers | UI/parse/session/copy/export integration; extend already shipped V2 single-index receipts to each member citation. | X4, T1, V2 | Full data survives every consumer; member receipts extend the predesigned identity fields without changing their guarantee. |
+| X4 — combined reads | Multi-Project resolution, unique-index execution, qualified follow-ups, vectors/errors/cursors and canonical input catalogs. | X3/T1 for internal work; public activation with X5 at P7 | Shared membership cannot duplicate scoring, jobs or counts; attribution/scopes preserved. Internal implementation has no V2 dependency; public capability cannot precede complete parity. |
+| X5 — combined consumers | UI/parse/session/copy/export integration; extend complete V2 single-index receipts to each member citation. | X4, T1, V2; joint P7 activation | Full data survives every consumer; member receipts extend the predesigned identity fields without changing their guarantee. |
+| R1 — recommendations and agent scope | Bounded native advisory read, Indexing cards, explicit temporary/saved selections and capability-checked copied harness instructions. | X5, T2a, X0/M0 policy and advice contracts | Complete advisory parity, current authorized scope, useful subset examples and bounded work; no model, scan, auto-selection or mutation. |
+| R2 — management recommendations | Connect split/trim recommendations to qualified previews and regenerate affected scope instructions after reviewed completion. | R1, M1, M2 | Shared-Project effects, costs/unknowns, inherited blocks and changed grants disclosed; preview advice cannot bypass native admission. |
 | M0 — content-management contract | Design split partitions, persistent index-owned include/deny policy, operation receipts and shared-Project effects; include compatibility and schema work in X1/U stages. | X0 design; before X1 migration freeze | No alias/ignore/rebuild bypass; ADR 002 includes split/trim lifecycle and upgrade implications. |
 | M1 — permanent trim | Native deny admission/fencing, removal publications, pack reclamation, status and Inspector/CLI UI actions. | M0, X1, X3; X2 for Explorer UI | Immediate exclusion across actual native/transport paths; policy survives failure/upgrade/rebuild and cleanup has honest states. |
 | M2 — split index | Reviewed partition/destination preparation, capacity admission, independent indexing, residual deny/publication and membership cutover with durable recovery. | M1, X2, X3; existing native publication jobs | Crash-safe two-index result, no source mutation, no implicit shared objects or grant expansion; inherited exclusions and ownership verified. |
-| X6 — feature qualification | U4–U6 context/client migration and activation; complete upgrade/fault/resource/relevance/installed-editor matrix including split/trim. | X1–X5, M1–M2 | Mixed-version handling, operation recovery/cleanup, rollback limits and explicit platform evidence; catalog-only delivery is insufficient. |
+| X6 — feature qualification | Expand the already functioning U0–U6 upgrade/activation path with the complete fault/resource/relevance/installed-editor matrix including recommendations and split/trim. | X1–X5, M1–M2, R1–R2 | Mixed-version handling, operation recovery/cleanup, rollback limits and platform evidence; catalog-only delivery is insufficient. |
 | T1 — independent replies | Explicit canonical Lean/Rich selection and legacy compatibility; preserve existing absent-argument defaults and encoding, including Agent Lean MCP/CLI reads. Workbench keeps its existing rich behavior. | W0 | Explicit-choice parity; regression comparing no-new-argument results modulo documented identity/timing; conflicting flags reject. No storage change. |
 | T2a / T2b — availability and profiles | T2a defines shared availability/reason vocabulary using existing observations, without profile or registry changes. T2b inventories families and adds bounded effective-profile reporting before new profiles. | T2a: T1; T2b: T2a, with X contracts reconciled if selected | Unsupported/not retained/reply-omitted remain distinct; bounded status. T2a can ship independently of X/T3. |
 | T3 — file-aware evidence | Implement Lean/Rich first for sampled code, manifests, Markdown and DOCX; publish under existing ownership. Separate migration/recovery review from adapter policy review. | T2b | Manifest facts survive Lean; Rich retains the core; pause/manual/vector settings survive; interruption/quota failure keeps the valid publication. Broad adapter qualification remains explicit. |
@@ -347,10 +672,11 @@ large PR per row; split extensive packages by the indicated acceptance boundary.
 | G1 — guidance | Consolidate missing-evidence reasons and inert next-read suggestions, identifier routing, paging and relationship caveats across interfaces. | T2a vocabulary only; no S1/S2/X/T3 dependency | Existing empty/unavailable/excluded/stale/truncated cases get correct next actions without ranking changes or unadvertised new inputs. |
 | Q0 — release gate | Review combined behavior, run task/resource campaigns and document supported scope/migrations. | All selected release packages; X/V3 only when included | Complete task outcomes, parity, failure recovery and platform limits are recorded for the declared full or fallback scope before 1.9.0 claims. |
 
-The dependency rule is **V2 ships single-index receipts first; X5 adds per-member
-citation associations later**. Neither V1 nor V2 depends on X. X4 depends on X3
-and T1; X5 depends on X4 and V2. T2a/G1 also remain independent of X. X1/X2 can
-proceed alongside T1 after W0/X0. E0 runs throughout. Keep S1
+The dependency rule is **V2 delivers single-index receipts first; X5 adds per-member
+citation associations later**. Neither V1 nor V2 depends on X. X4's internal work
+depends on X3 and T1; public X4/X5 activation also requires V2. T2a/G1 remain
+independent of X. These independent contracts permit smaller phases, not an
+instruction to implement several phases concurrently. E0 runs throughout. Keep S1
 and diversity as separate experiments so an improvement or regression is
 attributable. Do not bundle a new embedding model or semantic-unit change into
 the ranking comparison. Reuse current tooling where suitable, including
@@ -383,6 +709,9 @@ resource thresholds before candidate runs; keep held-out queries out of tuning.
   window grants and one-or-more Project query selection are
   separate contracts. Adopt the supersession map in the cross-project feature
   document; do not implement the original W1–W3 automatic setup alongside it.
+- Recommendations use these contracts and never supply authority. Set limits,
+  metadata observations, capability discovery and saved-default/session semantics
+  before R1; distinguish query omission, membership removal and permanent denial.
 - Separate new Project IDs from legacy native `project` index bindings. Schema
   migration, saved-reader/IPC validators and compatibility adapters must ship
   together; do not rename SQL ownership rows or weaken unknown-version rejection.
@@ -414,16 +743,20 @@ decision records, not approvals invented by this planning edit.
 
 ## Scope control and deferred value
 
-The full target is W0, E0, X0–X6, M0–M2, T1, T2a/T2b, T3, G1, V0–V3 and Q0.
-S1/S2 remain conditional on measured gains. Preserve the recommended sequence;
-set the release cut after X0/X1 estimates and upgrade evidence rather than treating
-every research idea as an unconditional release blocker.
+The requested full target is W0, E0, X0–X6, M0–M2, R1–R2, T1, T2a/T2b, T3,
+G1, V0–V3 and Q0. S1/S2 remain conditional on measured gains. Use the phase
+schedule and performance gates; reassess estimates after P3/P5. This is the
+default implementation scope. Reducing the requested Project/index, split/trim
+or recommendation scope requires the maintainer's review, not an autonomous
+fallback because the work is large.
 
-**Minimum fallback 1.9.0:** W0, E0, T1, T2a's existing-observation vocabulary,
+**Contingency for maintainer decision, not the current target:** a minimum
+fallback 1.9.0 could contain W0, E0, T1, T2a's existing-observation vocabulary,
 G1, V0–V2 and Q0 for those packages. V2's member/index identity fields are present
 from the start, with one member, so X5 stays additive. Retain existing index
-policies; defer X0–X6 and M0–M2 delivery to 1.10 if necessary, with optional design/ADR work
-remaining inert. Also defer T2b/T3, V3 and S1/S2 unless independently qualified.
+policies; defer X0–X6, M0–M2 and R1–R2 delivery to 1.10 only by that decision,
+with optional design/ADR work remaining inert. Also defer T2b/T3, V3 and S1/S2
+unless independently qualified.
 The fallback has **no Project registry schema migration, new index hierarchy or
 cross-project queries**. Do not apply U0–U3 just to reserve future tables, and do
 not advertise a picker as cross-project support. Any unrelated schema change
@@ -503,6 +836,23 @@ verified predecessor termination, while macOS has graceful shutdown and requires
 its own qualification. Unknown/undrained owners block migration. An activation
 timeout must inspect the saved upgrade receipt rather than restart U3 blindly.
 
+P5 implements and tests the complete operational U0–U6 safety path in isolated
+state; P6 is the earliest normal-state activation boundary, after Indexing and
+grant consumers are ready. U4's safe pending imports, U5's readiness decisions
+and U6's bounded settlement/recovery cannot be deferred to final qualification.
+X6 adds wider evidence for that working path. Feature gates are not bypasses for
+unknown schemas or unsupported state; failed admission retains the old supported
+selection or an explicit recovery state, never partial readiness.
+
+Validate registry, collection-policy and operation-receipt versions independently
+of the application version. Earlier development builds also labeled 1.9.0 must
+refuse newer grant/deny/split semantics they cannot enforce. Bind test receipts
+to exact runtime build identities and exercise predecessor development readers
+as well as 1.8 readers. New policy tables may be prepared inertly, but do not admit
+deny/partition policies until all native readers enforce them at P9/P10; an old
+direct CLI cannot bypass that requirement. Do not relax managed activation rules
+for intermediate same-version development builds.
+
 The 1.9.0 extension must add **1.9** to supported forward runtime lines and stage
 upgrades from supported older installs according to [versioning](../versioning.md).
 After the Project registry migration, 1.9→1.8 is a blocked ordinary downgrade;
@@ -536,11 +886,13 @@ and setup copy, synchronized with native help.
 | --- | --- |
 | W0 | Two-tier research follow-up; read-interface-parity, unified-mcp, mcp, CLI/MCP developer guides and release record; distinguish captured invariants from executed regressions |
 | E0 | validation and relevance/performance evidence; check-retrieval-quality harness instructions; MCP investigation reconciliation |
+| P0b | synchronized version manifests/lockfiles/catalogs, versioning and contributor version guidance, installer forward-line policy, candidate release record and accurate README/index/Marketplace status |
 | X0 | ADR 002, vscode-extension current behavior/limitations, scenario map, architecture boundaries and cross-project design |
 | X1 | collections, source-roots, storage-formats, service-project-setup, service-freshness, versioning, U-stage release/upgrade notes |
 | X2 | vscode-extension, Explorer help and source-assignment/Project UX; extension README/Marketplace setup text |
 | X3 | unified-mcp, mcp, cli-reference, agent-integration, source-roots, versioning and grants/revocation help |
 | X4–X5 | unified-mcp, mcp, cli-reference, read-interface-parity, Workbench forms/session/export help and both developer guides |
+| R1–R2 | Indexing Recommendations help, cross-project design, agent-integration, CLI/MCP developer guides, canonical input catalog, scope recipe examples, saved-default/session behavior and split/trim decision help |
 | M0–M2 | collections, source-roots, extraction-policy, storage-formats, service-project-setup, index-coverage, read-interface-parity, Indexing/CLI help and shared-Project split/trim/cleanup/recovery documentation |
 | X6 | versioning, storage-formats, upgrade recovery/qualification, release record, README/index and extension/Marketplace limits |
 | T1 | mcp, unified-mcp, cli-reference, read-interface-parity, Workbench defaults and MCP response-mode compatibility |
@@ -560,11 +912,14 @@ component responsibilities change, preserving dependency direction.
 | Risk | Owner / gate | Mitigation and release cut |
 | --- | --- | --- |
 | Registry upgrade damages installed metadata or replays pending work | X1/X6, U0–U6 | Protected consistent backup, owner drain, atomic backfill, receipt recovery and fault tests; defer X rather than ship an unqualified migration |
+| Intermediate phase exposes incomplete schema/API behavior | P5–P7 activation gates | Complete operational upgrade safety before migration, combined-read consumers before advertisement, exact format/build fences and isolated fixtures; never assume a code revert repairs persisted state |
 | Old extension/build/profile reopens shared state | X3/X6, scenario 20 | Explicit version/schema fences, upgrade-required UX and no automatic old-runtime activation or grant expansion |
 | Verification dominates latency on large PDFs/remote files | V0–V2, E0 | Full-source hashing with measured byte/time admission, opt-in mode, explicit unchecked outcomes; no metadata-only substitute or blanket speed claim |
 | Lexical ranking needs FTS layout rebuild | S1 design gate | `detail=none`/`columnsize=0` may not provide chosen scoring inputs. Audit authenticated FTS schema and every publication/update path; any layout change needs a separately versioned collection lexical/index-v1 compatibility and rebuild/migration plan, quota/recovery/rollback tests and per-collection cost disclosure. It is not the X registry migration; keep current ranking if not qualified |
 | Split or trim leaves leaked evidence or incomplete ownership transfer | M0–M2/X6 | Durable deny fences, independent destination ownership, peak quota reservation, shared-Project review and phase-by-phase fault tests; no success while partition, grant or cleanup state is unknown |
-| Expanded scope prevents a coherent release | Q0 after X0/X1 | Use the explicit fallback above; no hidden partial hierarchy or migration-only release |
+| New features undo current performance improvements | Every phase/E0/Q0 | Frozen 1.8.7 and previous-phase comparisons, deterministic work counters, controlled tail/resource campaigns and no unselected/disabled feature work; stop at an unexplained breached gate |
+| Advice creates overscope, bad splits or a new background cost | R1/R2/P8–P10 | Bounded authorized metadata, explicit selected/omitted indexes, unknown estimates, schema-checked recipes and native reviews; no automatic management or all-index fallback |
+| Expanded scope prevents a coherent release | Q0 after P3/P5 | Ask the maintainer to review the documented contingency; no silently dropped requested features, partial hierarchy or migration-only release |
 
 | Deferred element | Potential value | Why it needs a later decision |
 | --- | --- | --- |
@@ -764,8 +1119,10 @@ indexing and whole-workspace freshness claims.
 ## Validation and release decisions
 
 Set numerical quality and resource thresholds before experiments, after recording
-the baseline. Require no lost mandatory evidence, scope/identity violation or
-hidden truncation. Compare indexing profiles independently from reply projections:
+the baseline, following the performance contract above. Gate each accepted phase
+and the cumulative change; enabling an opt-in path is measured separately from
+the legacy path with that feature off. Require no lost mandatory evidence,
+scope/identity violation or hidden truncation. Compare indexing profiles independently from reply projections:
 cross Lean/Rich indexes with Lean/Rich replies on identical source/model inputs.
 Measure cold/no-op/edit indexing, CPU, peak memory, retained/physical bytes, read
 latency and expansion calls; reply bytes alone are insufficient. For completed
@@ -795,17 +1152,27 @@ Include split/trim policies and resumable receipts in that campaign. Test every
 mutation boundary and permanent-deny enforcement across reindex, repair, alias
 changes, all evidence transports and shared-Project queries; verify sources are
 unchanged and distinguish logical removal from physical reclamation.
+Recommendations acceptance includes useful one-index and combined-index subsets,
+explicit omitted members, bounded advisory work, stale or inaccessible inputs,
+safe saved defaults and actual-schema-valid copied MCP examples. Compare selected
+subsets with all permitted indexes in original evaluation fixtures; record useful
+evidence/recall and resource differences rather than asserting every narrower
+query is better. Include concurrent management/query load and one selected index
+in a large library to detect hidden all-library work.
 Keep installed Windows, macOS and Linux qualification separate from unit fixtures;
 unrun path/profile/editor scenarios remain unknown. Run the checks in
 [CONTRIBUTING.md](../../CONTRIBUTING.md), keep routine CI lean and use broad
 qualification only when explicitly requested. Review the complete diff and
 validation evidence before corrective pushes; record whether review was independent.
 
-Before feature/fix PR creation, remind the maintainer to increment the patch/build
-number unless already requested or completed for that PR. The eventual 1.9.0
-version change must synchronize native/extension versions and lockfiles; this
-planning document does not perform that bump. Update README, documentation index,
-release notes and VSIX/Marketplace descriptions together when behavior lands.
+The maintainer has requested the 1.9.0 increment: honor it once at P0b, after
+baseline capture and approval of this plan, now given. The planning edit itself
+performed no bump or commit. Before a later feature/fix PR, verify that the requested increment,
+native/extension locks and generated catalogs agree; do not ask for or apply the
+same bump again. Follow the separate changed-candidate rule if distributing
+intermediate builds. Update README, documentation index, release notes and
+VSIX/Marketplace descriptions together when behavior lands, labeling unfinished
+candidate capabilities accurately.
 Keep these research notes dated and identifiable as proposals, and claim release
 completion only after authorized merge/publication and verification succeed.
 
@@ -813,9 +1180,13 @@ completion only after authorized merge/publication and verification succeed.
 
 This assessment reads the three original local research files, the new
 cross-project feature design, current project guidance and the cited native/
-extension verification and multi-project routing paths;
+extension verification and multi-project routing paths. The phase refinement also
+reviews current versioning/CI policy, the dated performance report, release
+evidence and measurement harness capabilities;
 it does not rerun the earlier live experiments, audit the Copilot implementation anew or
 establish new performance/platform results. Their source-review and measured
 findings are attributed above, while priorities, package boundaries and scope
-decisions are recommendations made here. No runtime, indexing policy, source
-registration or version is changed by creating this file.
+decisions are recommendations made here. The earlier planning pass changed only
+this plan and made no runtime, indexing-policy, registration, database, version
+or Git-commit change. Subsequent implementation evidence belongs to the linked
+ledger and candidate release record; it does not retroactively qualify research.

@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Retrieval qualification rejects false-positive rankings and identities."""
 import importlib.util
+import contextlib
+import io
 import json
 from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -69,6 +72,48 @@ class RetrievalQualityTests(unittest.TestCase):
         session.publication = "previous-revision"
         with self.assertRaises(AssertionError):
             session.search(self.case())
+
+    def test_graded_search_keeps_relevance_misses_and_checks_every_hit_identity(self):
+        session = self.session([self.hit("other.txt")])
+        case = {"query": "needle", "mode": "lexical", "grades": {"wanted.txt": 3}}
+        result = session.judged_search(case, {"other.txt": "a" * 64, "wanted.txt": "a" * 64})
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["recall_at_10"], 0)
+        self.assertEqual(result["ndcg_at_10"], 0)
+        session = self.session([self.hit("other.txt", source_hash="b" * 64)])
+        with self.assertRaisesRegex(AssertionError, "source or scope differs"):
+            session.judged_search(case, {"other.txt": "a" * 64})
+
+    def test_graded_search_rejects_scope_leak_and_requests_ten_chunks(self):
+        session = self.session([self.hit("outside.txt")])
+        original = session.request
+        calls = []
+        def request(*arguments):
+            calls.append(arguments)
+            return original()
+        session.request = request
+        with self.assertRaisesRegex(AssertionError, "source or scope differs"):
+            session.judged_search({"query": "needle", "mode": "lexical", "grades": {},
+                                   "path_prefix": "docs/"}, {"outside.txt": "a" * 64})
+        self.assertEqual(calls[0][1]["arguments"]["limit"], 10)
+
+    def test_setup_failure_writes_a_failed_receipt_without_serializing_error_text(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            binary = Path(temporary) / "airk"
+            binary.write_bytes(b"fixture identity only")
+            output = Path(temporary) / "receipt.json"
+            with patch("sys.argv", ["check-retrieval-quality", "--binary", str(binary),
+                                    "--output", str(output), "--trials", "2"]), \
+                    patch.object(QUALITY, "source_identity", return_value={"fixture": "fixed"}), \
+                    patch.object(QUALITY.subprocess, "check_output", return_value="airk fixture"), \
+                    patch.object(QUALITY, "fixture", side_effect=RuntimeError("private path and source")), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaisesRegex(SystemExit, "qualification failed"):
+                    QUALITY.main()
+            receipt = json.loads(output.read_text(encoding="utf-8"))
+            self.assertFalse(receipt["passed"])
+            self.assertEqual(receipt["failure_class"], "RuntimeError")
+            self.assertNotIn("private path and source", output.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,31 @@
+{
+  "schema": "airk.relevance-corpus/1",
+  "license": "Apache-2.0",
+  "ranking_unit": "first occurrence of a judged file within the first ten returned chunks; repeats consume rank",
+  "judgment_scope": "Every fixture file is judged; omitted grades are zero. This small original corpus is a regression baseline, not general relevance qualification.",
+  "index_control": {"path":"src/retry.rs","append":"// Explicit controlled baseline edit.\n"},
+  "compact_plan_probe": {"name":"authorize_refund","path":"src/refunds.rs"},
+  "sources": {
+    "src/refunds.rs": "// SPDX-License-Identifier: Apache-2.0\n//! Refund authorization and idempotency.\npub fn authorize_refund(amount_cents: u64, daily_limit: u64) -> bool { amount_cents <= daily_limit }\npub fn refund_idempotency_key(payment_id: &str) -> String { format!(\"refund:{payment_id}\") }\n",
+    "src/sessions.rs": "// SPDX-License-Identifier: Apache-2.0\n//! Revoke account sessions after credential recovery.\npub struct Session { pub revoked: bool }\npub fn revoke_session(session: &mut Session) { session.revoked = true; }\n",
+    "src/retry.rs": "// SPDX-License-Identifier: Apache-2.0\n//! Backoff for transient transport failures.\npub fn retry_delay_ms(attempt: u32) -> u64 { 25 * (1_u64 << attempt.min(4)) }\n",
+    "Cargo.toml": "# SPDX-License-Identifier: Apache-2.0\n[package]\nname = \"fictional-refund-ledger\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[dependencies]\nserde = { version = \"1\", features = [\"derive\"] }\n",
+    "docs/refunds.md": "# Refund authorization\n\nA refund must remain below the daily limit. Retries use a refund idempotency key so the same payment is not refunded twice. The implementation is authorize_refund in src/refunds.rs.\n",
+    "docs/recovery.md": "# Credential recovery\n\nAfter a password reset, revoke all existing account sessions. Session revocation prevents an old credential from continuing to authorize requests. The implementation is revoke_session in src/sessions.rs.\n",
+    "docs/retry.md": "# Transport retry policy\n\nRetry only transient transport failures with bounded exponential backoff. The first delay is 25 milliseconds; subsequent delays double up to a maximum of 400 milliseconds. A permanent authorization failure must not be retried.\n",
+    "docs/limits.md": "# Operational limits\n\n| Operation | Daily limit | Retry policy |\n| --- | --- | --- |\n| Refund authorization | 50000 cents | Idempotency key required |\n| Credential recovery | 3 attempts | Revoke existing sessions |\n| Transport retry | 5 attempts | Exponential backoff, 400 ms cap |\n",
+    "docs/packaging.md": "# Building the refund ledger\n\nThe fictional-refund-ledger Cargo package uses serde with the derive feature. Cargo.toml declares the package name, edition and dependency. This document concerns packaging, not refund authorization.\n",
+    "docs/unrelated.md": "# Observatory maintenance\n\nPolish the telescope mirror with a clean cloth. Schedule dome inspection after heavy snow.\n"
+  },
+  "queries": [
+    {"id":"refund-definition","split":"development","family":"code","query":"authorize_refund","path_prefix":"src/","modes":["lexical","vector","hybrid"],"grades":{"src/refunds.rs":3}},
+    {"id":"session-revocation","split":"development","family":"code","query":"revoke_session","modes":["lexical","vector","hybrid"],"grades":{"src/sessions.rs":3,"docs/recovery.md":2,"docs/limits.md":1}},
+    {"id":"cargo-package","split":"development","family":"manifest","query":"fictional-refund-ledger","modes":["lexical","vector","hybrid"],"grades":{"Cargo.toml":3,"docs/packaging.md":2}},
+    {"id":"refund-idempotency","split":"development","family":"prose","query":"refund idempotency","modes":["lexical","vector","hybrid"],"grades":{"docs/refunds.md":3,"src/refunds.rs":2,"docs/limits.md":1}},
+    {"id":"limits-table","split":"development","family":"table","query":"Operational limits","path_prefix":"docs/","modes":["lexical","vector","hybrid"],"grades":{"docs/limits.md":3}},
+    {"id":"reset-credentials","split":"held_out","family":"prose","query":"invalidate old logins after password reset","modes":["lexical","vector","hybrid"],"grades":{"docs/recovery.md":3,"src/sessions.rs":2,"docs/limits.md":1}},
+    {"id":"dependency-derive","split":"held_out","family":"manifest","query":"serde derive","modes":["lexical","vector","hybrid"],"grades":{"Cargo.toml":3,"docs/packaging.md":2}},
+    {"id":"retry-budget","split":"held_out","family":"table","query":"Transport retry","path_prefix":"docs/","modes":["lexical","vector","hybrid"],"grades":{"docs/limits.md":3,"docs/retry.md":2}},
+    {"id":"absent-marker","split":"held_out","family":"negative","query":"absentfixturetokenzebra","modes":["lexical"],"grades":{}}
+  ]
+}
