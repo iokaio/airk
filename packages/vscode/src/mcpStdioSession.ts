@@ -92,6 +92,12 @@ export class McpStdioSession {
         this.fail(new McpSessionError('closed', 'AIRK MCP session closed.'));
     }
 
+    /** Bounded transport facts for an explicitly requested local failure report. No RPC or source reads. */
+    diagnosticSnapshot(): {pid:number|null;exitCode:number|null;signalCode:NodeJS.Signals|null;closed:boolean;stderr:string} {
+        return {pid:this.child.pid??null,exitCode:this.child.exitCode,signalCode:this.child.signalCode,
+            closed:this.closed,stderr:this.stderr};
+    }
+
     private write(message: unknown): void {
         this.child.stdin.write(JSON.stringify(message) + '\n');
     }

@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {LaunchSpec,launchArgs} from '../model';
 import {runText} from '../native';
+import {McpStdioSession} from '../mcpStdioSession';
 import {boundedReply,readNative} from './nativeReadRetry';
 import {NativeControlTransport,RecordValue,ServiceClient,record,JobKind,ServiceError} from '../serviceClient';
 
@@ -84,6 +85,7 @@ export class NativeServiceFixture {
             fixture.client=new ServiceClient(new NativeControlTransport(fixture.binary,['service','console','--runtime-dir',fixture.control],60000));
             return fixture;
         }catch(error){
+            await fixture.retainFailure(error);
             try{await fixture.dispose();}catch(cleanup){throw new AggregateError([error,cleanup],'Native fixture setup and cleanup failed');}
             throw error;
         }
@@ -207,6 +209,26 @@ export class NativeServiceFixture {
         const reviewed=await wait('ready');assert.match(String(reviewed.preview_digest),/^[a-f0-9]{64}$/);
         await this.client!.rpc({plan_execute:{id,preview:reviewed.preview_digest,allow_fallback:false}},'plan');
         const completed=await wait('finished');assert.equal(completed.outcome,'succeeded',JSON.stringify(completed));return completed;
+    }
+    async retainFailure(error:unknown,sessions:readonly McpStdioSession[]=[]):Promise<void>{
+        const parent=process.env.AIRK_NATIVE_DIAGNOSTIC_DIR;
+        if(!parent)return;
+        try{
+            // Reports contain only fictional fixture failures and transport
+            // stderr. Never copy fixture databases, source, control or logs.
+            await fs.mkdir(parent,{recursive:true});
+            const directory=await fs.mkdtemp(path.join(parent,'failure-'));
+            const disk=await fs.statfs(this.owner).catch(()=>undefined);
+            const report={schema:'airk-native-test-failure/1',observed_utc:new Date().toISOString(),
+                error:String(error).slice(0,8192),memory:{total_bytes:os.totalmem(),free_bytes:os.freemem()},
+                disk:disk?{available_bytes:disk.bavail*disk.bsize,total_bytes:disk.blocks*disk.bsize}:null,
+                sessions:sessions.slice(0,16).map(session=>session.diagnosticSnapshot())};
+            await fs.writeFile(path.join(directory,'failure.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx'});
+            process.stderr.write(`[native fixture] retained bounded failure report: ${directory}\n`);
+        }catch(diagnostic){
+            // Preserve the original failure even when diagnostic storage fails.
+            process.stderr.write(`[native fixture] failure report unavailable: ${String(diagnostic).slice(0,1024)}\n`);
+        }
     }
     async dispose():Promise<void>{
         this.client?.transport.dispose();this.client=undefined;

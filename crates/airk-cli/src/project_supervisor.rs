@@ -32,6 +32,7 @@ struct ChildWorker {
     input: Option<ChildStdin>,
     output: Receiver<Reply>,
     reader: Option<std::thread::JoinHandle<()>>,
+    stderr: Option<crate::process_diagnostics::WorkerStderr>,
     identity: Option<WorkerIdentity>,
     role: String,
     runtime: PathBuf,
@@ -100,6 +101,9 @@ impl Drop for ChildWorker {
         if let Some(reader) = self.reader.take() {
             let _ = reader.join();
         }
+        if let Some(stderr) = self.stderr.take() {
+            stderr.finish(&mut self.child);
+        }
     }
 }
 
@@ -115,6 +119,7 @@ impl ChildWorker {
             crate::process_roles::Role::Index,
         )?;
         let worker = new_instance_id()?;
+        let diagnostic_directory = crate::process_diagnostics::directory();
         let mut command = Command::new(executable);
         command
             .arg(if derived {
@@ -124,7 +129,11 @@ impl ChildWorker {
             })
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(if diagnostic_directory.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            });
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -143,6 +152,7 @@ impl ChildWorker {
             input: Some(input),
             output: receiver,
             reader: None,
+            stderr: None,
             identity: None,
             role: protocol::role(worker),
             runtime: root.into(),
@@ -152,6 +162,13 @@ impl ChildWorker {
             last_status: Instant::now(),
             waiting: None,
         };
+        if let Some(directory) = diagnostic_directory {
+            process.stderr = Some(crate::process_diagnostics::WorkerStderr::start(
+                &mut process.child,
+                &process.role,
+                &directory,
+            )?);
+        }
         process.reader = Some(
             std::thread::Builder::new()
                 .name("airk-project-replies".into())

@@ -2,6 +2,8 @@
 
 **1.8.7:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](releases/release-1.8.7.md) for current behavior and dated validation.
 
+Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes the separate build/validation jobs, complete-attempt release rule, focused repetitions and remaining Intel failure. Product versions remain synchronized at 1.8.7.
+
 Developer references: [MCP tools](mcp-developer-guide.md) covers all 28 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. Both explain why `airk tools list` has 18 native tools while unified MCP has 28, and map the remaining capabilities to separate terminal commands.
 
 The [CLI/MCP/Workbench parity audit](read-interface-parity.md) maps every native read, complete response/input contracts, conditional/continuity options and full versus selected exports. [Installed MCP checks](mcp-improvements-test-results.md#installed-187-acceptance--november-1-2026) record the 78-check Windows campaign, its permitted retry and the remaining navigation limits. Earlier 20-scenario investigations remain explicitly historical.

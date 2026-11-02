@@ -19,6 +19,7 @@ rl.on('line', line => {
     case 'invalid': process.stdout.write('{not json\\n'); break;
     case 'big': send({ jsonrpc: '2.0', id: m.id, result: 'x'.repeat(m.params.bytes) }); break;
     case 'exit': process.exit(3);
+    case 'diagnostic': process.stderr.write('x'.repeat(8192)+'fixture worker cause'); send({ jsonrpc: '2.0', id: m.id, result: true }); break;
   }
 });`;
 function open(maxMessageBytes?: number) {
@@ -87,4 +88,22 @@ test('a silent handshake timeout retains bounded launcher diagnostics and the fa
         assert.ok(error instanceof McpSessionError);assert.equal(error.code,'timeout');
         assert.match(error.message,/initialize.*1000 ms/);assert.match(error.message,/waiting for runtime lock/);return true;
     });
+});
+
+test('diagnostic snapshots retain bounded stderr and actual child exit without another request',async()=>{
+    const {session}=await open();
+    try{
+        assert.ok(session.diagnosticSnapshot().pid);
+        await session.request('diagnostic',{});
+        const deadline=performance.now()+5000;
+        while(!session.diagnosticSnapshot().stderr.endsWith('fixture worker cause')&&performance.now()<deadline){
+            await new Promise(resolve=>setTimeout(resolve,10));
+        }
+        const live=session.diagnosticSnapshot();
+        assert.equal(live.stderr.length,4096);assert.ok(live.stderr.endsWith('fixture worker cause'));
+        assert.equal(live.exitCode,null);assert.equal(live.closed,false);
+        await assert.rejects(session.request('exit',{}));
+        const exited=session.diagnosticSnapshot();
+        assert.equal(exited.exitCode,3);assert.equal(exited.closed,true);assert.equal(exited.stderr,live.stderr);
+    }finally{session.close();}
 });

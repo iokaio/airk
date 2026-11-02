@@ -41,7 +41,7 @@ test('one root-scoped MCP session survives late registration and rejects ambiguo
         assert.equal(search.isError,true);assert.equal(body(search).error.code,'PROJECT_AMBIGUOUS');
         assert.equal((await fixture.embedding()).loads,0,'metadata and rejected reads do not start inference');
         assert.ok(spec.service!.project);
-    }finally{session?.close();await fixture.dispose();}
+    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{session?.close();await fixture.dispose();}
 });
 
 test('registered native MCP verifies before the first publication without starting inference', {skip:!process.env.AIRK_TEST_BINARY,timeout:240000}, async()=>{
@@ -56,7 +56,7 @@ test('registered native MCP verifies before the first publication without starti
         assert.equal(status.index_state,'unavailable');assert.equal(status.files,null);
         const embedding=await fixture.embedding();
         assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
-    }finally{await fixture.dispose();}
+    }catch(error){await fixture.retainFailure(error);throw error;}finally{await fixture.dispose();}
 });
 
 test('pinned MCP quick status completes cold verification without diagnostics or inference',{skip:!process.env.AIRK_TEST_BINARY,timeout:240000},async t=>{
@@ -73,7 +73,7 @@ test('pinned MCP quick status completes cold verification without diagnostics or
         const status=await quickStatus(session,observe);assert.equal(status.project,spec.service!.project);
         assert.equal(status.index_state,'unavailable');assert.equal(status.files,null);assert.equal(status.publication,null);
         const embedding=await fixture.embedding();assert.equal(embedding.loads,0);assert.equal(embedding.sessions,0);
-    }finally{
+    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{
         t.diagnostic(JSON.stringify({quickStatus:{attempts,confirmed:confirmed??null,dropped,nativeStageCounts:'unmeasured',hashCounts:'unmeasured'}}));
         session?.close();await fixture.dispose();
     }
@@ -110,7 +110,7 @@ test('basic status includes version and health, caches snapshots and diagnostics
         for(const value of [first,primedTerse,full,cached,legacy,terse,included,includedHit,beforeDetail]){assert.equal(value.query_concurrency,16,JSON.stringify(value));assert.equal(value.runtime,undefined);assert.equal(value.work,undefined);assert.equal(value.explorer,undefined);assert.ok(Buffer.byteLength(JSON.stringify(value))<1024);}
         for(const name of ['diagnostics','airk_diagnostics']){const detail=await read(name);assert.equal(detail.query_concurrency,16,JSON.stringify(detail));assert.ok(detail.runtime);assert.ok(detail.work);}
         const after=await read('status',{response_mode:'terse'});assert.equal(after.cached,false);assert.ok(after.observed_unix_ms>=first.observed_unix_ms);
-    }finally{session?.close();await fixture.dispose();}
+    }catch(error){await fixture.retainFailure(error,session?[session]:[]);throw error;}finally{session?.close();await fixture.dispose();}
 });
 
 for(const binding of ['pinned','source'] as const){
@@ -140,7 +140,7 @@ for(const binding of ['pinned','source'] as const){
                 assert.equal(observation.files,null);assert.equal(observation.publication,null);
             }
             assert.equal((await fixture.embedding()).loads,0,'first status does not start inference');
-        }finally{for(const session of sessions)session.close();await fixture.dispose();}
+        }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{for(const session of sessions)session.close();await fixture.dispose();}
     });
 }
 
@@ -202,5 +202,5 @@ test('mixed four-call batches honor status snapshots and typed read admission',{
             }
         }
         process.stderr.write(`[native fixture] mixed batches: ${JSON.stringify({bindings:2,batches:12,logical_reads:48,unsubmitted_refusals:refusals})}\n`);
-    }finally{for(const session of sessions)session.close();await fixture.dispose();}
+    }catch(error){await fixture.retainFailure(error,sessions);throw error;}finally{for(const session of sessions)session.close();await fixture.dispose();}
 });
