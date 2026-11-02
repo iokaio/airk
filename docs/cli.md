@@ -10,6 +10,8 @@ CLI tool calls, dedicated read commands and Workbench plans share the MCP read h
 
 For explicit plans, put a JSON object in the `plan` field and pass the request through `airk tools call airk_parse --args-file request.json`. Do not encode the plan object as a string. Workbench's complete JSON/Markdown exports retain the full response; selected-evidence exports identify their selected subset.
 
+MCP-compatible status results can report `status_timeout` with `index_error.stage: setup`, unknown readiness and null evidence. Later polls preserve that explicit setup-deadline outcome after already accepted work drains. Apply the existing bounded read-retry contract with the same scope; genuine setup failures and ordinary session cancellation retain their failure handling. See the [status contract](mcp.md).
+
 ## Identifier navigation
 
 For a known type/function, use compact `airk symbol` first, scoped `airk refs` for textual uses, and `airk read`/`context` to inspect a selected location. `airk outline` reads one file's structure in source order; it does not propose an Explorer screen. Search remains useful for concepts and supplementary passages, with bounded same-publication definition pointers where available.
