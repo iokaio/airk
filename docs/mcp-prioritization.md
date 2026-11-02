@@ -6,6 +6,14 @@ This is the final stage of [indexing enhancements](indexingenhancements.md). It 
 
 ## Three understandable modes
 
+**2 November 2026 planning clarification:** the proposed [1.9.0 two-tier delivery](research/plan-v190.md)
+reserves **Rich** for a new versioned file-aware profile. Keep **Rich Structure**
+as the legacy `balanced` display label, qualified as legacy in migration review;
+it is not an alias for new Rich and does not gain Detailed document continuity.
+Existing stored/API identities and absent-argument reply behavior remain unchanged
+until explicit selection or migration. The table below describes the existing
+policy; the new names/contract are not implemented by this documentation update.
+
 Present these three choices in the collection UI, CLI help and MCP capability summary. Display names have no more than two words. A mode chooses indexed evidence; vector enablement, model provisioning, search readiness policy and client tool permissions remain separately inspectable settings.
 
 | Mode | Meaning and intended use | Policy identity |

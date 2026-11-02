@@ -233,7 +233,9 @@ Each collection defaults to local vector indexing and hybrid retrieval. The **Ve
 
 Use machine-scoped settings for user-selected storage. A folder picker should allow another local drive; defaults can use the extension's per-user global storage. Keep the chosen absolute path out of shared repository configuration. Show its free space, total AIRK usage and each collection's current/reclaimable bytes, last index, queued work, root binding and extraction status.
 
-Each workspace folder gets a stable collection ID. Multi-root workspaces initially register one MCP server per root; a collection spanning multiple roots requires the root inventory described in [collections](collections.md). Choosing a common data directory never authorizes cross-collection retrieval.
+Each registered workspace folder gets a stable collection ID. The current VS Code provider publishes one MCP definition for the window, with additional configured roots and no implicit default in multi-root mode; callers choose a configured project. A collection spanning multiple roots uses explicit aliases described in [collections](collections.md). Choosing a common data directory never authorizes cross-collection retrieval.
+
+Current limitations: saving a folder as a workspace preserves its native index binding but workspace-keyed saved searches may not follow; closing/removing a folder leaves native watching active until explicitly changed. Window-scoped settings in folder settings do not apply in multi-root windows, and a recognized manual AIRK entry in one folder can suppress the provider for the window. The [dated scenario analysis](research/vs-code-folders-workspaces.md) and [proposed 1.9.0 plan](research/plan-v190.md) distinguish these current behaviors from planned fixes. Editor `files.exclude`/`search.exclude` do not replace AIRK's native ignore policy.
 
 Implemented settings and commands:
 

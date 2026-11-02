@@ -62,5 +62,6 @@ node_modules/
 
 # Local reference material is inspiration only, never part of a release.
 /temp/
+/docs/copilot-research/
 .codex/config.toml
 .mcp.json
