@@ -16,6 +16,16 @@ The extension's Marketplace summary and README now describe complete cited resul
 
 See the [complete CLI/MCP/Workbench audit](../read-interface-parity.md) for command mappings, options, result contracts and regression coverage. Both `AGENTS.md` and `CLAUDE.md` now require shared implementations, complete response/input parity and native/transport regressions for future read-contract changes.
 
+## Unreleased CI follow-up — November 1, 2026
+
+The review branch separates native build/regression jobs from runtime validation, with source-bound same-run handoffs and reuse of successful builds on rerun. Routine MCP validation runs one full pass plus two focused cold-client repetitions; qualification retains three full passes. CI test builds omit debug information; shipped release optimization is unchanged. Bounded worker/frontend failure and runner-capacity reports preserve evidence without copying test databases or sources. The existing complete-attempt release/provenance gates remain in place. See [the CI policy and motivating failure](../ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).
+
+This follow-up has not run on hosted Darwin. Both pinned and source-bound cold-client failures recurred on Intel in CI attempt 2; the underlying cause remains unresolved. No release, version bump or measured hosted speedup is claimed. The owner explicitly retained the unpublished 1.8.7 build version.
+
+Local review checks passed: formatting, all-target/all-feature workspace Clippy with warnings denied, actionlint, repository/whitespace/version checks, Python contracts (296 total, six skipped), extension tests (541 passed, 19 skipped), and the focused CI plan/producer/transfer contracts after final workflow edits. A real Windows release pair passed the complete seal/restore handoff and both cold-client tests under four-core affinity, with opt-in worker diagnostics enabled. The actual-process noisy-stderr collector regression also passed.
+
+The initial all-feature workspace attempt stopped on three native-owner recovery cases because the default temporary namespace did not qualify as a private boundary. Those exact three cases passed with one declared helper ignore in a newly created owner-only fixture base. The full rerun was stopped to keep this CI change's final validation focused; no complete workspace pass is claimed. An initial paired-build attempt rejected a source change during compilation without publishing staging; the subsequent stable-source paired build and transfer checks passed. These are local Windows observations, not Darwin or hosted workflow qualification. The primary performed an explicit review of the complete diff and validation evidence; no independent review is claimed.
+
 ## Included branch improvements
 
 - Installed startup and lightweight status ownership, separate cold-setup and observation deadlines, typed contention/retry receipts and cached observations with exact publication and age metadata.

@@ -240,7 +240,17 @@ impl ServerHandler for Bridge {
             query_concurrency,
         )
         .await;
-        Ok(result.unwrap_or_else(|_|CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])).into())
+        Ok(result.unwrap_or_else(|error| {
+            if std::env::var_os("AIRK_PROCESS_DIAGNOSTICS").as_deref()
+                == Some(std::ffi::OsStr::new("1"))
+            {
+                // Explicit local/CI diagnostics only: keep the bounded cause on
+                // stderr without changing the public reply or retry authority.
+                let detail: String = format!("{error:#}").chars().take(4096).collect();
+                eprintln!("AIRK direct project connection failed: {detail}");
+            }
+            CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])
+        }).into())
     }
 }
 
