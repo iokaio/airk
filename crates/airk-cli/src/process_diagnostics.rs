@@ -148,7 +148,8 @@ mod tests {
             .spawn()?;
         let capture = WorkerStderr::start(&mut child, "fixture", directory.path())?;
         let pid = child.id();
-        assert_eq!(child.wait()?.code(), Some(7));
+        let status = child.wait()?;
+        assert_eq!(status.code(), Some(7));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while !capture.reader.is_finished() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(1));
@@ -169,7 +170,7 @@ mod tests {
                 .ends_with("worker failure")
         );
         assert_eq!(report["dropped_bytes"], 64 * 4096 + 14 - TAIL_BYTES);
-        assert_eq!(report["exit"], "exit code: 7");
+        assert_eq!(report["exit"], status.to_string());
         assert_eq!(report["pid"], pid);
         assert_eq!(report["read_failed"], false);
         assert_eq!(report["stderr_eof"], true);
