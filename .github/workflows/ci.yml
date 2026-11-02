@@ -385,9 +385,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: airk-ci-timings-${{ matrix.target }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            artifacts/ci/
-            target/nextest/ci/junit.xml
+          # Validation reuses the transferred runtime; nextest never runs here.
+          path: artifacts/ci/
           if-no-files-found: warn
           retention-days: 7
   container:

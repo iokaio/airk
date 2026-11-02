@@ -17,6 +17,17 @@ def sha256(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
+def fixture_parent(root=Path(__file__).resolve().parents[1]):
+    """Return the repository target directory, creating it when no native build has.
+
+    Validation jobs that reuse a transferred runtime never compile here, so the
+    fixture must not assume Cargo already created this directory.
+    """
+    parent = root / "target"
+    parent.mkdir(parents=True, exist_ok=True)
+    return parent
+
+
 def check_login_plan(plan, install, platform=sys.platform):
     if not plan["id"].startswith("airksvc-"):
         raise RuntimeError("Optional startup plan reused a legacy scheduler identity")
@@ -72,7 +83,7 @@ def main():
             raise RuntimeError(f"Client lifetime fixture failed ({result.returncode}): {result.stdout[-4096:]} {result.stderr[-8192:]}")
         print(result.stdout.strip(), flush=True)
 
-    with tempfile.TemporaryDirectory(prefix="airk install original café fixture-", dir=Path(__file__).resolve().parents[1] / "target") as temporary:
+    with tempfile.TemporaryDirectory(prefix="airk install original café fixture-", dir=fixture_parent()) as temporary:
         fixture = Path(temporary)
         install = fixture / "install"
         state = fixture / "service-state"
