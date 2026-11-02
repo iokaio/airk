@@ -88,6 +88,8 @@ A completed status query that overlaps ordinary scalar-cache invalidation return
 
 **How it works:** The frontend prepares the selected runtime, then obtains bounded scalar metadata. Successful observations can be reused for five seconds with their original observation time and cache age. The cold preparation allowance is ten seconds; established observation has a separate two-second allowance.
 
+Deadline cancellation of setup admission retains its typed expiry through the shared outcome, including for later waiters. Accepted exact work stays owned until it settles; another pipeline operation cannot start on that expired attempt. The existing `status_timeout` with stage `setup` remains an unconfirmed observation. Genuine setup errors and session EOF retain their original failure classification.
+
 **Inputs:** Optional configured `project`, `response_mode` and `include_status`. It does not accept a request to run diagnostics.
 
 **Result and limits:** `query_concurrency` (configured frontend evidence capacity at admission), version, index state, counts, publication, freshness and semantic readiness. A successful envelope can still report unavailable or unknown evidence. Require `index_state: available` and a publication; never turn a timeout into proof that the index is unavailable.

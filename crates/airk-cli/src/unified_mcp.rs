@@ -262,7 +262,7 @@ impl RuntimeReadiness {
                                 }
                                 _=tokio::time::sleep_until(tokio::time::Instant::from_std(owner.started+Duration::from_secs(10))),if armed=>{
                                     if let Some(setup)=&owner.setup{
-                                        setup.close(); // no new election; already admitted exact work drains once
+                                        setup.expire(); // no new election; already admitted exact work drains once
                                         break future.await.map_err(Arc::new);
                                     }
                                     break Err(Arc::new(anyhow::Error::new(airk_mcp::remote::PreparationExpired)));
@@ -337,7 +337,15 @@ impl RuntimeReadiness {
             // if timeout_at polls a prompt cancellation completion first.
             return Err(airk_mcp::remote::PreparationExpired.into());
         }
-        outcome.map_err(|error| anyhow::Error::new(SharedReadinessError(error)))
+        outcome.map_err(|error| {
+            if error.is::<airk_mcp::remote::PreparationExpired>() {
+                // The shared wrapper preserves display chains, not root type
+                // identity. Keep this explicit deadline receipt recognizable.
+                anyhow::Error::new(airk_mcp::remote::PreparationExpired)
+            } else {
+                anyhow::Error::new(SharedReadinessError(error))
+            }
+        })
     }
 
     /// EOF closes new setup admission and joins the owned driver/worker.
@@ -1147,6 +1155,63 @@ mod readiness_tests {
         ready.shutdown().await?;
         Ok(())
     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn status_deadline_cancellation_remains_expiry_for_later_waiter() -> Result<()> {
+        let ready = RuntimeReadiness::default();
+        let (release, released) = std::sync::mpsc::channel();
+        let mut first = Box::pin(ready.run_inner_status(
+            move |setup| async move {
+                let setup = setup.context("cooperative setup required")?;
+                setup
+                    .run_worker(move |_| {
+                        released.recv().context("expired setup release")?;
+                        Ok(PathBuf::from("accepted-operation"))
+                    })
+                    .await?;
+                // Use the production admission seam after accepted work drains.
+                setup
+                    .run_worker(|_| Ok(PathBuf::from("forbidden-later-operation")))
+                    .await?;
+                Ok(())
+            },
+            true,
+            true,
+        ));
+        assert!(
+            std::future::poll_fn(|cx| std::task::Poll::Ready(first.as_mut().poll(cx)))
+                .await
+                .is_pending()
+        );
+        assert!(
+            first
+                .await
+                .unwrap_err()
+                .is::<airk_mcp::remote::PreparationExpired>()
+        );
+        release
+            .send(())
+            .map_err(|_| anyhow::anyhow!("accepted setup operation was lost"))?;
+        await_published_readiness(&ready).await?;
+        let error = ready
+            .run_inner_status(
+                |_| async { anyhow::bail!("replacement admitted before expired setup settled") },
+                true,
+                true,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            error.is::<airk_mcp::remote::PreparationExpired>(),
+            "late waiter lost the setup deadline cause: {error:#}"
+        );
+        assert!(matches!(*ready.state.lock().await, ReadinessState::Idle));
+        ready
+            .run_inner_status(|_| async { Ok(()) }, true, true)
+            .await?;
+        ready.shutdown().await?;
+        Ok(())
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn accepted_late_setup_failure_preserves_actual_cause_for_later_caller_and_allows_retry()
     -> Result<()> {

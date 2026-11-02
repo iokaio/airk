@@ -325,7 +325,7 @@ jobs:
         env:
           AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/${{ matrix.target }}/${{ matrix.executable }}
         # One full routine pass. Preserve three cold-client observations until
-        # the Intel connection failure is diagnosed; qualification repeats all.
+        # the corrected cold setup path is qualified; qualification repeats all.
         # Each failed command stops the step; no failed pass is retried.
         run: |
           # Qualification's full suite above already supplies its first pass.
