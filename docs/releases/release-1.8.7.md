@@ -1,6 +1,6 @@
 # AIRK 1.8.7
 
-Prepared November 1, 2026. This single release record consolidates the unpublished 1.8.0-1.8.6 branch work and the 1.8.7 CLI/MCP/Workbench parity correction. Native/extension versions and lockfiles are synchronized at 1.8.7. At preparation, Marketplace's latest version was 1.7.6; publication requires successful exact-main CI and the protected GitHub and Marketplace workflows. Local installer and development receipts below are separate from published release provenance.
+Prepared November 1, 2026. This single release record consolidates the unpublished 1.8.0-1.8.6 branch work and the 1.8.7 CLI/MCP/Workbench parity correction. Native/extension versions and lockfiles are synchronized at 1.8.7. At preparation, Marketplace's latest version was 1.7.6. Publication through the protected GitHub and Marketplace workflows is recorded in [Publication (2026-11-02)](#publication-2026-11-02). Local installer and development receipts below are separate from published release provenance.
 
 ## Cold setup deadline follow-up (November 2 UTC)
 
@@ -9,6 +9,17 @@ A late status waiter could consume the cancellation caused by the shared ten-sec
 PR #55 CI 41372380164 passed after the manually restarted Apple Silicon job. Its first attempt had failed one cold pinned-client status check. Main CI 41380069062 then passed Windows, Linux, Apple Silicon and all other gates, but Intel failed a cold source-client status check in its third smoke pass. All mixed-read tests passed. The focused Intel diagnostic 41384006126 was canceled during cohort twelve; its eleven completed cohorts retained two passing and twenty failing selected test outcomes, repeatedly logging `runtime setup cancelled`. Its compiler cache missed, and the native build took about 29 minutes; no broad test suite ran in that diagnostic.
 
 A local native regression reproduced the exact late-waiter failure before the correction. Afterward, all sixteen readiness-owner tests, eleven setup-admission tests and twenty MCP status tests passed, including genuine early/late failures, EOF, retained accepted work and repair. The actual CLI/public-MCP parity case initially received a valid nested `publication_busy` receipt from its one-step CLI status plan. That fixture now repeats only an explicitly refused single status read, retains every refusal and bounds attempts/time; submitted/unknown errors and additional/completed reads do not replay. Both its guard regression and actual process case passed. Whole evidence plans still execute once. Formatting, workspace/all-target/all-feature Clippy, version agreement, repository checks and four native-read contract checks passed. Unrelated broad local suites were not repeated. Hosted candidate and publication checks remain pending. These local Windows results do not establish macOS qualification. Version 1.8.7 remains the already requested, unpublished bump.
+
+## Publication (2026-11-02)
+
+| Step | Result |
+|---|---|
+| Pull request | [#56](https://github.com/iokaio/airk/pull/56), rebase-merged; its final commit is main `0dbd2f0729d158a73686ce726a424555a9bbb3f8` (tree `2b84150e4d42b6175800240d5eb7477223a88beb`) |
+| Main CI | Run `41398425043`, attempt 1, succeeded on that commit with all four native build and validation jobs, the container, extension, contract and required-check gates. It rebuilt every target itself (`airk-ci-producer/1`) because the PR changed CI inputs. The Intel cold-client step passed in one full pass plus two cold-client repetitions (7.0 minutes); the Intel install step took 10.3 minutes on a slow runner |
+| GitHub release | Run `41405017894` signed Windows (Azure Artifact Signing) and both macOS architectures (signing and notarization), then published [`v1.8.7`](https://github.com/iokaio/airk/releases/tag/v1.8.7) with 19 assets at 2026-11-02T07:20:20Z as the latest release, and redeployed the downloads site, which listed the 1.8.7 packages immediately afterwards |
+| Marketplace | Rehearsal run `41405848046` packaged all four platforms from the same main CI candidate; publish run `41406112490`, bound to that rehearsal, published `iokaio.airk` 1.8.7 for darwin-arm64, darwin-x64, win32-x64 and linux-x64 on the stable channel between 07:25 and 07:26 UTC through Entra OIDC without rebuilding. The public Marketplace query listed darwin-arm64, win32-x64 and linux-x64 within a minute and darwin-x64 at 07:34 UTC, about eight minutes after the publish job finished |
+
+The published Windows x64 and Linux x64 GitHub assets were checked with [release verification](../release-verification.md#recorded-result-187-windows-x64-and-linux-x64-2026-11-02). The macOS assets were signed and notarized by the release workflow but not re-checked locally. The tag-provenance workflow does not run for workflow-created tags, as for earlier releases; the release record and verifier bind the assets to the producer run instead.
 
 ## Workbench and MCP return the same data
 
@@ -24,9 +35,9 @@ The extension's Marketplace summary and README now describe complete cited resul
 
 See the [complete CLI/MCP/Workbench audit](../read-interface-parity.md) for command mappings, options, result contracts and regression coverage. Both `AGENTS.md` and `CLAUDE.md` now require shared implementations, complete response/input parity and native/transport regressions for future read-contract changes.
 
-## Unreleased CI follow-up — November 1, 2026
+## CI follow-up — November 1, 2026
 
-The paragraphs below retain this CI change's original validation record. The later [cold setup deadline follow-up](#cold-setup-deadline-follow-up-november-2-utc) identifies and locally corrects the cancellation cause. Hosted validation of the combined changes remains pending.
+The paragraphs below retain this CI change's original validation record. The later [cold setup deadline follow-up](#cold-setup-deadline-follow-up-november-2-utc) identifies and locally corrects the cancellation cause. Hosted validation of the combined changes is recorded in [Publication (2026-11-02)](#publication-2026-11-02).
 
 The combined candidate passed 51 targeted native/MCP/process test outcomes, 46 CI provenance/plan/transfer contracts and four native-read contract checks on Windows. Formatting, workspace/all-target/all-feature Clippy, exact version agreement, repository checks and whitespace checks passed. The combined review covered setup ownership and genuine failures, single-read retry guards, immutable runtime handoffs, successful-build authentication, native validation selection and bounded opt-in diagnostics. No independent review or new complete workspace run is claimed.
 
