@@ -6,7 +6,7 @@ For detailed per-tool developer guidance, see the [MCP developer guide](mcp-deve
 
 
 
-AIRK 1.8.7 retains one server named `airk`, with 28 unique, unprefixed tools (the preceding 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer.
+The AIRK 1.9.0 development candidate retains one server named `airk`, with 28 unique, unprefixed tools (the preceding 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer.
 
 
 
@@ -197,7 +197,7 @@ Management → Service → Concurrent requests… sets the service-host policy: 
 
 Successful MCP `status` and `diagnostics` responses (including the `airk_status` and `airk_diagnostics` aliases) include top-level `query_concurrency`, for example `"query_concurrency": 16`, in both JSON text and structured content. It is the evidence request limit read by the frontend for this request's admission: default 16, configured choices 4, 8, 16, 32 and 64. The separate reserved status/control slot is additional. It does not report free permits, queue depth or guaranteed admission. For a multi-project bridge, it is the minimum configured backend limit used by that bridge.
 
-CLI status/diagnostics include top-level `query_concurrency`. Workbench `/status` and `/diagnostics`, CLI-executed plans and MCP `parse` retain it inside each completed step result. The shared frontend/CLI response adapter reuses the outer request's admission observation; payload accounting and output limits still apply. Previously saved replies retain their original fields; rerun them with 1.8.7 to obtain the new data.
+CLI status/diagnostics include top-level `query_concurrency`. Workbench `/status` and `/diagnostics`, CLI-executed plans and MCP `parse` retain it inside each completed step result. The shared frontend/CLI response adapter reuses the outer request's admission observation; payload accounting and output limits still apply. Previously saved replies retain their original fields; rerun them with 1.8.7 or later to obtain the new data.
 
 The value reuses the existing admission policy read; reporting adds no configuration read, collection access or service RPC. It is refreshed for each request even when the index status snapshot is cached. Original publication, observation time and cache age continue to describe the index snapshot. Error receipts remain unchanged. Both terse and full responses include the field; status retains its lightweight scope. The [bridge implementation and regression](../crates/airk-mcp/src/remote.rs) cover live capacity changes, aliases, cached metadata, text/structured agreement, error preservation and one policy read per request.
 

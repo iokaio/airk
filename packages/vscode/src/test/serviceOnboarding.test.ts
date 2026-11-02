@@ -229,9 +229,11 @@ for(const from of ['1.4.4','1.5.12','1.6.0']){
     });
 }
 test('unsupported automatic downgrade remains visible and never applies a transition',async context=>{
-    const f=await serviceTestHost(context,{automatic:true,runtimeVersion:'1.9.0',bundledVersion:releaseVersion});
+    const [major,minor,patch]=releaseVersion.split('.').map(Number);
+    const newerRuntime=`${major}.${minor}.${patch+1}`;
+    const f=await serviceTestHost(context,{automatic:true,runtimeVersion:newerRuntime,bundledVersion:releaseVersion});
     try{
-        assert.equal(f.binding.version,'1.9.0');
+        assert.equal(f.binding.version,newerRuntime);
         assert.ok(!f.calls.includes('upgrade-applied'));
         assert.ok(f.calls.some(line=>line.startsWith('Automatic installation failed:')&&line.includes('explicit_runtime_upgrade_or_matching_extension_required')));
         assert.ok(f.calls.some(line=>line.startsWith('AIRK installation needs attention:')));

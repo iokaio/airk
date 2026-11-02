@@ -1,6 +1,6 @@
 # AIRK MCP developer guide
 
-This guide explains **all 28 public tools in AIRK 1.8.7**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current qualification and the dated development records are in the [1.8.7 release record](releases/release-1.8.7.md).
+This guide explains **all 28 public tools in the AIRK 1.9.0 development candidate**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current qualification is in the [1.9.0 candidate record](releases/release-1.9.0.md); the inherited 1.8.7 contracts and evidence remain in their [dated record](releases/release-1.8.7.md).
 
 ## Start with the right layer
 
@@ -686,7 +686,7 @@ When modifying a tool, read its schema, dispatcher, kernel/adapter contract and 
 
 Successful MCP `status` and `diagnostics` responses (including the `airk_status` and `airk_diagnostics` aliases) include top-level `query_concurrency`, for example `"query_concurrency": 16`, in both JSON text and structured content. It is the evidence request limit read by the frontend for this request's admission: default 16, configured choices 4, 8, 16, 32 and 64. The separate reserved status/control slot is additional. It does not report free permits, queue depth or guaranteed admission. For a multi-project bridge, it is the minimum configured backend limit used by that bridge.
 
-CLI status/diagnostics include top-level `query_concurrency`. Workbench `/status` and `/diagnostics`, CLI-executed plans and MCP `parse` retain it inside each completed step result. The shared frontend/CLI response adapter reuses the outer request's admission observation; payload accounting and output limits still apply. Previously saved replies retain their original fields; rerun them with 1.8.7 to obtain the new data.
+CLI status/diagnostics include top-level `query_concurrency`. Workbench `/status` and `/diagnostics`, CLI-executed plans and MCP `parse` retain it inside each completed step result. The shared frontend/CLI response adapter reuses the outer request's admission observation; payload accounting and output limits still apply. Previously saved replies retain their original fields; rerun them with 1.8.7 or later to obtain the new data.
 
 The value reuses the existing admission policy read; reporting adds no configuration read, collection access or service RPC. It is refreshed for each request even when the index status snapshot is cached. Original publication, observation time and cache age continue to describe the index snapshot. Error receipts remain unchanged. Both terse and full responses include the field; status retains its lightweight scope. The [bridge implementation and regression](../crates/airk-mcp/src/remote.rs) cover live capacity changes, aliases, cached metadata, text/structured agreement, error preservation and one policy read per request.
 

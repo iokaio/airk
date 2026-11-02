@@ -1,6 +1,8 @@
 # AIRK: Local Search for Coding Agents
 
-**1.8.7:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.7.md) for current behavior and dated validation.
+**1.9.0 development candidate:** native/extension versions and lockfiles are synchronized; supported forward runtime activation includes 1.9. The [candidate record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.9.0.md) tracks phase completion and validation. Project/index management and source verification remain planned work.
+
+**Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.7.md) for current behavior and dated validation.
 
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**
 

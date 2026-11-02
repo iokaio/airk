@@ -1,5 +1,6 @@
 # Release records
 
+- [1.9.0 development candidate](release-1.9.0.md): phase status, original performance/relevance controls and the candidate identity increment; later features remain planned.
 - [1.8.7](release-1.8.7.md): all unpublished 1.8.0-1.8.6 changes, complete CLI/MCP/Workbench read results, configured concurrency and dated validation.
 
 Versioned release notes and dated release evidence live here. Each record retains its original version, date and qualification limits; a record alone does not establish publication. Current release procedures remain in the [release workflow](../release-workflow.md).

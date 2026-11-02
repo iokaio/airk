@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-**2 November 2026 — proposed 1.9.0 work:** see the [research and delivery plan](research/plan-v190.md) for Project/index scope, source verification, compatibility, upgrade gates and the explicit fallback release; these are proposals, not implemented or released behavior.
+**2 November 2026 — 1.9.0 implementation started:** the [research and delivery plan](research/plan-v190.md) defines Project/index scope, source verification, compatibility, performance/upgrade gates and the maintainer-reviewed contingency. The [implementation ledger](research/implementation-v190.md) and [candidate record](releases/release-1.9.0.md) distinguish completed checkpoints from planned features; publication is separate.
 
 The native kernel and extension implement persistent lexical/vector components, real local transformer inference, local usage, workspace coverage, live provider/OCR adapters and durable scheduling with native events and optional per-user services. The remaining release-qualification work below is explicit; passing original fixtures does not establish production semantic quality or completion of the large-repository target.
 
