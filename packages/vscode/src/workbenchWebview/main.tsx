@@ -99,7 +99,7 @@ function Turn({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
                     {cards.length>0&&selectionRow()}
                     {rows.length>show&&<button onClick={()=>setShow(show+20)}>Show 20 more retained records</button>}
                     {(state.continuations?.[turn.id]??[]).map(page=><button disabled={state.busy} onClick={()=>send({type:'continue',turn:turn.id,step:page.id})}>Fetch next {page.tool} page · {page.callsRemaining} calls remain{page.requiredRecordBytes!==undefined?` · needs ${page.requiredRecordBytes} bytes`:''}</button>)}
-                    {!cards.length&&<pre>{canonical(envelope.steps??envelope)}</pre>}
+                    <details class="complete-response" open={!cards.length}><summary>Complete response</summary><pre>{canonical(envelope)}</pre></details>
                 </>:<pre>{formatted}</pre>}
                 <footer>{!selectionUi&&<button onClick={()=>send({type:'copy',turn:turn.id,format:format==='json'?'json':'markdown'})}>Copy {format==='json'?'JSON':'Markdown'}</button>}
                     {!selectionUi&&selected.length>0&&<button title={copySelectionTitle} disabled={!copySelectionAllowed} onClick={()=>send(copySelection)}>Copy selected ({selected.length})</button>}

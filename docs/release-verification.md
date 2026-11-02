@@ -20,18 +20,18 @@ The check does **not** prove that rebuilding the source reproduces the same byte
 1. Choose the tag and the platform, and download into an empty directory, for example for Windows x64:
 
    ```text
-   gh release download v1.7.3 --repo iokaio/airk --dir DIR --pattern SHA256SUMS --pattern release.json \
-     --pattern "airk-1.7.3-win32-x64.vsix*" --pattern "airk-1.7.3-x86_64-pc-windows-msvc*"
+   gh release download v1.8.7 --repo iokaio/airk --dir DIR --pattern SHA256SUMS --pattern release.json \
+     --pattern "airk-1.8.7-win32-x64.vsix*" --pattern "airk-1.8.7-x86_64-pc-windows-msvc*"
    ```
 
    The macOS and Linux targets are `darwin-arm64`/`aarch64-apple-darwin`, `darwin-x64`/`x86_64-apple-darwin` and `linux-x64`/`x86_64-unknown-linux-gnu`.
 
-2. Resolve the expected source commit from a clone you trust: `git rev-parse "v1.7.3^{commit}"`.
+2. Resolve the expected source commit from a clone you trust: `git rev-parse "v1.8.7^{commit}"`.
 
 3. Run the read-only verifier from a checkout of this repository:
 
    ```text
-   python scripts/verify-published-release.py --directory DIR --version 1.7.3 --platform win32-x64 --commit <commit> --authenticode
+   python scripts/verify-published-release.py --directory DIR --version 1.8.7 --platform win32-x64 --commit <commit> --authenticode
    ```
 
    It exits 0 only when every check passes, and it lists what it could not verify. `--authenticode` reads Windows signatures. On macOS, run `codesign --verify --strict --verbose=2` and `spctl --assess --type execute` on the extracted `AIRK.app` instead.

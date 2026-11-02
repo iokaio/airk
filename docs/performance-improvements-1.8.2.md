@@ -48,7 +48,7 @@ Workbench improvements are part of the release's main installed-experience story
 | Linked Select all N and Copy selected | Top/bottom controls select and copy the returned set, including unexpanded or filtered selections under the documented rules. | Functional keyboard/filter/copy/budget fixtures; no extra page is fetched. |
 | Conversational evidence requests | Supported developer, writer, architect and QA phrasing prepares bounded native evidence plans while preserving identifiers. | 476-case inventory plus 48 known role regressions; unsupported/compound requests retain clarification and explicit review. |
 
-See the [Workbench implementation](workbench/implementation.md), [release notes](releases/release-1.8.2.md) and [UI preparation/reuse record](optimizations.md#f16af17-ui-preparation-and-workbench-reuse). These usability and work-reduction improvements are separate from kernel throughput.
+See the [Workbench implementation](workbench/implementation.md), [release notes](releases/release-1.8.7.md#candidate-1-8-2) and [UI preparation/reuse record](optimizations.md#f16af17-ui-preparation-and-workbench-reuse). These usability and work-reduction improvements are separate from kernel throughput.
 
 ## Why responsiveness improved without a general native speedup
 
@@ -151,4 +151,4 @@ Raw receipts and measurement scripts remain ignored under `artifacts/performance
 
 Measurements refer to the exact runtime/receipt identities above. Later CI corrections align Windows-only fixture guards, distinguish parsed execution from learned review in the smoke, and preserve shared IPC timeout causes. The timed campaigns were not rerun on the final signed publication artifacts; their original receipts remain unchanged rather than being relabeled as measurements of those artifacts.
 
-See the [release record](releases/release-1.8.2.md) for product changes and validation, and the [optimization ledger](optimizations.md) for adopted/deferred scopes and historical evidence. Installed responsiveness, native corpus qualification, correctness checks and publication provenance are separate claims.
+See the [release record](releases/release-1.8.7.md#candidate-1-8-2) for product changes and validation, and the [optimization ledger](optimizations.md) for adopted/deferred scopes and historical evidence. Installed responsiveness, native corpus qualification, correctness checks and publication provenance are separate claims.

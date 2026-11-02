@@ -4,7 +4,13 @@ The `airk` executable is the whole engine, not only a VS Code helper. This guide
 
 For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. `airk tools list` exposes 18 native prefixed operations; unified MCP adds projects and nine Assistance operations. The terminal exposes those separately through `airk projects` and `airk explorer`, so 18 is not a count of all CLI capabilities.
 
-## Identifier navigation in 1.8.4
+## Complete read results in 1.8.7
+
+CLI tool calls, dedicated read commands and Workbench plans share the MCP read handlers. Full results retain provenance, publication, readiness, coverage, continuations and error/retry details. `airk tools call airk_status` returns its MCP envelope, while `airk parse --execute '/status'` places the complete status result under `steps[].result`, including `query_concurrency`. The shell pretty-prints the same tool content. Defaults can differ between convenience commands; use matching arguments and [the parity audit](read-interface-parity.md) when comparing results.
+
+For explicit plans, put a JSON object in the `plan` field and pass the request through `airk tools call airk_parse --args-file request.json`. Do not encode the plan object as a string. Workbench's complete JSON/Markdown exports retain the full response; selected-evidence exports identify their selected subset.
+
+## Identifier navigation
 
 For a known type/function, use compact `airk symbol` first, scoped `airk refs` for textual uses, and `airk read`/`context` to inspect a selected location. `airk outline` reads one file's structure in source order; it does not propose an Explorer screen. Search remains useful for concepts and supplementary passages, with bounded same-publication definition pointers where available.
 

@@ -118,6 +118,6 @@ npm test --prefix packages/vscode
 python scripts/release-version.py check
 ```
 
-Reprovision an installed runtime through the normal candidate installer so its compiled asset actually changes; editing source or a JSON manifest does not update a running service. The current repository work is already version 1.8.2 and needs no second bump for this change.
+Reprovision an installed runtime through the normal candidate installer so its compiled asset actually changes; editing source or a JSON manifest does not update a running service. This parser correction was prepared as candidate 1.8.2 on November 1, 2026 and is included in the consolidated 1.8.7 release. Honor the version bump already completed for a PR; do not repeat it for the same change.
 
 After a reviewed campaign, `python tools/parser-train/export_datasets.py publish` refreshes the canonical compressed inputs and catalog, followed by `verify`. That command prepares source files; it never stages, commits, pushes or uploads them. Track only reviewed data, required reports, source attribution and the narrow allowed data paths. Raw local directories, clones, private corpora and native index state remain excluded.

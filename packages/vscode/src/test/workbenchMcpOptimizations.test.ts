@@ -14,6 +14,24 @@ const schema:Value={type:'object',required:['name'],properties:{
     language:{type:'string'},
 }};
 
+test('change selector forms preserve typed JSON arrays and reject malformed input',()=>{
+    const changes={type:'object',properties:{selectors:{type:'array',maxItems:64,items:{type:'object'}}}};
+    assert.equal(toolFormFields(changes)[0].type,'json');
+    assert.equal(toolFormFields(changes)[0].maxLength,32768);
+    assert.deepEqual(toolFormArguments(changes,{selectors:'[{"kind":"path","path":"queue.rs"}]'}),{selectors:[{kind:'path',path:'queue.rs'}]});
+    const selectors=Array(8).fill({kind:'path',path:'a'.repeat(700)});
+    assert.deepEqual(toolFormArguments(changes,{selectors:JSON.stringify(selectors)}),{selectors});
+    for(const selectors of ['{','{}',JSON.stringify(Array(65).fill({kind:'path',path:'queue.rs'}))])assert.throws(()=>toolFormArguments(changes,{selectors}));
+});
+
+test('full Markdown exports retain every native field even when evidence cards are present',()=>{
+    const turn:WorkbenchTurn={id:'full',at:1,input:'/search Queue',format:'structured',envelope:{status:'complete',steps:[{id:'query',tool:'search',status:'complete',result:{new_native_field:{retained:true},query_concurrency:32}}],evidence:[{step:'query',citation:{path:'queue.rs',start_line:1,end_line:1,content_hash:'fixture'},text:'struct Queue;'}]}};
+    const output=markdown(turn);
+    assert.match(output,/Complete response/);
+    assert.match(output,/new_native_field/);
+    assert.match(output,/"query_concurrency": 32/);
+});
+
 test('native forms keep optional booleans and enums typed without injecting defaults',()=>{
     const before=structuredClone(schema);
     const fields=toolFormFields(schema);

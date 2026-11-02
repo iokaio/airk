@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 mod execution;
 mod lifecycle;
 pub mod response;
+mod workbench;
 use response::ResponseArgs;
 pub mod explorer_offline;
 pub mod help;
@@ -329,6 +330,8 @@ pub struct FactArgs {
     /// Literal collection-relative path prefix, not a glob. Empty searches the active collection.
     #[serde(default)]
     pub path_prefix: String,
+    /// Exact indexed file path; takes precedence over path_prefix.
+    pub path: Option<String>,
     /// Definition name for symbols (exact by default); imports use case-insensitive substring by default. Omit to list.
     pub name: Option<String>,
     /// Explicit case-sensitive matching of simple/qualified names. Omit for this tool's existing default.
@@ -347,14 +350,14 @@ pub struct FactArgs {
 impl FactArgs {
     fn query(self, kind: Option<&str>, exact_name: bool, document_only: bool) -> FactQuery {
         FactQuery {
-            path_prefix: self.path_prefix,
+            path_exact: self.path.is_some(),
+            path_prefix: self.path.unwrap_or(self.path_prefix),
             name: self.name,
             language: self.language,
             kind: kind.map(str::to_owned),
             exact_name,
             limit: self.limit,
             max_bytes: self.max_bytes,
-            path_exact: false,
             document_only,
         }
     }
@@ -374,6 +377,8 @@ pub struct DocumentFactArgs {
     /// Literal collection-relative path prefix, not a glob.
     #[serde(default)]
     pub path_prefix: String,
+    /// Exact indexed file path; takes precedence over path_prefix.
+    pub path: Option<String>,
     /// Optional case-insensitive substring of the fact's source statement or heading/date name.
     pub name: Option<String>,
     /// Optional indexed language/profile label from airk_file_info.
@@ -480,6 +485,8 @@ pub struct CodeFactArgs {
     pub language: Option<String>,
     #[serde(default)]
     pub path_prefix: String,
+    /// Exact indexed file path; takes precedence over path_prefix.
+    pub path: Option<String>,
     #[serde(default = "default_limit")]
     pub limit: usize,
     #[serde(default = "default_budget")]
@@ -544,6 +551,8 @@ pub struct AirkServer {
     admission: execution::Admission,
     responses: std::sync::Arc<response::Session>,
     response_mode: response::ResponseMode,
+    // Inner plan reads share the outer admitted lifetime and usage observation.
+    plan_read: bool,
 }
 
 #[tool_router]
@@ -559,6 +568,7 @@ impl AirkServer {
             admission,
             responses: Default::default(),
             response_mode: response::ResponseMode::from_environment(),
+            plan_read: false,
         }
     }
 
@@ -586,12 +596,22 @@ impl AirkServer {
     )]
     async fn parse(&self, Parameters(args): Parameters<ParseArgs>) -> CallToolResult {
         let observations = serde_json::json!({"runtime":self.runtime.read().ok().and_then(|v|v.clone()),"work":self.work.read().ok().and_then(|v|v.clone())});
+        let mut reader = self.clone();
+        reader.plan_read = true;
+        let handle = tokio::runtime::Handle::current();
         self.execute_response(UsageOperation::Parse, args.response, move |kernel| {
+            reader.kernel = kernel.clone();
             let mut value = serde_json::to_value(args)?;
             if value["mode"].is_null() {
                 value["mode"] = serde_json::json!("prepare");
             }
-            kernel.evidence_plan_observed(serde_json::from_value(value)?, &observations)
+            kernel.evidence_plan_with_reader(
+                serde_json::from_value(value)?,
+                &observations,
+                Some(&|tool, args, revision| {
+                    handle.block_on(reader.workbench_read(tool, args, revision))
+                }),
+            )
         })
         .await
     }
@@ -619,6 +639,7 @@ impl AirkServer {
                     || args.include_count
                     || args.kind.is_some()
                     || args.language.is_some()
+                    || args.path.is_some()
                     || !args.path_prefix.is_empty()
                     || args.cursor.is_some(),
             )? {
@@ -626,14 +647,14 @@ impl AirkServer {
             }
             kernel.code_facts_page_with_options(
                 &FactQuery {
-                    path_prefix: args.path_prefix,
+                    path_exact: args.path.is_some(),
+                    path_prefix: args.path.unwrap_or(args.path_prefix),
                     name: args.name,
                     kind: args.kind,
                     language: args.language,
                     exact_name: true,
                     limit: args.limit,
                     max_bytes: args.max_bytes,
-                    path_exact: false,
                     document_only: false,
                 },
                 &airk_core::discovery::DiscoveryOptions {
@@ -782,12 +803,17 @@ impl AirkServer {
     )]
     async fn status(&self, Parameters(args): Parameters<StatusArgs>) -> CallToolResult {
         self.execute_response_policy(UsageOperation::Status,args.response,false,move|kernel|{
-            kernel.status_summary().or_else(|error| {
+            let mut status = kernel.status_summary().or_else(|error| {
                 if airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() {
                     return Err(error);
                 }
                 Ok(serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"unknown","index_state":"unavailable","publication":null,"files":null,"chunks":null,"freshness":kernel.changes_freshness(),"index_error":{"code":"index_status_unavailable","message":"Published index metadata could not be read. Use diagnostics for details."}}))
-            })
+            })?;
+            status["observed_unix_ms"] = serde_json::json!(std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64);
+            status["cache_age_ms"] = 0.into();
+            status["cached"] = false.into();
+            Ok(status)
         }).await
     }
 
@@ -957,6 +983,7 @@ impl AirkServer {
                     args.name.is_some()
                         || args.kind.is_some()
                         || args.language.is_some()
+                        || args.path.is_some()
                         || !args.path_prefix.is_empty()
                         || args.cursor.is_some(),
                 )? {
@@ -964,14 +991,14 @@ impl AirkServer {
                 }
                 kernel.facts_page(
                     &FactQuery {
-                        path_prefix: args.path_prefix,
+                        path_exact: args.path.is_some(),
+                        path_prefix: args.path.unwrap_or(args.path_prefix),
                         name: args.name,
                         language: args.language,
                         kind: args.kind,
                         exact_name: false,
                         limit: args.limit,
                         max_bytes: args.max_bytes,
-                        path_exact: false,
                         document_only: true,
                     },
                     &airk_core::discovery::DiscoveryOptions {
@@ -1133,13 +1160,14 @@ pub(crate) fn unavailable_status(
 
 fn render<T: Serialize>(
     kernel: &Kernel,
-    span: airk_kernel::usage::RequestSpan,
+    usage: (airk_kernel::usage::RequestSpan, bool),
     result: anyhow::Result<T>,
     responses: &response::Session,
     mode: response::ResponseMode,
     include_status: bool,
     operation: UsageOperation,
 ) -> CallToolResult {
+    let (span, record_usage) = usage;
     let mut logical = result
         .as_ref()
         .ok()
@@ -1204,13 +1232,15 @@ fn render<T: Serialize>(
         Err(error) => response::error_result(&error),
     };
     let bytes = serde_json::to_vec(&rendered).map_or(0, |v| v.len());
-    kernel.finish_usage(
-        span,
-        logical.as_ref(),
-        bytes,
-        rendered.is_error.unwrap_or(false),
-        ResponseRepresentation::McpToolResultJson,
-    );
+    if record_usage {
+        kernel.finish_usage(
+            span,
+            logical.as_ref(),
+            bytes,
+            rendered.is_error.unwrap_or(false),
+            ResponseRepresentation::McpToolResultJson,
+        );
+    }
     rendered
 }
 

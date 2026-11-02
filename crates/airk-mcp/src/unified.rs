@@ -462,7 +462,43 @@ impl RemoteTools for Unified {
                     }
                     return Ok(success(value));
                 }
-                return project.backend.call(native.name.to_string(), args).await;
+                let result = project.backend.call(native.name.to_string(), args).await?;
+                if native.name == "airk_parse"
+                    && result["isError"] != true
+                    && let Some(value) = body(&result)
+                {
+                    let diagnostics = value["steps"].as_array().is_some_and(|steps| {
+                        steps.iter().any(|step| {
+                            step["tool"] == "diagnostics"
+                                && step["status"] == "complete"
+                                && step["result"].is_object()
+                        })
+                    });
+                    let explorer = if diagnostics {
+                        let response = self
+                            .ui(
+                                Some(project.binding.clone()),
+                                "airk_explorer_ui_status",
+                                Map::new(),
+                            )
+                            .await;
+                        Some(body(&response).unwrap_or_else(|| json!({"available":false})))
+                    } else {
+                        None
+                    };
+                    let value = crate::remote::map_plan_results(value, |tool, fields| {
+                        if matches!(tool, "status" | "diagnostics") {
+                            fields.insert("project".into(), json!(project.binding));
+                        }
+                        if tool == "diagnostics"
+                            && let Some(explorer) = &explorer
+                        {
+                            fields.insert("explorer".into(), explorer.clone());
+                        }
+                    })?;
+                    return Ok(success(value));
+                }
+                return Ok(result);
             }
             let ui = UI_NAMES
                 .iter()
@@ -664,7 +700,18 @@ mod tests {
         fn call(&self, tool: String, args: Map<String, Value>) -> RemoteFuture<'_> {
             Box::pin(async move {
                 let status = tool == "airk_status";
+                let parse = tool == "airk_parse";
+                let operation = if args.get("text") == Some(&json!("/diagnostics")) {
+                    "diagnostics"
+                } else {
+                    "status"
+                };
                 self.calls.lock().unwrap().push((tool, args));
+                if parse {
+                    return Ok(success(
+                        json!({"schema":"airk.workbench.result/1","collection":"one","publication":null,"status":"complete","executed":true,"plan":airk_core::workbench::Plan::default(),"requires_input":[],"steps":[{"id":"query","tool":operation,"arguments":{},"status":"complete","elapsed_ms":1,"result":{"files":1},"error":null}],"evidence":[],"warnings":[],"truncated":false,"completeness":[],"calls":1,"payload_bytes":11}),
+                    ));
+                }
                 if status && self.stall_status.load(std::sync::atomic::Ordering::SeqCst) {
                     return std::future::pending().await;
                 }
@@ -739,6 +786,32 @@ mod tests {
         u.call(name.into(), args.as_object().unwrap().clone())
             .await
             .unwrap()
+    }
+    #[tokio::test]
+    async fn plan_status_and_diagnostics_keep_unified_project_and_editor_observations() {
+        let (unified, _, _, ui) = fixture(false, true);
+        for tool in ["status", "diagnostics"] {
+            let result = call(
+                &unified,
+                "parse",
+                json!({"schema":"airk.parse.request/1","mode":"execute","text":format!("/{tool}")}),
+            )
+            .await;
+            let value = body(&result).unwrap();
+            assert_eq!(value["steps"][0]["result"]["project"], "aa".repeat(32));
+            assert_eq!(value["steps"][0]["result"]["files"], 1);
+            if tool == "diagnostics" {
+                assert_eq!(
+                    value["steps"][0]["result"]["explorer"]["ui"]["code"],
+                    "UI_NOT_ATTACHED"
+                );
+            }
+        }
+        assert_eq!(
+            ui.calls.lock().unwrap().len(),
+            1,
+            "only diagnostics probes the editor"
+        );
     }
     #[test]
     fn immutable_catalog_preserves_exact_definitions_and_isolates_caller_mutation() {

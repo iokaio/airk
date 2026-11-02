@@ -18,6 +18,18 @@ use std::{
 
 mod natural;
 
+pub type PlanReader<'a> = dyn Fn(&str, &Map<String, Value>, Option<&str>) -> Result<Value> + 'a;
+
+/// An adapter's complete failed read receipt, retained under the plan's byte budget.
+#[derive(Debug)]
+pub struct ReadFailure(pub Value);
+impl std::fmt::Display for ReadFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+impl std::error::Error for ReadFailure {}
+
 const TOOLS: &[&str] = &[
     "search",
     "symbols",
@@ -1072,9 +1084,16 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
                 "--include-files" => "include_files",
                 "--compact" => "compact",
                 "--kind" => "kind",
-                _ => bail!("unknown command option"),
+                flag => {
+                    let name = flag.trim_start_matches("--").replace('-', "_");
+                    fields(tool)
+                        .iter()
+                        .copied()
+                        .find(|key| *key == name)
+                        .context("unknown command option")?
+                }
             };
-            if matches!(key, "include_count" | "include_files" | "compact") {
+            if argument_schema(key)["type"] == "boolean" {
                 let explicit = words.get(i + 1).and_then(|value| match value.as_str() {
                     "true" => Some(true),
                     "false" => Some(false),
@@ -1092,8 +1111,10 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
             ensure!(!value.starts_with("--"), "option needs a value");
             args.insert(
                 key.into(),
-                if matches!(key, "limit" | "max_bytes") {
+                if argument_schema(key)["type"] == "integer" {
                     json!(value.parse::<usize>()?)
+                } else if key == "selectors" {
+                    serde_json::from_str(value)?
                 } else {
                     json!(value)
                 },
@@ -1147,6 +1168,9 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
         "relationships" => {
             args.insert("symbol".into(), json!(value));
         }
+        "help" if !value.is_empty() => {
+            args.insert("topic".into(), json!(value));
+        }
         _ => ensure!(
             value.is_empty() || tool == "help",
             "command takes no positional arguments"
@@ -1167,6 +1191,8 @@ fn fields(tool: &str) -> &'static [&'static str] {
     match tool {
         "search" => &[
             "query",
+            "semantic",
+            "full_chunks",
             "mode",
             "path_prefix",
             "language",
@@ -1188,6 +1214,7 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "compact",
         ],
         "code_facts" => &[
+            "symbol_key",
             "path",
             "name",
             "kind",
@@ -1201,6 +1228,7 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "compact",
         ],
         "document_facts" => &[
+            "document_key",
             "path",
             "name",
             "kind",
@@ -1225,6 +1253,9 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "include_count",
         ],
         "read_file" => &[
+            "if_evidence",
+            "artifact_id",
+            "follow_moves",
             "path",
             "start_line",
             "end_line",
@@ -1232,8 +1263,18 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "revision",
             "max_bytes",
         ],
-        "file_info" => &["path", "known_hash", "revision"],
+        "file_info" => &[
+            "if_evidence",
+            "artifact_id",
+            "follow_moves",
+            "path",
+            "known_hash",
+            "revision",
+        ],
         "outline" => &[
+            "if_evidence",
+            "artifact_id",
+            "follow_moves",
             "path",
             "known_hash",
             "revision",
@@ -1243,6 +1284,9 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "compact",
         ],
         "context" => &[
+            "if_evidence",
+            "artifact_id",
+            "follow_moves",
             "path",
             "line",
             "before",
@@ -1252,7 +1296,19 @@ fn fields(tool: &str) -> &'static [&'static str] {
             "max_bytes",
         ],
         "list_files" => &["prefix", "limit", "max_bytes", "cursor"],
-        "changes" => &["since", "path_prefix", "limit", "max_bytes", "cursor"],
+        "changes" => &[
+            "since",
+            "selectors",
+            "include_symbols",
+            "include_documents",
+            "include_suggestions",
+            "path_prefix",
+            "limit",
+            "max_bytes",
+            "cursor",
+        ],
+        "capabilities" => &["adapter", "rich"],
+        "help" => &["topic", "command", "tool", "start_line", "max_bytes"],
         "relationships" => &[
             "symbol",
             "direction",
@@ -1272,7 +1328,7 @@ pub fn operation_catalog() -> Value {
             let schema = argument_schema(key);
             (key.to_string(),schema)
         }).collect();
-        let required:Vec<&str>=match *tool {"search"=>vec!["query"],"references"=>vec!["name"],"read_file"=>vec!["path","start_line","end_line"],"file_info"|"outline"|"context"=>vec!["path"],"changes"=>vec!["since"],"relationships"=>vec!["symbol"],_=>vec![]};
+        let required:Vec<&str>=match *tool {"search"=>vec!["query"],"references"=>vec!["name"],"read_file"=>vec!["path","start_line","end_line"],"file_info"|"outline"|"context"=>vec!["path"],"relationships"=>vec!["symbol"],_=>vec![]};
         (tool.to_string(),json!({"type":"object","additionalProperties":false,"properties":properties,"required":required}))
     }).collect();
     json!({"catalog":CATALOG,"operations":operations,"selectors":["unique_definition_path","hit_locations","selected_symbol_ids"],"recipes":["definition","documents","impact","tests","component","readiness"],"classifier":"candidate suggestions only"})
@@ -1284,7 +1340,17 @@ fn argument_schema(key: &str) -> Value {
         | "hops" => {
             json!({"type":"integer","minimum":if matches!(key,"before"|"after"){0}else{1},"maximum":numeric_max(key)})
         }
-        "include_count" | "include_files" | "compact" => json!({"type":"boolean"}),
+        "include_count"
+        | "include_files"
+        | "compact"
+        | "semantic"
+        | "full_chunks"
+        | "follow_moves"
+        | "rich"
+        | "include_symbols"
+        | "include_documents"
+        | "include_suggestions" => json!({"type":"boolean"}),
+        "selectors" => json!({"type":"array","maxItems":64,"items":{"type":"object"}}),
         "mode" => json!({"type":"string","enum":["lexical","vector","hybrid"]}),
         "direction" => json!({"type":"string","enum":["incoming","outgoing"]}),
         "name_match" => json!({"type":"string","enum":["exact","suffix","contains"]}),
@@ -1351,7 +1417,34 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
             if key == "hops" {
                 ensure!(n <= 3, "hops exceeds 3");
             }
-        } else if matches!(key.as_str(), "include_count" | "include_files" | "compact") {
+        } else if key == "selectors" {
+            let selectors: Vec<airk_core::changes::RememberedSelector> =
+                serde_json::from_value(value.clone())?;
+            ensure!(
+                selectors.len() <= 64 && serde_json::to_vec(value)?.len() <= 32768,
+                "selector budget exceeded"
+            );
+            for selector in value.as_array().context("selectors require an array")? {
+                if let Some(path) = selector.get("path").and_then(Value::as_str) {
+                    ensure!(
+                        safe_path(path) && path.starts_with(prefix),
+                        "selector escapes plan scope"
+                    );
+                }
+            }
+        } else if matches!(
+            key.as_str(),
+            "include_count"
+                | "include_files"
+                | "compact"
+                | "semantic"
+                | "full_chunks"
+                | "follow_moves"
+                | "rich"
+                | "include_symbols"
+                | "include_documents"
+                | "include_suggestions"
+        ) {
             ensure!(value.is_boolean(), "boolean argument required");
         } else {
             ensure!(
@@ -1440,7 +1533,7 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
     for required in match step.tool.as_str() {
         "search" => &["query"][..],
         "references" => &["name"],
-        "changes" => &["since"],
+
         "relationships" if bound => &["symbol"],
         "read_file" if bound => &["path", "start_line", "end_line"],
         "outline" | "file_info" | "context" if bound => &["path"],
@@ -1534,7 +1627,8 @@ fn clipped(value: &Value) -> bool {
     }
 }
 
-fn bounded_result(mut result: ResultEnvelope) -> Result<ResultEnvelope> {
+/// Reapply the output bound after a transport adds observations to a result.
+pub fn bounded_result(mut result: ResultEnvelope) -> Result<ResultEnvelope> {
     // Clip whole records/payloads, never serialized JSON or a citation tuple.
     while serde_json::to_vec(&result)?.len() > result.plan.output.max_bytes {
         result.truncated = true;
@@ -1563,6 +1657,17 @@ impl Kernel {
         &self,
         request: Request,
         observations: &Value,
+    ) -> Result<ResultEnvelope> {
+        self.evidence_plan_with_reader(request, observations, None)
+    }
+
+    /// Run the bounded composition with an adapter's canonical read implementation.
+    /// The callback cannot add plan operators or bypass scope/revision/budget validation.
+    pub fn evidence_plan_with_reader(
+        &self,
+        request: Request,
+        observations: &Value,
+        reader: Option<&PlanReader<'_>>,
     ) -> Result<ResultEnvelope> {
         ensure!(
             serde_json::to_vec(&request)?.len() <= 32768,
@@ -2068,8 +2173,12 @@ impl Kernel {
                 result.calls += 1;
                 result.executed = true;
                 let at = Instant::now();
-                let answer =
-                    self.plan_read(&step.tool, &args, plan.publication.as_deref(), observations);
+                let answer = match reader {
+                    Some(read) => read(&step.tool, &args, plan.publication.as_deref()),
+                    None => {
+                        self.plan_read(&step.tool, &args, plan.publication.as_deref(), observations)
+                    }
+                };
                 let mut report = StepReport {
                     id: step.id.clone(),
                     tool: step.tool.clone(),
@@ -2083,11 +2192,38 @@ impl Kernel {
                     Err(error) => {
                         report.status = "failed".into();
                         report.error = Some(error.to_string());
+                        if let Some(receipt) = error.downcast_ref::<ReadFailure>() {
+                            report.error =
+                                Some("native read failed; complete receipt in result".into());
+                            let bytes = serde_json::to_vec(&receipt.0)?.len();
+                            if bytes <= remaining {
+                                result.payload_bytes += bytes;
+                                report.result = Some(receipt.0.clone());
+                            } else {
+                                result.truncated = true;
+                                // Do not retain a second, unbounded serialized receipt in error.
+                                report.error =
+                                    Some("read failed; receipt exceeds payload budget".into());
+                            }
+                        }
                         result
                             .completeness
                             .push(format!("{}: read failed", step.id));
                     }
                     Ok(value) => {
+                        if locations(&value).iter().any(|record| {
+                            record["citation"]["path"]
+                                .as_str()
+                                .is_some_and(|path| !path.starts_with(&plan.path_prefix))
+                        }) {
+                            report.status = "failed".into();
+                            report.error = Some("read result escapes plan scope".into());
+                            result
+                                .completeness
+                                .push(format!("{}: out-of-scope evidence not admitted", step.id));
+                            result.steps.push(report);
+                            continue;
+                        }
                         if is_evidence(&step.tool) && publication(&value) != plan.publication {
                             report.status = "failed".into();
                             report.error = Some("publication changed or missing".into());

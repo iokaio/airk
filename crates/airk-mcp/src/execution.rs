@@ -192,6 +192,20 @@ impl AirkServer {
         T: Serialize + Send + 'static,
         F: FnOnce(airk_kernel::Kernel) -> anyhow::Result<T> + Send + 'static,
     {
+        if self.plan_read {
+            // This runs on the outer parse's blocking worker, under its permit.
+            // Reuse the exact handlers without recursive transport/admission or usage entries.
+            let span = self.kernel.usage_span(operation, self.client);
+            return crate::render(
+                &self.kernel,
+                (span, false),
+                work(self.kernel.clone()),
+                &self.responses,
+                crate::response::ResponseMode::Full,
+                true,
+                operation,
+            );
+        }
         let responses = self.responses.clone();
         let mode = options.response_mode.unwrap_or(self.response_mode);
         let control = matches!(
@@ -225,7 +239,7 @@ impl AirkServer {
                     if let Some((runtime, work)) = diagnostics && (runtime.is_some() || work.is_some()) {
                         let status = crate::unavailable_status(&kernel, runtime, work, "AIRK collection selection is busy or unavailable; retry against the current revision");
                         let span = kernel.usage_span(operation, client);
-                        return crate::render(&kernel, span, Ok(status), &responses, mode, true, operation);
+                        return crate::render(&kernel, (span, true), Ok(status), &responses, mode, true, operation);
                     }
                     // Other selection failures retain the path-free generic reply.
                     return error("AIRK collection selection is busy or unavailable; retry against the current revision");
@@ -236,7 +250,7 @@ impl AirkServer {
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(kernel.clone())))
                     .unwrap_or_else(|_| Err(anyhow::anyhow!("retrieval worker failed")));
             // Serialization and all optional usage I/O stay off the protocol executor.
-            crate::render(&kernel, span, result, &responses, mode, options.include_status || control, operation)
+            crate::render(&kernel, (span, true), result, &responses, mode, options.include_status || control, operation)
         })
         .await
         .unwrap_or_else(|_| error("retrieval worker failed"))
