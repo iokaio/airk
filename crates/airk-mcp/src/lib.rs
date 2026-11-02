@@ -83,12 +83,12 @@ pub struct ParseArgs {
     /// prepare (default) validates; execute collects read-only evidence.
     pub mode: Option<String>,
     pub text: Option<String>,
-    pub recipe: Option<serde_json::Value>,
-    pub plan: Option<serde_json::Value>,
+    pub recipe: Option<serde_json::Map<String, serde_json::Value>>,
+    pub plan: Option<serde_json::Map<String, serde_json::Value>>,
     #[serde(default)]
     pub path_prefix: String,
-    pub budgets: Option<serde_json::Value>,
-    pub output: Option<serde_json::Value>,
+    pub budgets: Option<serde_json::Map<String, serde_json::Value>>,
+    pub output: Option<serde_json::Map<String, serde_json::Value>>,
     pub expected_digest: Option<String>,
 }
 

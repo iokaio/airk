@@ -188,6 +188,144 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     assert_eq!(cli["plan"], mcp["plan"]);
     assert_eq!(cli["evidence"], mcp["evidence"]);
     assert!(!cli["evidence"].as_array().unwrap().is_empty());
+    // Compare observations only after the fixture's initial source job settles;
+    // retain freshness fields rather than deleting a real running/idle difference.
+    let settled_by = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        let observed =
+            decode(session.read_retry(19, "status", json!({"response_mode":"full"}))?)?;
+        if observed["freshness"]["state"] == "idle" {
+            break;
+        }
+        anyhow::ensure!(
+            std::time::Instant::now() < settled_by,
+            "fixture source work did not settle: {observed}"
+        );
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    session.send(json!({"jsonrpc":"2.0","id":18,"method":"tools/list","params":{}}))?;
+    let catalog = session.receive(18)?;
+    let parse = catalog["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "parse")
+        .unwrap();
+    for (offset, key) in ["plan", "recipe", "budgets", "output"]
+        .into_iter()
+        .enumerate()
+    {
+        assert!(
+            parse["inputSchema"]["properties"][key]["type"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("object"))
+        );
+        let mut invalid = json!({"schema":"airk.parse.request/1"});
+        invalid[key] = json!("{}");
+        // native read: deliberate malformed nested argument; rejection executes exactly once.
+        let rejected = session.call(40 + offset as u64, "parse", invalid)?;
+        assert!(
+            rejected.get("error").is_some() || rejected["result"]["isError"] == true,
+            "{rejected}"
+        );
+    }
+    for (offset, compact) in [true, false].into_iter().enumerate() {
+        let request = json!({"schema":"airk.parse.request/1","mode":"execute","response_mode":"full",
+        "plan":{"steps":[
+            {"id":"find","tool":"symbols","args":{"name":"QueueClient","compact":compact}},
+            {"id":"structure","tool":"file_info","args":{},"bind":[{"arg":"path","from":"find","select":"unique_definition_path"}]},
+            {"id":"excerpt","tool":"read_file","args":{},"bind":[{"arg":"location","from":"find","select":"hit_locations"}]}
+        ]}});
+        // native read: a dependent evidence plan executes once; never retry the whole plan.
+        let mcp = decode(session.call(20 + offset as u64, "parse", request.clone())?)?;
+        assert_eq!(mcp["status"], "complete", "{mcp}");
+        assert_eq!(mcp["calls"], 4);
+        fs::write(&file, serde_json::to_vec(&request)?)?;
+        let cli = common::call(
+            root.path(),
+            state.path(),
+            "project-a",
+            &[
+                "parse",
+                "--request",
+                file.to_str().unwrap(),
+                "--project",
+                &service.project.binding.to_string(),
+            ],
+        )?;
+        let tool_reply = common::call(
+            root.path(),
+            state.path(),
+            "project-a",
+            &[
+                "tools",
+                "call",
+                "airk_parse",
+                "--args",
+                &serde_json::to_string(&request)?,
+            ],
+        )?;
+        let tool: Value = serde_json::from_str(tool_reply["content"][0]["text"].as_str().unwrap())?;
+        for actual in [&cli, &tool] {
+            assert_eq!(actual["status"], "complete", "{actual}");
+            assert_eq!(actual["plan"], mcp["plan"]);
+            assert_eq!(actual["evidence"], mcp["evidence"]);
+            assert_eq!(actual["completeness"], mcp["completeness"]);
+            for field in [
+                "schema",
+                "collection",
+                "publication",
+                "requires_input",
+                "warnings",
+                "truncated",
+                "calls",
+                "executed",
+            ] {
+                assert_eq!(
+                    actual[field], mcp[field],
+                    "lost or changed envelope field {field}"
+                );
+            }
+            assert_eq!(
+                actual["steps"].as_array().unwrap().len(),
+                mcp["steps"].as_array().unwrap().len()
+            );
+            for (a, b) in actual["steps"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .zip(mcp["steps"].as_array().unwrap())
+            {
+                assert_eq!(a["status"], b["status"]);
+                assert_eq!(a["arguments"], b["arguments"]);
+                // Compare complete native read data; only transport/cache observations vary.
+                fn stable(value: &mut Value) {
+                    match value {
+                        Value::Object(fields) => {
+                            for key in [
+                                "request_id",
+                                "observed_unix_ms",
+                                "cache_age_ms",
+                                "cached",
+                                "elapsed_ms",
+                            ] {
+                                fields.remove(key);
+                            }
+                            fields.values_mut().for_each(stable);
+                        }
+                        Value::Array(rows) => rows.iter_mut().for_each(stable),
+                        _ => {}
+                    }
+                }
+                let mut a = a.clone();
+                let mut b = b.clone();
+                stable(&mut a);
+                stable(&mut b);
+                assert_eq!(a, b);
+            }
+        }
+    }
     let direct = decode(session.read_retry(4, "status", json!({"response_mode":"full"}))?)?;
     assert_eq!(direct["query_concurrency"], 16);
     // native read: only this single refused status read can repeat with its explicit receipt.

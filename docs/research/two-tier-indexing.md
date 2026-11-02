@@ -4,6 +4,11 @@
 repository, plus current source inspection. This is research and a proposal;
 no source corpus, indexing policy or runtime implementation was changed.
 
+**Implementation follow-up:** the original observations below are historical.
+The 1.9.0 P1 repair and its actual-handler/transport regressions are tracked in the
+[implementation ledger](implementation-v190.md); the 35 captured invariants alone
+did not qualify the failed compact workflow.
+
 ## Recommendation
 
 **Agent Lean supplies useful evidence for many common coding investigations, but

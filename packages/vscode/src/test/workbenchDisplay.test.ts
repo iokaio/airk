@@ -38,3 +38,20 @@ test('actual webview update consumer retains exact bodies/cursors and rejects cr
     const replacement={...state,session:newSession(session.project)};
     assert.equal(applyWorkbenchUpdate(saved,{type:'state',state:replacement}),replacement);
 });
+
+test('materialized compact evidence keeps original locations and self-contained bindings in cards and exports',()=>{
+    const session=newSession('ab'.repeat(32)),entry=turn('compact');
+    const citation={path:'docs/rules.pdf',content_hash:'cd'.repeat(32),start_line:12,end_line:14,location:{Page:{number:3}}};
+    const file={path:citation.path,content_hash:citation.content_hash,language:'pdf',parse_status:'extracted',line_basis:'extracted-text; cite original location'};
+    const fact={name:'Refund rules',kind:'heading',lines:[12,14],file,provenance:{basis:'document_structure',producer:'fixture'},details_truncated:true};
+    entry.envelope={status:'complete',publication:'original-head',plan:{path_prefix:'docs/'},steps:[],
+        evidence:[{step:'find',publication:'original-head',citation,text:fact.name,fact}]};
+    session.turns=[entry];
+    const cards=evidenceCards(entry.envelope);
+    assert.equal(cards.length,1);assert.deepEqual(cards[0].location,citation.location);assert.equal(cards[0].hash,citation.content_hash);
+    const full=JSON.parse(renderExport(session,'json')).turns[0].envelope;
+    assert.deepEqual(full,entry.envelope);
+    const selected=JSON.parse(renderExport(session,'json',entry.id,['record-0'])).turns[0].envelope;
+    assert.deepEqual(selected.evidence,entry.envelope.evidence);assert.equal(selected.selection,true);
+    const md=renderExport(session,'markdown');assert.match(md,/"producer": "fixture"/);assert.match(md,/"details_truncated": true/);assert.match(md,/Page/);
+});

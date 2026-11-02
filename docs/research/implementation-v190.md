@@ -34,8 +34,9 @@ cross-platform qualification.
 | Phase | State | Acceptance / recovery boundary |
 | --- | --- | --- |
 | P0a | Complete — `60f5c9d` | Frozen controls, relevance judgments and matched MCP measurements; no runtime behavior change |
-| P0b | Complete — commit recorded at next checkpoint | Synchronized 1.9.0 increment and forward-line policy; no schema migration |
-| P1–P2b | Not started | Compact-plan correctness, independent replies and existing-observation guidance |
+| P0b | Complete — `3021995` | Synchronized 1.9.0 increment and forward-line policy; no schema migration |
+| P1 | Complete — commit recorded at next checkpoint | Compact-plan correctness and nested object inputs; no persistent format change |
+| P2a–P2b | Not started | Independent replies and existing-observation guidance |
 | P3–P4 | Not started | Decision records/contracts, then opt-in single-index verification |
 | P5–P7 | Not started | Safe metadata upgrade, Indexing/grants, then complete combined-read parity |
 | P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
@@ -263,7 +264,7 @@ Recovery before later state changes is an ordinary source revert. This phase
 has no new persistent format, migration or job receipt. Frozen P0a artifacts and
 the normal 1.8.7 installed service remain untouched.
 
-## Restart handoff — stopped at the maintainer's request
+## Historical restart handoff — after P0b
 
 P0a and P0b are complete. The P0b commit is the current branch tip at this stop;
 obtain its exact identity with `git log -1` and verify its human DCO trailer.
@@ -292,3 +293,114 @@ Add the contributor Cargo directory to PATH per process; use pinned nextest
 for native ownership fixtures. Read that path only locally; it is not a portable
 configuration. Set process-local Git `safe.directory` as needed. Match the sandbox
 identity to the sealed runtime/fixture ACLs; never relax existing user ACLs.
+
+## P1 — compact-plan correctness
+
+Resumed on 2 November 2026 from clean, signed commit
+`3021995d272f3d95487dd0d781920febe7c4ca50`. P0a/P0b remain accepted; the 1.9.0
+version increment is not repeated. Installed navigation MCP still runs 1.8.7
+against the configured repository collection. Its indexed evidence was checked
+against live affected sources before edits.
+
+New actual-handler regressions first failed on both captured defects: compact
+plans returned zero cited evidence and skipped dependent reads, and `parse.plan`
+advertised the unconstrained schema `true`. The shared kernel consumer now
+resolves each minimal page independently, preserves exact hash/original location,
+inlines file/provenance descriptors for aggregation, and rejects malformed or
+out-of-scope pages without retaining a leaking raw result. Rich reads keep their
+existing path. Aggregation decodes once per result; no extra query, source read,
+model work or indexing is introduced.
+
+The native envelope uses optional object maps for plan/recipe/budgets/output;
+kernel contracts still validate nested fields. `unique_definition_path` also
+supports a subsequent symbols/code-facts lookup. This provides a visible,
+budgeted rich locator step before `selected_symbol_ids` when compact rows omit
+IDs. No IDs or semantic facts are synthesized and no hidden lookup is performed.
+
+Focused evidence so far: actual MCP handler compact/rich dependent plans and
+schema tests pass; kernel Workbench suite passes 21 cases (one existing ignored
+measurement); extension passes 542 with 19 skips. Actual native CLI/stdio tests
+also pass the compact/rich three-read plan and compare complete step results,
+arguments and evidence with CLI parse and tools-call paths. The first transport
+comparison caught fixture source work changing running/idle freshness between
+calls. The test now waits for that initial job to settle and retains freshness
+in equality checks instead of omitting it. Initial assertion/fixture failures
+and corrected logs remain separate. The final acceptance results follow below.
+
+Recovery remains a source revert; no persistent schema, profile, source policy,
+normal runtime installation or grant changes occur in this phase.
+
+### P1 validation receipts
+
+- `cargo fmt --all --check` and all-target/all-feature workspace Clippy pass,
+  including the final transport assertions.
+- `python -m unittest discover -s scripts/tests -v`: 307 tests, six skipped,
+  zero failures/errors. No Python implementation changed in P1.
+- `npm test --prefix packages/vscode`: 542 passed, 19 skipped, zero failures.
+  Installed-editor/native lifecycle qualification remains distinct from those
+  skipped cases.
+- Full `airk-cli --test mcp`, all features, two test threads: 11 passed after
+  strengthening equality to complete step reports, step counts and envelope fields.
+  Only documented request/cache observation timing and step elapsed time are
+  normalized. Freshness state, coverage, evidence, errors and arguments remain
+  compared. This targeted rerun follows the earlier complete workspace build;
+  it does not hide or replace any workspace failure.
+- `ci-local.ps1 -SkipBuild -RuntimeDir artifacts/v190/p1-runtime -Repeat 1
+  -Suites @('smoke','clients')`: both suites passed with four logical CPUs, no
+  load workers; smoke had seven passed cases. This is one focused repetition,
+  not the five-repeat pre-PR campaign or installed-editor qualification.
+  Original logs: ignored `artifacts/ci-local/20261102-161924-44382882/`.
+- Final runtime builder receipt (`artifacts/v190/p1-final-runtime/airk-build.json`)
+  binds 751 native inputs to
+  `211cb59e35c39cb6ada723e9ebb771340c0c16facbe8e18655250a1eb63fd96b`.
+  Main SHA-256: `21de22cae5c572a573cc616a4283b793490e9618b6a56ce82b94f5138e667901`;
+  helper: `fd2bec7ddb6d9c9826f7beb6d51df914930e6415876d5470467696dbe404addc`.
+  Both executable hashes exactly match the earlier pair used by the staged
+  client checks. The final builder rerun accounts for transport-test-only review
+  changes in the input inventory; nothing was manually relabeled or installed.
+- Repository checks: 1,498 public files; version agreement, affected Markdown
+  links/anchors/fences and whitespace checks pass. Final ledger/release-record
+  edits will receive those checks again before commit.
+
+The workspace run uses the unchanged pinned nextest CI profile and qualified
+private fixture base: **1,843 passed, 35 skipped**, zero failures. Serial workspace
+doctests pass (zero cases defined). The four existing workload exclusions and
+31 declared ignores remain unchanged. The final transport-test-only strengthening
+also passed the complete 11-case CLI/MCP target and Clippy separately.
+
+**Uncontended acceptance:** 75 graded queries completed without failures; every
+mode/split nDCG@10, Recall@10 and negative-query outcome exactly matches both P0a
+and P0b. No-op and one-file edit extraction/publication guards pass. The captured
+two-step compact workflow now completes with one cited record and three calls,
+matching its rich equivalent; previously it had no cited records and skipped its
+dependent read. Its actual native schema is now `type: [object, null]`, not `true`.
+
+The legacy MCP sentinel completed 90 trials/810 calls at concurrency one, with
+30 samples for each connection cohort and zero errors/retries. Coverage, source
+identity, publication and cleanup guards pass. Task-with-connection median/p95
+(ms): status-first **1,036.549 / 1,151.170**; unprimed **1,043.929 / 1,118.155**;
+reused **959.387 / 1,023.786**. Both task-only and task-with-connection median/p95
+limits pass independently against the frozen 1.8.7 baseline and previous P0b
+receipts. No build/test campaign or source edit ran during these measurements.
+This is preservation within the frozen decision bounds, not a speedup claim.
+
+Receipt SHA-256 values:
+
+- Relevance: `1e05d4e37ac520d07b56126a98c85de449254b299948902969d87e8ca77e52ad`.
+- MCP: `a8953904b414b77c5d460335f9521d450ee5023b862c2e30417913b382098177`.
+- Final builder: `8f6f02341f13d1780f672dc041faa4bbf043f1d49b1909203411a4204fa369da`.
+
+**P1 review:** explicit implementer self-review covered the complete code/docs
+diff, canonical callers and consumers, earlier baseline/version changes, table
+locality, scope/revision refusal, byte/fanout bounds, missing-ID expansion, actual
+transport equality and receipt identities. The review strengthened complete
+step/envelope comparisons and corrected overstatements about minimal fields in
+the current MCP guide. It was not an independent review. README, documentation
+index, candidate record and Marketplace description agree on implemented behavior
+and planned features. Final repository/link/version/whitespace checks precede the
+human DCO-signed checkpoint; an ordinary source revert remains its recovery path.
+
+P1 is accepted. Resume with P2a after its signed commit. Physical I/O, whole-service
+peak resources, other platforms, external-client schema-cache refresh and
+installed-editor acceptance remain outside these observations. Later indexing,
+verification, combined-query and release phases retain their separate gates.

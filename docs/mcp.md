@@ -95,7 +95,20 @@ Defaults are 10 results and 8192 payload bytes; bounds are 1–100 and 1–65536
 
 Reference `max_bytes` continues to budget returned text, not the complete envelope. Optional file-summary metadata is additional and bounded to 16 rows/4 KiB of encoded summary records. Candidate-scoped counts are never whole-query totals: an identifier split across index chunk tokenization can be absent from lexical candidates. New paged responses expose this through `page.coverage` even when zero candidates match; complete bounded candidate scanning does not establish global textual completeness. Verified UTF-8 source lines are reconstructed across retained chunk splits; non-UTF-8 fragments whose original-line completeness cannot be proven remain explicitly qualified. Use live verification or additional exact reads when completeness matters.
 
-File/fact discovery and outlines accept revision/filter-bound keyset cursors. `record_bytes` counts complete serialized records; cursor and envelope framing are additional. Oversized first records report `required_record_bytes` without skipping evidence. Outlines additionally offer `compact: true`. Code/document facts default to compact when the applied mode is Agent Lean; `compact: false` requests rich details. Compact code records retain qualified names, written signatures, original spans, citations and producer/coverage basis. Document compact records preserve heading context, truncation flags, parser/basis and table cells with formula/cache qualifiers. Durable-key lookup retains its established rich result. See [resumable discovery](discovery.md) for continuation, revision expiry and historical outline behavior.
+File/fact discovery and outlines accept revision/filter-bound keyset cursors.
+`record_bytes` counts complete serialized records and new bindings; cursor and
+envelope framing are additional. Oversized first records report
+`required_record_bytes` without skipping evidence. Symbols/imports/outlines default
+to minimal navigation; code/document facts use compact by default under Agent
+Lean. Minimal `items` retain names, kinds, line ranges, available written
+signatures, original document locations, truncation/candidate flags and available
+table cells with formula/cache qualifiers. Their page-local `files` and
+`provenance` tables retain source hashes, language/parse/line basis and producer
+coverage. Do not assume minimal rows contain native symbol IDs, qualified names,
+scopes or full heading metadata: request `compact:false` for retained rich
+details. Durable-key lookup retains its established rich result. See
+[resumable discovery](discovery.md) for continuation, revision expiry and
+historical outline behavior.
 
 Agent Lean fact replies include bounded discovery and independent scheduler-freshness observations when the reply publication can still be matched. Observation time does not establish live-source equality. Existing Rich Structure/Search Only evidence reply shapes remain compatible. Status exposes applied indexing mode, execution admission and freshness independently of readiness. These reads do not scan live files or start work.
 
@@ -124,6 +137,13 @@ airk --root <workspace> --data-dir <storage> --collection <collection> search "h
 This CLI command exercises native retrieval directly; `airk mcp` starts the stdio protocol server. An enabled collection needs a published model and DiskANN index before explicit vector retrieval can succeed.
 
 ## Call tools without a coding agent
+
+In 1.9.0, `parse` advertises nested `plan`, `recipe`, `budgets` and `output` as
+optional JSON objects. Compact discovery's shared file/provenance tables now
+resolve in the canonical plan consumer for dependent reads and cited aggregation.
+Original hashes, document locations and page/byte limits remain authoritative.
+Native symbol IDs omitted from compact rows require an explicit rich lookup;
+see [binding and parity details](read-interface-parity.md#regression-evidence).
 
 The native CLI exposes eighteen native read-only aliases including `airk_parse`, schemas and handlers for terminal compatibility; the public unified stdio catalog is described above:
 

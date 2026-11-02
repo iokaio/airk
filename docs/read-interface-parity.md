@@ -1,5 +1,10 @@
 # CLI, MCP and Workbench read parity
 
+**1.9.0 P1 update (2 November 2026):** compact discovery now feeds dependent
+plans and cited evidence through the shared consumer. The earlier audit below
+remains the inherited contract; current outcomes are in the
+[candidate record](releases/release-1.9.0.md).
+
 Audit dated November 1, 2026, for the 1.8.7 candidate. Equivalent read requests must retain complete native data through each interface. Workbench wraps reads in bounded plans; `airk tools call airk_<operation>` returns the native MCP result envelope. The tools shell uses that same call path and pretty-prints its text content. Dedicated CLI aliases below are convenience argument builders; their documented defaults can differ. Use `tools help` and `tools call --args-file` for the complete native input schema.
 
 | Native operation | Workbench command | Dedicated CLI alias, where present |
@@ -38,9 +43,32 @@ Structured views offer **Complete response** even when cited cards are present. 
 
 ## Regression evidence
 
+Compact `items` resolve against their own page's `files` and `provenance` tables.
+Aggregated evidence carries an ordinary citation with the exact source hash and
+original document location; its `fact.file` and `fact.provenance` contain resolved
+descriptors, not page-local indexes. Original minimal step results are retained
+unchanged. Invalid bindings or out-of-scope evidence reject the entire step;
+continuations still prevent a unique-definition claim. Output clipping remains
+explicit. This decoding performs no extra query, source read or indexing work.
+
+`unique_definition_path` can target `outline`, `file_info`, `symbols` or
+`code_facts`. A compact row without a native symbol ID cannot supply
+`selected_symbol_ids`: explicitly read `symbols`/`code_facts` with `compact:false`,
+the same exact name and the uniquely selected path, then bind the returned IDs.
+That lookup is a visible, budgeted plan step; there is no hidden expansion.
+`hit_locations` retains the cited path, inclusive lines and known source hash.
+
+The native `parse` catalog advertises `plan`, `recipe`, `budgets` and `output`
+as optional JSON objects. Encoded strings, arrays and booleans are rejected;
+nested contents still use the canonical kernel contract.
+
 - The native 17-operation table compares full MCP and executed Workbench results, checks the complete native input inventory, and verifies failed-read receipts. It excludes per-request IDs and cache observation timing from value equality.
 - Bridge tests cover aliases, modes, all five capacity choices, live policy updates, identical JSON text/structured content, failed/unrelated results and payload/output bounds.
 - The CLI session regression checks all 18 tool names through both response modes and all capacity choices, retaining arbitrary native fields, complete arguments and unchanged error receipts. Existing dedicated-alias tests deserialize their arguments against actual MCP schemas and check filter/matching/paging flags. The actual-process CLI/stdio regression also compares direct MCP status field presence with the nested Workbench result and requires capacity in dedicated CLI status and CLI-executed status plans.
 - Extension regressions cover typed selector arrays and complete Markdown exports with evidence cards, alongside existing state, continuation, selection and host-boundary tests.
+- P1 regressions exercise compact/rich chained reads through actual handlers and
+  CLI/stdio transports, page-local default/override provenance, document/mapped
+  locations, malformed bindings, scope/revision rejection, ambiguity, clipping,
+  explicit rich symbol-ID expansion and full/selected exports.
 
-These local regressions do not establish installed-editor acceptance or cross-platform qualification. Current run outcomes and installer identity are in the [consolidated release record](releases/release-1.8.7.md).
+These local regressions do not establish installed-editor acceptance or cross-platform qualification. Current run outcomes are in the [1.9.0 candidate record](releases/release-1.9.0.md); inherited qualification remains in the [dated 1.8.7 record](releases/release-1.8.7.md).

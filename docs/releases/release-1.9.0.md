@@ -15,6 +15,12 @@ acceptance require their separate authorized gates.
   policy include the supported 1.9 line. Downgrades, unknown lines and malformed
   versions remain refused. Validation passed at this checkpoint in the
   [implementation ledger](../research/implementation-v190.md).
+- **P1 — compact plans:** compact shared file/provenance
+  bindings now produce self-contained cited evidence and dependent reads without
+  extra implicit queries. Invalid tables, scope/revision mismatches, ambiguity,
+  truncation and output limits retain their guards. Nested parse inputs are
+  advertised as optional objects. Symbol-ID follow-ups use an explicit rich
+  lookup when compact rows omit IDs. Ordinary direct read defaults are unchanged.
 
 Existing read behavior inherits [1.8.7](release-1.8.7.md). P0a changes contributor
 measurement tooling; P0b changes candidate identity and forward activation policy.
@@ -39,6 +45,15 @@ tests (six skipped) and 541 extension tests (19 skipped). Its staged 1.9.0 runti
 retains all frozen relevance scores and passes the legacy latency sentinel:
 90 trials/810 calls, zero errors/retries. These isolated local checks do not
 qualify installed-editor upgrades, other platforms or physical I/O.
+
+P1 passed 1,843 workspace tests under the unchanged CI profile (35 skipped),
+doctests, formatting/Clippy, all 11 actual CLI/MCP transport tests, 307 Python tests
+(six skipped) and 542 extension tests (19 skipped). One staged four-CPU native
+smoke/client repetition passed. Its 75-query relevance scores exactly match both
+preceding checkpoints. All median/p95 latency limits pass against both 1.8.7 and
+P0b across 90 trials/810 calls, with zero errors/retries. The captured compact and
+rich dependent workflows now both complete with equivalent citations. See the
+ledger for exact identities, original failures, commands and qualification limits.
 
 ## Delivery and compatibility gates
 

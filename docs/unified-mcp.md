@@ -8,6 +8,12 @@ For detailed per-tool developer guidance, see the [MCP developer guide](mcp-deve
 
 The AIRK 1.9.0 development candidate retains one server named `airk`, with 28 unique, unprefixed tools (the preceding 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer.
 
+P1 repairs compact discovery bindings inside `parse` and advertises its nested
+plan/recipe/budget/output inputs as JSON objects. See the [shared binding and
+parity contract](read-interface-parity.md#regression-evidence). Existing direct
+read defaults and compact producer replies are unchanged; source verification
+and Project/index management remain later planned phases.
+
 
 
 Tool names are unique within this server; the client may add its own server namespace. Repeating `airk_` on every tool adds no distinction between reading evidence and proposing a form. Verbs and descriptions carry that distinction. Previously saved `airk_*` and `airk_explorer_*` calls remain callable compatibility aliases; they are omitted from discovery so agents see one catalog. Native `airk tools` exposes eighteen read-only aliases including `airk_parse`; Explorer retains its seventeen direct evidence operations.

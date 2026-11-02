@@ -2,6 +2,10 @@
 
 **1.9.0 development candidate:** [phase status and validation](releases/release-1.9.0.md), [implementation ledger](research/implementation-v190.md) and [approved plan](research/plan-v190.md). The candidate increment adds the supported 1.9 runtime line; later features remain gated by their phases.
 
+P1 repairs compact plan bindings/aggregation and nested object schemas; the
+[interface contract](read-interface-parity.md#regression-evidence) records original
+locations, explicit rich symbol-ID lookups, guards and transport/export coverage.
+
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](releases/release-1.8.7.md) for current behavior and dated validation.
 
 Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes the separate build/validation jobs, complete-attempt release rule, focused repetitions and remaining Intel failure. Product versions are synchronized at 1.9.0 for the current development candidate.

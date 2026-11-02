@@ -16,7 +16,9 @@ use std::{
     time::Instant,
 };
 
+mod locations;
 mod natural;
+pub use locations::locations;
 
 pub type PlanReader<'a> = dyn Fn(&str, &Map<String, Value>, Option<&str>) -> Result<Value> + 'a;
 
@@ -1573,36 +1575,6 @@ fn has_revision_bound_symbol_inputs(plan: &Plan) -> bool {
     })
 }
 
-/// Extract rich kernel citations without flattening original document locations.
-pub fn locations(value: &Value) -> Vec<Value> {
-    fn visit(value: &Value, out: &mut Vec<Value>) {
-        match value {
-            Value::Object(map) => {
-                if let Some(citation) = map
-                    .get("citation")
-                    .filter(|c| c.get("path").and_then(Value::as_str).is_some())
-                {
-                    out.push(json!({"citation":citation,"text":map.get("text").or_else(|| map.get("name")).unwrap_or(&Value::Null),"fact":value}));
-                } else {
-                    for child in map.values() {
-                        visit(child, out);
-                    }
-                }
-            }
-            Value::Array(items) => {
-                for item in items {
-                    visit(item, out);
-                }
-            }
-            _ => {}
-        }
-    }
-    let mut out = vec![];
-    visit(value, &mut out);
-    let mut seen = BTreeSet::new();
-    out.retain(|v| seen.insert(v["citation"].to_string()));
-    out
-}
 fn publication(value: &Value) -> Option<String> {
     value
         .get("publication")
@@ -1792,7 +1764,10 @@ impl Kernel {
                     (binding.select == "unique_definition_path"
                         && binding.arg == "path"
                         && source == "symbols"
-                        && matches!(step.tool.as_str(), "outline" | "file_info"))
+                        && matches!(
+                            step.tool.as_str(),
+                            "outline" | "file_info" | "symbols" | "code_facts"
+                        ))
                         || (binding.select == "hit_locations"
                             && binding.arg == "location"
                             && step.tool == "read_file")
@@ -2020,7 +1995,7 @@ impl Kernel {
                         "publication changed during name resolution"
                     );
                     resolution_bytes += serde_json::to_vec(&value)?.len();
-                    if !locations(&value).is_empty() {
+                    if !locations(&value)?.is_empty() {
                         matches.insert(candidate);
                     }
                 }
@@ -2211,7 +2186,21 @@ impl Kernel {
                             .push(format!("{}: read failed", step.id));
                     }
                     Ok(value) => {
-                        if locations(&value).iter().any(|record| {
+                        let records = match locations(&value) {
+                            Ok(records) => records,
+                            Err(_) => {
+                                report.status = "failed".into();
+                                report.error = Some(
+                                    "invalid compact evidence bindings; result not admitted".into(),
+                                );
+                                result
+                                    .completeness
+                                    .push(format!("{}: invalid evidence bindings", step.id));
+                                result.steps.push(report);
+                                continue;
+                            }
+                        };
+                        if records.iter().any(|record| {
                             record["citation"]["path"]
                                 .as_str()
                                 .is_some_and(|path| !path.starts_with(&plan.path_prefix))
@@ -2260,7 +2249,7 @@ impl Kernel {
                                     step.id
                                 ));
                             }
-                            for mut record in locations(&value) {
+                            for mut record in records {
                                 if seen.insert(record["citation"].to_string()) {
                                     record["step"] = json!(step.id);
                                     record["publication"] = json!(plan.publication);
@@ -2533,7 +2522,7 @@ fn expand(
         outputs
             .get(&binding.from)
             .context("dependency unavailable")?,
-    );
+    )?;
     ensure!(!records.is_empty(), "dependency has no cited locations");
     if binding.select == "unique_definition_path" {
         ensure!(
@@ -2563,7 +2552,10 @@ fn expand(
             })
             .filter(|id| seen.insert(id.to_string()))
             .collect();
-        ensure!(!symbols.is_empty(), "dependency has no native symbol IDs");
+        ensure!(
+            !symbols.is_empty(),
+            "dependency has no native symbol IDs; use an explicit compact:false symbols/code_facts lookup at the cited path before selected_symbol_ids"
+        );
         return Ok((
             symbols
                 .iter()

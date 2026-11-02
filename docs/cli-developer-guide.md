@@ -519,6 +519,13 @@ Usage: airk outline [OPTIONS] <PATH>
 
 **Behavior and developer use:** Prepare mode returns a bounded plan for review. Only --execute requests execution. Finite parsed or explicitly confirmed plans use native evidence operations; learned proposals remain review-only.
 
+Explicit request files can also select `mode: execute`. In 1.9.0 compact symbol
+discovery supports cited aggregation and dependent file/location reads through
+the same consumer as MCP and Workbench. Nested plan/recipe/budget/output inputs
+are objects. See [compact binding and symbol-ID lookup rules](read-interface-parity.md#regression-evidence)
+before composing dependent requests. `tools call` and the tools shell retain
+the same native results and validation.
+
 ```text
 Usage: airk parse [OPTIONS] [TEXT]
 ```

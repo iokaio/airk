@@ -104,6 +104,115 @@ mod tests {
         }
     }
 
+    #[test]
+    fn parse_advertises_object_inputs_for_nested_contracts() {
+        let tool = local::tools()
+            .into_iter()
+            .find(|t| t.name == "airk_parse")
+            .unwrap();
+        for key in ["plan", "recipe", "budgets", "output"] {
+            let schema = &tool.input_schema["properties"][key];
+            // Optional JSON objects may also admit null, never strings or arbitrary JSON.
+            let kinds = schema["type"]
+                .as_array()
+                .cloned()
+                .unwrap_or_else(|| vec![schema["type"].clone()]);
+            assert!(kinds.contains(&json!("object")), "{key}: {schema}");
+            assert!(
+                kinds.iter().all(|v| v == "object" || v == "null"),
+                "{key}: {schema}"
+            );
+            for invalid in [json!("{}"), json!([]), json!(true)] {
+                let mut args = json!({"schema":"airk.parse.request/1"});
+                args[key] = invalid;
+                assert!(
+                    serde_json::from_value::<ParseArgs>(args).is_err(),
+                    "{key} requires an object"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn compact_pages_feed_cited_dependent_reads_through_actual_handlers() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let root = temporary.path().join("source");
+        std::fs::create_dir(&root)?;
+        let source = "pub struct Queue;\n";
+        std::fs::write(root.join("queue.rs"), source)?;
+        let kernel = Kernel::open(&root, Some(temporary.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let mut tools = local::LocalTools::new(kernel).await?;
+        let mut citations = Vec::new();
+        for compact in [true, false] {
+            let request = json!({"schema":"airk.parse.request/1","mode":"execute",
+            "plan":{"steps":[
+                {"id":"find","tool":"symbols","args":{"name":"Queue","compact":compact}},
+                {"id":"structure","tool":"file_info","args":{},"bind":[
+                    {"arg":"path","from":"find","select":"unique_definition_path"}]},
+                {"id":"excerpt","tool":"read_file","args":{},"bind":[
+                    {"arg":"location","from":"find","select":"hit_locations"}]}
+            ]}});
+            let value = payload(
+                tools
+                    .call("airk_parse".into(), request.as_object().unwrap().clone())
+                    .await?,
+            )?;
+            assert_eq!(value["status"], "complete", "{value}");
+            assert_eq!(
+                value["calls"], 4,
+                "one publication read and three explicit evidence reads"
+            );
+            for step in value["steps"].as_array().unwrap() {
+                assert_eq!(step["status"], "complete", "{step}");
+            }
+            assert_eq!(value["steps"][1]["arguments"]["path"], "queue.rs");
+            assert_eq!(
+                value["steps"][2]["arguments"]["known_hash"],
+                value["evidence"][0]["citation"]["content_hash"]
+            );
+            citations.push(value["evidence"][0]["citation"].clone());
+            assert!(
+                serde_json::to_vec(&value)?.len()
+                    <= value["plan"]["output"]["max_bytes"].as_u64().unwrap() as usize
+            );
+            if compact {
+                assert_eq!(value["steps"][0]["result"]["representation"], "minimal");
+                let fact = &value["evidence"][0]["fact"];
+                assert_eq!(fact["file"]["path"], "queue.rs");
+                assert_eq!(fact["provenance"]["basis"], "syntax");
+                assert!(fact["file"].get("provenance").is_none());
+                assert!(fact.get("symbol_id").is_none());
+            }
+        }
+        assert_eq!(
+            citations[0], citations[1],
+            "compact/rich retain exact original citations"
+        );
+        // ID selectors require an explicit rich locator read; it is a charged plan step.
+        let request = json!({"schema":"airk.parse.request/1","mode":"execute","plan":{"steps":[
+            {"id":"find","tool":"symbols","args":{"name":"Queue","compact":true}},
+            {"id":"locate","tool":"symbols","args":{"name":"Queue","compact":false},"bind":[{"arg":"path","from":"find","select":"unique_definition_path"}]},
+            {"id":"links","tool":"relationships","args":{"direction":"incoming"},"bind":[{"arg":"symbol","from":"locate","select":"selected_symbol_ids"}]}
+        ]}});
+        let value = payload(
+            tools
+                .call("airk_parse".into(), request.as_object().unwrap().clone())
+                .await?,
+        )?;
+        assert_eq!(value["status"], "complete", "{value}");
+        assert_eq!(value["calls"], 4);
+        assert!(
+            value["steps"][2]["arguments"]["symbol"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("syntax:"))
+        );
+        assert_eq!(std::fs::read_to_string(root.join("queue.rs"))?, source);
+        tools.close().await?;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn every_workbench_operation_retains_the_full_mcp_result() -> Result<()> {
         let temporary = tempfile::tempdir()?;

@@ -426,11 +426,23 @@ Optional file summaries count only returned-page records in the reported unit an
 
 **Inputs:** `schema: airk.parse.request/1`; exactly one text/recipe/plan; mode prepare/execute. Preparation is the default. Explicit plan execution must retain required choices and exact revision identity.
 
-`plan`, `recipe`, `budgets` and `output` contain JSON values, not JSON encoded inside strings. For an explicit plan, pass an object such as `{"steps":[{"id":"ready","tool":"status","args":{}}]}`. Read the live native schema if a client renders an unconstrained JSON field as a string; a stringified plan is rejected.
+`plan`, `recipe`, `budgets` and `output` are advertised as optional JSON objects in
+1.9.0. For an explicit plan, pass an object such as
+`{"steps":[{"id":"ready","tool":"status","args":{}}]}`. Encoded strings,
+arrays and booleans are rejected. Refresh a client's catalog if it retains an old
+unconstrained/string declaration. Nested contents use canonical kernel validation.
 
 All 17 inner read operations invoke the canonical MCP handlers and retain their complete full response in `steps[].result`, including `items`, provenance, readiness, coverage, continuations and error receipts. Workbench explicitly requests rich facts unless compact is selected. Inner reads share the outer plan's admitted lifetime and usage entry. Completed status/diagnostics steps include the configured `query_concurrency`; each observation retains its own time and cache identity. See the [interface parity audit](read-interface-parity.md) for defaults and transport differences.
 
 Prepare/Execute requires the original publication for retained literal syntax/provider IDs, including pasted/raw-text forms; preparation cannot substitute today's token for that identity, so preserve stored text and use a retained inspection action or a fresh name/current binding.
+
+Compact discovery resolves page-local file/provenance bindings before aggregation
+and dependent reads; cited cards and complete exports retain the reconstructed
+hash/location. `unique_definition_path` supports `outline`, `file_info`, `symbols`
+and `code_facts`. For `selected_symbol_ids`, a compact row without IDs requires
+an explicit `compact:false` symbols/code-facts lookup at that path first. This
+read is charged to the plan, never performed implicitly. Malformed tables,
+out-of-scope rows, ambiguous definitions and incomplete enumeration fail closed.
 
 **Result and limits:** A prepared/needs-input/completed result with plan tier, per-step outcomes, citations and completeness. Finite supported parsing can execute when requested; learned proposals remain review-only until explicit plan submission. It never edits source or executes tests.
 
