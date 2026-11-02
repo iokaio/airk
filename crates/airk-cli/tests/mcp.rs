@@ -190,8 +190,11 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     assert!(!cli["evidence"].as_array().unwrap().is_empty());
     let direct = decode(session.read_retry(4, "status", json!({"response_mode":"full"}))?)?;
     assert_eq!(direct["query_concurrency"], 16);
-    // native read: each status plan executes exactly once; never replay a whole plan.
-    let parsed = decode(session.call(5,"parse",json!({"schema":"airk.parse.request/1","mode":"execute","text":"/status","response_mode":"full"}))?)?;
+    // native read: only this single refused status read can repeat with its explicit receipt.
+    // The evidence plan above still executes once, without whole-plan replay.
+    let status_request = json!({"schema":"airk.parse.request/1","mode":"execute","text":"/status","response_mode":"full"});
+    let parsed =
+        status_plan_with_retry(|| decode(session.call(5, "parse", status_request.clone())?))?;
     let nested = &parsed["steps"][0]["result"];
     assert_eq!(parsed["steps"][0]["status"], "complete", "{parsed}");
     for field in direct.as_object().unwrap().keys() {
@@ -211,17 +214,108 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             &json!({"schema":"airk.parse.request/1","mode":"execute","text":"/status"}),
         )?,
     )?;
-    let cli_plan = common::call(
-        root.path(),
-        state.path(),
-        "project-a",
-        &["parse", "--request", file.to_str().unwrap()],
-    )?;
+    // native read: the same single-status request; additional/completed steps cannot repeat.
+    let cli_plan = status_plan_with_retry(|| {
+        common::call(
+            root.path(),
+            state.path(),
+            "project-a",
+            &["parse", "--request", file.to_str().unwrap()],
+        )
+    })?;
     assert_eq!(
         cli_plan["steps"][0]["result"]["query_concurrency"], 16,
         "{cli_plan}"
     );
     assert_eq!(fs::read_to_string(root.path().join("client.rs"))?, source);
+    Ok(())
+}
+
+// A fixture may repeat one explicitly refused status read: at most 12 attempts,
+// with further attempts admitted only within 30 seconds. Other plans execute once.
+fn status_plan_with_retry(
+    mut read: impl FnMut() -> anyhow::Result<Value>,
+) -> anyhow::Result<Value> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut attempts = 1;
+    let mut reply = read()?;
+    loop {
+        let single_status = reply["executed"] == true
+            && reply["status"] == "failed"
+            && reply["calls"] == 1
+            && reply["plan"]["steps"].as_array().is_some_and(|steps| {
+                steps.len() == 1
+                    && steps[0]["tool"] == "status"
+                    && steps[0]["bind"].as_array().is_some_and(Vec::is_empty)
+            })
+            && reply["steps"].as_array().is_some_and(|steps| {
+                steps.len() == 1 && steps[0]["tool"] == "status" && steps[0]["status"] == "failed"
+            });
+        let retry = single_status
+            .then(|| common::read_retry::within(&reply["steps"][0]["result"], deadline))
+            .flatten()
+            .filter(|_| attempts < 12);
+        if let Some(retry) = retry {
+            eprintln!("status plan refusal {attempts}: {reply}");
+            std::thread::sleep(retry.delay);
+            if std::time::Instant::now() >= deadline {
+                return Ok(reply);
+            }
+            attempts += 1;
+            reply = read()?;
+        } else {
+            return Ok(reply);
+        }
+    }
+}
+
+#[test]
+fn workbench_prepared_plans_retry_only_single_explicit_status_refusals() -> anyhow::Result<()> {
+    let receipt = json!({"isError":true,"content":[{"type":"text","text":json!({"status":"retry","retryable":true,"code":"publication_busy","retry_after_ms":1,"action":"repeat_same_request"}).to_string()}]});
+    let refused = json!({"executed":true,"status":"failed","calls":1,"plan":{"steps":[{"tool":"status","bind":[]}]},"steps":[{"tool":"status","status":"failed","result":receipt}]});
+    let complete = json!({"status":"complete","steps":[{"tool":"status","status":"complete","result":{"query_concurrency":16}}]});
+    let mut calls = 0;
+    assert_eq!(
+        status_plan_with_retry(|| {
+            calls += 1;
+            Ok(if calls == 1 {
+                refused.clone()
+            } else {
+                complete.clone()
+            })
+        })?,
+        complete
+    );
+    assert_eq!(calls, 2);
+    let mut cases = vec![];
+    let mut value = refused.clone();
+    value["calls"] = json!(2);
+    cases.push(value);
+    let mut value = refused.clone();
+    value["steps"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"tool":"search","status":"complete"}));
+    cases.push(value);
+    for result in [
+        json!({"isError":true,"content":[{"type":"text","text":"unknown failure"}]}),
+        json!({"isError":true,"content":[{"type":"text","text":json!({"error":{"code":"direct_query_admission","reason":"busy","query_submitted":true,"retryable":true,"fresh_brokerage_required":false,"retry_after_ms":1}}).to_string()}]}),
+    ] {
+        let mut value = refused.clone();
+        value["steps"][0]["result"] = result;
+        cases.push(value);
+    }
+    for value in cases {
+        let mut calls = 0;
+        assert_eq!(
+            status_plan_with_retry(|| {
+                calls += 1;
+                Ok(value.clone())
+            })?,
+            value
+        );
+        assert_eq!(calls, 1, "ineligible plan was replayed");
+    }
     Ok(())
 }
 

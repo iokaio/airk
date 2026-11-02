@@ -56,14 +56,20 @@ impl SetupCancellation {
         // Never wait for an OS operation already admitted on the blocking owner.
         self.admission.fetch_or(CLOSED, Ordering::AcqRel);
     }
+    pub(crate) fn expire(&self) {
+        // Keep deadline cancellation typed after accepted work has drained, so
+        // a later status waiter cannot mistake it for a genuine setup failure.
+        self.admission.fetch_or(CLOSED | EXPIRED, Ordering::AcqRel);
+    }
     pub(super) fn checkpoint(&self) -> Result<()> {
         if let Some(session) = &self.session {
             session.checkpoint()?;
         }
-        ensure!(
-            self.admission.load(Ordering::Acquire) & CLOSED == 0,
-            "runtime setup cancelled"
-        );
+        let admission = self.admission.load(Ordering::Acquire);
+        if admission & EXPIRED != 0 {
+            return Err(airk_mcp::remote::PreparationExpired.into());
+        }
+        ensure!(admission & CLOSED == 0, "runtime setup cancelled");
         Ok(())
     }
     fn admit(&self) -> Result<OperationPermit<'_>> {
@@ -72,8 +78,12 @@ impl SetupCancellation {
         let session = self.session.as_ref().map(|gate| gate.admit()).transpose()?;
         self.admission
             .compare_exchange(0, ACTIVE, Ordering::AcqRel, Ordering::Acquire)
-            .map_err(|_| {
-                anyhow::anyhow!("runtime setup cancelled or operation already admitted")
+            .map_err(|admission| {
+                if admission & EXPIRED != 0 {
+                    anyhow::Error::new(airk_mcp::remote::PreparationExpired)
+                } else {
+                    anyhow::anyhow!("runtime setup cancelled or operation already admitted")
+                }
             })?;
         Ok(OperationPermit {
             owner: self,
@@ -140,6 +150,7 @@ impl SetupCancellation {
 
 const ACTIVE: u8 = 1;
 const CLOSED: u8 = 2;
+const EXPIRED: u8 = 4;
 /// Non-Clone and tied to this owner. This is specific operation admission, not
 /// a durable receipt or permission for a subsequent pipeline operation.
 pub(super) struct OperationPermit<'a> {
@@ -290,6 +301,46 @@ mod tests {
         let later = SetupCancellation::for_session(session);
         assert!(later.admit().is_err());
         assert!(later.checkpoint().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn expired_attempt_refuses_later_effects_without_poisoning_session() -> Result<()> {
+        let session = Arc::new(SetupAdmission::default());
+        let setup = SetupCancellation::for_session(session.clone());
+        let accepted = setup.admit()?;
+        setup.expire();
+        assert!(
+            setup
+                .checkpoint()
+                .unwrap_err()
+                .is::<airk_mcp::remote::PreparationExpired>()
+        );
+        drop(accepted);
+        let calls = AtomicUsize::new(0);
+        let error = setup
+            .effect(|| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+            .unwrap_err();
+        assert!(error.is::<airk_mcp::remote::PreparationExpired>());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let replacement = SetupCancellation::for_session(session.clone());
+        replacement.effect(|| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })?;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        session.close();
+        for control in [&setup, &replacement] {
+            assert!(
+                !control
+                    .checkpoint()
+                    .unwrap_err()
+                    .is::<airk_mcp::remote::PreparationExpired>()
+            );
+        }
         Ok(())
     }
 

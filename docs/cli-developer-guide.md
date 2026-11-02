@@ -28,6 +28,7 @@ Equivalent CLI, MCP and Workbench reads share the canonical handlers and retain 
 - Ordinary queries print JSON; failures exit nonzero with diagnostics on stderr (`AIRK_ERROR_FORMAT=json` requests structured errors). Help/text/CSV/Markdown output, interactive tools shell, MCP stdio, persistent service console and foreground owners have their documented output/lifetime contracts.
 - Source files remain read-only. Management commands can change owned runtime, registry, settings, jobs, indexes and logs. Even evidence connections can prepare the installed service and maintain caches/accounting metadata.
 - Honor exact typed retry hints only for the eligible read. Unknown submission outcomes require the saved durable request/nonce contract; do not submit a new operation identity to guess whether a mutation succeeded.
+- A status setup deadline retains its explicit expiry for later polls after accepted setup work drains. Keep `status_timeout` stage `setup` as unknown readiness with null evidence; generic cancellation text and genuine verification failures are not retry receipts. See the [MCP status contract](mcp.md).
 - The invocation shapes below come from parser help. Angle-bracket arguments are placeholders, not runnable approved tokens. Obtain guards/digests from the appropriate reviewed preview; do not fabricate them.
 
 For an already registered project, run these separately, supplying the same root/data/collection selection when needed:
