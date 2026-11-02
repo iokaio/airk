@@ -188,6 +188,39 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     assert_eq!(cli["plan"], mcp["plan"]);
     assert_eq!(cli["evidence"], mcp["evidence"]);
     assert!(!cli["evidence"].as_array().unwrap().is_empty());
+    let direct = decode(session.read_retry(4, "status", json!({"response_mode":"full"}))?)?;
+    assert_eq!(direct["query_concurrency"], 16);
+    // native read: each status plan executes exactly once; never replay a whole plan.
+    let parsed = decode(session.call(5,"parse",json!({"schema":"airk.parse.request/1","mode":"execute","text":"/status","response_mode":"full"}))?)?;
+    let nested = &parsed["steps"][0]["result"];
+    assert_eq!(parsed["steps"][0]["status"], "complete", "{parsed}");
+    for field in direct.as_object().unwrap().keys() {
+        assert!(
+            nested.get(field).is_some(),
+            "Workbench status lost MCP field {field}: {nested}"
+        );
+    }
+    assert_eq!(nested["query_concurrency"], 16);
+    assert_eq!(nested["publication"], direct["publication"]);
+    assert_eq!(nested["files"], direct["files"]);
+    let cli_status = common::call(root.path(), state.path(), "project-a", &["status"])?;
+    assert_eq!(cli_status["query_concurrency"], 16);
+    fs::write(
+        &file,
+        serde_json::to_vec(
+            &json!({"schema":"airk.parse.request/1","mode":"execute","text":"/status"}),
+        )?,
+    )?;
+    let cli_plan = common::call(
+        root.path(),
+        state.path(),
+        "project-a",
+        &["parse", "--request", file.to_str().unwrap()],
+    )?;
+    assert_eq!(
+        cli_plan["steps"][0]["result"]["query_concurrency"], 16,
+        "{cli_plan}"
+    );
     assert_eq!(fs::read_to_string(root.path().join("client.rs"))?, source);
     Ok(())
 }

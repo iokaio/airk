@@ -278,6 +278,25 @@ pub async fn direct(
     }
 }
 
+/// Backend calls can obtain fresh brokerage; the same strict receipt classifier
+/// still authorizes only a bounded repetition of the unchanged read.
+pub async fn backend(
+    backend: &dyn airk_mcp::remote::RemoteTools,
+    name: &str,
+    arguments: &Map<String, Value>,
+    deadline: Instant,
+    mut rejected: impl FnMut(&Value),
+) -> Result<Value> {
+    loop {
+        let reply = backend.call(name.into(), arguments.clone()).await?;
+        let Some(retry) = within(&reply, deadline) else {
+            return Ok(reply);
+        };
+        rejected(&reply);
+        tokio::time::sleep(retry.delay).await;
+    }
+}
+
 pub fn evidence_for_comparison(value: &mut Value) -> Result<()> {
     let Some(fields) = value.as_object_mut() else {
         anyhow::bail!("expected evidence object")

@@ -1,6 +1,6 @@
 # AIRK MCP developer guide
 
-This guide explains **all 28 public tools in the AIRK 1.8.6 release candidate**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Candidate qualification and remaining work are recorded in the [1.8.5 release record](releases/release-1.8.5.md).
+This guide explains **all 28 public tools in AIRK 1.8.7**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current qualification and the dated development records are in the [1.8.7 release record](releases/release-1.8.7.md).
 
 ## Start with the right layer
 
@@ -82,7 +82,7 @@ Examples below are **tool argument objects**, not executed calls. Source paths/n
 
 ## status
 
-In the 1.8.4 local candidate, a completed status query that overlaps ordinary scalar-cache invalidation returns its original snapshot successfully with `status_observation.superseded: true`, `reason: scalar_invalidation` and an explanatory message. Original publication and observation age are retained. The superseded snapshot does not repopulate the current cache or acknowledge an obsolete status receipt; the query is not replayed. Project/namespace changes, authenticated worker replacement, expired source authorization and shutdown retain their existing rejection behavior. Cached reuse still has its five-second limit, and 1.8.5 uses the configured evidence capacity plus one reserved status slot.
+A completed status query that overlaps ordinary scalar-cache invalidation returns its original snapshot successfully with `status_observation.superseded: true`, `reason: scalar_invalidation` and an explanatory message. Original publication and observation age are retained. The superseded snapshot does not repopulate the current cache or acknowledge an obsolete status receipt; the query is not replayed. Project/namespace changes, authenticated worker replacement, expired source authorization and shutdown retain their existing rejection behavior. Cached reuse has its five-second limit; configured evidence capacity has one additional reserved status slot.
 
 **Why and when:** Answer the inexpensive question: what publication and readiness does this configured project currently expose?
 
@@ -424,6 +424,10 @@ Optional file summaries count only returned-page records in the reported unit an
 
 **Inputs:** `schema: airk.parse.request/1`; exactly one text/recipe/plan; mode prepare/execute. Preparation is the default. Explicit plan execution must retain required choices and exact revision identity.
 
+`plan`, `recipe`, `budgets` and `output` contain JSON values, not JSON encoded inside strings. For an explicit plan, pass an object such as `{"steps":[{"id":"ready","tool":"status","args":{}}]}`. Read the live native schema if a client renders an unconstrained JSON field as a string; a stringified plan is rejected.
+
+All 17 inner read operations invoke the canonical MCP handlers and retain their complete full response in `steps[].result`, including `items`, provenance, readiness, coverage, continuations and error receipts. Workbench explicitly requests rich facts unless compact is selected. Inner reads share the outer plan's admitted lifetime and usage entry. Completed status/diagnostics steps include the configured `query_concurrency`; each observation retains its own time and cache identity. See the [interface parity audit](read-interface-parity.md) for defaults and transport differences.
+
 Prepare/Execute requires the original publication for retained literal syntax/provider IDs, including pasted/raw-text forms; preparation cannot substitute today's token for that identity, so preserve stored text and use a retained inspection action or a fresh name/current binding.
 
 **Result and limits:** A prepared/needs-input/completed result with plan tier, per-step outcomes, citations and completeness. Finite supported parsing can execute when requested; learned proposals remain review-only until explicit plan submission. It never edits source or executes tests.
@@ -436,7 +440,7 @@ Prepare/Execute requires the original publication for retained literal syntax/pr
 }
 ```
 
-**Implementation:** [workbench.rs](../crates/airk-kernel/src/workbench.rs). **Contract/regression evidence:** [lib.rs](../crates/airk-mcp/src/lib.rs).
+**Implementation:** [bounded kernel runner](../crates/airk-kernel/src/workbench.rs), [canonical MCP read adapter](../crates/airk-mcp/src/workbench.rs). **Contract/regression evidence:** [native full-result comparisons](../crates/airk-mcp/src/workbench.rs), [actual CLI/MCP process checks](../crates/airk-cli/tests/mcp.rs).
 
 ## help
 
@@ -676,10 +680,14 @@ For a UI proposal: read the appropriate template/help, explicitly inspect diagno
 
 When modifying a tool, read its schema, dispatcher, kernel/adapter contract and linked tests first. Preserve exact scopes, request/response identity, source read-only behavior, original locations, validators, budgets and failure distinctions. Update this guide and the catalog/native contracts together, and verify current names against the advertised catalog. Native catalog/argument tests live in [MCP lib.rs](../crates/airk-mcp/src/lib.rs), unified catalog/alias/deadline tests in [unified.rs](../crates/airk-mcp/src/unified.rs), and native transport/client qualification in [check-service-clients.py](../scripts/check-service-clients.py). A linked test is evidence for its asserted contract, not a claim of complete platform or language qualification.
 
-## Request capacity in status and diagnostics (1.8.6)
+## Request capacity in status, diagnostics and plans
 
 Successful MCP `status` and `diagnostics` responses (including the `airk_status` and `airk_diagnostics` aliases) include top-level `query_concurrency`, for example `"query_concurrency": 16`, in both JSON text and structured content. It is the evidence request limit read by the frontend for this request's admission: default 16, configured choices 4, 8, 16, 32 and 64. The separate reserved status/control slot is additional. It does not report free permits, queue depth or guaranteed admission. For a multi-project bridge, it is the minimum configured backend limit used by that bridge.
+
+CLI status/diagnostics include top-level `query_concurrency`. Workbench `/status` and `/diagnostics`, CLI-executed plans and MCP `parse` retain it inside each completed step result. The shared frontend/CLI response adapter reuses the outer request's admission observation; payload accounting and output limits still apply. Previously saved replies retain their original fields; rerun them with 1.8.7 to obtain the new data.
 
 The value reuses the existing admission policy read; reporting adds no configuration read, collection access or service RPC. It is refreshed for each request even when the index status snapshot is cached. Original publication, observation time and cache age continue to describe the index snapshot. Error receipts remain unchanged. Both terse and full responses include the field; status retains its lightweight scope. The [bridge implementation and regression](../crates/airk-mcp/src/remote.rs) cover live capacity changes, aliases, cached metadata, text/structured agreement, error preservation and one policy read per request.
 
 Status and diagnostics preserve recognized temporary publication/selection contention as the existing typed read retry receipt (`publication_busy` or `selection_busy`, with `action: repeat_same_request`). This is not evidence that the index is unavailable. Honor the exact retry delay and repeat only that read. Diagnostic runtime/work context does not suppress the receipt. Missing or damaged evidence retains its separate existing reporting path.
+
+See [CLI, MCP and Workbench parity](read-interface-parity.md) for the complete command audit, input/output contracts and regression coverage.

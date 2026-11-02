@@ -75,7 +75,7 @@ export function applyWorkbenchUpdate(previous:WorkbenchState,message:WorkbenchUp
     return {...previous,session:{...previous.session,revision:message.revision},recent:message.recent,save:message.save};
 }
 export interface WorkbenchToolField {
-    name:string;label:string;type:'string'|'integer'|'boolean';required:boolean;
+    name:string;label:string;type:'string'|'integer'|'boolean'|'json';required:boolean;
     values?:string[];description?:string;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;
 }
 const fieldLabels:Record<string,string>={path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
@@ -94,11 +94,11 @@ export function toolFormFields(raw:unknown):WorkbenchToolField[]{
     const schema=object(raw),required=Array.isArray(schema.required)?schema.required:[];
     return Object.entries(object(schema.properties)).map(([name,value])=>{
         const spec=fieldSchema(value,schema),types=Array.isArray(spec.type)?spec.type:[spec.type];
-        const type:WorkbenchToolField['type']=types.includes('boolean')?'boolean':types.includes('integer')?'integer':'string';
+        const type:WorkbenchToolField['type']=types.includes('boolean')?'boolean':types.includes('integer')?'integer':types.includes('array')||types.includes('object')?'json':'string';
         return {name,label:fieldLabels[name]??name.replaceAll('_',' '),type,required:required.includes(name),
             ...(Array.isArray(spec.enum)?{values:spec.enum.filter(item=>['string','number','boolean'].includes(typeof item)).map(String)}:{}),
             ...(typeof spec.description==='string'?{description:spec.description}:{}),
-            ...(typeof spec.minLength==='number'?{minLength:spec.minLength}:{}),...(typeof spec.maxLength==='number'?{maxLength:Math.min(32768,spec.maxLength)}:{}),
+            ...(typeof spec.minLength==='number'?{minLength:spec.minLength}:{}),...(typeof spec.maxLength==='number'?{maxLength:Math.min(32768,spec.maxLength)}:type==='json'?{maxLength:32768}:{}),
             ...(typeof spec.minimum==='number'?{minimum:spec.minimum}:{}),...(typeof spec.maximum==='number'?{maximum:spec.maximum}:{})};
     });
 }
@@ -117,6 +117,10 @@ export function toolFormArguments(schema:unknown,values:Record<string,string>):V
             const number=Number(value);
             if(!Number.isSafeInteger(number)||(field.minimum!==undefined&&number<field.minimum)||(field.maximum!==undefined&&number>field.maximum))throw new Error(`Enter an allowed whole number for ${field.label}.`);
             entries.push([field.name,number]);
+        }else if(field.type==='json'){
+            let parsed:unknown;try{parsed=JSON.parse(value);}catch{throw new Error(`Enter valid JSON for ${field.label}.`);}
+            if(field.name==='selectors'&&(!Array.isArray(parsed)||parsed.length>64))throw new Error('Enter at most 64 selectors as a JSON array.');
+            entries.push([field.name,parsed]);
         }else entries.push([field.name,value]);
     }
     return Object.fromEntries(entries);

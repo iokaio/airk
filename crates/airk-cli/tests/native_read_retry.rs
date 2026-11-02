@@ -54,6 +54,89 @@ fn only_complete_typed_read_rejections_authorize_replay() {
     }
 }
 
+#[tokio::test]
+async fn backend_retries_keep_arguments_and_never_replay_submitted_or_unknown_errors() -> Result<()>
+{
+    use airk_mcp::remote::{RemoteFuture, RemoteTools};
+    use std::sync::Mutex;
+    struct Backend {
+        replies: Mutex<std::collections::VecDeque<Value>>,
+        calls: Mutex<Vec<(String, serde_json::Map<String, Value>)>>,
+    }
+    impl RemoteTools for Backend {
+        fn call(
+            &self,
+            name: String,
+            arguments: serde_json::Map<String, Value>,
+        ) -> RemoteFuture<'_> {
+            Box::pin(async move {
+                self.calls.lock().unwrap().push((name, arguments));
+                Ok(self
+                    .replies
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .expect("unexpected replay"))
+            })
+        }
+    }
+    let arguments = json!({"revision":"original","cursor":"exact-cursor","name":"Copper"})
+        .as_object()
+        .unwrap()
+        .clone();
+    let success = json!({"isError":false,"content":[{"type":"text","text":"{}"}]});
+    for (hint, repeats) in [
+        (
+            json!({"status":"retry","code":"selection_busy","retryable":true,"action":"repeat_same_request","retry_after_ms":1}),
+            true,
+        ),
+        (
+            json!({"error":{"code":"direct_query_setup","reason":"busy","query_submitted":false,"retryable":true,"fresh_brokerage_required":true,"retry_after_ms":1}}),
+            true,
+        ),
+        (
+            json!({"error":{"code":"direct_query_setup","reason":"busy","query_submitted":true,"retryable":true,"fresh_brokerage_required":true,"retry_after_ms":1}}),
+            false,
+        ),
+        (
+            json!({"status":"retry","code":"unknown_busy","retryable":true,"action":"repeat_same_request","retry_after_ms":1}),
+            false,
+        ),
+    ] {
+        let refusal = envelope(hint);
+        let backend = Backend {
+            replies: Mutex::new([refusal.clone(), success.clone()].into()),
+            calls: Mutex::new(Vec::new()),
+        };
+        let mut observed = Vec::new();
+        let result = read_retry::backend(
+            &backend,
+            "airk_symbols",
+            &arguments,
+            Instant::now() + Duration::from_secs(5),
+            |reply| observed.push(reply.clone()),
+        )
+        .await?;
+        assert_eq!(
+            result,
+            if repeats {
+                success.clone()
+            } else {
+                refusal.clone()
+            }
+        );
+        assert_eq!(observed, if repeats { vec![refusal] } else { vec![] });
+        let calls = backend.calls.lock().unwrap();
+        assert_eq!(calls.len(), if repeats { 2 } else { 1 });
+        assert!(
+            calls
+                .iter()
+                .all(|(name, args)| name == "airk_symbols" && args == &arguments)
+        );
+    }
+    Ok(())
+}
+
 fn hold_gate(path: &std::path::Path) -> Result<fs::File> {
     let file = fs::OpenOptions::new().read(true).write(true).open(path)?;
     let deadline = Instant::now() + Duration::from_secs(5);

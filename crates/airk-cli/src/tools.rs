@@ -21,7 +21,98 @@ impl ToolSession for RemoteSession {
             serde_json::to_value(airk_mcp::response::ResponseMode::from_environment())
                 .expect("scalar response mode")
         });
-        self.0.call(tool, arguments).await
+        airk_mcp::remote::call_observed(self.0.as_ref(), tool, arguments).await
+    }
+}
+
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+    use airk_mcp::remote::{RemoteFuture, RemoteTools};
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    struct Backend {
+        limit: AtomicUsize,
+    }
+    impl RemoteTools for Backend {
+        fn query_concurrency(&self) -> usize {
+            self.limit.load(Ordering::SeqCst)
+        }
+        fn call(&self, tool: String, arguments: Map<String, Value>) -> RemoteFuture<'_> {
+            Box::pin(async move {
+                if arguments.get("query") == Some(&json!("refuse")) {
+                    return Ok(airk_mcp::unified::failure(
+                        "fixture_retry",
+                        "Preserve this failure",
+                    ));
+                }
+                let result = json!({"publication":{"token":"fixture"},"native_field":{"complete":true},"arguments":arguments});
+                if tool == "airk_parse" {
+                    let bytes = serde_json::to_vec(&result)?.len();
+                    let mut reply = airk_mcp::unified::success(
+                        json!({"schema":"airk.workbench.result/1","collection":"fixture","publication":null,"status":"complete","executed":true,"plan":airk_core::workbench::Plan::default(),"requires_input":[],"steps":[{"id":"query","tool":"status","arguments":{},"status":"complete","elapsed_ms":1,"result":result,"error":null}],"evidence":[],"warnings":[],"truncated":false,"completeness":[],"calls":1,"payload_bytes":bytes}),
+                    );
+                    reply.as_object_mut().unwrap().remove("structuredContent");
+                    return Ok(reply);
+                }
+                let mut reply = airk_mcp::unified::success(result);
+                if matches!(tool.as_str(), "airk_status" | "airk_diagnostics") {
+                    reply.as_object_mut().unwrap().remove("structuredContent");
+                }
+                Ok(reply)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn cli_tool_calls_keep_all_fields_and_share_mcp_capacity_observations() -> Result<()> {
+        let backend = Arc::new(Backend {
+            limit: AtomicUsize::new(16),
+        });
+        let session = RemoteSession(backend.clone());
+        for mode in ["terse", "full"] {
+            for limit in [4, 8, 16, 32, 64] {
+                backend.limit.store(limit, Ordering::SeqCst);
+                for tool in tools().into_iter().map(|tool| tool.name.to_string()) {
+                    let arguments = json!({"response_mode":mode}).as_object().unwrap().clone();
+                    let reply = session.call(tool.clone(), arguments.clone()).await?;
+                    let body = &reply["structuredContent"];
+                    assert_eq!(
+                        serde_json::from_str::<Value>(
+                            reply["content"][0]["text"].as_str().unwrap()
+                        )?,
+                        *body
+                    );
+                    let result = if tool == "airk_parse" {
+                        &body["steps"][0]["result"]
+                    } else {
+                        body
+                    };
+                    assert_eq!(result["native_field"], json!({"complete":true}), "{tool}");
+                    assert_eq!(result["arguments"], json!(arguments), "{tool}");
+                    if matches!(
+                        tool.as_str(),
+                        "airk_parse" | "airk_status" | "airk_diagnostics"
+                    ) {
+                        assert_eq!(result["query_concurrency"], limit, "{tool}");
+                    }
+                }
+            }
+        }
+        let error = session
+            .call(
+                "airk_status".into(),
+                json!({"query":"refuse"}).as_object().unwrap().clone(),
+            )
+            .await?;
+        assert_eq!(
+            error,
+            airk_mcp::unified::failure("fixture_retry", "Preserve this failure")
+        );
+        Ok(())
     }
 }
 

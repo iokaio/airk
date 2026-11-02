@@ -31,6 +31,8 @@ For command purpose, implementation ownership, effects and catalog differences, 
 
 ## Editor-only features
 
+Headless reads and executed plans retain the same complete native results as MCP and Workbench. Direct status/diagnostics include configured `query_concurrency`; completed plan steps carry that field inside their result. CLI `tools call` preserves the MCP envelope and the interactive tools shell renders its text content. See [read interface parity](read-interface-parity.md) for all operations, input defaults, scoped observations and result/export limits.
+
 These belong to the editor integration and have no headless meaning:
 
 - the first-use setup review;

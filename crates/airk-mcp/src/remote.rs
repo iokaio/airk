@@ -233,28 +233,81 @@ impl ServerHandler for Bridge {
                 serde_json::to_value(self.response_mode).expect("scalar display mode")
             });
         }
-        let result = self
-            .backend
-            .call(request.name.to_string(), arguments)
-            .await
-            .and_then(|value| {
-                let mut result = serde_json::from_value::<CallToolResult>(value)?;
-                report_query_concurrency(&mut result, &request.name, query_concurrency);
-                Ok(result)
-            });
+        let result = call_at_capacity(
+            self.backend.as_ref(),
+            request.name.to_string(),
+            arguments,
+            query_concurrency,
+        )
+        .await;
         Ok(result.unwrap_or_else(|_|CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])).into())
     }
+}
+
+/// One-shot CLI reads use the same response observations as the MCP bridge.
+/// The backend owns native channel/worker admission and read retries.
+pub async fn call_observed(
+    backend: &dyn RemoteTools,
+    tool: String,
+    arguments: serde_json::Map<String, serde_json::Value>,
+) -> anyhow::Result<serde_json::Value> {
+    let limit = backend.query_concurrency();
+    Ok(serde_json::to_value(
+        call_at_capacity(backend, tool, arguments, limit).await?,
+    )?)
+}
+
+async fn call_at_capacity(
+    backend: &dyn RemoteTools,
+    tool: String,
+    arguments: serde_json::Map<String, serde_json::Value>,
+    limit: usize,
+) -> anyhow::Result<CallToolResult> {
+    let value = backend.call(tool.clone(), arguments).await?;
+    let mut result = serde_json::from_value::<CallToolResult>(value)?;
+    report_query_concurrency(&mut result, &tool, limit);
+    Ok(result)
 }
 
 /// Reuse the admission observation even when the backend returns cached status.
 /// This describes configured capacity, not free slots or guaranteed admission.
 fn report_query_concurrency(result: &mut CallToolResult, tool: &str, limit: usize) {
-    if result.is_error == Some(true)
-        || !matches!(
-            tool,
-            "status" | "airk_status" | "diagnostics" | "airk_diagnostics"
-        )
-    {
+    if result.is_error == Some(true) {
+        return;
+    }
+    if !matches!(
+        tool,
+        "parse" | "airk_parse" | "status" | "airk_status" | "diagnostics" | "airk_diagnostics"
+    ) {
+        return;
+    }
+    // Native worker replies can carry JSON text without structured content.
+    // Unified routing adds structured content, while direct CLI/legacy calls do not.
+    if result.structured_content.is_none() {
+        result.structured_content = result
+            .content
+            .first()
+            .and_then(|content| content.as_text())
+            .and_then(|text| serde_json::from_str(&text.text).ok());
+    }
+    if matches!(tool, "parse" | "airk_parse") {
+        if let Some(value) = result.structured_content.clone() {
+            match report_plan_query_concurrency(value, limit) {
+                Ok(value) => {
+                    result.content = vec![ContentBlock::text(value.to_string())];
+                    result.structured_content = Some(value);
+                }
+                Err(error) => {
+                    *result = CallToolResult::error(vec![ContentBlock::text(error.to_string())]);
+                }
+            }
+        }
+        return;
+    }
+    if !matches!(
+        tool,
+        "status" | "airk_status" | "diagnostics" | "airk_diagnostics"
+    ) {
         return;
     }
     if let Some(body) = result
@@ -267,6 +320,59 @@ fn report_query_concurrency(result: &mut CallToolResult, tool: &str, limit: usiz
             serde_json::to_string(body).expect("JSON status body"),
         )];
     }
+}
+
+fn report_plan_query_concurrency(
+    value: serde_json::Value,
+    limit: usize,
+) -> anyhow::Result<serde_json::Value> {
+    map_plan_results(value, |tool, body| {
+        if matches!(tool, "status" | "diagnostics") {
+            body.insert("query_concurrency".into(), limit.into());
+        }
+    })
+}
+
+pub(crate) fn map_plan_results(
+    value: serde_json::Value,
+    mut update: impl FnMut(&str, &mut serde_json::Map<String, serde_json::Value>),
+) -> anyhow::Result<serde_json::Value> {
+    use airk_core::workbench::ResultEnvelope;
+    let mut envelope: ResultEnvelope = serde_json::from_value(value)?;
+    for report in &mut envelope.steps {
+        if report.status != "complete" {
+            continue;
+        }
+        let Some(body) = report.result.as_mut().and_then(|v| v.as_object_mut()) else {
+            continue;
+        };
+        let old_bytes = serde_json::to_vec(body)?.len();
+        update(&report.tool, body);
+        let new_bytes = serde_json::to_vec(body)?.len();
+        let payload_bytes = envelope.payload_bytes.saturating_sub(old_bytes) + new_bytes;
+        if payload_bytes > envelope.plan.budgets.max_bytes {
+            envelope.payload_bytes = envelope.payload_bytes.saturating_sub(old_bytes);
+            report.result = None;
+            report.status = "failed".into();
+            report.error = Some("payload budget exceeded".into());
+            envelope.truncated = true;
+            envelope.completeness.push(format!(
+                "{}: materialized payload exceeds budget",
+                report.id
+            ));
+            if envelope.status != "publication_changed" {
+                envelope.status = "partial".into();
+            }
+        } else {
+            envelope.payload_bytes = payload_bytes;
+        }
+    }
+    if envelope.status == "partial" && !envelope.steps.iter().any(|s| s.status == "complete") {
+        envelope.status = "failed".into();
+    }
+    Ok(serde_json::to_value(
+        airk_kernel::workbench::bounded_result(envelope)?,
+    )?)
 }
 
 pub async fn serve(backend: Arc<dyn RemoteTools>) -> anyhow::Result<()> {
@@ -443,6 +549,100 @@ mod tests {
     use super::*;
     use rmcp::ServiceExt;
     use tokio::io::{AsyncRead, AsyncReadExt};
+
+    fn plan_fixture() -> serde_json::Value {
+        serde_json::json!({
+            "schema":"airk.workbench.result/1", "collection":"fixture", "publication":null,
+            "status":"complete", "executed":true,
+            "plan":airk_core::workbench::Plan::default(),
+            "requires_input":[], "evidence":[], "warnings":[], "completeness":[],
+            "truncated":false, "calls":1, "payload_bytes":14,
+            "steps":[{"id":"query","tool":"status","arguments":{},"elapsed_ms":6,
+                "status":"complete","error":null,"result":{"files":1414}}]
+        })
+    }
+
+    #[test]
+    fn plan_capacity_preserves_step_contracts_and_bounds() -> anyhow::Result<()> {
+        for operation in ["status", "diagnostics"] {
+            for alias in ["parse", "airk_parse"] {
+                let mut original = plan_fixture();
+                original["steps"][0]["tool"] = operation.into();
+                for limit in [4, 8, 16, 32, 64] {
+                    let mut reply: CallToolResult =
+                        serde_json::from_value(crate::unified::success(original.clone()))?;
+                    if alias == "airk_parse" {
+                        reply.structured_content = None;
+                    }
+                    report_query_concurrency(&mut reply, alias, limit);
+                    let body = reply.structured_content.as_ref().unwrap();
+                    assert_eq!(body["steps"][0]["result"]["query_concurrency"], limit);
+                    assert_eq!(body["steps"][0]["elapsed_ms"], 6);
+                    assert_eq!(body["plan"], original["plan"]);
+                    assert_eq!(
+                        body["payload_bytes"],
+                        serde_json::to_vec(&body["steps"][0]["result"])?.len()
+                    );
+                    assert_eq!(
+                        serde_json::from_str::<serde_json::Value>(
+                            &reply.content[0].as_text().unwrap().text
+                        )?,
+                        *body
+                    );
+                }
+            }
+        }
+        let mut failed = plan_fixture();
+        failed["status"] = "failed".into();
+        failed["steps"][0]["status"] = "failed".into();
+        assert_eq!(report_plan_query_concurrency(failed.clone(), 16)?, failed);
+        let mut search = plan_fixture();
+        search["steps"][0]["tool"] = "search".into();
+        assert_eq!(report_plan_query_concurrency(search.clone(), 16)?, search);
+        let mut tight = plan_fixture();
+        tight["plan"]["budgets"]["max_bytes"] = 14.into();
+        let bounded = report_plan_query_concurrency(tight, 16)?;
+        assert_eq!(bounded["status"], "failed");
+        assert_eq!(bounded["truncated"], true);
+        assert!(bounded["steps"][0]["result"].is_null());
+        assert_eq!(bounded["payload_bytes"], 0);
+        let mut mixed = plan_fixture();
+        let mut small = mixed["steps"][0].clone();
+        small["id"] = "small".into();
+        mixed["steps"][0]["result"]["padding"] = "x".repeat(100).into();
+        mixed["steps"].as_array_mut().unwrap().push(small);
+        let raw_bytes: usize = mixed["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|step| serde_json::to_vec(&step["result"]).unwrap().len())
+            .sum();
+        mixed["payload_bytes"] = raw_bytes.into();
+        mixed["plan"]["budgets"]["max_bytes"] = raw_bytes.into();
+        let bounded = report_plan_query_concurrency(mixed, 16)?;
+        assert_eq!(bounded["status"], "partial");
+        assert!(bounded["steps"][0]["result"].is_null());
+        assert_eq!(bounded["steps"][1]["status"], "complete");
+        assert_eq!(bounded["steps"][1]["result"]["query_concurrency"], 16);
+        assert_eq!(
+            bounded["payload_bytes"],
+            serde_json::to_vec(&bounded["steps"][1]["result"])?.len()
+        );
+        let mut clipped = plan_fixture();
+        clipped["steps"][0]["result"]["padding"] = "x".repeat(100).into();
+        clipped["payload_bytes"] = serde_json::to_vec(&clipped["steps"][0]["result"])?
+            .len()
+            .into();
+        clipped["plan"]["output"]["max_bytes"] = serde_json::to_vec(&clipped)?.len().into();
+        let bounded = report_plan_query_concurrency(clipped, 16)?;
+        assert_eq!(bounded["truncated"], true);
+        assert!(bounded["steps"][0]["result"].is_null());
+        assert!(
+            serde_json::to_vec(&bounded)?.len()
+                <= bounded["plan"]["output"]["max_bytes"].as_u64().unwrap() as usize
+        );
+        Ok(())
+    }
 
     fn pending<T>(future: Pin<&mut impl Future<Output = T>>) {
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -848,6 +1048,8 @@ mod tests {
                     "diagnostics",
                     "airk_diagnostics",
                     "airk_search",
+                    "parse",
+                    "airk_parse",
                 ]
                 .into_iter()
                 .map(|name| {
@@ -862,7 +1064,7 @@ mod tests {
             }
             fn call(
                 &self,
-                _: String,
+                tool: String,
                 arguments: serde_json::Map<String, serde_json::Value>,
             ) -> RemoteFuture<'_> {
                 Box::pin(async move {
@@ -871,6 +1073,9 @@ mod tests {
                             "fixture_failure",
                             "Retain error receipt",
                         ));
+                    }
+                    if matches!(tool.as_str(), "parse" | "airk_parse") {
+                        return Ok(crate::unified::success(plan_fixture()));
                     }
                     Ok(crate::unified::success(serde_json::json!({
                         "cached": true, "observed_unix_ms": 123, "cache_age_ms": 456,
@@ -900,6 +1105,8 @@ mod tests {
             ("airk_diagnostics", "full", 4),
             ("status", "full", 8),
             ("airk_search", "terse", 16),
+            ("parse", "terse", 32),
+            ("airk_parse", "full", 64),
         ]
         .into_iter()
         .enumerate()
@@ -916,6 +1123,11 @@ mod tests {
                 )
                 .await?;
             let body = reply.structured_content.as_ref().unwrap();
+            if matches!(tool, "parse" | "airk_parse") {
+                assert_eq!(body["steps"][0]["result"]["query_concurrency"], limit);
+                assert_eq!(backend.reads.load(Ordering::SeqCst), request + 1);
+                continue;
+            }
             assert_eq!(
                 body["query_concurrency"],
                 if tool == "airk_search" { 8 } else { limit }
@@ -955,7 +1167,7 @@ mod tests {
                 .get("query_concurrency")
                 .is_none()
         );
-        assert_eq!(backend.reads.load(Ordering::SeqCst), 7);
+        assert_eq!(backend.reads.load(Ordering::SeqCst), 9);
         client.close().await?;
         server.close().await?;
         Ok(())

@@ -42,7 +42,7 @@ fn configured_query_capacity_updates_live_worker_and_reads_through_matching_chan
         ensure!(matches!(airk_cli::service_runtime::request(&runtime, Method::Register { project: project.clone() }).await?, Response::Registered { .. }), "registration failed");
         let backend = airk_cli::project_client::tools(runtime.clone(), project.binding);
         // Establish the worker first; later configurations must update this same owner.
-        let first = backend.call("airk_symbols".into(), serde_json::json!({"name":"Copper"}).as_object().unwrap().clone()).await?;
+        let first = read_retry::backend(backend.as_ref(), "airk_symbols", serde_json::json!({"name":"Copper"}).as_object().unwrap(), Instant::now()+Duration::from_secs(5), |reply| eprintln!("capacity fixture initial refusal: {reply}")).await?;
         ensure!(first["isError"] != true, "initial read failed: {first}");
         for concurrency in [4,16,64,4] {
             let configuration = ResourceConfiguration { query_concurrency: concurrency, ..Default::default() };
@@ -51,7 +51,7 @@ fn configured_query_capacity_updates_live_worker_and_reads_through_matching_chan
             let mut requests = tokio::task::JoinSet::new();
             for _ in 0..concurrency {
                 let backend = backend.clone();
-                requests.spawn(async move { backend.call("airk_symbols".into(), serde_json::json!({"name":"Copper","max_bytes":4000}).as_object().unwrap().clone()).await });
+                requests.spawn(async move { read_retry::backend(backend.as_ref(), "airk_symbols", serde_json::json!({"name":"Copper","max_bytes":4000}).as_object().unwrap(), Instant::now()+Duration::from_secs(5), |reply| eprintln!("capacity fixture {concurrency}-channel refusal: {reply}")).await });
             }
             while let Some(reply) = requests.join_next().await {
                 let reply = reply??;

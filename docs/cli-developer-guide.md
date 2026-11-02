@@ -1,6 +1,6 @@
 # CLI developer guide
 
-Current command behavior for the **AIRK 1.8.6 release candidate**. This guide explains why each public command exists, how it behaves and where developers should follow its implementation. The generated [CLI reference](cli-reference.md) remains authoritative for every flag, default and complete parser help; [CLI workflows](cli.md) and [headless feature mapping](headless-cli.md) provide task-oriented walkthroughs. Candidate qualification is tracked separately in the [1.8.6 record](releases/release-1.8.6.md).
+Current command behavior for **AIRK 1.8.7**. This guide explains why each public command exists, how it behaves and where developers should follow its implementation. The generated [CLI reference](cli-reference.md) remains authoritative for every flag, default and complete parser help; [CLI workflows](cli.md) and [headless feature mapping](headless-cli.md) provide task-oriented walkthroughs. Current qualification and dated development evidence are tracked separately in the [1.8.7 record](releases/release-1.8.7.md).
 
 **Related developer reference: [MCP developer guide](mcp-developer-guide.md)** explains every unified MCP tool, inputs, examples, limitations and implementation/test ownership.
 
@@ -20,6 +20,8 @@ These counts describe different catalogs, not the size of the CLI. `airk tools l
 The public parser reference has 120 command sections including root and command groups. This guide also includes the explicitly implemented `airk tools help` command, which the reference walker omits as a help-named child. These are documentation entry counts, not 121 independent evidence tools.
 
 ## Developer contracts and examples
+
+Equivalent CLI, MCP and Workbench reads share the canonical handlers and retain complete result data. `tools call` emits the MCP envelope; `tools shell` pretty-prints its text payload; dedicated aliases build arguments with their documented defaults. Direct status/diagnostics report `query_concurrency` at the result's top level; executed parse plans retain it inside each completed status/diagnostics step. [The parity audit](read-interface-parity.md) records all 17 read mappings, supported inputs and the actual-process regressions. Separate requests retain their own request IDs, observation times and cache ages.
 
 - Select the canonical source root, separate index data directory and collection/binding. A UI dropdown does not redirect a native query. Keep index/control/log storage outside source roots.
 - Published evidence is an indexed snapshot. Preserve publication tokens, hashes, validators, original locations, continuation filters and byte budgets. Verify live files separately before editing.
@@ -1450,7 +1452,7 @@ Usage: airk setup-model [OPTIONS]
 
 ## airk status
 
-In the 1.8.4 local candidate, a completed status query that overlaps ordinary scalar-cache invalidation returns its original snapshot successfully with `status_observation.superseded: true`, `reason: scalar_invalidation` and an explanatory message. Original publication and observation age are retained. The superseded snapshot does not repopulate the current cache or acknowledge an obsolete status receipt; the query is not replayed. Project/namespace changes, authenticated worker replacement, expired source authorization and shutdown retain their existing rejection behavior. Cached reuse still has its five-second limit, and 1.8.5 uses the configured evidence capacity plus one reserved status slot.
+A completed status query that overlaps ordinary scalar-cache invalidation returns its original snapshot successfully with `status_observation.superseded: true`, `reason: scalar_invalidation` and an explanatory message. Original publication and observation age are retained. The superseded snapshot does not repopulate the current cache or acknowledge an obsolete status receipt; the query is not replayed. Project/namespace changes, authenticated worker replacement, expired source authorization and shutdown retain their existing rejection behavior. Cached reuse has its five-second limit; configured evidence capacity has one additional reserved status slot.
 
 **Purpose:** Print the project's publication, freshness, coverage and job status
 
@@ -1647,3 +1649,5 @@ Usage: airk watch [OPTIONS] <MODE>
 Read the parser/dispatcher and owning module before editing; the links above are entrypoints, not a claim that every behavior lives in main.rs. Runtime dispatch leads to staging, activation, layout, managed-payload, repair and retirement modules; their unit tests sit beside those implementations. Evidence dispatch leads to the shared [MCP native handlers](../crates/airk-mcp/src/lib.rs), Kernel queries and Store. The CLI owns transport, scheduling and lifecycle; it does not move service ownership into the editor or make Kernel/Store depend on UI adapters.
 
 For help changes, regenerate docs/cli-reference.md with the existing parser-reference test workflow and review its diff. Keep this guide, the [MCP developer guide](mcp-developer-guide.md), public schemas, [CLI workflows](cli.md), release notes and README links consistent. Run the relevant command/contract tests and repository checks; link evidence for the exact platform tested and report unavailable qualification honestly.
+
+The [CLI, MCP and Workbench parity audit](read-interface-parity.md) maps all read operations and records complete-data, observation, budget and export contracts for 1.8.7.

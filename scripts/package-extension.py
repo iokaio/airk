@@ -39,7 +39,7 @@ JSONC_FILES = ("package.json", "LICENSE.md", "lib/umd/main.js", "lib/umd/impl/ed
                "lib/umd/impl/format.js", "lib/umd/impl/parser.js", "lib/umd/impl/scanner.js",
                "lib/umd/impl/string-intern.js")
 ILLUSTRATIONS = ("local-evidence.png", "index-to-context.png")
-PRODUCT_ILLUSTRATIONS = {"workbench-1.7.1-results.png": "workbench", "explorer-1.7.1.png": "explorer"}
+PRODUCT_ILLUSTRATIONS = {"workbench-1.8.7-results.png": "workbench", "explorer-1.7.1.png": "explorer"}
 ICONS = ("airk.svg", "icon.png")
 
 

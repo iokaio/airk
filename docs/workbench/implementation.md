@@ -1,5 +1,11 @@
 # Workbench development branch
 
+## 1.8.7 full MCP response parity
+
+All 17 native read commands use the MCP handlers inside the outer bounded plan lifetime. Workbench requests full response data and explicitly retains rich facts unless compact is selected. Completed status/diagnostics steps include configured `query_concurrency` from the outer admission observation. Fact records use `items`; capabilities, help, provenance, readiness, conditional reads and continuity options use their canonical MCP contracts. Forms and slash flags expose the native read inputs, with JSON arrays for change selectors. Structured results offer **Complete response**, and full JSON/Markdown copies and exports retain the entire response even when cited cards are present. User-selected evidence exports remain explicitly selected subsets. Saved old turns retain the bytes originally returned; rerun to obtain newly implemented fields.
+
+See the [consolidated 1.8.7 record](../releases/release-1.8.7.md) for current validation and dated development evidence.
+
 ## 1.8.4 bounded discovery controls
 
 Workbench consumes the native operation catalog rather than duplicating a separate retrieval implementation. **+ → Tool forms** exposes search/reference extraction filters, symbols/code-facts matching and qualified counts, reference ordering/file summaries and continuation controls. Enum selectors and optional Default/Yes/No controls retain JSON types; empty controls stay omitted. Catalog length/number limits are applied by the actual webview form and independently enforced natively. Supported slash commands include `/code-facts` and the same filter/matching/paging flags; boolean flags accept optional true/false.
@@ -18,11 +24,11 @@ Structured result details show top-level fact count precision, nested reference 
 
 Continuation detection understands both flattened discovery cursors and nested reference page cursors. **Fetch next page** preserves selectors and publication. A resumable complete-record budget refusal displays its required bytes; explicit continuation may raise that step's text allowance only within the original remaining aggregate budget and supported maximum. Terminal record/scan limits remain incomplete and cannot create an endless continuation loop.
 
-The host retains full results and JSON exports. Markdown exports include discovery summaries, count precision, pointers, qualifiers and continuation metadata even when evidence cards are present. Selected JSON/Markdown copies retain minimal qualification for their selected source-step IDs, labeled `original_source_request`; full page summaries, hints, arguments and counts remain in complete exports. Selected citations and publication identity stay intact. Scalar status/save updates retain existing ownership and do not replace those bodies. Native processing remains in Kernel/Store; the extension renders bounded display projections and sends explicitly chosen read-only follow-ups. See the [1.8.4 release/qualification record](../releases/release-1.8.4.md).
+The host retains full results and JSON exports. Markdown exports include discovery summaries, count precision, pointers, qualifiers and continuation metadata even when evidence cards are present. Selected JSON/Markdown copies retain minimal qualification for their selected source-step IDs, labeled `original_source_request`; full page summaries, hints, arguments and counts remain in complete exports. Selected citations and publication identity stay intact. Scalar status/save updates retain existing ownership and do not replace those bodies. Native processing remains in Kernel/Store; the extension renders bounded display projections and sends explicitly chosen read-only follow-ups. See the [1.8.4 release/qualification record](../releases/release-1.8.7.md#candidate-1-8-4).
 
 ## 1.8.2 conversational evidence requests (unpublished)
 
-A finite conversational grammar recognizes complete simple evidence requests before classifier fallback. Explicit typed or quoted single identifiers and requests for the definition or declaration of a name use the existing bounded definition recipe, including “I want to know about struct Owner.” Symbol extraction preserves `Owner` as the requested name rather than treating `struct Owner` as one identifier. Untyped capitalized, snake_case or qualified identifiers collect both symbol candidates and text search; capitalization alone cannot distinguish a symbol from a topic such as Rust. Ordinary lowercase or multiword topics use text search. Supported complete forms include “Find the…”, “Tell me about…”, “I want to know about…”, “What is…”, polite/modal variants, a type word before or after its name, and dotted or `::` qualified names. Unsupported operations and compound requests still require clarification or an explicit reviewed plan. General symbol requests may return multiple cited candidates without choosing a definition path; a definition recipe that needs one of several paths requires an explicit choice. Existing definition/reference forms also normalize articles and type words, including “find definition of struct Owner” and “where is the Owner struct defined?”. Lowercase or multiword definition targets keep the existing bounded name resolver. Uncertain classifier results explain the candidate, rejection reason and explicit-command examples. Learned classifier proposals remain inert and require explicit plan confirmation; this fix does not qualify learned automatic execution. The [1.8.2 candidate record](../releases/release-1.8.2.md) records implementation and validation limits.
+A finite conversational grammar recognizes complete simple evidence requests before classifier fallback. Explicit typed or quoted single identifiers and requests for the definition or declaration of a name use the existing bounded definition recipe, including “I want to know about struct Owner.” Symbol extraction preserves `Owner` as the requested name rather than treating `struct Owner` as one identifier. Untyped capitalized, snake_case or qualified identifiers collect both symbol candidates and text search; capitalization alone cannot distinguish a symbol from a topic such as Rust. Ordinary lowercase or multiword topics use text search. Supported complete forms include “Find the…”, “Tell me about…”, “I want to know about…”, “What is…”, polite/modal variants, a type word before or after its name, and dotted or `::` qualified names. Unsupported operations and compound requests still require clarification or an explicit reviewed plan. General symbol requests may return multiple cited candidates without choosing a definition path; a definition recipe that needs one of several paths requires an explicit choice. Existing definition/reference forms also normalize articles and type words, including “find definition of struct Owner” and “where is the Owner struct defined?”. Lowercase or multiword definition targets keep the existing bounded name resolver. Uncertain classifier results explain the candidate, rejection reason and explicit-command examples. Learned classifier proposals remain inert and require explicit plan confirmation; this fix does not qualify learned automatic execution. The [1.8.2 candidate record](../releases/release-1.8.7.md#candidate-1-8-2) records implementation and validation limits.
 
 Workbench now reveals a new pending, completed or failed turn at the **query bubble**, keeping the question visible above its timestamp, details and results. Oversized queries start at their top. Existing transcript/nested scroll positions, expanded details, output selections and draft input remain retained across simulated tab hiding and scalar status/save updates. The compiled fictional-data Edge 156 browser fixture passed these cases; it does not establish actual installed VS Code tab-switch acceptance. The earlier 1.8.1 first-result behavior remains recorded below as history.
 
@@ -98,7 +104,13 @@ See the [1.7.1 candidate record](../releases/release-1.7.1.md) for validation.
 
 The composer footer reads “Local index · Read-only (no generative AI used in AIRK Workbench)”. Supported intent parsing still uses the fixed local classifier; this label makes no claim that all machine learning is absent.
 
-### Rendered 1.7.1 previews
+### Rendered 1.8.7 listing preview
+
+![Workbench 1.8.7 with code and document evidence](images/workbench-1.8.7-results.png)
+
+Generated with `node scripts/render-workbench.cjs --listing` from the current compiled Workbench browser bundle and fictional host data. The preview shows linked selection controls, source/context actions, Complete response and export. It is not installed-editor or retrieval-quality qualification. Packaging explicitly allowlists this bounded public asset for the Marketplace listing.
+
+### Historical rendered 1.7.1 previews
 
 These are screenshots of the compiled browser bundle with fictional host data, not installed-editor qualification.
 
@@ -107,3 +119,5 @@ These are screenshots of the compiled browser bundle with fictional host data, n
 ![Composer + menu](images/workbench-1.7.1-add-menu.png)
 
 ![Workbench results](images/workbench-1.7.1-results.png)
+
+The [CLI, MCP and Workbench parity audit](../read-interface-parity.md) maps all read operations and records complete-data, observation, budget and export contracts for 1.8.7.

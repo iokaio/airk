@@ -1,21 +1,10 @@
 # Release records
 
+- [1.8.7](release-1.8.7.md): all unpublished 1.8.0-1.8.6 changes, complete CLI/MCP/Workbench read results, configured concurrency and dated validation.
+
 Versioned release notes and dated release evidence live here. Each record retains its original version, date and qualification limits; a record alone does not establish publication. Current release procedures remain in the [release workflow](../release-workflow.md).
 
 ## Versions
-
-- [1.8.6](./release-1.8.6.md): status/diagnostics request capacity and the preceding unpublished MCP, Workbench and concurrency improvements; publication evidence recorded separately
-
-- [1.8.5](./release-1.8.5.md): configurable concurrent evidence requests and matching native channel/project capacity; unpublished manual-test candidate
-- [1.8.4](./release-1.8.4.md): distinct-version local candidate carrying the unpublished MCP/Workbench changes and status/Windows permission follow-ups; validation and artifact identity recorded separately
-
-- [1.8.3](./release-1.8.3.md): development candidate for MCP admission, scoped identifier discovery and bounded navigation; qualification pending
-
-- [1.8.2](./release-1.8.2.md) — installed startup/status responsiveness, conversational evidence parsing, query-first Workbench reveal, result selection/copy and [performance measurements/causal analysis](../performance-improvements-1.8.2.md); publication verified separately
-
-- [1.8.1](./release-1.8.1.md) — unpublished source candidate: reveal Workbench results and retain scroll position across sidebar tab switches
-
-- [1.8.0](./release-1.8.0.md) — unpublished source candidate: synchronized versions and supported forward upgrade policy; optimization phases pending
 
 - [1.7.6](./release-1.7.6.md) — published stable release (2026-10-31): review 02 follow-up (setup review, native execution control, uninstall cleanup, data purge, advisory gate)
 - [1.7.3](./release-1.7.3.md) — published stable release: Marketplace images, release promotion and repository review fixes

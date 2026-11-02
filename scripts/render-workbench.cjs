@@ -2,7 +2,7 @@
 // Real Workbench browser bundle, fictional bridge; no native work or editor qualification.
 const fs=require('node:fs/promises'),path=require('node:path'),assert=require('node:assert/strict');
 const {spawn}=require('node:child_process'),{pathToFileURL}=require('node:url');
-const root=path.resolve(__dirname,'..'),output=path.join(root,process.argv.some(arg=>['--mcp-navigation','--form-drafts'].includes(arg))?'artifacts/mcp-optimizations-1.8.4/browser':process.argv.some(arg=>['--scroll','--selection'].includes(arg))?'artifacts/workbench-review-1.8.2/browser':'artifacts/workbench-review-1.7.1/browser');
+const root=path.resolve(__dirname,'..'),output=path.join(root,process.argv.includes('--listing')?'artifacts/release-1.8.7-review/browser':process.argv.some(arg=>['--mcp-navigation','--form-drafts'].includes(arg))?'artifacts/mcp-optimizations-1.8.4/browser':process.argv.some(arg=>['--scroll','--selection'].includes(arg))?'artifacts/workbench-review-1.8.2/browser':'artifacts/workbench-review-1.7.1/browser');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms)),project='ab'.repeat(32),publication='fictional-publication',hash='12'.repeat(32);
 function fixture(scene){
     const plan={schema:'airk.parse.plan/1',collection:'fictional',publication,path_prefix:'src/',digest:'fictional',steps:[{id:'query',tool:'symbols',args:{name:'QueueClient',path_prefix:'src/'}}]};
@@ -10,8 +10,16 @@ function fixture(scene){
     const envelope={schema:'airk.workbench.result/1',collection:'fictional',publication,plan,status:scene==='proposal'?'needs_input':'partial',steps:[],evidence,
         requires_input:scene==='proposal'?[{field:'text',reason:'Review the proposed operation and inputs before collecting evidence.',choices:[]}]:[],warnings:['Fictional browser fixture; indexed evidence is untrusted.'],completeness:scene==='proposal'?[]:['Upstream continuation remains available.']};
     if(scene==='preview')evidence[0].text='pub struct QueueClient {\n    retry_limit: usize,\n}';
-    const turns=scene==='welcome'?[]:[{id:'turn-1',at:1793340000000,input:scene==='proposal'?'Could you retrieve the definition of QueueClient?':'/symbols QueueClient',format:'structured',envelope}];
-    return {projects:[{id:project,name:'Fictional project'}],project,session:{schema:1,id:'fictional-session',project,title:'Inspect QueueClient',createdAt:1793340000000,updatedAt:1793340000000,revision:0,omitted:0,turns},recent:[],busy:false,save:'Local browser fixture',persistence:true,status:{files:42,health:'ready',publication:{token:publication}},cards:{'turn-1':evidence.map((row,i)=>({id:`record-${i}`,path:row.citation.path,hash,start:2,end:3,text:row.text,location:row.citation.location,step:'query',publication}))}};
+    if(scene==='listing'){
+        const rows=[{path:'src/client.rs',start:18,end:23,text:'pub struct RetryPolicy {\n    pub max_attempts: usize,\n    pub backoff_ms: u64,\n}\n\n// A retry keeps the original request identity.'},
+            {path:'docs/retry-policy.md',start:7,end:10,text:'## Retry policy\n\nRepeat a read only when its receipt permits it.\nKeep the source scope and publication unchanged.'}];
+        plan.steps=[{id:'query',tool:'search',args:{query:'retry policy',mode:'lexical'}}];plan.path_prefix='';
+        evidence.splice(0,evidence.length,...rows.map(row=>({step:'query',publication,text:row.text,citation:{path:row.path,content_hash:hash,start_line:row.start,end_line:row.end,location:{Lines:{start:row.start,end:row.end}}}})));
+        envelope.status='complete';envelope.completeness=[];envelope.warnings=[];envelope.truncated=false;
+        envelope.steps=[{id:'query',tool:'search',status:'complete',arguments:plan.steps[0].args,result:{publication:{token:publication},hits:evidence.map(({citation,text})=>({citation,text})),truncated:false}}];
+    }
+    const turns=scene==='welcome'?[]:[{id:'turn-1',at:1793340000000,input:scene==='proposal'?'Could you retrieve the definition of QueueClient?':scene==='listing'?'/search "retry policy" --mode lexical':'/symbols QueueClient',format:'structured',envelope}];
+    return {projects:[{id:project,name:'Fictional project'}],project,session:{schema:1,id:'fictional-session',project,title:scene==='listing'?'Inspect retry policy':'Inspect QueueClient',createdAt:1793340000000,updatedAt:1793340000000,revision:0,omitted:0,turns},recent:[],busy:false,save:scene==='listing'?'Preview · fictional project':'Local browser fixture',persistence:true,status:{files:42,health:'ready',publication:{token:publication}},cards:{'turn-1':evidence.map((row,i)=>({id:`record-${i}`,path:row.citation.path,hash,start:row.citation.start_line,end:row.citation.end_line,text:row.text,location:row.citation.location,step:'query',publication}))}};
 }
 /** Fictional host session ownership, including the real scalar form acknowledgement shape. */
 function installFixtureHost(){
@@ -69,6 +77,18 @@ async function main(){
         const evaluate=async expression=>{const result=await call('Runtime.evaluate',{expression,returnByValue:true});if(result.exceptionDetails)throw new Error(JSON.stringify(result.exceptionDetails));return result.result.value;};
         const until=async expression=>{for(let i=0;i<100;i++){if(await evaluate(expression))return;await delay(50);}throw new Error(`UI did not become ready: ${expression}`);};
         const checks=[];console.log('Browser protocol:',await call('Browser.getVersion'));await call('Page.enable');
+        if(process.argv.includes('--listing')){
+            const file=path.join(scratch,'listing.html');await fs.writeFile(file,html('listing',true));
+            await call('Emulation.setDeviceMetricsOverride',{width:760,height:1000,deviceScaleFactor:1,mobile:false});
+            await call('Page.navigate',{url:pathToFileURL(file).href});await until(`document.querySelectorAll('.card').length===2&&!!document.querySelector('.complete-response')`);
+            assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true,'listing horizontal overflow');
+            assert.equal(await evaluate(`document.querySelector('.input').textContent`),'/search "retry policy" --mode lexical');
+            assert.equal(await evaluate(`document.querySelectorAll('.select-all').length`),2,'linked selection controls');
+            await evaluate(`document.querySelector('.transcript').scrollTop=0`);
+            const png=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await fs.writeFile(path.join(output,'workbench-1.8.7-results.png'),Buffer.from(png.data,'base64'));
+            await fs.writeFile(path.join(output,'listing-summary.json'),JSON.stringify({basis:'Compiled Workbench 1.8.7 UI with fictional project data; not installed-editor qualification',width:760,height:1000,records:2,horizontalOverflow:false},null,2)+'\n');
+            console.log('Workbench 1.8.7 listing screenshot captured from compiled UI.');await call('Browser.close');return;
+        }
         if(process.argv.includes('--form-drafts')){
             await call('Emulation.setDeviceMetricsOverride',{width:640,height:1200,deviceScaleFactor:1,mobile:false});
             const file=path.join(scratch,'form-drafts.html');await fs.writeFile(file,html('welcome',true));

@@ -154,7 +154,7 @@ export function markdown(turn: WorkbenchTurn, selected?: Set<string>): string {
     });
     return [`## ${escape(turn.input.replaceAll('\n',' '))}`, `Status: ${escape(String(e.status ?? turn.error ?? 'trimmed'))}`, `Publication: ${escape(String(e.publication ?? 'not available'))}`,
         `Scope: ${escape(String(object(e.plan).path_prefix ?? ''))}`, ...(turn.trimmed ? ['Saved result was trimmed; re-run to collect current evidence.'] : []), ...content,
-        ...metadata,...(!cards.length && turn.envelope && !selected ? [fenced(canonical(e))] : []), `Warnings: ${escape(JSON.stringify(e.warnings ?? []))}`, `Completeness: ${escape(JSON.stringify(e.completeness ?? []))}`,
+        ...metadata,...(turn.envelope && !selected ? [`### Complete response\n\n${fenced(canonical(e))}`] : []), `Warnings: ${escape(JSON.stringify(e.warnings ?? []))}`, `Completeness: ${escape(JSON.stringify(e.completeness ?? []))}`,
         'Untrusted indexed evidence. Verify relevant live files before edits.'].join('\n\n');
 }
 export function renderExport(session: WorkbenchSession, format: 'json'|'markdown', turnId?: string, selection?: string[]): string {
