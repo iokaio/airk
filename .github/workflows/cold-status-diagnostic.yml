@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+name: Cold status diagnostic
+on:
+  push:
+    branches: [diag/cold-status-55]
+    paths:
+      - .github/workflows/cold-status-diagnostic.yml
+      - crates/airk-mcp/src/remote.rs
+      - packages/vscode/src/mcpStdioSession.ts
+permissions:
+  contents: read
+jobs:
+  cold-status:
+    runs-on: macos-15-intel
+    timeout-minutes: 50
+    env:
+      CARGO_BUILD_JOBS: '4'
+      CARGO_INCREMENTAL: '0'
+      MACOSX_DEPLOYMENT_TARGET: '13.3'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - run: rustup show
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          shared-key: native-x86_64-apple-darwin
+          cache-workspace-crates: false
+          cache-on-failure: false
+          save-if: 'false'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24.15.0'
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode
+      - run: python scripts/provision-local-model.py --destination target/local-vector-model --download
+      - run: python scripts/provision-onnx-runtime.py --download
+      - run: python scripts/build-service-runtime.py --profile release --destination artifacts/runtime/x86_64-apple-darwin
+      - run: npm run compile --prefix packages/vscode
+      - name: Twelve isolated pinned and source cold-client cohorts, retaining actual failures
+        shell: bash
+        env:
+          AIRK_TEST_BINARY: ${{ github.workspace }}/artifacts/runtime/x86_64-apple-darwin/AIRK.app/Contents/MacOS/airk
+          AIRK_COLD_STATUS_TRACE: '1'
+        run: |
+          status=0
+          for pass in $(seq 1 12); do
+            echo "Cold client cohort $pass of 12" | tee -a artifacts/cold-status.log
+            if node --test --test-name-pattern='four cold (pinned|source) clients' packages/vscode/out/test/nativeSmoke.test.js 2>&1 | tee -a artifacts/cold-status.log; then
+              :
+            else
+              status=1
+            fi
+          done
+          exit "$status"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: cold-status-trace-${{ github.run_id }}
+          path: artifacts/cold-status.log
+          if-no-files-found: warn
+          retention-days: 7

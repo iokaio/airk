@@ -39,7 +39,10 @@ export class McpStdioSession {
         child.on('exit', code => this.fail(new McpSessionError('exited', `AIRK MCP exited (${code}): ${this.stderr}`)));
         child.stdin.on('error', error => this.fail(new McpSessionError('exited', `AIRK MCP input closed: ${error.message}`)));
         child.stdout.setEncoding('utf8');
-        child.stderr.on('data', bytes => { this.stderr = (this.stderr + bytes.toString()).slice(-4096); });
+        child.stderr.on('data', bytes => {
+            this.stderr = (this.stderr + bytes.toString()).slice(-4096);
+            if(process.env.AIRK_COLD_STATUS_TRACE==='1')process.stderr.write(`[mcp child ${child.pid}] ${bytes.toString().slice(-4096)}`);
+        });
         child.stdout.on('data', (text: string) => this.read(text));
     }
 

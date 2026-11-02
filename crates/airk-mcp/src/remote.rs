@@ -240,7 +240,11 @@ impl ServerHandler for Bridge {
             query_concurrency,
         )
         .await;
-        Ok(result.unwrap_or_else(|_|CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])).into())
+        Ok(result.unwrap_or_else(|error| {
+            let detail = format!("{error:#}").chars().take(2048).collect::<String>();
+            eprintln!("AIRK_COLD_STATUS_DIAGNOSTIC pid={} {detail}", std::process::id());
+            CallToolResult::error(vec![ContentBlock::text("AIRK direct project connection failed. Retry through fresh brokerage with the same revision selector; use the service console for indexing or repair.")])
+        }).into())
     }
 }
 
