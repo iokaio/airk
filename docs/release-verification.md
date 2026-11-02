@@ -40,6 +40,17 @@ The check does **not** prove that rebuilding the source reproduces the same byte
 
 5. Record the result, including which install, upgrade and uninstall tests actually ran on that platform. A source test, a CI candidate test and a test of the signed installed artifact are separate kinds of evidence.
 
+## Recorded result: 1.8.7, Windows x64 and Linux x64 (2026-11-02)
+
+| Item | Observed |
+|---|---|
+| Channel and tag | stable, `v1.8.7`, published on GitHub on 2026-11-02 |
+| Source identity | commit `0dbd2f0729d158a73686ce726a424555a9bbb3f8`, tree `2b84150e4d42b6175800240d5eb7477223a88beb` (expected commit supplied with `--commit`) |
+| Producer run | `41405017894`, workflow "GitHub release" at the same commit, conclusion success; it promoted main CI `41398425043` attempt 1 (`airk-ci-producer/1`) |
+| Windows x64 VSIX SHA-256 | `dd93dc9edec55d89118be9be11d0199f189d972a0823a63178c596cecf9e8cfe`; native archive `7b39c86d0c85813fc8cc0c54e834e0e7726c7f103be05f9dffae2008e5e7c505`; all 22 checks passed; all 761 VSIX payload files and 674 bundled runtime files matched; `airk.exe` and `airk-embed.exe` Authenticode `Valid`, signer `CN=Ioka LLC` |
+| Linux x64 VSIX SHA-256 | `edffffca029ad196835921c98c35a633778abbc58c15c0a26234e71022b76608`; native archive `05cd2239c089993e3237d17d117912262ee734fc36d90594c89585736fd86285`; all 20 checks passed; all 761 VSIX payload files and 674 bundled runtime files matched |
+| Not verified | bit-for-bit reproduction from source; macOS packages (signed and notarized by the workflow, not re-checked locally); installed-editor behavior of these artifacts |
+
 ## Recorded result: 1.7.6, Windows x64 and Linux x64 (2026-10-31)
 
 | Item | Observed |
