@@ -32,6 +32,47 @@ fn record(time: u64) -> LogRecord {
     record
 }
 #[test]
+fn helper_recovery_codes_survive_native_recent_and_retained_export() -> Result<()> {
+    let root = private_root()?;
+    let mut sink = Sink::open(root.path())?;
+    let mut expected = Vec::new();
+    for (index, code) in [
+        "helper_cooldown",
+        "helper_cooldown_elapsed",
+        "helper_healthy_reset",
+        "helper_grant_missing",
+        "helper_grant_registered",
+        "helper_exit_code_3221225477",
+        "helper_exit_signal_9",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let mut value = record(index as u64);
+        value.kind = if code.starts_with("helper_exit") {
+            LogKind::ModelFailed
+        } else {
+            LogKind::ModelRecovery
+        };
+        value.code = Some((*code).into());
+        value.validate()?;
+        sink.append(&value)?;
+        expected.push(value);
+    }
+    let recent = recent(root.path(), 32)?;
+    let retained = export(root.path())?;
+    assert_eq!(
+        serde_json::to_value(&recent.records)?,
+        serde_json::to_value(&expected)?
+    );
+    assert_eq!(
+        serde_json::to_value(&recent)?,
+        serde_json::to_value(&retained)?
+    );
+    Ok(())
+}
+
+#[test]
 fn full_export_reads_every_retained_file_and_excludes_malformed_payloads() -> Result<()> {
     let root = private_root()?;
     let sink = Sink::open(root.path())?;

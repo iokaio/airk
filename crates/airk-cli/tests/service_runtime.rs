@@ -189,6 +189,30 @@ fn process_logs_survive_shutdown_and_unknown_log_state_does_not_disable_health()
             observation.logs.available && observation.logs.write_failures == 0,
             "owned diagnostic log unavailable"
         );
+        ensure!(
+            matches!(
+                request(Method::StartEmbedding).await?,
+                Response::EmbeddingStarting
+            ),
+            "explicit helper recovery request was not admitted"
+        );
+        let until = Instant::now() + Duration::from_secs(15);
+        loop {
+            let Response::Logs { page } = request(Method::Logs { limit: 32 }).await? else {
+                anyhow::bail!("recovery log control unavailable")
+            };
+            if page.records.iter().any(|record| {
+                record.kind == LogKind::ModelRecovery
+                    && record.code.as_deref() == Some("helper_explicit_start")
+            }) {
+                break;
+            }
+            ensure!(
+                Instant::now() < until,
+                "native IPC omitted helper recovery record"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
         let Response::Logs { page } = request(Method::Logs { limit: 32 }).await? else {
             anyhow::bail!("cached log control unavailable")
         };
@@ -206,6 +230,19 @@ fn process_logs_survive_shutdown_and_unknown_log_state_does_not_disable_health()
         "logged service did not drain"
     );
     let cached = airk_cli::service_logs::recent(&root, 32)?;
+    for selection in [Vec::<&str>::new(), vec!["--all"]] {
+        let exported = command()
+            .args(["service", "logs", "--runtime-dir"])
+            .arg(&root)
+            .args(["--format", "json"])
+            .args(selection)
+            .output()?;
+        ensure!(exported.status.success(), "cached native CLI export failed");
+        ensure!(
+            serde_json::from_slice::<Value>(&exported.stdout)? == serde_json::to_value(&cached)?,
+            "CLI recent/retained page differs from the complete canonical native page"
+        );
+    }
     let readable = Command::new(env!("CARGO_BIN_EXE_airk"))
         .args([
             "--root",

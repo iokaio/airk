@@ -1,5 +1,14 @@
 # Bounded service diagnostics
 
+The 1.8.8 working build adds `model_recovery` transitions for helper backoff,
+cooldown, healthy reset and grant replacement. `model_failed` can retain the
+observed native exit code or Unix signal as a bounded `code`, alongside startup
+verification/containment and control failures. These codes survive the complete
+native log page, CLI JSON/text, console display and retained JSON export. Malformed
+helper output currently closes its reader and can appear as `helper_control_closed`;
+it is not distinguished from every other control EOF. No stderr content is added,
+and new observations cannot reconstruct the cause of older unexplained exits.
+
 Version 1.5.10 introduced a separate local raw job-error ring. In 1.6.4 it also retains bounded extension setup, connection and polling/action errors; it is not restricted to jobs. Management › Logs offers **Open raw diagnostic log** and **Save raw diagnostic log…**, and failed project/repair panels link directly to it. `airk service logs --runtime-dir <control-directory> --raw` reads this ring without starting the service. It captures the exception chain at the worker's failure boundary, with exact project/job/grant/worker identities and operation. Deferred failed attempts are retained too. Each chain is limited to 8 KiB/32 causes with an explicit truncation flag; FIFO segments bound each stream to a 200 MB high-water mark and purge oldest segments to at most 100 MB. An empty ring explicitly means no raw records were retained; earlier generic failures cannot be reconstructed.
 
 Raw records can contain paths and exception values. They stay local and are excluded from the metadata-only diagnostic report, ordinary summary ring and public MCP responses. Review them before sharing. Their protected native ring is named `job-errors-1`, independently of the AIRK release version. Abrupt process death before reporting an error can still leave no exception chain; this is not a complete crash dump or subprocess stderr transcript.

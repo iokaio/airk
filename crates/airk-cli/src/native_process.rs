@@ -5,6 +5,22 @@ use std::{
     process::{Child, Command},
 };
 
+/// Contain this exact newly spawned child before Init, or terminate and reap it.
+pub(crate) fn attach_owned(
+    child: &mut Child,
+    attach: impl FnOnce(&mut Child) -> anyhow::Result<crate::child_job::ChildJob>,
+) -> anyhow::Result<crate::child_job::ChildJob> {
+    use anyhow::Context;
+    match attach(child) {
+        Ok(containment) => Ok(containment),
+        Err(error) => {
+            let _ = child.kill();
+            child.wait().context("failed to reap uncontained child")?;
+            Err(error)
+        }
+    }
+}
+
 /// Replace this process with `command` (Unix) or run it with inherited stdio inside a
 /// kill-on-close job and exit with its code (Windows). Callers must not write to stdout first.
 pub(crate) fn forward_stdio(mut command: Command) -> anyhow::Result<()> {
@@ -57,14 +73,7 @@ impl ContainedChild {
         mut child: Child,
         attach: impl FnOnce(&mut Child) -> anyhow::Result<crate::child_job::ChildJob>,
     ) -> anyhow::Result<Self> {
-        let containment = match attach(&mut child) {
-            Ok(containment) => containment,
-            Err(error) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(error);
-            }
-        };
+        let containment = attach_owned(&mut child, attach)?;
         Ok(Self { child, containment })
     }
 }

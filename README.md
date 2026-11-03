@@ -11,6 +11,11 @@ actual Developer ID signed installer lifecycle and all 60 latency comparisons.
 Notarization, installed-editor acceptance and remaining
 platform gates are recorded in the [implementation ledger](docs/research/implementation-v190.md).
 
+P6b adds durable helper cooldown recovery, measured healthy reset and isolated
+worker-grant repair. Local Windows/Mac ARM gates and all 84 latency comparisons
+passed; see the validation limits in the
+[helper recovery contract](docs/service-embedding.md#helper-recovery).
+
 Contributor dependency checks now include pinned `cargo-deny` and `cargo-vet`,
 with committed policy and visible unreviewed baseline exemptions. See the
 [supply-chain policy](docs/dependency-advisories.md) for coverage and limits.

@@ -272,6 +272,233 @@ mod tests {
         assert_eq!(registry.recovery_budget(&scope, digest(3))?.failures, 0);
         Ok(())
     }
+
+    #[test]
+    fn helper_cooldown_cas_preserves_incident_start_across_bursts_and_restart() -> Result<()> {
+        let (root, mut registry, _lease, _) = fixture()?;
+        assert!(registry.helper_recovery_snapshot()?.is_none());
+        let engine = digest(3);
+        for tick in [100, 200, 300] {
+            registry.recovery_failed("helper", engine, tick)?;
+        }
+        let exhausted = registry.helper_recovery_snapshot()?.unwrap();
+        assert_eq!(exhausted.failures, 3);
+        assert_eq!(exhausted.started_ms, 100);
+        assert_eq!(exhausted.next_ms, 60_300);
+        drop(registry);
+        let mut registry = ServiceRegistry::open(root.path(), nonce(8))?;
+        assert_eq!(
+            registry.helper_recovery_snapshot()?,
+            Some(exhausted.clone())
+        );
+        // The supervisor owns fake monotonic cooldown eligibility. Store changes
+        // only the exhausted burst, not the incident's original wall-clock start.
+        assert!(registry.resume_helper_after_cooldown(engine, &exhausted)?);
+        let resumed = registry.helper_recovery_snapshot()?.unwrap();
+        assert_eq!(resumed.failures, 0);
+        assert_eq!(resumed.next_ms, 0);
+        assert_eq!(resumed.started_ms, exhausted.started_ms);
+        assert!(!registry.resume_helper_after_cooldown(engine, &exhausted)?);
+        assert!(!registry.resume_helper_after_cooldown(engine, &resumed)?);
+        // Even a backward wall clock cannot reset the ongoing incident history.
+        for tick in [50, 60, 70] {
+            registry.recovery_failed("helper", engine, tick)?;
+        }
+        let second = registry.helper_recovery_snapshot()?.unwrap();
+        assert_eq!(second.started_ms, 100);
+        assert_eq!(second.failures, 3);
+        assert!(registry.resume_helper_after_cooldown(engine, &second)?);
+        let healthy = registry.helper_recovery_snapshot()?.unwrap();
+        assert!(registry.clear_helper_recovery(engine, &healthy, HelperRecoveryClear::Healthy)?);
+        assert!(registry.helper_recovery_snapshot()?.is_none());
+        assert!(!registry.clear_helper_recovery(engine, &healthy, HelperRecoveryClear::Healthy)?);
+        Ok(())
+    }
+
+    #[test]
+    fn helper_mutations_compare_every_saved_field_and_ignore_other_scopes() -> Result<()> {
+        let (root, mut registry, lease, _) = fixture()?;
+        let engine = digest(3);
+        let scope = lease.identity().0.to_string();
+        registry.recovery_failed(&scope, engine, 5)?;
+        registry.recovery_failed(&scope, engine, 6)?;
+        registry.recovery_failed(&scope, engine, 7)?;
+        for tick in [100, 200, 300] {
+            registry.recovery_failed("helper", engine, tick)?;
+        }
+        let expected = registry.helper_recovery_snapshot()?.unwrap();
+        let mut variants = vec![expected.clone(); 5];
+        variants[0].engine = digest(4);
+        variants[1].failures = 2;
+        variants[2].next_ms += 1;
+        variants[3].started_ms += 1;
+        variants[4].suppressed = true;
+        for stale in variants {
+            assert!(!registry.resume_helper_after_cooldown(engine, &stale)?);
+            assert!(!registry.clear_helper_recovery(
+                engine,
+                &stale,
+                HelperRecoveryClear::Healthy
+            )?);
+            assert!(!registry.clear_helper_recovery(
+                digest(9),
+                &stale,
+                HelperRecoveryClear::EngineChanged
+            )?);
+            assert_eq!(registry.helper_recovery_snapshot()?, Some(expected.clone()));
+        }
+        // A different registry writer can invalidate the observation while this
+        // connection remains open; no cached in-memory comparison grants mutation.
+        let mut writer = ServiceRegistry::open(root.path(), nonce(8))?;
+        writer.recovery_failed("helper", engine, 400)?;
+        let newer = writer.helper_recovery_snapshot()?.unwrap();
+        assert!(!registry.resume_helper_after_cooldown(engine, &expected)?);
+        assert!(!registry.clear_helper_recovery(
+            engine,
+            &expected,
+            HelperRecoveryClear::Healthy
+        )?);
+        assert_eq!(registry.helper_recovery_snapshot()?, Some(newer.clone()));
+        assert!(registry.clear_helper_recovery(engine, &newer, HelperRecoveryClear::Healthy)?);
+        let other = registry.recovery_budget(&scope, engine)?;
+        assert_eq!(other.failures, 3);
+        assert_eq!(
+            other.next_ms,
+            7 + 8000 + scope.bytes().map(u64::from).sum::<u64>() % 1000
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn helper_engine_change_requires_distinct_identity_and_starts_new_incident() -> Result<()> {
+        let (_root, mut registry, lease, _) = fixture()?;
+        let old = digest(3);
+        let new = digest(4);
+        registry.recovery_failed("helper", old, 100)?;
+        let previous = registry.helper_recovery_snapshot()?.unwrap();
+        assert!(!registry.clear_helper_recovery(new, &previous, HelperRecoveryClear::Healthy)?);
+        assert!(!registry.clear_helper_recovery(
+            old,
+            &previous,
+            HelperRecoveryClear::EngineChanged
+        )?);
+        assert!(!registry.resume_helper_after_cooldown(new, &previous)?);
+        assert!(registry.clear_helper_recovery(
+            new,
+            &previous,
+            HelperRecoveryClear::EngineChanged
+        )?);
+        registry.recovery_failed("helper", old, 200)?;
+        registry.recovery_failed("helper", old, 300)?;
+        registry.recovery_failed("helper", new, 400)?;
+        assert_eq!(
+            registry.helper_recovery_snapshot()?.unwrap(),
+            HelperRecoverySnapshot {
+                engine: new,
+                failures: 1,
+                next_ms: 400 + delay("helper", 1),
+                started_ms: 400,
+                suppressed: false,
+            }
+        );
+        // Other scope history keeps its existing engine-change semantics.
+        let scope = lease.identity().0.to_string();
+        registry.recovery_failed(&scope, old, 100)?;
+        registry.recovery_failed(&scope, new, 400)?;
+        let started: i64 = registry.connection.query_row(
+            "SELECT started_ms FROM service_recovery_budget WHERE scope=?1",
+            [&scope],
+            |r| r.get(0),
+        )?;
+        assert_eq!(started, 100);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_helper_stop_survives_late_failures_and_all_automatic_clears() -> Result<()> {
+        let (root, mut registry, _lease, _) = fixture()?;
+        let engine = digest(3);
+        for tick in [100, 200, 300] {
+            registry.recovery_failed("helper", engine, tick)?;
+        }
+        let before_stop = registry.helper_recovery_snapshot()?.unwrap();
+        registry.suppress_helper_recovery(engine)?;
+        let stopped = registry.helper_recovery_snapshot()?.unwrap();
+        drop(registry);
+        let mut registry = ServiceRegistry::open(root.path(), nonce(8))?;
+        for late_engine in [engine, digest(4)] {
+            assert!(
+                registry
+                    .recovery_failed("helper", late_engine, 900)?
+                    .suppressed
+            );
+            assert_eq!(registry.helper_recovery_snapshot()?, Some(stopped.clone()));
+            for expected in [&before_stop, &stopped] {
+                assert!(!registry.resume_helper_after_cooldown(late_engine, expected)?);
+                for reason in [
+                    HelperRecoveryClear::Healthy,
+                    HelperRecoveryClear::EngineChanged,
+                ] {
+                    assert!(!registry.clear_helper_recovery(late_engine, expected, reason)?);
+                }
+            }
+        }
+        assert_eq!(registry.helper_recovery_snapshot()?, Some(stopped));
+        registry.reset_recovery_budget("helper")?; // Explicit Start remains authoritative.
+        registry.recovery_failed("helper", digest(4), 1000)?;
+        let restarted = registry.helper_recovery_snapshot()?.unwrap();
+        assert!(!restarted.suppressed);
+        assert_eq!(restarted.started_ms, 1000);
+        assert_eq!(restarted.failures, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn helper_cooldown_observation_waits_while_stop_and_worker_attention_remain_distinct()
+    -> Result<()> {
+        let (_root, mut registry, lease, _) = fixture()?;
+        let project = lease.identity().0;
+        for tick in [100, 200, 300] {
+            registry.recovery_failed("helper", digest(3), tick)?;
+            registry.recovery_failed(&project.to_string(), digest(3), tick)?;
+        }
+        let observations = registry.recovery_observations(project)?;
+        assert_eq!(observations.len(), 2);
+        let helper = observations
+            .iter()
+            .find(|row| row.reason == "helper_unavailable")
+            .unwrap();
+        assert_eq!(helper.state, "waiting");
+        assert_eq!(helper.attempts, 3);
+        assert_eq!(helper.limit, 3);
+        assert_eq!(helper.next_check_unix_ms, 60_300);
+        assert_eq!(helper.started_unix_ms, 100);
+        assert!(helper.job.is_none());
+        let worker = observations
+            .iter()
+            .find(|row| row.reason == "worker_unavailable")
+            .unwrap();
+        assert_eq!(worker.state, "needs_attention");
+        assert_eq!(worker.attempts, 3);
+        assert_eq!(worker.limit, 3);
+        assert_eq!(
+            worker.next_check_unix_ms,
+            300 + delay(&project.to_string(), 3)
+        );
+        assert_eq!(worker.started_unix_ms, 100);
+        assert!(worker.job.is_none());
+        let before = serde_json::to_value(&observations)?;
+        registry.suppress_helper_recovery(digest(3))?;
+        let stopped = registry.recovery_observations(project)?;
+        let mut expected = before;
+        for row in expected.as_array_mut().unwrap() {
+            if row["reason"] == "helper_unavailable" {
+                row["state"] = "stopped".into();
+            }
+        }
+        assert_eq!(serde_json::to_value(stopped)?, expected);
+        Ok(())
+    }
     #[test]
     fn terminal_source_failures_survive_new_hints_and_restart_until_explicit_retry() -> Result<()> {
         let (root, mut registry, lease, mut key) = fixture()?;
@@ -439,6 +666,21 @@ pub struct RecoveryBudget {
     pub next_ms: u64,
     pub suppressed: bool,
 }
+/// Exact persisted helper state, without projecting away another engine's history.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HelperRecoverySnapshot {
+    pub engine: Sha256Digest,
+    pub failures: u32,
+    pub next_ms: u64,
+    pub started_ms: u64,
+    pub suppressed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HelperRecoveryClear {
+    Healthy,
+    EngineChanged,
+}
 pub struct WaitingRecovery {
     pub job: Sha256Digest,
     pub project: ProjectBinding,
@@ -459,9 +701,68 @@ fn scope_valid(scope: &str) -> Result<()> {
 }
 fn delay(scope: &str, attempt: u32) -> u64 {
     // Stable bounded jitter; restarting the service cannot shorten the saved deadline.
+    if scope == "helper" && attempt >= 3 {
+        return 60_000;
+    }
     (1u64 << attempt.min(3)) * 1000 + scope.bytes().map(u64::from).sum::<u64>() % 1000
 }
 impl ServiceRegistry {
+    pub fn helper_recovery_snapshot(&self) -> Result<Option<HelperRecoverySnapshot>> {
+        let row: Option<(String, u32, i64, i64, bool)> = self.connection.query_row(
+            "SELECT engine,failures,next_ms,started_ms,suppressed FROM service_recovery_budget WHERE scope='helper'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).optional()?;
+        row.map(|(engine, failures, next_ms, started_ms, suppressed)| {
+            Ok(HelperRecoverySnapshot {
+                engine: engine.parse()?,
+                failures,
+                next_ms: u64::try_from(next_ms)?,
+                started_ms: u64::try_from(started_ms)?,
+                suppressed,
+            })
+        })
+        .transpose()
+    }
+
+    /// The caller must prove cooldown elapsed using its monotonic observation.
+    /// Saved wall-clock deadlines alone do not authorize a new retry burst.
+    pub fn resume_helper_after_cooldown(
+        &mut self,
+        engine: Sha256Digest,
+        expected: &HelperRecoverySnapshot,
+    ) -> Result<bool> {
+        if expected.engine != engine || expected.failures != 3 || expected.suppressed {
+            return Ok(false);
+        }
+        Ok(self.connection.execute(
+            "UPDATE service_recovery_budget SET failures=0,next_ms=0 WHERE scope='helper' AND engine=?1 AND failures=?2 AND next_ms=?3 AND started_ms=?4 AND suppressed=?5",
+            params![expected.engine.to_string(), expected.failures, i64::try_from(expected.next_ms)?, i64::try_from(expected.started_ms)?, expected.suppressed],
+        )? == 1)
+    }
+
+    /// Clear only the exact unsuppressed observation justified by the caller.
+    /// Explicit Start remains the separate unconditional helper-budget reset.
+    pub fn clear_helper_recovery(
+        &mut self,
+        engine: Sha256Digest,
+        expected: &HelperRecoverySnapshot,
+        reason: HelperRecoveryClear,
+    ) -> Result<bool> {
+        if expected.suppressed
+            || match reason {
+                HelperRecoveryClear::Healthy => expected.engine != engine,
+                HelperRecoveryClear::EngineChanged => expected.engine == engine,
+            }
+        {
+            return Ok(false);
+        }
+        Ok(self.connection.execute(
+            "DELETE FROM service_recovery_budget WHERE scope='helper' AND engine=?1 AND failures=?2 AND next_ms=?3 AND started_ms=?4 AND suppressed=?5",
+            params![expected.engine.to_string(), expected.failures, i64::try_from(expected.next_ms)?, i64::try_from(expected.started_ms)?, expected.suppressed],
+        )? == 1)
+    }
+
     pub fn source_failure_blocked(&self, project: ProjectBinding) -> Result<bool> {
         let version: i64 = self
             .connection
@@ -539,14 +840,14 @@ impl ServiceRegistry {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
-        tx.execute("INSERT INTO service_recovery_budget VALUES(?1,?2,1,?3,?4,0) ON CONFLICT(scope) DO UPDATE SET failures=CASE WHEN engine=excluded.engine THEN min(failures+1,3) ELSE 1 END,engine=excluded.engine,next_ms=excluded.next_ms",params![scope,engine.to_string(),i64::try_from(now.saturating_add(9000))?,i64::try_from(now)?])?;
+        tx.execute("INSERT INTO service_recovery_budget VALUES(?1,?2,1,?3,?4,0) ON CONFLICT(scope) DO UPDATE SET failures=CASE WHEN engine=excluded.engine THEN min(failures+1,3) ELSE 1 END,started_ms=CASE WHEN scope='helper' AND engine<>excluded.engine THEN excluded.started_ms ELSE started_ms END,engine=excluded.engine,next_ms=excluded.next_ms WHERE scope<>'helper' OR suppressed=0",params![scope,engine.to_string(),i64::try_from(now.saturating_add(9000))?,i64::try_from(now)?])?;
         let attempts: u32 = tx.query_row(
             "SELECT failures FROM service_recovery_budget WHERE scope=?1",
             [scope],
             |r| r.get(0),
         )?;
         tx.execute(
-            "UPDATE service_recovery_budget SET next_ms=?1 WHERE scope=?2",
+            "UPDATE service_recovery_budget SET next_ms=?1 WHERE scope=?2 AND (scope<>'helper' OR suppressed=0)",
             params![
                 i64::try_from(now.saturating_add(delay(scope, attempts)))?,
                 scope
@@ -704,6 +1005,8 @@ impl ServiceRegistry {
                 .into(),
                 state: if stopped {
                     "stopped"
+                } else if scope == "helper" && attempts >= 3 {
+                    "waiting"
                 } else if attempts >= 3 {
                     "needs_attention"
                 } else {

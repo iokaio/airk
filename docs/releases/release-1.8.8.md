@@ -6,6 +6,11 @@ Native crates, workspace/local lock entries, extension and npm root lock entries
 are synchronized. Generated extension catalogs and fresh native pairs must carry
 this identity too. This working build is unpublished.
 
+P6b adds durable helper cooldown recovery, measured healthy reset, native exit
+codes and isolated worker-grant repair. Local Windows/Mac ARM gates and all 84
+unchanged-bound latency comparisons passed;
+see the [recovery contract](../service-embedding.md#helper-recovery) and ledger.
+
 The completed P1–P4 implementation includes compact plan repairs, independent
 Lean/Rich replies, evidence guidance and saved-source verification with **Report**
 as its default. The [implementation ledger](../research/implementation-v190.md)

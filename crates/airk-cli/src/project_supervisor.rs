@@ -25,6 +25,13 @@ use std::{
 };
 use tokio::sync::oneshot;
 
+#[path = "helper_recovery.rs"]
+mod helper_recovery;
+use helper_recovery::PoolRecovery;
+#[cfg(test)]
+#[path = "project_supervisor_pool_tests.rs"]
+mod pool_tests;
+
 struct ChildWorker {
     derived: bool,
     _containment: crate::child_job::ChildJob,
@@ -118,6 +125,24 @@ impl ChildWorker {
             &std::env::current_exe()?.canonicalize()?,
             crate::process_roles::Role::Index,
         )?;
+        Self::spawn_image(
+            root,
+            project,
+            service,
+            derived,
+            &executable,
+            crate::runtime_pair::engine_identity()?,
+        )
+    }
+
+    fn spawn_image(
+        root: &Path,
+        project: ProjectBinding,
+        service: Incarnation,
+        derived: bool,
+        executable: &Path,
+        engine: airk_core::identity::Sha256Digest,
+    ) -> Result<Self> {
         let worker = new_instance_id()?;
         let diagnostic_directory = crate::process_diagnostics::directory();
         let mut command = Command::new(executable);
@@ -141,7 +166,8 @@ impl ChildWorker {
         }
         let mut child =
             crate::native_process::spawn(&mut command).context("start project owner")?;
-        let containment = crate::child_job::ChildJob::attach(&mut child)?;
+        let containment =
+            crate::native_process::attach_owned(&mut child, crate::child_job::ChildJob::attach)?;
         let input = child.stdin.take().context("project input missing")?;
         let mut output = child.stdout.take().context("project output missing")?;
         let (sender, receiver) = mpsc::sync_channel(1);
@@ -183,7 +209,7 @@ impl ChildWorker {
         service_ipc::write_frame(
             process.input.as_mut().context("project input missing")?,
             &protocol::Init {
-                engine: crate::runtime_pair::engine_identity()?,
+                engine,
                 runtime: root.into(),
                 project,
                 service,
@@ -292,6 +318,47 @@ impl ChildWorker {
         self.pool_pending = pool_pending;
         Ok(())
     }
+
+    fn prepare_pool_binding(
+        &self,
+        pool: Option<&mut Pool>,
+        registry: &ServiceRegistry,
+        helper_pending: bool,
+    ) -> Result<Option<(Option<crate::embedding_pool_protocol::Access>, bool)>> {
+        let pool = pool.filter(|_| !self.derived);
+        let desired = pool.as_ref().map(|pool| pool.identity());
+        let pending = desired.is_none() && !self.derived && helper_pending;
+        if self.pool_binding == desired && self.pool_pending == pending {
+            return Ok(None);
+        }
+        let access = match pool {
+            Some(pool) => {
+                let identity = self.identity.context("project identity missing")?;
+                Some(pool.access(
+                    identity.worker,
+                    registry.get(identity.project)?.registration,
+                )?)
+            }
+            None => None,
+        };
+        Ok(Some((access, pending)))
+    }
+
+    fn renew_pool_binding(
+        &mut self,
+        pool: &mut Pool,
+    ) -> Result<crate::embedding_pool_process::Renewal> {
+        let identity = self.identity.context("project identity missing")?;
+        ensure!(
+            self.pool_binding == Some(pool.identity()),
+            "pool renewal binding changed"
+        );
+        let result = pool.renew(identity.worker)?;
+        if result == crate::embedding_pool_process::Renewal::Missing {
+            self.pool_binding = None;
+        }
+        Ok(result)
+    }
     fn run_job(&mut self, allowance: airk_core::service_resources::WorkAllowance) -> Result<()> {
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
@@ -374,36 +441,6 @@ impl ChildWorker {
             "project query capacity update failed"
         );
         Ok(())
-    }
-}
-
-// Three attempts per service lifetime (or explicit start), with no source-job dependency.
-struct PoolRecovery {
-    attempts: u32,
-    retry_at: Instant,
-    suppressed: bool,
-    requested: bool,
-}
-impl PoolRecovery {
-    fn new(now: Instant) -> Self {
-        Self {
-            attempts: 0,
-            retry_at: now,
-            suppressed: false,
-            requested: false,
-        }
-    }
-    fn due(&self, now: Instant) -> bool {
-        self.admission_pending() && now >= self.retry_at
-    }
-    fn admission_pending(&self) -> bool {
-        !self.suppressed && self.attempts < 3
-    }
-    fn attempted(&mut self) {
-        self.attempts += 1;
-    }
-    fn failed(&mut self, now: Instant) {
-        self.retry_at = now + Duration::from_secs(1 << self.attempts.min(3));
     }
 }
 
@@ -571,7 +608,7 @@ struct WorkerAdmission<'a> {
     policy: &'a Mutex<Broker>,
     pool: &'a mut Option<Pool>,
     resources: &'a mut airk_kernel::service_resources::Resources,
-    helper_pending: bool,
+    recovery: &'a mut PoolRecovery,
 }
 
 fn settle_failed_start(root: &Path, instance: Incarnation, project: ProjectBinding) {
@@ -596,7 +633,7 @@ fn start_worker(
         policy,
         pool,
         resources,
-        helper_pending,
+        recovery,
     } = admission;
     let project = registration.binding;
     if let Some(worker) = workers.get(&project) {
@@ -677,10 +714,41 @@ fn start_worker(
             Duration::from_secs(300),
         )?;
     resources.resident_started(identity)?;
-    let access = pool
-        .as_mut()
-        .filter(|_| !derived)
-        .and_then(|pool| pool.access(identity.worker, registration).ok());
+    let access = match pool.as_mut().filter(|_| !derived) {
+        Some(helper) => match helper.access(identity.worker, registration) {
+            Ok(access) => Some(access),
+            Err(error) => {
+                // A failed exchange leaves its reply stream ambiguous. Retire the
+                // helper before admitting any sibling control call, but keep this
+                // project's lexical worker and account one helper outage.
+                let code = crate::embedding_pool_process::failure_code(
+                    &error,
+                    "helper_grant_registration_failed",
+                );
+                drop(pool.take());
+                recovery.failed(Instant::now());
+                let saved = (|| -> Result<_> {
+                    ServiceRegistry::open(root, instance)?.recovery_failed(
+                        "helper",
+                        crate::runtime_pair::engine_identity()?,
+                        unix_ms()?,
+                    )
+                })();
+                if saved.is_err() {
+                    recovery.suppressed = true;
+                }
+                log.record_code(
+                    airk_core::service_logs::LogKind::ModelFailed,
+                    None,
+                    None,
+                    Some(&code),
+                );
+                None
+            }
+        },
+        None => None,
+    };
+    let helper_pending = recovery.admission_pending();
     if let Err(error) = worker.activate(identity, allowance, access, helper_pending) {
         drop(worker);
         resources.process_exited(identity)?;
@@ -767,13 +835,21 @@ impl Supervisor {
                         next_recovery_check=Instant::now()+Duration::from_secs(1);
                     }
                     if pool.is_none() {
-                        match registry.as_ref().and_then(|r|r.recovery_budget("helper",crate::runtime_pair::engine_identity().ok()?).ok()) {
-                            Some(budget)=>{
-                                pool_recovery.attempts=budget.failures;
-                                pool_recovery.suppressed|=budget.suppressed;
-                                if let Ok(now)=unix_ms(){pool_recovery.retry_at=Instant::now()+Duration::from_millis(budget.next_ms.saturating_sub(now).min(60_000));}
-                            }
-                            None=>pool_recovery.suppressed=true,
+                        let refreshed = (|| -> Result<Option<&'static str>> {
+                            pool_recovery.refresh(
+                                registry.as_mut().context("registry unavailable")?,
+                                crate::runtime_pair::engine_identity()?, Instant::now(), unix_ms()?,
+                            )
+                        })();
+                        match refreshed {
+                            Ok(Some(code)) => log.record_code(airk_core::service_logs::LogKind::ModelRecovery, None, None, Some(code)),
+                            Ok(None) => {},
+                            Err(_) => {
+                                if !pool_recovery.suppressed {
+                                    log.record_code(airk_core::service_logs::LogKind::ModelRecovery, None, None, Some("helper_recovery_metadata_unavailable"));
+                                }
+                                pool_recovery.suppressed = true;
+                            },
                         }
                     }
                     // A committed unregister closes fresh brokerage immediately.
@@ -933,11 +1009,41 @@ impl Supervisor {
                         cache.idle_safe = idle_safe;
                         cache.waiting = sampled_waits;
                     }
-                    if pool.as_mut().is_some_and(Pool::exited) {
-                        log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
-                        drop(pool.take());
-                        pool_recovery.failed(Instant::now());
-                        if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
+                    match pool.as_mut().map(Pool::exit_status) {
+                        Some(Ok(Some(status))) => {
+                            let code = crate::embedding_pool_process::exit_code(status);
+                            log.record_code(airk_core::service_logs::LogKind::ModelFailed, None, None, Some(&code));
+                            drop(pool.take());
+                            pool_recovery.failed(Instant::now());
+                            if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
+                        },
+                        Some(Err(_)) => {
+                            if !pool_recovery.suppressed {
+                                log.record_code(airk_core::service_logs::LogKind::ModelFailed, None, None, Some("helper_wait_unavailable"));
+                            }
+                            pool_recovery.suppressed = true; // Unknown exit never authorizes replacement.
+                        },
+                        Some(Ok(None)) => {
+                            if let Some(code) = pool.as_ref().and_then(Pool::control_failure).map(str::to_owned) {
+                                // A timed-out mutation has no correlation-safe reply left.
+                                // This also handles errors ignored during worker cleanup or
+                                // resource rollback; no later control can reuse that stream.
+                                drop(pool.take());
+                                pool_recovery.failed(Instant::now());
+                                if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
+                                log.record_code(airk_core::service_logs::LogKind::ModelFailed, None, None, Some(&code));
+                            } else {
+                            let health = pool.as_ref().unwrap().health();
+                            let reset = (|| -> Result<bool> {
+                                pool_recovery.healthy(registry.as_mut().context("registry unavailable")?,
+                                    crate::runtime_pair::engine_identity()?, health, Instant::now())
+                            })();
+                            if matches!(reset, Ok(true)) {
+                                log.record_code(airk_core::service_logs::LogKind::ModelRecovery, None, None, Some("helper_healthy_reset"));
+                            }
+                            }
+                        },
+                        None => {},
                     }
                     if predecessors.is_none()
                         && let Some(registry) = registry.as_ref()
@@ -976,16 +1082,29 @@ impl Supervisor {
                             || pool_recovery.requested)
                     {
                         pool_recovery.attempted();
-                        pool = Pool::start(
+                        let started = Pool::start(
                             &root,
                             instance,
                             resources.snapshot().inference_threads_limit,
-                        )
-                        .ok();
-                        if pool.is_none() {
-                            pool_recovery.failed(Instant::now());
-                        if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
-                            log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
+                        );
+                        match started {
+                            Ok(started) => {
+                                pool_recovery.started(started.identity());
+                                pool = Some(started);
+                                log.record_code(airk_core::service_logs::LogKind::ModelRecovery, None, None, Some("helper_started"));
+                            },
+                            Err(error) => {
+                                let code = crate::embedding_pool_process::failure_code(&error, "helper_start_failed");
+                                pool_recovery.failed(Instant::now());
+                                if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
+                                if matches!(code.as_str(), "helper_payload_verification_failed" | "helper_containment_failed" | "helper_start_identity_mismatch" | "helper_start_wait_unavailable" | "helper_permission_denied") {
+                                    pool_recovery.suppressed = true;
+                                    if let Some(registry) = registry.as_mut() {
+                                        let _ = crate::runtime_pair::engine_identity().and_then(|engine| registry.suppress_helper_recovery(engine));
+                                    }
+                                }
+                                log.record_code(airk_core::service_logs::LogKind::ModelFailed, None, None, Some(&code));
+                            },
                         }
                     }
                     let finished: Vec<_> = workers
@@ -1032,52 +1151,35 @@ impl Supervisor {
                     }
                     let mut failed_renewals = Vec::new();
                     let mut clean_renewals = std::collections::BTreeSet::new();
-                    let mut pool_control_failed = false;
+                    let mut pool_control_failure = None;
                     for (project, worker) in &mut workers {
-                        if pool_control_failed {
+                        if pool_control_failure.is_some() {
                             continue;
                         }
-                        let desired_pool = pool
-                            .as_ref()
-                            .filter(|_| !worker.derived)
-                            .map(Pool::identity);
-                        let desired_pending=desired_pool.is_none()&&!worker.derived
-                            &&pool_recovery.admission_pending();
-                        if worker.pool_binding != desired_pool || worker.pool_pending!=desired_pending {
-                            let access = (|| -> Result<_> {
-                                match pool.as_mut() {
-                                    Some(pool) => Ok(Some(
-                                        pool.access(
-                                            worker
-                                                .identity
-                                                .context("project identity missing")?
-                                                .worker,
-                                            registry
-                                                .as_ref()
-                                                .context("registry unavailable")?
-                                                .get(*project)?
-                                                .registration,
-                                        )?,
-                                    )),
-                                    None => Ok(None),
-                                }
-                            })();
-                            let access = match access {
-                                Ok(access) => access,
-                                Err(_) => {
-                                    // The failed authority is the helper, not this project.
-                                    // Drain it before retrying any ambiguous control exchange.
-                                    pool_control_failed = true;
+                        let update = (|| -> Result<_> {
+                            worker.prepare_pool_binding(pool.as_mut(),
+                                registry.as_ref().context("registry unavailable")?,
+                                pool_recovery.admission_pending())
+                        })();
+                        match update {
+                            Ok(Some((access, pending))) => {
+                                let registered = access.is_some();
+                                if let Err(error) = worker.configure_pool(access, pending) {
+                                    if clean_disconnected_exit(&mut worker.child, &error) {
+                                        clean_renewals.insert(*project);
+                                    }
+                                    failed_renewals.push(*project);
                                     continue;
                                 }
-                            };
-                            if let Err(error) = worker.configure_pool(access,desired_pending) {
-                                if clean_disconnected_exit(&mut worker.child, &error) {
-                                    clean_renewals.insert(*project);
+                                if registered {
+                                    log.record_code(airk_core::service_logs::LogKind::ModelRecovery, Some(*project), None, Some("helper_grant_registered"));
                                 }
-                                failed_renewals.push(*project);
+                            },
+                            Ok(None) => {},
+                            Err(error) => {
+                                pool_control_failure = Some(crate::embedding_pool_process::failure_code(&error, "helper_grant_registration_failed"));
                                 continue;
-                            }
+                            },
                         }
                         if worker.last_renewal.elapsed() < Duration::from_secs(30) {
                             continue;
@@ -1102,14 +1204,25 @@ impl Supervisor {
                         if let Some(pool) = pool.as_mut()
                             && worker.pool_binding == Some(pool.identity())
                         {
-                            pool_control_failed = pool.renew(identity.worker).is_err();
+                            match worker.renew_pool_binding(pool) {
+                                Ok(crate::embedding_pool_process::Renewal::Renewed) => {},
+                                Ok(crate::embedding_pool_process::Renewal::Missing) => {
+                                    // The exact correlated reply proves only this membership is
+                                    // absent. The next ordinary turn installs a new capability;
+                                    // other workers and the healthy shared model remain owned.
+                                    log.record_code(airk_core::service_logs::LogKind::ModelRecovery, Some(*project), None, Some("helper_grant_missing"));
+                                },
+                                Err(error) => {
+                                    pool_control_failure = Some(crate::embedding_pool_process::failure_code(&error, "helper_grant_renewal_failed"));
+                                },
+                            }
                         }
                     }
-                    if pool_control_failed {
+                    if let Some(code) = pool_control_failure {
                         drop(pool.take());
                         pool_recovery.failed(Instant::now());
                         if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
-                        log.record(airk_core::service_logs::LogKind::ModelFailed, None, None);
+                        log.record_code(airk_core::service_logs::LogKind::ModelFailed, None, None, Some(&code));
                     }
                     for project in failed_renewals {
                         let clean = clean_renewals.contains(&project);
@@ -1210,7 +1323,7 @@ impl Supervisor {
                                         policy: &policy,
                                         pool: &mut pool,
                                         resources: &mut resources,
-                                    helper_pending: pool_recovery.admission_pending(),
+                                    recovery: &mut pool_recovery,
                                     },
                                 )?;
                                 workers
@@ -1319,6 +1432,7 @@ impl Supervisor {
                                 }
                                 pool_recovery = PoolRecovery::new(Instant::now());
                                 pool_recovery.requested = true;
+                                log.record_code(airk_core::service_logs::LogKind::ModelRecovery, None, None, Some("helper_explicit_start"));
                                 ControlResponse::EmbeddingStarting
                             };
                             let _ = reply.send(response);
@@ -1341,10 +1455,11 @@ impl Supervisor {
                                 let failed = force
                                     && pool.as_mut().is_some_and(|pool| pool.terminate().is_err());
                                 drop(pool.take());
-                                log.record(
+                                log.record_code(
                                     airk_core::service_logs::LogKind::ModelStopped,
                                     None,
                                     None,
+                                    Some("helper_explicit_stop"),
                                 );
                                 if failed {
                                     ControlResponse::Failure {
@@ -1434,7 +1549,7 @@ impl Supervisor {
                                     policy: &policy,
                                     pool: &mut pool,
                                     resources: &mut resources,
-                                helper_pending: pool_recovery.admission_pending(),
+                                recovery: &mut pool_recovery,
                                 },
                             );
                         }
@@ -1486,7 +1601,7 @@ impl Supervisor {
                                     policy: &policy,
                                     pool: &mut pool,
                                     resources: &mut resources,
-                                helper_pending: pool_recovery.admission_pending(),
+                                recovery: &mut pool_recovery,
                                 },
                             );
                         }

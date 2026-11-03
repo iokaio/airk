@@ -1,6 +1,6 @@
 # AIRK: Local Search for Coding Agents
 
-**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) records local P5 foundation qualification toward the planned 1.9.0 release. Project/index management remains gated. Saved-source verification defaults to Report; see the [controls and limits](https://github.com/iokaio/airk/blob/main/docs/source-verification.md).
+**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) records accepted development phases toward the planned 1.9.0 release. Project/index management remains gated. Saved-source verification defaults to Report; see the [controls and limits](https://github.com/iokaio/airk/blob/main/docs/source-verification.md).
 
 Compact discovery now supplies cited evidence to dependent plans and Workbench
 results. Nested plan inputs are advertised as JSON objects. See the candidate
@@ -10,6 +10,11 @@ P6a implements the macOS copied-launcher correction and shared signed
 release producer. Local gates passed, including actual Developer ID signed
 installation and all 60 latency comparisons. The [implementation ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md)
 records remaining notarization, installed-editor and platform gates.
+
+P6b adds durable helper cooldown recovery, measured healthy reset and isolated
+worker-grant repair. Local Windows/Mac ARM gates and all 84 latency comparisons
+passed; see the validation limits in the
+[helper recovery contract](https://github.com/iokaio/airk/blob/main/docs/service-embedding.md#helper-recovery).
 
 **Lean/Rich replies:** select Reply detail in a Workbench tool form, or pass
 `reply_detail` in MCP / `--reply-detail` on CLI read commands. Choices affect

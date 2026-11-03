@@ -111,6 +111,33 @@ fn location_key(
 }
 
 impl Engine {
+    fn admit_owner(&mut self, worker: Incarnation, alive: &Arc<AtomicBool>) -> Result<()> {
+        // A queued request from an expired connection cannot retire a repaired owner.
+        ensure!(alive.load(Ordering::Acquire), "pool request canceled");
+        self.retire_disconnected();
+        let owner = Arc::downgrade(alive);
+        if self
+            .owners
+            .get(&worker)
+            .is_some_and(|old| !old.ptr_eq(&owner))
+        {
+            self.sessions.retain(|(member, _), _| *member != worker);
+        }
+        self.owners.insert(worker, owner);
+        Ok(())
+    }
+
+    fn release_owner(&mut self, worker: Incarnation, expected: Option<&Weak<AtomicBool>>) {
+        if expected.is_none_or(|expected| {
+            self.owners
+                .get(&worker)
+                .is_some_and(|owner| owner.ptr_eq(expected))
+        }) {
+            self.owners.remove(&worker);
+            self.sessions.retain(|(member, _), _| *member != worker);
+        }
+    }
+
     fn new(runtime: &Path) -> Result<Self> {
         Ok(Self {
             runtime: runtime.canonicalize()?,
@@ -407,6 +434,7 @@ enum Work {
     },
     Release {
         worker: Incarnation,
+        owner: Option<Weak<AtomicBool>>,
     },
 }
 struct Authorization {
@@ -415,6 +443,56 @@ struct Authorization {
     expires: Instant,
     alive: Arc<AtomicBool>,
 }
+
+fn register_authorization(
+    grants: &mut BTreeMap<Sha256Digest, Authorization>,
+    service: Incarnation,
+    pool: Incarnation,
+    grant: protocol::Grant,
+    now: Instant,
+) -> protocol::Observation {
+    // Validate the entire replacement before revoking any current capability.
+    // In particular, even a duplicate token must not reset its consumed state.
+    if grant.service != service
+        || grant.pool != pool
+        || grant.project.validate().is_err()
+        || grants.contains_key(&grant.token)
+        || grants
+            .values()
+            .filter(|authorization| {
+                authorization.grant.worker != grant.worker
+                    && authorization.alive.load(Ordering::Acquire)
+                    && now < authorization.expires
+            })
+            .take(32)
+            .count()
+            >= 32
+    {
+        return protocol::Observation::Failed;
+    }
+    grants.retain(|_, authorization| {
+        let retain = authorization.grant.worker != grant.worker
+            && authorization.alive.load(Ordering::Acquire)
+            && now < authorization.expires;
+        if !retain {
+            authorization.alive.store(false, Ordering::Release);
+        }
+        retain
+    });
+    grants.insert(
+        grant.token,
+        Authorization {
+            grant,
+            used: false,
+            expires: now + Duration::from_secs(300),
+            alive: Arc::new(AtomicBool::new(true)),
+        },
+    );
+    // Old sockets are fenced by their own alive flag and exact-owner cleanup.
+    // An unfenced worker-wide Release here could retire the replacement later.
+    protocol::Observation::Registered
+}
+
 struct State {
     service: Incarnation,
     pool: Incarnation,
@@ -507,6 +585,7 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     alive.store(false, Ordering::Release);
     let _ = state.sender.try_send(Work::Release {
         worker: grant.worker,
+        owner: Some(Arc::downgrade(&alive)),
     });
     result
 }
@@ -562,14 +641,13 @@ pub async fn run() -> Result<()> {
                         reply,
                     } => {
                         let envelope = *envelope;
-                        engine.owners.insert(grant.worker, Arc::downgrade(&alive));
-                        engine.retire_disconnected();
                         let response = (|| {
                             ensure!(
                                 alive.load(Ordering::Acquire)
                                     && !engine_closing.load(Ordering::Acquire),
                                 "pool request canceled"
                             );
+                            engine.admit_owner(grant.worker, &alive)?;
                             match envelope.operation {
                                 protocol::Operation::Call { request } => {
                                     engine.request(&grant, envelope.session, *request)
@@ -592,10 +670,7 @@ pub async fn run() -> Result<()> {
                             response,
                         });
                     }
-                    Work::Release { worker } => {
-                        engine.owners.remove(&worker);
-                        engine.sessions.retain(|(owner, _), _| *owner != worker)
-                    }
+                    Work::Release { worker, owner } => engine.release_owner(worker, owner.as_ref()),
                 }
                 if let Ok(mut observation) = engine_observation.lock() {
                     *observation = (
@@ -647,19 +722,15 @@ pub async fn run() -> Result<()> {
                     Some(protocol::Control::Renew{worker})=>{
                         let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
                         let authorization=grants.values_mut().find(|auth|auth.grant.worker==worker&&auth.alive.load(Ordering::Acquire)&&Instant::now()<auth.expires);
-                        if let Some(authorization)=authorization {authorization.expires=Instant::now()+Duration::from_secs(300);protocol::Observation::Renewed}else{protocol::Observation::Failed}
+                        if let Some(authorization)=authorization {authorization.expires=Instant::now()+Duration::from_secs(300);protocol::Observation::Renewed}else{protocol::Observation::GrantMissing{worker}}
                     },
                     Some(protocol::Control::Register{grant})=>{
                         let mut grants=state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?;
-                        grants.retain(|_,auth|{if auth.alive.load(Ordering::Acquire)&&Instant::now()<auth.expires{true}else{auth.alive.store(false,Ordering::Release);false}});
-                        if grant.service==state.service&&grant.pool==state.pool&&grant.project.validate().is_ok()&&grants.len()<32 {
-                            grants.insert(grant.token,Authorization{grant,used:false,expires:Instant::now()+Duration::from_secs(300),alive:Arc::new(AtomicBool::new(true))});
-                            protocol::Observation::Registered
-                        }else{protocol::Observation::Failed}
+                        register_authorization(&mut grants,state.service,state.pool,grant,Instant::now())
                     },
                     Some(protocol::Control::Revoke{worker})=>{
                         state.grants.lock().map_err(|_|anyhow::anyhow!("pool authorization unavailable"))?.retain(|_,auth|{if auth.grant.worker==worker{auth.alive.store(false,Ordering::Release);false}else{true}});
-                        let _=state.sender.try_send(Work::Release{worker});
+                        let _=state.sender.try_send(Work::Release{worker,owner:None});
                         protocol::Observation::Revoked
                     },
                     Some(protocol::Control::Status)=>{
@@ -745,6 +816,302 @@ mod tests {
             location,
             identity,
         }
+    }
+
+    #[test]
+    fn registration_replaces_live_authority_at_capacity_without_revoking_siblings() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let (template, _, _) = fixture(root.path(), "capacity", "unused fixture")?;
+        let now = Instant::now();
+        let mut grants = BTreeMap::new();
+        for member in 1u8..=32 {
+            let grant = protocol::Grant {
+                worker: Incarnation::from_bytes([member; 16]),
+                token: Sha256Digest::from_bytes([member; 32]),
+                ..template.clone()
+            };
+            assert!(matches!(
+                register_authorization(&mut grants, template.service, template.pool, grant, now),
+                protocol::Observation::Registered
+            ));
+        }
+        let old_token = Sha256Digest::from_bytes([1; 32]);
+        let old_alive = grants[&old_token].alive.clone();
+        let sibling_token = Sha256Digest::from_bytes([2; 32]);
+        let sibling_alive = grants[&sibling_token].alive.clone();
+        grants.get_mut(&sibling_token).unwrap().used = true;
+        let replacement = protocol::Grant {
+            worker: Incarnation::from_bytes([1; 16]),
+            token: Sha256Digest::from_bytes([100; 32]),
+            ..template.clone()
+        };
+        assert!(matches!(
+            register_authorization(
+                &mut grants,
+                template.service,
+                template.pool,
+                replacement.clone(),
+                now + Duration::from_secs(1),
+            ),
+            protocol::Observation::Registered
+        ));
+        assert!(
+            !old_alive.load(Ordering::Acquire),
+            "old socket retained authority after ACK"
+        );
+        assert!(!grants.contains_key(&old_token));
+        assert_eq!(grants.len(), 32);
+        assert_eq!(
+            grants
+                .values()
+                .filter(|entry| entry.grant.worker == replacement.worker)
+                .count(),
+            1
+        );
+        assert!(!grants[&replacement.token].used);
+        assert_eq!(
+            grants[&replacement.token].expires,
+            now + Duration::from_secs(301)
+        );
+        assert!(Arc::ptr_eq(&sibling_alive, &grants[&sibling_token].alive));
+        assert!(grants[&sibling_token].used);
+        assert_eq!(
+            grants[&sibling_token].expires,
+            now + Duration::from_secs(300)
+        );
+        let extra = protocol::Grant {
+            worker: Incarnation::from_bytes([33; 16]),
+            token: Sha256Digest::from_bytes([101; 32]),
+            ..template
+        };
+        assert!(matches!(
+            register_authorization(&mut grants, extra.service, extra.pool, extra, now),
+            protocol::Observation::Failed
+        ));
+        assert_eq!(grants.len(), 32);
+        assert!(grants[&replacement.token].alive.load(Ordering::Acquire));
+        for member in 2u8..=32 {
+            assert!(
+                grants[&Sha256Digest::from_bytes([member; 32])]
+                    .alive
+                    .load(Ordering::Acquire)
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_or_colliding_registration_preserves_consumed_and_sibling_authority() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let (first, _, _) = fixture(root.path(), "invalid", "unused fixture")?;
+        let sibling = protocol::Grant {
+            worker: Incarnation::from_bytes([41; 16]),
+            token: Sha256Digest::from_bytes([42; 32]),
+            ..first.clone()
+        };
+        let now = Instant::now();
+        let mut grants = BTreeMap::new();
+        for grant in [&first, &sibling] {
+            assert!(matches!(
+                register_authorization(&mut grants, first.service, first.pool, grant.clone(), now),
+                protocol::Observation::Registered
+            ));
+            grants.get_mut(&grant.token).unwrap().used = true;
+        }
+        let first_alive = grants[&first.token].alive.clone();
+        let sibling_alive = grants[&sibling.token].alive.clone();
+        let first_bytes = serde_json::to_vec(&grants[&first.token].grant)?;
+        let sibling_bytes = serde_json::to_vec(&grants[&sibling.token].grant)?;
+        let mut invalid_project = first.project.clone();
+        invalid_project.binding = Sha256Digest::from_bytes([255; 32]);
+        let fresh = protocol::Grant {
+            token: Sha256Digest::from_bytes([43; 32]),
+            ..first.clone()
+        };
+        let attempts = [
+            first.clone(), // A duplicate consumed token cannot become unused again.
+            protocol::Grant {
+                token: sibling.token,
+                ..fresh.clone()
+            },
+            protocol::Grant {
+                service: Incarnation::from_bytes([44; 16]),
+                ..fresh.clone()
+            },
+            protocol::Grant {
+                pool: Incarnation::from_bytes([45; 16]),
+                ..fresh.clone()
+            },
+            protocol::Grant {
+                project: invalid_project,
+                ..fresh
+            },
+        ];
+        for invalid in attempts {
+            assert!(matches!(
+                register_authorization(
+                    &mut grants,
+                    first.service,
+                    first.pool,
+                    invalid,
+                    now + Duration::from_secs(1)
+                ),
+                protocol::Observation::Failed
+            ));
+            assert_eq!(grants.len(), 2);
+            assert_eq!(
+                serde_json::to_vec(&grants[&first.token].grant)?,
+                first_bytes
+            );
+            assert_eq!(
+                serde_json::to_vec(&grants[&sibling.token].grant)?,
+                sibling_bytes
+            );
+            for (token, alive) in [(first.token, &first_alive), (sibling.token, &sibling_alive)] {
+                assert!(alive.load(Ordering::Acquire));
+                assert!(Arc::ptr_eq(alive, &grants[&token].alive));
+                assert!(grants[&token].used);
+                assert_eq!(grants[&token].expires, now + Duration::from_secs(300));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repaired_owner_survives_delayed_old_release_without_losing_sibling_inference() -> Result<()>
+    {
+        // Exercise both a replaced-but-live owner and an expired owner. The
+        // latter is normally retired by Sweep; the former needs the distinct
+        // owner check even when the old connection has not observed revocation.
+        for old_still_alive in [true, false] {
+            let root = tempfile::tempdir()?;
+            let (first, location, identity) = fixture(root.path(), "first", "shared fixture")?;
+            let (mut sibling, other, other_identity) =
+                fixture(root.path(), "sibling", "shared fixture")?;
+            sibling.token = Sha256Digest::from_bytes([14; 32]);
+            let old_session = Incarnation::from_bytes([21; 16]);
+            let sibling_session = Incarnation::from_bytes([22; 16]);
+            let repaired_session = Incarnation::from_bytes([23; 16]);
+            let old_alive = Arc::new(AtomicBool::new(true));
+            let old_owner = Arc::downgrade(&old_alive);
+            let sibling_alive = Arc::new(AtomicBool::new(true));
+            let repaired_alive = Arc::new(AtomicBool::new(true));
+            let mut engine = Engine::new(root.path())?;
+            engine.admit_owner(first.worker, &old_alive)?;
+            engine.request(
+                &first,
+                old_session,
+                open(location.clone(), identity.clone()),
+            )?;
+            engine.admit_owner(sibling.worker, &sibling_alive)?;
+            engine.request(&sibling, sibling_session, open(other, other_identity))?;
+            assert_eq!(
+                (engine.loads, engine.reuses, engine.sessions.len()),
+                (1, 1, 2)
+            );
+
+            old_alive.store(old_still_alive, Ordering::Release);
+            let repaired = protocol::Grant {
+                token: Sha256Digest::from_bytes([15; 32]),
+                ..first.clone()
+            };
+            engine.admit_owner(repaired.worker, &repaired_alive)?;
+            assert!(!engine.sessions.contains_key(&(first.worker, old_session)));
+            assert!(
+                engine
+                    .sessions
+                    .contains_key(&(sibling.worker, sibling_session))
+            );
+            engine.request(
+                &repaired,
+                repaired_session,
+                open(location.clone(), identity.clone()),
+            )?;
+            assert_eq!(
+                (engine.loads, engine.reuses, engine.sessions.len()),
+                (1, 2, 2)
+            );
+
+            // The obsolete socket can close after the new grant opens a model.
+            // Its Weak witness remains exact even after its last Arc is gone.
+            old_alive.store(false, Ordering::Release);
+            assert!(engine.admit_owner(first.worker, &old_alive).is_err());
+            assert!(
+                engine
+                    .sessions
+                    .contains_key(&(first.worker, repaired_session))
+            );
+            assert!(
+                engine
+                    .sessions
+                    .contains_key(&(sibling.worker, sibling_session))
+            );
+            drop(old_alive);
+            engine.release_owner(first.worker, Some(&old_owner));
+            engine.retire_disconnected();
+            engine.admit_owner(repaired.worker, &repaired_alive)?;
+            for (grant, session) in [(&repaired, repaired_session), (&sibling, sibling_session)] {
+                assert!(engine.sessions.contains_key(&(grant.worker, session)));
+                let Response::Embedded { vectors, .. } = engine.request(
+                    grant,
+                    session,
+                    Request::Embed {
+                        texts: vec!["cobalt".into()],
+                        workers: 1,
+                        memory_bytes: 8 << 20,
+                    },
+                )?
+                else {
+                    anyhow::bail!("delayed old-owner release lost a live inference session")
+                };
+                assert_eq!(vectors, vec![Some(vec![1.0, 0.0])]);
+            }
+            assert_eq!(engine.loads, 1, "repair reloaded the shared model");
+
+            // Exact current-owner close retires only that worker. A subsequent
+            // explicit Revoke retains its intentional whole-worker semantics.
+            engine.release_owner(first.worker, Some(&Arc::downgrade(&repaired_alive)));
+            assert!(
+                !engine
+                    .sessions
+                    .contains_key(&(first.worker, repaired_session))
+            );
+            assert!(
+                engine
+                    .sessions
+                    .contains_key(&(sibling.worker, sibling_session))
+            );
+            engine.admit_owner(repaired.worker, &repaired_alive)?;
+            engine.request(&repaired, repaired_session, open(location, identity))?;
+            engine.release_owner(first.worker, None);
+            assert!(
+                !engine
+                    .sessions
+                    .contains_key(&(first.worker, repaired_session))
+            );
+            assert!(
+                engine
+                    .sessions
+                    .contains_key(&(sibling.worker, sibling_session))
+            );
+            assert!(engine.owners.contains_key(&sibling.worker));
+            assert!(!engine.owners.contains_key(&first.worker));
+            let Response::Embedded { vectors, .. } = engine.request(
+                &sibling,
+                sibling_session,
+                Request::Embed {
+                    texts: vec!["harbor".into()],
+                    workers: 1,
+                    memory_bytes: 8 << 20,
+                },
+            )?
+            else {
+                anyhow::bail!("worker-local revocation lost sibling inference")
+            };
+            assert_eq!(vectors, vec![Some(vec![0.0, 1.0])]);
+            assert_eq!(engine.loads, 1);
+        }
+        Ok(())
     }
 
     #[test]

@@ -1991,3 +1991,141 @@ acceptance, hosted release execution and unexercised platform/security cases
 remain explicitly unqualified release gates. No publication, PR or user-runtime
 installation occurred. The plan permits independent P6b onward work with these
 limits retained; normal catalog/grant activation remains disabled until P6f.
+
+## P6b — helper outage recovery (3 November 2026, source gates accepted)
+
+P6a was committed and pushed as `7500fa2f13f43a603c4f7aa1875f90af0a52c416`
+with the authorized human DCO trailer. P6b retains working version **1.8.8**.
+Final local validation accepted source
+`ad49d73ca312e0ccadd4003f21f3ffea6c82727dc8e751e77ec2717273f06435`
+over 787 native inputs. P6c may proceed; signed/editor and remaining platform
+release qualification stay separate. The checkpoint history below identifies
+failures and corrections rather than presenting every earlier run as current.
+
+Before correction, a controlled request to the retained P6a Windows helper
+returned generic `failed` for an unknown worker grant, then answered Status and
+stayed alive. The receipt `artifacts/v190/p6b-missing-grant-before.json` pins helper
+SHA-256 `d0e6076126f9936ed77f10de4c3022adc21194de65b5541e1e51563443afa8fe`.
+This reproduces a missing-grant control path, not the cause of an older unexplained
+SIGKILL or crash. Source tracing confirmed that the generic reply caused the
+supervisor to drain the healthy shared pool, and that its former lifetime
+three-attempt cap could never reopen without explicit Start/service restart.
+
+The implementation adds helper-scoped, exact-state CAS operations without DDL.
+Three failed attempts enter a sixty-second cooldown; another burst preserves the
+original outage anchor. The supervisor translates a saved wall deadline once per
+observed state to monotonic time. Healthy reset requires the same live helper for
+sixty seconds and an existing acknowledged control exchange after that interval,
+and clears only the captured outage. Explicit Stop and terminal startup safety
+suppression survive restart until explicit Start. Helper cooldown observations
+use existing `waiting`/next-check fields; other recovery scopes retain their
+prior behavior. Payload/containment/identity failures are not mislabeled as
+transient healthy states.
+
+Missing-grant replies carry the exact worker identity. Repair replaces that
+worker's capability through its existing private pipe. Helper connection cleanup
+now carries an exact owner witness: delayed release or a canceled request from
+the old connection cannot remove repaired or sibling model sessions. A failed
+containment attachment terminates/reaps the exact uninitialized child before
+returning. Diagnostic codes retain observed exit code/signal and recovery/grant
+transitions without adding stderr or model inputs. Malformed reply framing can
+still collapse to control-closed; historical causes remain unknown.
+
+Initial focused Windows results: three supervisor recovery tests, two process
+diagnostic/containment tests (one child fixture intentionally ignored), seven
+Store helper tests, the actual helper missing/revoked-grant integration and the
+real tiny-model delayed-owner regression passed. Native IPC and CLI recent/full
+export preserved complete recovery log pages; the canonical log-reader test
+passed. Extension compilation passed, with **547 passed / 19 skipped** across
+566 tests, including complete log-page preservation. These tests separately cover
+helper control, canonical inference ownership and log transport; they do not by
+themselves prove the entire supervisor grant-repair loop or repeated native loss.
+
+Workspace Clippy/format passed. The first broad-test invocation could not find
+the existing pinned nextest executable; its log is retained and the campaign
+resumed with that directory on process PATH. Python ran 369 tests with nine skips
+and one Git ownership error; that exact test passed with process-scoped
+`safe.directory`. Repository checks likewise passed after the same process-only
+correction. No global Git identity/configuration or filesystem ACL was changed.
+At that checkpoint, Windows release and isolated Mac qualification, repeated
+native outage/cooldown/restart, complete production repair, phase latency and
+final review were still pending. Final evidence appears below.
+
+The fresh P6b dependency-policy receipt passed all seven checks with the same
+three dated advisory dispositions and no graph/policy change
+(`artifacts/dependency-policy/p6b-fresh.json`, observed 19:46:49 UTC). Repository
+checks covered 1,569 public files at that checkpoint. Mac ARM64 focused checks
+passed against source `579606b285a34d42afe402681e1aa02a4f26295f0a6bb2c675b9f07eedaf7510`
+(786 native inputs), with before/after hash verification. Its release build was
+held for final supervisor integration coverage; these results do not qualify
+later source changes. Exact logs and the initial qualification receipt are in
+`artifacts/v190/neo-p6b/`.
+
+The first broad Windows campaign completed **1,950 passed / seven failed / 38
+skipped**. All seven failures required the existing private native fixture base,
+which its invocation had omitted: two catalog-upgrade cases, three exceptional
+owner-recovery cases and two Store native-boundary cases. Their owner/privacy
+checks correctly refused the ordinary temporary directory. The two Store cases
+then passed using the previously qualified private base, and the final CLI
+package campaign passed the other five cases. No ACL, assertion or production
+ownership rule was changed to obtain those results. The original failed campaign
+is retained as `artifacts/v190/p6b-workspace.log`.
+
+A separate Sol review found a sibling control-channel gap: ignored Revoke errors
+and configuration rollback could reuse a reply stream after an ambiguous
+exchange. A delayed acknowledgement could then match a later exchange. The
+canonical Pool control boundary now refuses subsequent I/O after that
+uncertainty, with retirement/accounting on the existing supervisor turn.
+The known pending-Status continuation and correlated missing-grant repair remain
+distinct. Valid negative replies retain rejection codes instead of being called
+malformed protocol. Four actual-method/child-pipe regressions cover late replies,
+Status continuation, missing grants and negative reply classification. Final
+combined qualification passed as recorded below.
+
+The Mac checkpoint pair at source `2023546c89e20e429c65479c97280de88c6e92646ca267b017890d131c797dc8`
+built successfully, but its new supervisor fixture failed before worker
+admission: initial sibling inference requested 1 MiB, below the real helper's
+existing 8 MiB minimum. A single targeted backtrace identified that call. The
+fixture now requests the existing admitted minimum and supplies stage context;
+its identity, publication, shared-model, sibling-session and source-preservation
+assertions are unchanged. Original failure/build/backtrace evidence is retained
+in `artifacts/v190/neo-p6b/checkpoint-2023546/`. No production memory limit was
+changed. The next production checkpoint was
+`be6e29680ceacc11d056f04dfbb7a6cf63487876d01f6bccba7bd2b217542053`
+over 787 native inputs. Its strict one-load assertion then exposed a second
+fixture setup issue: custom provisioning after indexing deliberately retired
+resident inference state, adding an unrelated second load before repair. Moving
+reference capture before indexing retained every one-load, identity and repair
+assertion. Final production component bytes remain identical to that checkpoint;
+only the isolated test ordering changed.
+
+The first repeated-loss fixture also allowed its sole project worker to retire
+after the existing fifteen-second idle interval while polling only helper
+status. Recovery correctly reopened the saved retry burst but did not start an
+unused helper. The corrected fixture keeps real lexical reads active every five
+seconds and checks the same worker through cooldown. It explicitly closes its
+read-only SQLite observers and captures bounded failure diagnostics. No idle
+limit or production restart predicate was changed. Original failed receipts and
+logs remain retained.
+
+### Final P6b validation
+
+| Gate | Observed result and evidence |
+| --- | --- |
+| Windows native suites | Broad checkpoint: 1,950 passed, seven private-fixture failures, 38 skipped. Both affected Store cases then passed; final CLI package passed **439 / 15 skipped**, including the five affected CLI cases. After the control-stream correction, the CLI library passed **322 / 10 skipped**. Final all-target/all-feature CLI Clippy, earlier unchanged workspace Clippy, formatting and workspace doctests passed. Logs: `p6b-workspace.log`, `p6b-final-*.log`, `p6b-r3-cli-lib-tests.log`, `p6b-r4-cli-clippy.log`. These are complementary runs, not one claimed all-green workspace invocation. |
+| Actual Windows supervisor | Fresh current-source pair `artifacts/v190/p6b-r4-qualified-runtime`; exact native fixture passed in **2.12 s**, preserving one model load, sibling inference, worker/helper identities/PIDs, publication and source bytes through Missing-to-rebind repair. |
+| Hosted-runner CPU reproduction | **3/3** suites passed with four processors, one iteration: managed MCP **56.9 s**, native clients **27.1 s**, installer **101.3 s**. Receipt: `artifacts/ci-local/20261103-132054-dbd3024d/summary.json`. The five-iteration pre-PR/release gate remains separate. |
+| Pooled MiniLM | Actual offline two-project pool smoke passed model reuse, regeneration, helper loss, lexical/source preservation and explicit recovery with one shared model load. Log: `artifacts/v190/p6b-r4-pool-smoke.log`. |
+| Repeated native outage | Passed in **137.554 s**: three owned helper losses, **60.704 s** cooldown across service restart with the active worker and original outage anchor retained, healthy reset, a fresh later outage anchor, explicit Stop across restart and explicit Start recovery. Exact process handles/image/incarnation were checked before termination. Receipt: `artifacts/v190/p6b-native-outages.json`. |
+| Mac ARM | On neo, source/input hashes matched before and after. Focused production-checkpoint Clippy and helper tests passed, including four recovery and six pool-process tests; one owned child entry remained ignored in ordinary discovery and was invoked by its parents. The final test-only correction passed the exact supervisor fixture against retained and current-source pairs (**2.22 s / 2.16 s**). All four production components were byte-identical between those pairs. Full isolated install/repair/upgrade/rollback/retirement/uninstall and client lifetimes passed. Receipt: `artifacts/v190/neo-p6b/final-ad49d73/qualification.json`. Development ad-hoc sealing does not qualify Developer ID/notarization or editor acceptance. |
+| Source/tool contracts | Python **360 passed / nine skipped** out of 369, repository checks for **1,570** public files, synchronized **1.8.8** versions, instruction-file byte identity and whitespace checks passed. Complete native log pages, CLI retained/recent exports and console output retained recovery fields; extension compilation/tests passed **547 / 19 skipped**. Dependency policy passed all seven requested fresh checks without a dependency/policy graph change. |
+| Performance | **84/84** comparisons passed with the existing median/p95 limits unchanged. Candidate and contemporary P5 control each ran Off and Report: **90 trials / 810 calls per campaign**, zero errors/retries, and **720 verified receipts** in each Report campaign. Gates retain the original 60 frozen/P5 comparisons and add 24 archived P6a comparisons. Source/model work, coverage and receipt assertions remain enforced. Receipt: `artifacts/v190/p6b-gates.json`; reports: `p6b-{off,report,control-off,control-report}-mcp/replay/report.json`. |
+
+The lead reviewed the complete production change independently of its authors;
+a separate Sol review found the control-stream issue and reviewed the corrected
+native/private fixtures and final evidence. No unrelated user state, global
+identity, permissions or ignore rules were changed. No PR, release publication
+or version promotion occurred. Historical unexplained helper exits remain
+unattributed; malformed output can still appear as control EOF. Remaining
+signed/notarized, installed-editor/agent and platform release gates are retained
+for P14 rather than claimed from these local source results.

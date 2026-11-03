@@ -12,6 +12,10 @@ bootstrap passed local gates, including actual Developer ID signed installation
 and all 60 latency comparisons. The [ledger](research/implementation-v190.md)
 separates those results from pending notarization, editor and platform qualification.
 
+P6b's [helper recovery](service-embedding.md#helper-recovery) adds durable cooldown,
+measured healthy reset and worker-grant repair. Local Windows/Mac ARM gates and
+all 84 latency comparisons passed; the ledger retains release qualification limits.
+
 The [dependency supply-chain policy](dependency-advisories.md) adds pinned
 `cargo-deny` and `cargo-vet` checks, visible unreviewed baseline exemptions and
 review requirements for changed Rust dependencies alongside existing advisories.

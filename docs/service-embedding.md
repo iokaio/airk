@@ -56,7 +56,19 @@ Calibration development validation on October 24: the Windows shared-file suite 
 
 The cached session count describes live model/tokenizer handles, not idle transports or persisted semantic readiness. A completed job drops its model handle and queues its session close; the worker's direct helper transport can remain open. The loaded compatible model may also remain available with zero sessions. Shutdown regression coverage therefore owns an explicit authenticated model session while stopping the real helper, and separately verifies exact-incarnation service stop and preserved lexical reads.
 
-The supervisor confirms helper exit and drains its native containment before starting a replacement. It permits three helper start attempts per service lifetime, or per explicit `start_embedding` request, with bounded exponential delay. Exhaustion leaves lexical retrieval and service health available. A trusted `stop_embedding` request checks the exact opaque helper incarnation and suppresses automatic replacement; `start_embedding` accepts a request to resume bounded startup and reports `embedding_starting`, not readiness. Poll `embedding_status` for the observed replacement identity.
+The supervisor confirms helper exit and drains its native containment before starting a replacement. It permits three consecutive failed attempts with bounded backoff, then waits sixty seconds before another bounded burst. Saved recovery state survives service restart; reopening a burst preserves the original outage timestamp. The supervisor translates each observed saved deadline to monotonic time once, so wall-clock changes do not repeatedly move an active wait. A helper that remains alive for sixty seconds and acknowledges an existing control exchange after that interval clears only the exact recovery state captured when it started. This adds no health RPC or per-read process startup.
+
+Cooldown leaves lexical retrieval and service health available and appears as `waiting` with a next-check time. A trusted `stop_embedding` request checks the exact opaque helper incarnation and durably suppresses automatic replacement. Payload verification, containment or startup identity failures also suppress replacement pending repair and explicit Start; `stopped` therefore does not imply that the user requested Stop. `start_embedding` accepts a request to resume bounded startup and reports `embedding_starting`, not readiness. Poll `embedding_status` for the observed replacement identity.
+
+A correlated missing-grant reply identifies absent membership for one worker. The supervisor installs a fresh capability through that worker's existing private control channel while retaining the shared helper and other workers. Registration validates the replacement before revoking the old capability, keeps one live grant per worker and rejects reused tokens without resetting their consumed state. Delayed old-connection cleanup cannot retire replacement sessions. Ambiguous control failures still drain the owned helper before replacement. Failed in-flight work is not replayed by grant repair. Content-free diagnostic codes record grant registration/missing membership, cooldown, healthy reset, explicit controls and observed native exit code or signal. These observations do not establish the cause of a historical unobserved helper termination.
+
+An uncertain mutating control exchange closes that Pool's admission to further
+control writes and replies, including cleanup and configuration rollback. The
+next ordinary supervisor turn retires the helper and accounts the outage, so a
+late acknowledgement cannot satisfy a later request. A timed-out Status remains
+one known outstanding observation: its exact reply must finish before another
+operation is submitted. Invalid or disconnected Status fails closed. These
+fences add no health request or query replay.
 
 Existing project workers receive replacement capabilities over their private control pipes without changing their project identity or fencing generation. The direct connector checks service, worker, project, runtime and endpoint role before accepting an update. A retained model session reopens its original exact model descriptor on the replacement connection, validates the model handshake and retires its old session. Compatible projects still share one loaded model in each helper instance. Neither the broker nor the private rebind message carries model inputs or vectors.
 
@@ -67,3 +79,13 @@ Development validation on October 24, 2026: Windows passed 91 CLI unit tests and
 The real offline MiniLM fixture preserved both project worker identities through exact native helper drain, replacement and resumed vector queries, with one compatible model load in the replacement helper. It also preserved lexical evidence, source receipts and original source bytes. Development pair `target/airksvc-runtime-stage32` has source fingerprint `aba08207c8df88777e509c46be88ef9abe13184176b12cb52f4e448ed6c7d649` (618 files), main digest `049c4cb80d846f7cfad0eaca02ef184d491a19f92d23534e8d8250b752735eb3` and helper digest `e16c8c3822a099b332f7817a529066a55c90754bb261a0de8eb6fb9d0d5deb4f`. The final Linux unit/Clippy image is `3bbf09a4e408cb6249c51ea36adb54de89f0559ee578b0c7df4fab7214ff030b`. These are development receipts, with no VSIX or installed macOS/editor qualification.
 
 Readiness describes persisted semantic coverage independently of durable job outcomes. If failure reporting itself cannot publish, coverage may remain pending while the semantic job has an explicit failure receipt; inspect the job/events rather than treating the readiness state as a substitute for the job outcome.
+
+P6b source validation on 3 November 2026 passed actual Windows/Mac ARM
+supervisor grant repair and isolated installer lifecycles. Windows also passed
+repeated helper loss with cooldown/healthy reset/Stop across restart, pooled
+MiniLM recovery and all 84 unchanged-bound latency comparisons. See the
+[implementation ledger](research/implementation-v190.md) for exact source,
+suite counts, corrected fixture failures and retained receipts. These local
+results do not qualify current Developer ID/notarization, installed-editor/agent
+acceptance or unexercised release platforms. No cause is inferred for older
+unobserved helper exits.

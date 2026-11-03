@@ -19,6 +19,7 @@ pub enum LogKind {
     JobFailed,
     WorkerStopped,
     ModelFailed,
+    ModelRecovery,
     ModelStopped,
     SourceWorkerFailed,
     SourceTraversalUnavailable,

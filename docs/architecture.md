@@ -15,6 +15,16 @@ buffers separately. No source refresh, inference, registry migration or writer
 operation is introduced by verification. [Controls and qualification](source-verification.md)
 remain separate from later Project/index implementation.
 
+P6b keeps helper recovery inside the existing CLI supervisor. Store owns exact
+helper recovery snapshots and compare-and-swap transitions in the existing
+registry schema; CLI translates their deadlines to monotonic time and uses
+existing acknowledged control exchanges for healthy reset. The shared Pool
+adapter fences uncertain control replies, and the inference owner fences
+connection cleanup to the exact capability owner. Core adds a content-free
+recovery log category; existing native and editor readers preserve its complete
+records. No query-triggered startup, health probe or additional scheduler is
+introduced. See [helper recovery](service-embedding.md#helper-recovery).
+
 P5 prepares an inactive normalized catalog behind an explicit upgrade fence.
 Core owns typed index/Project/source identities, scope and policy formats; Store
 owns the exact SQLite shape, bounded snapshots, imports, migration and recovery

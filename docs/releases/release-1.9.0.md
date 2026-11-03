@@ -8,6 +8,11 @@ later promotion to **1.9.0**. See the [current working-build record](release-1.8
 The checkpoint identities and measurements below retain their original tested
 versions. Publication and installed-artifact acceptance require separate gates.
 
+P6b adds durable helper cooldown recovery, measured healthy reset, native exit
+codes and isolated worker-grant repair. Local Windows/Mac ARM gates and all 84
+unchanged-bound latency comparisons passed;
+see the [recovery contract](../service-embedding.md#helper-recovery) and ledger.
+
 ## Accepted work and current behavior
 
 P5's foundation passed local isolated qualification at working version 1.8.8.

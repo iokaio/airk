@@ -81,7 +81,9 @@ mod background;
 pub use background::audit::AutomaticAuditContext;
 #[path = "service_recovery.rs"]
 mod recovery;
-pub use recovery::{RecoveryBudget, RecoveryCondition, WaitingRecovery};
+pub use recovery::{
+    HelperRecoveryClear, HelperRecoverySnapshot, RecoveryBudget, RecoveryCondition, WaitingRecovery,
+};
 #[path = "service_cleanup.rs"]
 mod cleanup;
 #[path = "service_configuration.rs"]
