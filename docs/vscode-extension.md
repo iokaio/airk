@@ -194,12 +194,12 @@ If Windows locks a running CLI during an update, the previous executable remains
 
 **AIRK: Remove Terminal Command** removes AIRK-owned PATH integration from external shells now: the exact `# AIRK CLI PATH` blocks it wrote, or the matching user PATH entries on Windows. It also sets `airk.cli.shellIntegration` to `off` so later setup does not add them again. The wrapper stays so that VS Code terminals keep working. A block you edited, or a redirected or hard-linked profile, is preserved and reported.
 
-Uninstalling the extension runs its `vscode:uninstall` hook the next time VS Code starts. The hook copies the verified engine to a private temporary `airk-uninstall-*` directory and starts a detached cleanup worker. It prints that directory, which holds `cleanup.log`, `result.json` and `README.txt`. The worker:
+Uninstalling the extension runs its `vscode:uninstall` hook when VS Code completes the removal at a later start. After `code --uninstall-extension`, the first restart can only mark the extension as removed, and the hook then runs at the next start. Until the hook runs, the service, the PATH blocks and the runtime stay. If no `airk-uninstall-*` directory exists after one restart, restart VS Code again. The hook copies the verified engine to a private temporary `airk-uninstall-*` directory and starts a detached cleanup worker. It prints that directory, which holds `cleanup.log`, `result.json` and `README.txt`. The worker:
 
 - first records `state: started`;
 - removes recorded AIRK agent entries in project files;
 - runs `airk runtime uninstall`, which stops the service and removes the runtime payloads and the launcher;
-- removes the AIRK-owned PATH entries, profile blocks and wrapper, and the Workbench sessions;
+- removes the AIRK-owned PATH entries, profile blocks and wrapper, deletes a startup file that AIRK created when nothing else remains in it, and removes the Workbench sessions;
 - writes `complete` or `needs_attention`.
 
 The result is also mirrored to `extension-uninstall/last-result.json` in the native state directory, which survives uninstall. A `started` result with no running worker means the cleanup was interrupted; it is never reported as success. Reinstall AIRK and run **AIRK: Show Last Uninstall Result**, or read the files above. A later activation warns once when the last cleanup needs attention.

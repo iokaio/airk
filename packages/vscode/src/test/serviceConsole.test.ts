@@ -804,3 +804,22 @@ test('optional failure retains genuine early health and records the failed obser
         assert.equal(f.controller.state.connected,true);
     }finally{release();await poll;f.controller.dispose();}
 });
+
+test('a status poll while the workspace is untrusted explains the wait instead of the raw authorization code',async()=>{
+    const f=fixture();
+    f.setTrusted(false);await f.controller.refresh();
+    assert.notEqual(f.controller.state.message,'runtime_client_no_longer_authorized');
+    assert.match(f.controller.state.message!,/workspace trust/i);
+    assert.equal(f.controller.state.bootstrap.code,'runtime_client_no_longer_authorized','the code stays available for diagnosis');
+    f.setTrusted(true);await f.controller.refresh();
+    assert.equal(f.controller.state.connected,true,'the poll connects after trust');
+    f.controller.dispose();
+});
+
+test('an authorization code in a trusted workspace keeps the code instead of the trust text',async()=>{
+    const f=fixture();
+    f.host.runtime.discover=async()=>{throw new ServiceError('runtime_client_no_longer_authorized');};
+    await f.controller.refresh();
+    assert.equal(f.controller.state.message,'runtime_client_no_longer_authorized');
+    f.controller.dispose();
+});

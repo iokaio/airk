@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { serviceTestHost } from './serviceTestHost';
 import { renderServiceDashboard } from '../serviceDashboard';
-import { RuntimeHost } from '../serviceBootstrap';
+import { InstallFolderPermissionError, RuntimeHost } from '../serviceBootstrap';
 import { ServiceError } from '../serviceClient';
 import * as path from 'node:path';
 
@@ -470,4 +470,49 @@ for(const change of ['size','mtime'] as const)test(`a same-version VSIX ${change
         assert.deepEqual(await f.api.getServerDefinitions(),[],'changed code cannot admit native MCP through the older interface');
         assert.equal(f.calls.includes('workbench.action.reloadWindow'),false,'reload remains an explicit user action');
     }finally{await f.close();}
+});
+
+test('a successful Set Up after a failed automatic setup clears the startup warning',async context=>{
+    let release!:()=>void;
+    const discoveryGate=new Promise<void>(resolve=>{release=resolve;});
+    const f=await serviceTestHost(context,{automatic:true,deferStartup:true,discoveryGate});
+    try{
+        f.state.down=true;release();await f.api.whenReady();
+        assert.ok(f.calls.some(line=>line.startsWith('Automatic installation failed:')));
+        await f.commands.get('airk.explorer.open')!();
+        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');
+        const latest=async(requestId:string)=>{await panel.send({v:1,type:'ready',requestId});return (panel.posted.filter((entry:any)=>entry.type==='state').at(-1) as any)?.state;};
+        assert.equal((await latest('before-repair'))?.startup?.failed,true,'the failed automatic setup shows the warning');
+        f.state.down=false;await f.commands.get('airk.setUp')!();
+        assert.ok(f.calls.every(line=>!line.startsWith('Automatic installation failed:'))||f.state.ensured>1,'Set Up runs the installation again');
+        assert.equal((await latest('after-repair'))?.startup,undefined,'a ready runtime must not keep the failed startup banner');
+    }finally{release();await f.close();}
+});
+
+test('a failed setup shows in the status bar until a later setup succeeds',async context=>{
+    const f=await serviceTestHost(context,{automatic:false,fresh:true});
+    try{
+        f.state.down=true;await f.commands.get('airk.setUp')!();
+        assert.ok(f.calls.some(line=>line.startsWith('Automatic installation failed:')));
+        assert.match(f.statusBar.text,/setup failed/);
+        f.state.down=false;await f.commands.get('airk.setUp')!();
+        assert.doesNotMatch(f.statusBar.text,/setup failed/);
+    }finally{await f.close();}
+});
+
+test('an automatic reconnect after a failed project preparation clears the startup warning',async context=>{
+    let release!:()=>void;
+    const discoveryGate=new Promise<void>(resolve=>{release=resolve;});
+    const f=await serviceTestHost(context,{automatic:true,deferStartup:true,discoveryGate,registered:false});
+    try{
+        const review=context.mock.method(RuntimeHost.prototype,'reviewProject',async()=>{throw new ServiceError('source_unavailable');});
+        release();await f.api.whenReady();
+        await f.commands.get('airk.explorer.open')!();
+        const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');
+        const latest=async(requestId:string)=>{await panel.send({v:1,type:'ready',requestId});return (panel.posted.filter((entry:any)=>entry.type==='state').at(-1) as any)?.state;};
+        assert.equal((await latest('after-failure'))?.startup?.failed,true,'the failed project preparation shows the warning');
+        review.mock.restore();await f.refreshFolders();
+        assert.ok(f.calls.some(line=>line.includes('Connected to AIRK')),'the reconnect path ran');
+        assert.equal((await latest('after-reconnect'))?.startup,undefined);
+    }finally{release();await f.close();}
 });

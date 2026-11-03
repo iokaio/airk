@@ -178,6 +178,9 @@ export class ServiceConsoleController {
                 this.lastPollFailure=code(error);void this.host.diagnosticFailure?.('status_poll',error,this.bootstrap).catch(()=>{});
             }
             this.state.message=code(error);
+            // An untrusted workspace is a wait for the user, not a connection failure; the bootstrap code keeps the detail.
+            // The same code can come from a runtime host that cannot continue, so the trust text needs an untrusted workspace.
+            if(code(error)==='runtime_client_no_longer_authorized'&&!this.host.trusted())this.state.message='Waiting for workspace trust. AIRK connects after the workspace is trusted and setup finishes.';
             if(code(error)==='status_poll_timed_out'){
                 this.disconnected();this.state.health={...this.state.health,state:'failed',code:'status_poll_timed_out'};
                 this.state.message='Status check timed out. Reconnecting automatically; current indexing progress is unconfirmed.';

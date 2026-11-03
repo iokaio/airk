@@ -31,6 +31,9 @@ import { rememberShellIntegration, rememberUninstallTarget, shellProfiles } from
 import { recordDiagnosticFailure } from './diagnosticLogs';
 import { nativeExecutionAllowed, NativeExecutionDisabled, setNativeExecutionGate } from './nativeGate';
 
+/** Status bar text while the last setup attempt failed; the output and the error notification keep the details. */
+const SETUP_FAILED_STATUS='$(warning) AIRK: setup failed';
+
 /** User-scope only: a workspace cannot turn native execution back on. */
 function nativeExecutionSetting():boolean{
     return vscode.workspace.getConfiguration('airk').inspect<boolean>('runtime.nativeExecution')?.globalValue!==false;
@@ -126,6 +129,13 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }).then(undefined,error=>this.output.appendLine(`Update action failed: ${String(error)}`));
         }
         return !!this.extensionUpdate;
+    }
+    /** A completed setup replaces any earlier failed startup; reportInstall keeps only its message. */
+    private setupSucceeded():void{if(this.startup){this.startup=undefined;this.treeChanges.fire();}}
+    /** Status for a refresh that found no usable runtime: show a failed setup instead of the neutral text. */
+    private renderSetupFailed():boolean{
+        if(!this.installationFailed)return false;
+        this.status.text=SETUP_FAILED_STATUS;return true;
     }
     private renderUpdateStatus():boolean{
         if(!this.extensionUpdate)return false;
@@ -261,7 +271,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
             this.trusted();
             if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
-            if(!observation.inspection||observation.inspection.payload_verified===false||observation.inspection.metadata_only===true){clear();this.status.text='AIRK: setup';return;}
+            if(!observation.inspection||observation.inspection.payload_verified===false||observation.inspection.metadata_only===true){clear();if(!this.renderSetupFailed())this.status.text='AIRK: setup';return;}
             const binding=this.runtime().binding(observation.inspection,observation.installDir);
             if(binding.version!==this.runningVersion)throw new ServiceError('explicit_runtime_upgrade_or_matching_extension_required');
             const lifecycle=record(observation.inspection.lifecycle??{}),recovery=record(observation.inspection.connection_observation??{});
@@ -290,7 +300,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
             if(this.selectedEligible&&this.selectedFence(this.selectedEligible)){
                 this.status.text='AIRK: selected project ready';this.output.appendLine(`Other workspace preparation needs attention: ${String(error)}`);
-            }else{clear();this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
+            }else{clear();if(!this.renderSetupFailed())this.status.text='AIRK: inspect service';this.output.appendLine(String(error));}
         }}
         finally{if(!this.disposed&&generation===this.generation){this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}}
     }
@@ -736,6 +746,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                     await this.prepareWorkspaceProjects(binding,installed);
                     await this.refresh(installed);
                     this.reportInstall('Connected to AIRK. Saved project work remains with the service.');
+                    this.setupSucceeded();
                     await this.openWorkbenchAfterSetup();
                     if(this.installationWarnings)this.output.appendLine('Some agent connections need review in Management > Agents.');
                     return;
@@ -770,6 +781,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const completed=await this.runtime().discover();
             await this.prepareWorkspaceProjects(binding,completed);await this.refresh(completed);
             this.reportInstall(this.installationWarnings?'Runtime installation finished with issues to review.':'Runtime ready. Project indexing continues in Management.');
+            this.setupSucceeded();
             await this.openWorkbenchAfterSetup();
             if(notify)await this.installationComplete();
             },progressTitle);
@@ -808,6 +820,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 return;
             }
             this.reportInstall('Installation did not complete. See AIRK output for the failure and retry instructions.');
+            if(!this.renderUpdateStatus())this.status.text=SETUP_FAILED_STATUS;
             void vscode.window.showErrorMessage(`AIRK installation needs attention: ${error instanceof Error?error.message:String(error)}. Use AIRK: Install or Repair CLI to retry.`);}
     }
     private async projectDataRoot(observation:BootstrapObservation):Promise<string>{

@@ -550,7 +550,7 @@
           "airk.service.installDir": {
             "type": "string",
             "default": "",
-            "markdownDescription": "Absolute user installation directory on this execution host. Empty uses native account defaults. Workspace values are ignored.",
+            "markdownDescription": "Absolute user installation directory on this execution host. Empty uses native account defaults. On macOS and Linux, an existing directory must belong to you and be owner-only (`chmod 700`); setup creates a missing directory that way. Workspace values are ignored.",
             "scope": "machine"
           },
           "airk.service.managedSource": {
