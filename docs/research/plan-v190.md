@@ -56,6 +56,12 @@ The [3 November audit](../issue-analysis/audit-report.md) and
 operational evidence. Their assessment and implementation boundaries are woven
 into [the remaining-phase remediation sequence](#operational-research-and-remaining-phase-sequence).
 
+The [Shark Tank remediation draft](../reviews/shark-tank-todos.md), also dated
+3 November and based on 1.8.7, supplies additional qualification proposals.
+The [selective integration below](#selective-shark-tank-remediation) adopts useful
+items within the remaining phases and records exclusions; its separate milestones
+and blanket requirements do not replace this plan or current repository policy.
+
 ## Recommended direction
 
 Make 1.9.0 a release about **intentional indexing and dependable, useful evidence**.
@@ -129,6 +135,14 @@ advertise the new hierarchy. Similarly, X4's implementation may precede X5
 internally; **public combined reads activate only with X5 parity in P7**. The
 single-index V2 receipt is complete at P4 and gains Project/member associations
 in P7. These boundaries avoid a partially usable schema or API between phases.
+
+The [selective Shark Tank work](#selective-shark-tank-remediation) adds targeted
+qualification within these same boundaries: setup/ignore triage and risk review
+with P6, scope/relevance/property cases with P7/P8, fault and partition cases with
+P9–P11, and consolidated installed/resource/documentation evidence at P14.
+Prepare any additional held-out labels before P13 experiments. Do not postpone
+tests for an activating feature to P14 or turn optional broad campaigns into new
+prerequisites for every phase.
 
 ### Operational research and remaining-phase sequence
 
@@ -206,6 +220,67 @@ unresolved platform/signing question, collecting the existing run before another
 correction. No phase is complete solely because a renderer mock or workflow-schema
 test passes. Continue the frozen baseline and preceding-phase performance gates;
 measure outage/admission costs separately and retain healthy single-index fast paths.
+
+### Selective Shark Tank remediation
+
+**Planning assessment, 3 November 2026.** Use the review's stable `REQ-*` IDs for
+traceability, without confusing its R/M/P area codes with this plan's package or
+phase IDs. Its audit did not execute the proposed campaigns. Existing bootstrap
+instructions, benchmark/quality/fault scripts, runtime-upgrade checks, installed
+extension suites and P5 recovery tests already cover parts of the subject.
+Verify each claimed gap against live source before implementing; extend the
+owning harness rather than creating a competing runner. Record the search and
+existing owner in the phase ledger. Preserve accepted P0–P5 evidence and the
+P6a–P6f order; none of these proposals retroactively invalidates a completed phase.
+
+Adopt the following work at the phase that can use and test it. Each row belongs
+with that phase's behavior, documentation and validation commit; it is not a new
+parallel programme or an instruction to start implementation during this edit.
+
+| Review requirements | Placement and useful implementation | Acceptance and bounded scope |
+| --- | --- | --- |
+| REQ-G-1–G-6 — guardrails | Apply throughout P6–P14: reuse prior art, preserve dependency direction, source isolation, human DCO, parity, protected release boundaries and evidence provenance. Keep evaluation/model downloads explicit and outside product retrieval; send no query, source or activation data to an external service. | Existing task authorization and repository policy govern; the draft does not require repeated approval for already authorized work or prohibit existing installation downloads. Record UTC date, tested commit plus dirty/source digest where relevant, binary/model/corpus hashes, commands, hardware/OS, affinity, cache conditions and unavailable counters in existing receipts. Add only missing fields; do not rewrite historical receipts to imply new measurements. |
+| REQ-A-1–A-3 — reproducible setup | During P6a/P6f, improve the contributor entry path and, where existing scripts leave a demonstrated gap, add a thin bootstrap wrapper around pinned provisioning/build/test commands. Provide prerequisite-only, provision/build and normal-check modes; make downloads explicit and support verified offline inputs. | Use current `CONTRIBUTING.md`, toolchain, Node, Python and nextest pins, not the draft's stale versions/counts. Missing prerequisites produce actionable errors rather than installing OS software, changing PATH globally or altering permissions. Report actual pass/skip/fail counts and elapsed time. Repeated setup reuses hash-verified inputs. Verify fresh-machine behavior only on exercised platforms; a wrapper cannot promise a green run or gate unrelated feature work until every VM is available. Retain 1.8.7 reproduction as optional historical evidence, separate from current 1.8.8 results. |
+| REQ-B-1–B-2 — skipped-test triage | At P6 entry, inventory current Rust ignores and profile exclusions, distinguishing helper entry points, deliberately gated qualification and actual unresolved debt. Reuse this inventory for phase acceptance and P14 reporting. | Record commit, exact test IDs, reasons, required payload/platform and intended command. Include extension/Python skips when explaining overall qualification. Reconcile discoverable tests with the runner's skipped/excluded counts; `rg` attribute counts alone do not account for generated/conditional tests. Add reason validation through existing cheap checks if useful; do not relabel skips as passes, remove qualification gates or churn every historical reason merely to enforce a new spelling. Track debt in the ledger; opening external issues is a separately authorized action. |
+| REQ-C-1–C-5, REQ-X-1 — coverage and risk review | Before changing P6 ownership/admission and P9/P10 publication/quota paths, obtain a bounded coverage report if supported, then review affected branches and caller coupling. Extend reports to extension/Python where useful. Target meaningful tests at refusal, rollback, recovery and stale-authority behavior. | Pin development-only tooling and retain measured module/branch scope, configuration, exclusions and unavailable instrumentation. Coverage guides review; it does not prove correctness. Record findings/severity and close relevant safety findings with behavior tests before activation. No broad Store refactor, mandatory percentage target or automatic baseline commit. Full-workspace coverage and possible delta gates remain optional proposals after a comparable baseline and CI-cost review. |
+| REQ-F-1, F-3–F-4 — bounded generated tests | Add fixed-seed generated/property cases in owning crates as P6 grants/paths, P7 unions/cursors, P9 denies, P10 partitions and P11 profiles change. Cover arbitrary identifiers/UTF-8, path components, budgets, malformed metadata, revision fences and transactional non-mutation. | Derive properties from actual contracts. Chunkers may overlap or omit by policy, so require correct declared ranges, coverage/omissions and byte accounting rather than assuming disjoint lossless concatenation. Keep deterministic case counts bounded; retain minimal failures as ordinary regressions. Reuse current test facilities first; add a dev-only dependency only where it provides clear value. Real Windows/POSIX traversal and alias tests remain necessary. |
+| REQ-F-2, REQ-S-4 — hostile input | During P6e transport, P7 parsing and P11 extraction changes, extend original adversarial fixtures for overlong frames/lines, invalid UTF-8 boundaries, mixed scripts, archives, mutation races and path escapes. Add focused opt-in fuzz targets only for actual exposed parsers/providers with remaining risk. | Use isolated owned fixtures, capped input/output/time/memory and process containment. Generate large/sparse/archive cases on demand within reserved capacity; never extract a bomb unrestricted or follow a test escape outside its fixture. Assert documented bounded outcomes, source preservation and no panic. No blanket 24-hour fuzz prerequisite or new fuzzing crate for unimplemented DiskANN surfaces; qualify actual page providers when they exist. Preserve discovered seeds and conventional regression tests. |
+| REQ-R-1–R-6 — broader retrieval evidence | Extend E0's existing `check-retrieval-quality.py` owner at P7/P8 with shared-index attribution and useful subset cases, at P11 with profile comparisons, and before P13 with additional independently labelled held-out code/document queries. At P14, publish only the breadth actually measured. | Keep frozen original controls unchanged. Pin any added public corpus by revision/content digest and redistribution terms, fetch explicitly into ignored isolated storage, and publish only permitted sanitized fixtures. Freeze graded path/range judgments before observing candidate output; record authoring revision and independent spot checks when available. Report nDCG@10/Recall@10 by mode and query family, with MRR/Recall@5 only if useful and hand-checked. Separate literal ripgrep matching from conceptual retrieval; disclose ties, budgets, chunk/file ranking units and unsupported cases. No forced positive headline. Five corpora/300 blind queries remain a later broad-claim target, not a prerequisite for every feature commit; do not call post-hoc labels blind. |
+| REQ-P-1–P-4 — resource and scale evidence | At P7, P10 and P14, extend existing scale, real-corpus and service benchmarks for selected-index fan-out, concurrent updates, peak split capacity and cleanup. Run an affordable representative size first, then 10k/100k entries only within explicit capacity/time budgets and supported capabilities. | Preserve this plan's frozen and preceding-phase gates; proposed generic 15% limits cannot replace them. Record p50/p95, failures/retries, ingest throughput, retained/peak disk, RSS and physical I/O only when actually measured. Distinguish discovered entries from eligible files, indexed artifacts and vectors. Publish a separate table per size/shape/platform; 100k synthetic entries alone cannot qualify arbitrary large repositories. A 1M campaign is optional and may remain not run. Add Criterion only for a demonstrated component-measurement gap, not a duplicate of end-to-end runners. |
+| REQ-S-1–S-3, S-6–S-7 — durability, concurrency and upgrade | Extend `check-publication-faults.py`, `check-runtime-upgrade.py`, P5's catalog tests and existing service-load owners during P9/P10/P11 and P14. Cover quota/space refusal at publication, cancellation, cutover/restore fences, multi-client updates, process cleanup and retained predecessor compatibility. | Inject storage failures deterministically or use an explicitly bounded disposable volume; never fill a user's storage device. Verify the last admitted revision remains readable, no partial publication leaks, and recovery reports retained intent correctly. Test supported predecessor/candidate identities; unsupported downgrades must refuse, especially after the new-write barrier. Begin with finite load runs and explicit resource bounds; longer soak is optional qualification, not a mandatory 72-hour/nightly dependency. Process termination is crash evidence, not physical power-loss proof. Keep dated pass/fail/not-run receipts and treat relevant integrity/isolation failures as blockers. |
+| REQ-S-5, S-8–S-9, REQ-X-2 — privacy and installed paths | Fold the review's second-account Unix storage/Windows Assistance checks and install → first index → cited result → upgrade → uninstall/residue cases into P6a/P6f and P14's existing installed matrix. Investigate the Intel cold-client failure with bounded focused reproduction; reuse the signed-channel work already assigned to P6a. | Prefer documented manual procedures when disposable-account testing requires privileges or unavailable tooling. Never create accounts, modify machine permissions, kill unrelated processes or purge user state as an incidental test action. Inventory all fixture roots and verify owned cleanup. Record exact installed/signed payloads, platform and failure history; unavailable second-account/editor/signing/Intel evidence remains unqualified and cannot support the corresponding release claim. Do not substitute a source mock for an installed result. |
+| REQ-D-1–D-6, REQ-L-1/L-3 — useful documentation | With P8 guidance and P14 handoff, extend the existing documentation index, usage evaluation, benchmark/validation records and release workflow/runbook. Make install → first cited result → troubleshooting, contributor setup → architecture/parity and maintainer release → qualification paths easy to follow. | Walk each entry path in at most three links where practical; preserve historical records. Generate summary tables from receipts and link method/limits. README and Marketplace wording must agree with implemented behavior and observed measurements; no compulsory “X% better” sentence, implied regulated-environment certification or invented pricing. Rehearse the existing runbook without publishing and record friction; do not require a new duplicate document or a second maintainer to proceed with independent source work. |
+| REQ-CI-1–CI-3 and G-3 — measurement cost | Keep the above campaigns local or explicitly selected qualification, reusing current change selection and artifact provenance. When CI work is separately undertaken, record actual wall-clock/billable cost and propose the smallest missing gate. | No automatic nightly four-platform bootstrap, coverage, fuzz, scale, soak or privacy matrix. No new schedule, dispatch, required release gate or automatic `main` baseline write is authorized by this planning edit. Preserve current lean CI and signing/promotion protections. A proposed +15% cost allowance is not an approved budget. |
+
+**Deliberately excluded from the 1.9.0 implementation path:**
+
+- Automatic coverage ratchets/floors and broad toolchain/test rewrites
+  (REQ-C-3/C-4 as mandatory gates), exhaustive mutation campaigns (REQ-M-1) and
+  the recurring all-platform programme (REQ-CI-1). Their cost and comparability
+  are not established; targeted branch tests and the existing qualification
+  gates provide a tractable first step. Future adoption requires measured value.
+- A new exact-cosine implementation solely to measure an ANN engine not yet
+  selected by the runnable path (part of REQ-R-6/P-1). Reuse the actual provider's
+  diagnostics if available; defer additional baselines until they answer a
+  demonstrated retrieval question. Commercial-agent measurements need separate
+  access/data-sharing authorization; never send repository or private evaluation
+  content to obtain a comparison automatically.
+- Product activation telemetry/receipts (REQ-T-1), pricing/positioning changes,
+  fixed release cadence, outreach, issue quotas, staffing and business kill
+  criteria (REQ-L-2/L-4 and REQ-O-*). These are separate owner decisions, not
+  dependencies of indexing correctness. This plan adds no activation database,
+  new public read contract or telemetry collection, including local-only collection.
+- Hazardous literal interpretations of fault/security acceptance: unrestricted
+  disk filling, privileged account/ACL changes, unbounded archive expansion,
+  automatic historical runtime installation or downgrade, and mandatory long
+  fuzz/soak runs. The bounded fixture/manual alternatives above retain useful
+  evidence without expanding AIRK's runtime architecture or risking user state.
+
+Safety failures in an exercised affected path remain blockers; declining an
+expansive campaign never permits an integrity/privacy failure to be ignored.
+Unknowns must limit the published claim. Preserve the Shark Tank draft as dated
+input; this reconciliation, current repository guidance and explicit maintainer
+instructions govern implementation rather than importing its entire 90-day plan.
 
 ### Tests, review, commits and resuming work
 
@@ -329,6 +404,9 @@ Reuse existing measurement owners before adding a runner:
   no-op/edit work and model/cache behavior under qualified fixture ownership.
 - `scripts/benchmark-real-corpora.py`: separate isolated-native corpus costs;
   it does not establish installed-launcher or editor latency.
+- `scripts/benchmark-scale.py` and `scripts/benchmark-indexing.py`: inspect their
+  current entry/ingest workloads before extending scale qualification; keep
+  discovered-entry, indexed-file, resource and readiness measurements distinct.
 - E0's original relevance corpus and existing UI/native transport fixtures:
   completed useful tasks, nDCG@10/Recall@10, exported completeness and IPC work.
 
@@ -750,6 +828,7 @@ Every choice must preserve source identity, bounded reads and interface parity.
 | Signed distribution | Different signing by channel; weakened launcher guards; one approved signed producer with standalone-safe launcher | Preserve integrity checks and qualify exact installed payloads on each channel | Working macOS installation and reproducible provenance | Large / credentials and installed-platform proof | P6a/P14 copied signed executable, real editor/agent path and published-payload verification; no Windows-only success claim |
 | Certainty of returned references | Reindex every hit; metadata-only checks; hash distinct returned sources; re-extract every source | Bounded full-source hash verification, separate explicit refresh on mismatch | Evidence of saved-source agreement at a stated time, usable by people and agents | Medium–large / file races, scope and latency | Every referenced source accounted for; stable captured bytes match the exact result hash; failures cannot receive a verified label |
 | Performance acceptance | End-only benchmark; per-phase relative checks; frozen baseline plus phase checks | Deterministic no-extra-work gates and matched resource/quality budgets against both references | Preserve responsive existing paths and expose new feature costs | Medium / measurement noise and cumulative drift | Freeze thresholds before candidate runs; keep failures and tail observations; no cost when the feature is off |
+| Additional audit qualification | Import a new recurring assurance programme; ignore the review; integrate bounded tests into affected phases | Extend existing owners with targeted risk/property/fault and held-out evaluation cases; keep broad campaigns opt-in | Better failure detection and credible claims without unbounded delivery or CI cost | Medium / scope and instrumentation | Selective REQ mapping above, actual receipts, unchanged frozen gates and explicit unknowns; no hazardous live-state testing |
 | Advanced optimization | Reranker/model swap; unit tuning; cross-collection cache | Defer; retain measured experiment backlog | Avoid new resource/lifecycle cost without demonstrated benefit | Large / qualification | Revisit only with baseline misses and measured task/resource gains |
 
 ## Work packages and review boundaries
@@ -1011,7 +1090,7 @@ and setup copy, synchronized with native help.
 | W0 | Two-tier research follow-up; read-interface-parity, unified-mcp, mcp, CLI/MCP developer guides and release record; distinguish captured invariants from executed regressions |
 | E0 | validation and relevance/performance evidence; check-retrieval-quality harness instructions; MCP investigation reconciliation |
 | P0b | synchronized version manifests/lockfiles/catalogs, versioning and contributor version guidance, installer forward-line policy, candidate release record and accurate README/index/Marketplace status |
-| P6a–P6f | service-embedding, service-freshness, service-project-setup, CLI help/reference, mcp, unified-mcp, read-interface-parity, Workbench freshness/trust/error help, signing/build/release provenance and installed-test isolation. Keep issue-analysis reports dated; record current evidence in the ledger/release record. State any channel/platform limits accurately in README and Marketplace copy. |
+| P6a–P6f | service-embedding, service-freshness, service-project-setup, CLI help/reference, mcp, unified-mcp, read-interface-parity, Workbench freshness/trust/error help, signing/build/release provenance and installed-test isolation. Keep issue-analysis reports dated; record current evidence in the ledger/release record. Include selected Shark Tank setup/skip/risk findings in existing contributor and validation records; state channel/platform limits accurately in README and Marketplace copy. |
 | X0 | ADR 002, vscode-extension current behavior/limitations, scenario map, architecture boundaries and cross-project design |
 | X1 | collections, source-roots, storage-formats, service-project-setup, service-freshness, versioning, U-stage release/upgrade notes |
 | X2 | vscode-extension, Explorer help and source-assignment/Project UX; extension README/Marketplace setup text |
@@ -1048,6 +1127,7 @@ component responsibilities change, preserving dependency direction.
 | Vector backlog starves source edits or UI reports a fresh result as older | P6d/P6e, P7/P12 | Fair admissible source admission, bounded vector progress and causally scoped publication comparison; measure backlog latency and preserve incomparable/unknown labels without per-query polling |
 | Signed macOS launcher fails or Marketplace differs from qualified native payloads | P6a/P14, release handoff | Standalone-safe signature design, copied installed-path/editor/agent tests, immutable signed producer and channel payload verification; credentials/platform omissions remain release blockers, never inferred passes |
 | Expanded scope prevents a coherent release | Q0 after P3/P5 | Ask the maintainer to review the documented contingency; no silently dropped requested features, partial hierarchy or migration-only release |
+| Assurance work becomes a second product or damages a test host | Selective Shark Tank mapping, each affected phase/P14 | Extend existing harnesses, cap fixture resources, preserve user/OS state, keep long campaigns opt-in and unknowns explicit; no new telemetry, automatic coverage commits or recurring broad CI matrix |
 
 | Deferred element | Potential value | Why it needs a later decision |
 | --- | --- | --- |
@@ -1302,6 +1382,15 @@ Windows P5 run cannot satisfy them. Publication verification occurs only after
 separate authorization and checks the actual outputs, with honest failure/skip
 records and no substitution of different same-version native bytes.
 
+Use the selected Shark Tank requirements to deepen these same campaigns, not to
+create a second release definition. Publish skip reasons, targeted coverage/risk
+findings, frozen evaluation judgments, bounded hostile-input and space-failure
+outcomes, and installed privacy/upgrade evidence in existing records. Report
+unavailable metrics/platforms explicitly. Optional mutation, long-soak, million-
+entry and broad scheduled campaigns remain outside required 1.9.0 acceptance;
+any claim needing their evidence must be narrowed or withheld. Walk the updated
+documentation entry paths and rehearse the release runbook without publication.
+
 The original P0b checkpoint synchronized 1.9.0 after baseline capture. The
 maintainer's 3 November decision now keeps **1.8.8** as the working version until
 implementation and manual acceptance are complete; then promote to **1.9.0** and
@@ -1323,6 +1412,10 @@ extension verification and multi-project routing paths. The 3 November operation
 integration reads both issue-analysis documents completely and spot-checks current
 launcher, supervisor, trust and Workbench paths; it does not reproduce their
 installed failures, settle the unexplained helper exits or qualify signed artifacts.
+The selective Shark Tank integration reads its remediation draft and checks the
+existing harness inventory against the remaining phases. It adopts no new audit
+measurements, does not verify its broad absence claims, and runs no proposed
+coverage, fuzz, scale, privacy or commercial comparison campaign during planning.
 The phase refinement also
 reviews current versioning/CI policy, the dated performance report, release
 evidence and measurement harness capabilities;
