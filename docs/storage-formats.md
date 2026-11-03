@@ -21,6 +21,29 @@ From 1.6.4, native installation renames a registered historical default index ro
 
 Fresh installations use the version-independent defaults. Existing default index roots migrate during activation; a completed namespace-bound receipt selects the renamed root on later discovery. Migration refuses occupied destinations, redirects and live workers, and never opens source contents. A durable barrier prevents partial migration from being treated as a ready index. Runtime-install and service-state relocation remain separate from this index-root migration. Internal compatibility filenames such as `collections-1.4` remain unchanged.
 
+## Development catalog boundary
+
+The 1.8.8 working build implements the planned 1.9.0 changes. P5 prepares registry
+schema 12 in isolated upgrade fixtures; normal activation
+remains disabled until Indexing and native grants are ready in P6. Ordinary new
+registries still use schema 11. Schema 12 adds independent index/Project/source
+identities, memberships, context preferences, grants and upgrade metadata without
+changing index-v1, collection filenames or source bytes. A prepared table does
+not enable grant, trim or split enforcement; authority and source-policy contract
+versions are checked separately from the executable version.
+
+An admitted upgrade records an owner fence, exact candidate identity and durable
+intent before using SQLite's bounded backup/migration path. Ordinary readers and
+service startup refuse that pending state. Only the matching installer resume can
+recover its interrupted journal. The internal candidate migration command leaves
+the fence in place for imports and readiness; it cannot activate the catalog.
+Restoration validates its owned snapshot and is allowed only before accepted new
+writes; later recovery requires forward repair. Finish historical default-index
+directory relocation before catalog admission: the old generic registry rewriter
+refuses schema 12 before moving directories, while completed relocation receipts
+remain valid. See the [upgrade plan](research/plan-v190.md#upgrade-execution-and-version-line-policy)
+and [dated implementation evidence](research/implementation-v190.md).
+
 ## Cleanup and downgrade policy
 
 Superseded executable payloads and obsolete derived index objects need not be retained for a future downgrade. Older software can rebuild its own compatible index from sources. Cleanup still needs proof that the target belongs to AIRK and is no longer selected or referenced by current work or readers. Source files and saved user settings are separate from rebuildable data.

@@ -1,6 +1,6 @@
 # Service source freshness observations
 
-**1.9.0 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
+**1.8.8 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
 
 Service freshness describes saved source-work intent independently of authenticated index identity and extraction coverage. It does not verify live source files. The service registry combines its watcher state, pending/running source jobs and latest source outcome in one bounded read transaction. Verification, vector-only work and other derived maintenance cannot overwrite the latest source failure. Planned repair work reuses its existing durable source-job association.
 
@@ -29,7 +29,7 @@ Development checks cover actual non-root Unix permission denial at the source an
 
 Availability evidence, October 23, 2026: Windows passed two kernel availability regressions, four service-publication tests and the inspection regression. All fourteen prior native service scenarios passed, followed by the new real-ACL denied-root process regression with its query connection released before shutdown. Non-root Linux passed all four availability regressions, four publication tests, inspection and fourteen native service scenarios. Windows all-feature workspace Clippy and Linux CLI Clippy pass; MCP and repository/Python checks remain part of the recorded development matrix. The Unix denial fixtures restore permissions on both success and failure; the Windows fixture removes only its own explicit denial on its temporary source. No actual macOS runtime result is claimed.
 
-The 1.9.0 [evidence guidance](evidence-guidance.md) labels outstanding observed
+The 1.8.8 [evidence guidance](evidence-guidance.md) labels outstanding observed
 source watermarks as `stale` with subject `source_work_watermark`. That label
 does not establish that a cited file differs on disk; original observation age,
 failure and live-verification limits remain authoritative. Advice starts no work.

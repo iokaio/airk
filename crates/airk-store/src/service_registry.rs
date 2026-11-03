@@ -21,6 +21,13 @@ const APPLICATION: i64 = 0x41535256;
 const MAX_DATABASE_BYTES: u64 = 32 * 1024 * 1024;
 pub const MAX_PROJECTS: usize = 1024;
 
+#[path = "service_catalog.rs"]
+pub mod catalog;
+
+#[path = "service_source_relationships.rs"]
+mod source_relationships;
+pub use source_relationships::source_relation;
+
 #[path = "service_scope.rs"]
 mod scope;
 pub use scope::{
@@ -105,6 +112,10 @@ struct Owner {
     ready: bool,
     #[serde(default)]
     digest: Option<Sha256Digest>,
+    /// Admission fence bound to the owned upgrade intent. Old readers reject
+    /// this required field; absence retains the original format-two bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    catalog_upgrade: Option<Incarnation>,
 }
 
 impl Owner {
@@ -132,6 +143,12 @@ impl Owner {
 }
 
 fn owner(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> {
+    let receipt = owner_record(root, existed, incarnation)?;
+    ensure!(receipt.catalog_upgrade.is_none(), catalog::AdmissionPending);
+    Ok(receipt)
+}
+
+fn owner_record(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> {
     let path = root.join("service-1.4.owner.json");
     let root_text = root
         .to_str()
@@ -181,6 +198,7 @@ fn owner(root: &Path, existed: bool, incarnation: Incarnation) -> Result<Owner> 
                 incarnation,
                 ready: false,
                 digest: None,
+                catalog_upgrade: None,
             };
             owner.digest = Some(owner.checksum());
             let mut temporary = tempfile::NamedTempFile::new_in(root)?;
@@ -286,9 +304,17 @@ impl ServiceRegistry {
         connection.busy_timeout(scope::scope_remaining(deadline)?)?;
         let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
         ensure!(
-            application == APPLICATION && (2..=11).contains(&version),
+            application == APPLICATION && (2..=12).contains(&version),
             "unsupported saved service registry format"
         );
+        if version == 12 {
+            catalog::validate_existing(&connection)?;
+            ensure!(
+                catalog::state(&connection)?.activated,
+                catalog::AdmissionPending
+            );
+            connection.execute_batch("PRAGMA foreign_keys=ON;")?;
+        }
         connection.busy_timeout(scope::scope_remaining(deadline)?)?;
         background::audit::validate_existing(&connection, version >= 11)?;
         let registry = Self {
@@ -368,9 +394,16 @@ impl ServiceRegistry {
                 initialize = true;
             } else {
                 ensure!(
-                    application == APPLICATION && (1..=11).contains(&version),
+                    application == APPLICATION && (1..=12).contains(&version),
                     "unsupported service registry format"
                 );
+                if version == 12 {
+                    catalog::validate_existing(&connection)?;
+                    ensure!(
+                        catalog::state(&connection)?.activated,
+                        catalog::AdmissionPending
+                    );
+                }
                 schema_version = version;
                 let actual: String = connection.query_row(
                     "SELECT incarnation FROM service_meta WHERE id=1",

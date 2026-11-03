@@ -1,6 +1,6 @@
 # MCP response modes
 
-**1.9.0 update:** [Lean/Rich reply detail](reply-detail.md) is an independent
+**1.8.8 update:** [Lean/Rich reply detail](reply-detail.md) is an independent
 per-read projection of available evidence. `response_mode` and `include_status`
 retain the encoding/repetition behavior below; they do not select reply detail
 or retained indexing detail. Explicit `reply_detail` overrides the legacy default

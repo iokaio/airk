@@ -1,6 +1,6 @@
 # AIRK command-line guide
 
-The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
+The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
@@ -10,7 +10,7 @@ For each command's purpose, implementation, tests and guarded behavior, see the 
 
 ## Complete read results in 1.8.7
 
-The 1.9.0 candidate adds [Lean/Rich reply selection](reply-detail.md): use
+The 1.8.8 working build adds [Lean/Rich reply selection](reply-detail.md): use
 `--reply-detail lean|rich` on read aliases or `reply_detail` in tools-call/shell
 JSON. This is independent of retained indexing detail. Omitting it preserves
 the inherited defaults described below; conflicts with legacy projection flags

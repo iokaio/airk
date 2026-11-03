@@ -10,6 +10,14 @@ commits for each accepted phase. This plan synthesizes **five primary research i
 the three original notes, the fourth research area within this document, and
 the separate cross-project feature design. Dated observations retain their limits.
 
+**Working-version decision, 3 November 2026:** complete and manually test this
+plan on **1.8.8** on the same branch. Promote to **1.9.0** after implementation and
+manual acceptance, rebuilding and validating artifacts under the promoted version
+before the CI/Marketplace handoff. Keep phase names, schema/grant/policy versions
+and earlier tested payload identities independent from this numeric working
+version. The original P0b 1.9.0 checkpoint remains dated history; this decision
+does not authorize CI dispatch or publication.
+
 P3 implementation decisions are captured in [ADR 002](../decisions/002-projects-indexes-and-query-scope.md), [ADR 003](../decisions/003-dated-saved-source-verification.md) and the executable [design contract pack](contracts-v190/README.md). These settle selector names, grants, persistent policy ownership, registry-12 upgrade stages, bounded receipt semantics and profile-family inputs. They enable no new runtime behavior. Enabled verification uses explicit resolved budgets; P4 local measurements and qualification limits are recorded in the ledger.
 
 **P4 maintainer decision:** Report is the default for evidence reads and completed
@@ -43,6 +51,11 @@ The [1 November MCP investigation](../mcp-recommendations.md) is supplementary
 evidence; its implementation backlog is reconciled below rather than treated as
 a competing delivery plan.
 
+The [3 November audit](../issue-analysis/audit-report.md) and
+[open-issue analysis](../issue-analysis/open-issue-analysis.md) add dated
+operational evidence. Their assessment and implementation boundaries are woven
+into [the remaining-phase remediation sequence](#operational-research-and-remaining-phase-sequence).
+
 ## Recommended direction
 
 Make 1.9.0 a release about **intentional indexing and dependable, useful evidence**.
@@ -53,8 +66,9 @@ Keep retained-profile changes and relevance experiments separately measurable.
 
 Recommended order for addressing the research as implementation work:
 
-1. Freeze the current performance/quality baseline; then synchronize the future
-   implementation branch to 1.9.0 and repair compact-plan consumers.
+1. Preserve the frozen performance/quality baseline and compact-plan repairs.
+   Keep native/extension identities synchronized at working version 1.8.8 during
+   implementation and manual testing; promote to 1.9.0 after manual acceptance.
 2. Separate reply detail from retention, establish missing-evidence vocabulary,
    and implement bounded single-index verification with Report as the default with complete interface parity.
    Settle the Project/index and split/trim contracts before freezing schemas.
@@ -91,14 +105,14 @@ the linked ledger records completion. A row alone asserts no passing tests.
 | Phase / packages | Concrete outcome and commit boundary | Required evidence before acceptance |
 | --- | --- | --- |
 | P0a — E0 baseline | Record the clean starting commit, native/extension versions, build/model/configuration identities and current failures. Extend original fixtures and measurement tooling before changing behavior. | Reproduce the compact-plan issue; freeze representative relevance judgments and matched installed/native/UI performance cohorts, budgets and noise tolerance. Record unavailable cohorts instead of inventing a baseline. Commit fixtures and sanitized evidence. |
-| P0b — 1.9.0 candidate identity | Bump the workspace, local Cargo lock entries, extension and npm lock entries together; regenerate versioned MCP catalogs, add/test the supported 1.9 forward runtime line and start a dated candidate release record. This separate commit enables no new registry or collection migration. | `release-version.py check --expected 1.9.0`, extension compilation/catalog agreement, version/installer compatibility tests and repository checks. Preserve P0a's exact 1.8.7 comparison artifacts. |
+| P0b — candidate identity | The original accepted checkpoint synchronized 1.9.0 and added/tested the supported 1.9 forward runtime line. The 3 November maintainer decision temporarily sets the working version to 1.8.8. Keep manifests, local locks and generated catalogs synchronized; retain the original release/checkpoint identities. Neither numeric change enables a storage migration. | Check `release-version.py check --expected 1.8.8` while implementing/testing, then 1.9.0 after promotion; compile/check catalogs and installer compatibility. Preserve P0a's exact 1.8.7 controls and all dated 1.9.0 receipts. |
 | P1 — W0 correctness | Repair compact shared bindings/locations and native nested-plan schema agreement. | Actual native/CLI/MCP compact and rich dependent plans, negative guard cases and bounded outputs; convert the captured invariants to meaningful regressions. Confirm ordinary reads do not gain extra queries or source reads. |
 | P2a — T1 replies | Expose independent reply projection everywhere, preserving absent-argument compatibility and existing Workbench defaults. | Actual transport and consumer parity, conflicting-argument errors, copies/exports, equivalent useful evidence and unchanged default work/bytes apart from documented identity/timing. |
 | P2b — T2a/G1 guidance | Adopt shared existing-observation reasons and bounded next-read guidance without changing storage profiles. | Unsupported, not-retained, pending, failed, stale, excluded and truncated fixtures; no full coverage scan or repeated diagnostics to explain an empty result. |
 | P3 — X0/M0/V0 and T2b design gates | Complete ADR 002/003, source/workspace fixtures, profile-family inventory, permanent-policy/partition ownership, scope enums and receipt schemas. Reconcile the feature design, registry-versus-collection versions and recommendation inputs. T2b reporting implementation remains P11a. | Resolve every schema/authorization/performance decision needed by P4–P10; reviewed migration and fault matrices, bounded algorithms and budgets. No live migration or new profile selection. |
 | P4 — V1/V2 verification | Deliver single-index source verification with Report as the default end to end, with future member identity slots. | All receipt states, source races, large-file budgets, unsaved-buffer limits and real transport/export parity. `off` adds no hashing; unchanged matches start no extraction, model, writer or indexing job. |
 | P5 — X1 and U0–U6 safety foundation | Implement normalized catalogs, compatibility mappings, bounded overlap observations and the complete upgrade admission/backup/migration/import/readiness/recovery path in isolated fixtures. Design and guard collection policy formats separately. | Real predecessor/candidate activation and fault tests prove the safety-critical U0–U6 path, old-reader/writer refusal, idempotent imports, backup validity and no implicit rebuild. Keep production activation of the new schema disabled until P6 is ready; X6 later expands qualification, not basic safety. |
-| P6 — X2/X3 management and grants | Deliver Indexing library/detail/source/Project flows, reviewed window associations and native grants/revocation. Activate the qualified upgrade and explicit-setup cutover together; retain complete legacy single-index retrieval. | The mapped workspace scenarios, direct CLI and actual agent scope tests, empty/untrusted/manual/remote cases, stale reviews and no automatic folder scans or regrant. Run P5 upgrade tests against the complete UI/connection path before enabling it. |
+| P6 — operational remediation, then X2/X3 management and grants | Follow P6a–P6f below; deliver Indexing library/detail/source/Project flows, reviewed window associations and native grants/revocation. Activate the qualified upgrade and explicit-setup cutover together; retain complete legacy single-index retrieval. | Remediation receipts and local/actual-transport gates below, mapped workspace scenarios, direct CLI and actual agent scope tests, empty/untrusted/manual/remote cases, stale reviews and no automatic folder scans or regrant. Run unchanged P5 upgrade tests against the complete UI/connection path before enabling it; retain separately named installed/platform qualification limits. |
 | P7 — X4/X5 combined retrieval | Expose multi-Project queries with optional index subsets, canonical prefix unions, unique-index execution and complete UI/parse/session/export/verification support in the same accepted phase. | Shared-index attribution and scoring, partial/failed members, cursor/publication/grant expiry, all input catalogs and actual transports. Compare one-index routing with the legacy path; prove unselected indexes are untouched and total budgets stay bounded. |
 | P8 — R1 recommendations and harness guidance | Add bounded Recommendations, temporary scope selection and explicit saved defaults; copy live-capability-checked MCP instructions for one or several selected indexes. | All recommendation decision rows, stale/incomplete data, inaccessible members, narrow-to-broader user choices, no hidden queries/mutations and UI/CLI/MCP advisory parity. Smoke-test generated examples through actual transport fixtures. Splitting guidance explains pending capability until P10. |
 | P9 — M1 permanent trim | Add reviewed permanent deny admission, all-read fences, removal publication and resumable reclamation with honest status. | Direct CLI and every read family reject blocked evidence, including graph endpoints/caches; restart/rebuild/alias/upgrade invariants, active-read races, quota failure and source-byte preservation. Empty-policy reads retain their fast path. |
@@ -109,12 +123,89 @@ the linked ledger records completion. A row alone asserts no passing tests.
 | P13a / P13b — S1 / S2 conditional | Evaluate lexical ranking first, optional diversity in a separate commit/experiment. Retain current behavior if gates fail. | Frozen held-out nDCG@10/Recall@10, resource budgets, scope filtering before limits, stable ties, complete subsets/exports and any independently qualified lexical-format upgrade. No simultaneous model or semantic-unit change. |
 | P14 — X6/Q0 final qualification | Review the combined diff, expand installed upgrade/platform/fault coverage and run the selected end-to-end resource/task campaigns. Finalize current docs and 1.9.0 release-candidate evidence. | No unexplained cumulative performance regression, scope leak, incomplete migration or missing parity; observed failures/skips and platform limits recorded. Release, push, PR, merge and publication remain separate authorized actions. |
 
-P6 can be implemented as inert library/review commits followed by the grant and
+P6 management can be implemented as inert library/review commits followed by the grant and
 activation commit, but no intermediate build may migrate normal user state or
 advertise the new hierarchy. Similarly, X4's implementation may precede X5
 internally; **public combined reads activate only with X5 parity in P7**. The
 single-index V2 receipt is complete at P4 and gains Project/member associations
 in P7. These boundaries avoid a partially usable schema or API between phases.
+
+### Operational research and remaining-phase sequence
+
+**Assessment added 3 November 2026.** The audit reports installed **1.8.7 on
+darwin-arm64**; the issue analysis diagnoses nine 1.8.7 reports against source
+snapshot **`b72fbc8`**. They are valuable failure reproductions and hypotheses,
+not qualification of the current 1.8.8 branch. Recheck each affected live path
+before implementation and record whether the problem persists, changed or was
+already resolved. Neither document changes accepted P0–P4 evidence or relaxes
+P5's U0–U6 acceptance. A reproduced P5 safety failure blocks P5; otherwise these
+are explicit remaining-phase work, with no P6 implementation in the P5 checkpoint.
+
+The audit's strongest findings are the unusable copied signed macOS launcher and
+different native signing provenance between Marketplace and GitHub. Its successful
+secret/ignore, no-follow, source-preservation and document-location checks identify
+behaviors to preserve, rather than proving a complete security or platform audit.
+Its tool-count/help drift and unhelpful errors warrant small catalog/documentation
+corrections. Include unknown-Project `QueryReturnedNoRows` in P6f's canonical
+target-and-recovery errors, preserving scope/privacy and avoiding automatic
+namespace creation or reset. Native watchers continuing after editor closure are an intentional
+lifecycle that Indexing must explain, with explicit management controls. Observed
+vector throughput and an Apple Silicon run do not establish model/performance
+qualification. Fake-home state leakage warrants isolated installed-test roots,
+not an unrequested change to production storage defaults.
+
+The open-issue analysis usefully traces shared causes through native ownership,
+helper availability, admission, transport and UI evidence. Several suggested
+remedies need narrower contracts: restarting forever, querying status after every
+turn, accepting a launcher symlink or draining unlimited input would introduce
+new safety/performance risks. Use the following sequence instead. Each subphase
+has a coherent source/test/docs commit boundary; substantial work may use inert
+internal commits under the existing phase rules. Do not combine all nine issues
+into one corrective commit or make repeated hosted pushes the debugging loop.
+
+| Subphase / issues | Implementation and value | Minimum acceptance evidence and boundary |
+| --- | --- | --- |
+| P6a — installed launcher and release producer (#66, #67) | First choose and implement a standalone-safe signed launcher: prove an embedded Info.plist survives signing/copying, or use a separately signed small launcher. Preserve safe-file, alias, digest, ownership and payload-pair checks. Cover install, repair, managed activation, upgrade, shutdown and uninstall paths that execute copied binaries. Make both distribution channels consume one approved immutable signed native artifact set, preserving source/run/attempt/hash provenance. This removes an installation blocker and makes signing claims reproducible. | Native install/receipt/tamper and workflow-selection tests, isolated state roots, interrupted repair and rollback cases. On macOS, run the actual copied Developer ID signed/notarized executable, strict signature/OS checks, installed VS Code activation and agent connection; an in-bundle `--version` check is insufficient. Windows or ad-hoc fixtures cannot pass this signed-macOS gate. Unavailable credentials/platform remain explicitly unqualified and block release qualification; independent later source work may continue without claiming macOS readiness. No publication during this subphase. |
+| P6b — helper outage diagnosis and recovery (#58) | Capture bounded process exit/signal, worker/grant renewal and recovery transitions before correcting the demonstrated cause. Replace lifetime exhaustion with bounded consecutive-outage recovery, measured healthy reset/cooldown and observable terminal/backoff states; preserve explicit Stop and manual/managed ownership. Repair stale worker membership without killing a healthy shared pool only where reproduced. This restores recoverability without a restart storm. | Fake-clock backoff/reset tests, repeated helper loss, grant replacement, transient versus terminal failures and explicit Stop across reconnect/restart. Exercise real native supervisor/worker paths. Preserve actual failure reasons; do not label every SIGKILL a signature failure or claim the original unexplained helper exits are fixed by changing a counter. No read-triggered helper spawning, model loading or new scheduler. |
+| P6c — outage read contract (#58) | Put typed helper availability classification at the canonical owning boundary, preserving crate dependency direction. Permit Default search to return lexical evidence only when the saved DefaultSearchPolicy allows that degraded outcome; explicit vector/hybrid and RequireComplete retain their strict contract. Return complete served-mode, incomplete/availability, publication, coverage and retry information through every consumer. This keeps usable evidence available without overstating completeness. | Real native/CLI/MCP and Workbench/copy/export parity for saved policies, pending/ready/outage transitions, narrow typed transient errors and unrelated failures. Freeze field/error/retry schemas against current catalogs before implementation; do not blindly copy illustrative fields or retry delays from the research. Preserve grants, source-verification receipts, total budgets and original lexical evidence. No automatic replay of ambiguously accepted operations or per-read health probes; status may reuse bounded already-observed availability. |
+| P6d — source admission fairness (#64) | Ensure an admissible due source update gets the next existing writer opportunity ahead of a vector continuation. Fix the owning admission predicate as well as loop ordering; use service-mode batch-boundary preemption and saved watermarks. Retain fairness across indexes, bounded vector turns and a single writer. This makes edits discoverable during long embedding backlogs. | Edit/add/delete/rename during a measured multi-turn backlog; freeze lexical-publication allowance at one existing turn plus bounded admission overhead. Test pause/manual/quota/backoff, blocked/no-op source work, repeated edits, cancellation and continued vector progress. Reuse existing freshness observations; no filesystem scan merely to report lag. Compare query latency/resource use under the same backlog and load, carrying these gates into P7 fan-out and P12 refresh. |
+| P6e — bounded transport and truthful evidence (#63, #59) | Preserve the current stdio frame bound and distinguish oversized input from clean EOF. Prefer explicit stderr diagnostics and nonzero fail-closed termination unless the current transport can safely reject one bounded frame and continue with correct ordering. Fix Workbench's token-inequality-as-older comparison using authority/incarnation/generation/digest-aware observations; incomparable results get an honest different/unknown observation. This prevents silent disconnects and false stale warnings. | Actual process-pipe tests at/beyond the bound, chunked/no-newline/malformed input, bounded discard/cancellation and accepted-work/EOF behavior; diagnostics never contaminate protocol stdout. UI/controller tests cover older/newer/equal/inconsistent generations, missing/rebuilt identities and late responses after session/scope changes, backed by native publication receipts. Reuse returned publication/status or coalesced existing observation; no unconditional status request per turn, new source check or copy/export RPC. Preserve immutable turn evidence and Report verification semantics. |
+| P6f — safe setup, trust and management activation (#61, #62, #65; X2/X3) | Reuse the reviewed prepare-registration/reserve/prepare-storage/register path for explicit new-index setup across supported native/CLI/editor entry points. Explain missing selected data-leaf recovery; do not recursively create arbitrary paths or mutate on reads. Distinguish Restricted Mode from disposed/revoked client authority, offer Manage Workspace Trust, and suppress unavailable native commands while retaining handler guards. Correct `files <PREFIX>` help from the canonical parser/catalog rather than adding an unnecessary flag. Then complete the original Indexing/grant/upgrade activation gate. | Actual CLI setup/replay, source preservation, occupied/unowned destinations, missing parents, aliases/races and platform permission boundaries. Test restricted/granted/revoked trust through installed command/controller paths, stale in-flight review and all new forms; never silently grant or start native work from informational help. Compare CLI/MCP input catalogs and actual help/filter behavior. Re-run unchanged P5 upgrade/owner/recovery tests through complete UI/connection paths before cutover. |
+
+Before installed tests in P6a/P6f, inventory launcher, config, cache, logs, data,
+managed-install and uninstall roots. Fixtures must isolate native paths as well as
+extension fake-home paths and assert cleanup cannot escape owned destinations.
+Keep test-only isolation separate from user-selected production defaults. Review
+affected process/platform/unsafe boundaries and sibling callers when changing
+them; a source-wide unsafe count alone establishes no safety result.
+
+P6a starts first because package integrity must precede confidence in installed
+tests; P6b supplies the failure observations/classification needed by P6c. P6d
+must precede wider fan-out load. P6e establishes transport and publication semantics
+before larger scope inputs. P6f finishes explicit setup and trust before any new
+grant or live migration. Preserve this order for accepted commits; credentialed
+platform proof may remain a clearly tracked release blocker while independent
+source work proceeds. Required gates never turn into passes because they were
+unavailable. Do not widen the phase into model replacement, a new scheduler,
+unbounded recovery, weakened signatures or background all-library diagnostics.
+
+Carry the foundations forward rather than treating these as isolated fixes:
+
+| Remaining phase | Integrated regression/qualification obligation |
+| --- | --- |
+| P7 combined reads | Apply policy-qualified degradation per selected member; preserve typed partial/error/retry and verification data in all transports and exports. Compare per-index publication identities within authority; do not order a multi-index envelope as one scalar token or compare different selected index sets as older/newer. Test helper outage plus fresh source publication under fan-out without touching unselected members. |
+| P8 recommendations/harness | Advise using observed source lag, semantic availability and selected/omitted members without new scans or health probes. Generate scope recipes and limits from current canonical capabilities, including bounded framing; eliminate manual tool-count drift. Explain per-user launcher/config portability, explicit lifecycle controls and strict versus degraded outcomes. Do not embed secrets or silently edit harness configuration. |
+| P9/P10/P12 management | Keep trim/split/refresh admission under the same ownership, trust, pause and source-fairness rules. Surface source-pending versus semantic-pending honestly. Test outage/cancel/restart and grant changes without hiding incomplete cleanup or automatically replaying reviewed operations. |
+| P14 and release handoff | Re-run the complete installed path using exact qualified artifacts on each declared platform, with signed macOS proof and both-channel provenance. Validate Marketplace native payloads/install manifests against the approved signed producer; document only authorized outer-package/signature transformations rather than assuming service-signed VSIX envelopes are byte-identical. At a separately authorized release, verify the actually published downloads and retain immutable producer identities. A missing signed-platform or channel proof blocks promotion/publication claims. |
+
+Keep the original issue documents as dated reports. Future evidence should link
+each issue to its reproduction, current-source diagnosis, corrective commit,
+native/transport/installed tests and remaining platform limits. Start with local
+fixtures and actual transports; use focused hosted diagnostics only for a concrete
+unresolved platform/signing question, collecting the existing run before another
+correction. No phase is complete solely because a renderer mock or workflow-schema
+test passes. Continue the frozen baseline and preceding-phase performance gates;
+measure outage/admission costs separately and retain healthy single-index fast paths.
 
 ### Tests, review, commits and resuming work
 
@@ -150,8 +241,10 @@ upgrade/operation recovery boundary: a Git revert cannot restore a database or
 undo an exclusion safely. Use disposable fixtures for intermediate checkpoints,
 not a user's active index as the migration test bed.
 
-**Version discipline:** the requested 1.9.0 bump occurs once in P0b, after baseline
-capture; it does not repeat for each phase. Local development uses isolated
+**Version discipline:** P0b's original 1.9.0 bump is historical; the current
+working version is 1.8.8 until implementation and manual acceptance, followed by
+a fresh 1.9.0 build and qualification. Do not bump for each phase. Local
+development uses isolated
 source/runtime test environments with exact commit/payload identities. Withhold
 distribution of installable candidates until the chosen release gate. If changed
 VSIXs must be distributed earlier, revisit the version schedule: existing
@@ -652,6 +745,9 @@ Every choice must preserve source identity, bounded reads and interface parity.
 | Lexical relevance | Stable-ID ranking; ranked exact matching; implicit relaxed matching | Evaluate ranked exact matching; stable IDs break ties | More useful candidates within existing budgets | Medium–large / index cost | Matched relevance gain, narrow-scope recall and authenticated update behavior |
 | Diversity | Hidden display cap; explicit optional selection; always-on file cap | Explicit optional selection, judged separately | More distinct useful files when results repeat | Medium / recall tradeoff | Disclose subset; preserve concentrated-result option; no hidden export loss |
 | Missing evidence | Empty results; new status subsystem; reuse canonical coverage plus actionable reasons | Extend existing observations only where necessary | Distinguish absence from unavailable evidence and choose a next step | Medium / shared contract | Separate unsupported, omitted, pending, failed, stale and truncated outcomes |
+| Helper outage | Fail every search; unbounded restart; policy-qualified lexical degradation plus bounded recovery | Diagnose exits, recover per outage and honor strict versus Default policy | Useful evidence and understandable recovery without false completeness | Medium–large / process ownership and parity | P6b/P6c real supervisor and actual read transports; no per-read probes, model starts or ambiguous replay |
+| Freshness and background progress | Compare unequal tokens; poll every turn; reuse causally valid observations and prioritize admissible source work | Authority-aware publication comparison and bounded existing writer admission | Truthful freshness labels and timely lexical edits during embedding | Medium / ordering and starvation | P6d/P6e backlog fairness, late-response and incomparable-publication tests; no extra scans or unconditional status RPC |
+| Signed distribution | Different signing by channel; weakened launcher guards; one approved signed producer with standalone-safe launcher | Preserve integrity checks and qualify exact installed payloads on each channel | Working macOS installation and reproducible provenance | Large / credentials and installed-platform proof | P6a/P14 copied signed executable, real editor/agent path and published-payload verification; no Windows-only success claim |
 | Certainty of returned references | Reindex every hit; metadata-only checks; hash distinct returned sources; re-extract every source | Bounded full-source hash verification, separate explicit refresh on mismatch | Evidence of saved-source agreement at a stated time, usable by people and agents | Medium–large / file races, scope and latency | Every referenced source accounted for; stable captured bytes match the exact result hash; failures cannot receive a verified label |
 | Performance acceptance | End-only benchmark; per-phase relative checks; frozen baseline plus phase checks | Deterministic no-extra-work gates and matched resource/quality budgets against both references | Preserve responsive existing paths and expose new feature costs | Medium / measurement noise and cumulative drift | Freeze thresholds before candidate runs; keep failures and tail observations; no cost when the feature is off |
 | Advanced optimization | Reranker/model swap; unit tuning; cross-collection cache | Defer; retain measured experiment backlog | Avoid new resource/lifecycle cost without demonstrated benefit | Large / qualification | Revisit only with baseline misses and measured task/resource gains |
@@ -668,6 +764,7 @@ separate PR per package. Keep internal scaffolding inert until its public gate.
 | --- | --- | --- | --- |
 | W0 — first | Repair compact locations/aggregation/bindings and trace nested-plan schema mismatch. Convert the two-tier battery's 35 post-run invariants into appropriate deterministic regressions, retaining negative cases and the compact-plan task assertion. | None | Actual compact/rich native/CLI/MCP paths preserve citations, identity, guard failures, budgets and dependent reads; captured checks are not mistaken for passing workflow qualification. |
 | E0 — start with W0 | Extend tooling with original versioned code/manifest/prose/table queries and graded expected ranges. Use nDCG@10 as the primary relevance metric and Recall@10 as the recall guard, scored separately for lexical/vector/hybrid at fixed budgets. | None | Frozen judgments, negative-query outcomes, bytes/expansions and cold/warm latency; synthetic harness cases are not the production relevance baseline. |
+| P6a–P6f — operational foundation | Integrate dated issues #58, #59 and #61–#67 through the ordered remediation sequence above; share canonical ownership, setup, availability, admission, transport and evidence contracts with new management. | P5 accepted; P6b before P6c; all relevant source gates before X2/X3 activation | One coherent behavior/test/docs boundary at a time; actual native/transport evidence, isolated installed roots, unchanged performance gates and explicitly outstanding signed-platform qualification. |
 | X0–X1 — replaces W1 | X0 records workspace fixtures/limitations and ADR 002. X1 adds bounded native `relationships` (same/contains/contained_by), `repository_markers`, broad-root observations, catalogs/join/scopes/grants and M0 metadata. Implement the complete safety-critical U0–U6 path at P5 before P6 activation. | W0 for consumers; X0 design can start earlier; M0 before X1 schema freeze | Preserve old isolation. Bounded observations and actual parity; SQL/backup/backfill/import/readiness/recovery/mixed-version gates pass before live migration, not first at X6. |
 | X2–X3 — replaces W2/W3 setup | New Indexing screen, Project membership/source assignment, opening Projects per window and enforced grants/revocation. | X1 | No unrequested folder indexing; shared indexes reused; Project/member/window scope and actual transport tests pass. |
 | X4 — combined reads | Multi-Project resolution, unique-index execution, qualified follow-ups, vectors/errors/cursors and canonical input catalogs. | X3/T1 for internal work; public activation with X5 at P7 | Shared membership cannot duplicate scoring, jobs or counts; attribution/scopes preserved. Internal implementation has no V2 dependency; public capability cannot precede complete parity. |
@@ -847,6 +944,17 @@ SQL/backup validation. This is required implementation work, not a claim that
 today's activation already has those stages. MCP reads and editor webviews never
 initiate migration. Explicit native setup owns fresh-registry initialization.
 
+Finish any existing owned control-layout/default-index-directory relocation while
+the registry still uses the legacy format, before admitting schema 12. Its legacy
+rewriter replaces matching values throughout the registry and must not touch the
+new immutable index backing identities. After schema 12, refuse that rewriter
+before persisting a relocation intent or moving data; retain completed receipts.
+The activation path must resume a pending catalog with its matching candidate
+before normal readiness probes. General root relinking remains deferred; supporting
+a later physical relocation of an active catalog requires a separately qualified
+typed identity/mapping operation. This ordering preserves the existing legacy
+upgrade route without allowing partial directory moves or predecessor rollback.
+
 Reuse and extend existing managed-install ownership/drain: Windows/Linux have
 verified predecessor termination, while macOS has graceful shutdown and requires
 its own qualification. Unknown/undrained owners block migration. An activation
@@ -903,6 +1011,7 @@ and setup copy, synchronized with native help.
 | W0 | Two-tier research follow-up; read-interface-parity, unified-mcp, mcp, CLI/MCP developer guides and release record; distinguish captured invariants from executed regressions |
 | E0 | validation and relevance/performance evidence; check-retrieval-quality harness instructions; MCP investigation reconciliation |
 | P0b | synchronized version manifests/lockfiles/catalogs, versioning and contributor version guidance, installer forward-line policy, candidate release record and accurate README/index/Marketplace status |
+| P6a–P6f | service-embedding, service-freshness, service-project-setup, CLI help/reference, mcp, unified-mcp, read-interface-parity, Workbench freshness/trust/error help, signing/build/release provenance and installed-test isolation. Keep issue-analysis reports dated; record current evidence in the ledger/release record. State any channel/platform limits accurately in README and Marketplace copy. |
 | X0 | ADR 002, vscode-extension current behavior/limitations, scenario map, architecture boundaries and cross-project design |
 | X1 | collections, source-roots, storage-formats, service-project-setup, service-freshness, versioning, U-stage release/upgrade notes |
 | X2 | vscode-extension, Explorer help and source-assignment/Project UX; extension README/Marketplace setup text |
@@ -935,6 +1044,9 @@ component responsibilities change, preserving dependency direction.
 | Split or trim leaves leaked evidence or incomplete ownership transfer | M0–M2/X6 | Durable deny fences, independent destination ownership, peak quota reservation, shared-Project review and phase-by-phase fault tests; no success while partition, grant or cleanup state is unknown |
 | New features undo current performance improvements | Every phase/E0/Q0 | Frozen 1.8.7 and previous-phase comparisons, deterministic work counters, controlled tail/resource campaigns and no unselected/disabled feature work; stop at an unexplained breached gate |
 | Advice creates overscope, bad splits or a new background cost | R1/R2/P8–P10 | Bounded authorized metadata, explicit selected/omitted indexes, unknown estimates, schema-checked recipes and native reviews; no automatic management or all-index fallback |
+| Helper recovery hides failure or creates restart/query churn | P6b/P6c, P7 | Diagnose actual exits, typed bounded recovery, explicit Stop, saved-policy semantics and complete partial/error data; no read-triggered startup, unconditional retries or strict-mode degradation |
+| Vector backlog starves source edits or UI reports a fresh result as older | P6d/P6e, P7/P12 | Fair admissible source admission, bounded vector progress and causally scoped publication comparison; measure backlog latency and preserve incomparable/unknown labels without per-query polling |
+| Signed macOS launcher fails or Marketplace differs from qualified native payloads | P6a/P14, release handoff | Standalone-safe signature design, copied installed-path/editor/agent tests, immutable signed producer and channel payload verification; credentials/platform omissions remain release blockers, never inferred passes |
 | Expanded scope prevents a coherent release | Q0 after P3/P5 | Ask the maintainer to review the documented contingency; no silently dropped requested features, partial hierarchy or migration-only release |
 
 | Deferred element | Potential value | Why it needs a later decision |
@@ -1181,12 +1293,23 @@ unrun path/profile/editor scenarios remain unknown. Run the checks in
 qualification only when explicitly requested. Review the complete diff and
 validation evidence before corrective pushes; record whether review was independent.
 
-The maintainer has requested the 1.9.0 increment: honor it once at P0b, after
-baseline capture and approval of this plan, now given. The planning edit itself
-performed no bump or commit. Before a later feature/fix PR, verify that the requested increment,
-native/extension locks and generated catalogs agree; do not ask for or apply the
-same bump again. Follow the separate changed-candidate rule if distributing
-intermediate builds. Update README, documentation index, release notes and
+Include the operational sequence's helper-outage, source-backlog, framing,
+publication-ordering, setup/trust and signed-channel matrices in this campaign.
+Their local regressions establish only the paths actually exercised. P6a's macOS
+signed-copy/editor/agent gate and P14's immutable signed-producer/channel evidence
+are required before claiming those distribution paths qualified; a successful
+Windows P5 run cannot satisfy them. Publication verification occurs only after
+separate authorization and checks the actual outputs, with honest failure/skip
+records and no substitution of different same-version native bytes.
+
+The original P0b checkpoint synchronized 1.9.0 after baseline capture. The
+maintainer's 3 November decision now keeps **1.8.8** as the working version until
+implementation and manual acceptance are complete; then promote to **1.9.0** and
+rebuild before CI/release qualification. Before each phase commit and a later
+feature/fix PR, verify the current native/extension locks and generated catalogs
+agree. Do not repeat a version increment per phase or relabel earlier artifacts.
+Follow the separate changed-candidate rule if distributing intermediate builds.
+Update README, documentation index, release notes and
 VSIX/Marketplace descriptions together when behavior lands, labeling unfinished
 candidate capabilities accurately.
 Keep these research notes dated and identifiable as proposals, and claim release
@@ -1196,7 +1319,11 @@ completion only after authorized merge/publication and verification succeed.
 
 This assessment reads the three original local research files, the new
 cross-project feature design, current project guidance and the cited native/
-extension verification and multi-project routing paths. The phase refinement also
+extension verification and multi-project routing paths. The 3 November operational
+integration reads both issue-analysis documents completely and spot-checks current
+launcher, supervisor, trust and Workbench paths; it does not reproduce their
+installed failures, settle the unexplained helper exits or qualify signed artifacts.
+The phase refinement also
 reviews current versioning/CI policy, the dated performance report, release
 evidence and measurement harness capabilities;
 it does not rerun the earlier live experiments, audit the Copilot implementation anew or

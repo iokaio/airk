@@ -1,6 +1,6 @@
 # Dated saved-source verification
 
-AIRK 1.9.0 development evidence reads default to **Report**. A bounded native
+AIRK 1.8.8 development evidence reads default to **Report**. A bounded native
 check compares the complete saved bytes of each admitted, distinct referenced
 file with the source hash that supplied the indexed evidence. Implementation
 qualification is tracked in the [phase ledger](research/implementation-v190.md).

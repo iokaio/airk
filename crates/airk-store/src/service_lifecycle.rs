@@ -46,6 +46,24 @@ fn decode(id: Sha256Digest, bytes: Vec<u8>, phase: String) -> Result<LifecycleRe
     };
     Ok(LifecycleRecord { id, request, phase })
 }
+
+/// Upgrade admission must not bypass a saved Stop or interrupted lifecycle.
+/// Keep this predicate beside the canonical lifecycle schema and transitions.
+pub(super) fn require_catalog_admission(connection: &rusqlite::Connection) -> Result<()> {
+    let stopped: bool = connection.query_row(
+        "SELECT stopped FROM service_lifecycle_state WHERE id=1",
+        [],
+        |row| row.get(0),
+    )?;
+    ensure!(!stopped, "service_explicitly_stopped");
+    let pending: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM service_lifecycle WHERE phase NOT IN('complete','abandoned'))",
+        [],
+        |row| row.get(0),
+    )?;
+    ensure!(!pending, "resume_or_abandon_pending_lifecycle_first");
+    Ok(())
+}
 impl ServiceRegistry {
     pub fn lifecycle_by_id(&self, identity: Sha256Digest) -> Result<Option<LifecycleRecord>> {
         self.connection

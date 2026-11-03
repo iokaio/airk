@@ -34,6 +34,7 @@ pub mod retrieval_retry;
 pub mod roots;
 pub mod scheduler;
 pub mod service_broker;
+pub mod service_catalog_upgrade;
 pub mod service_configuration;
 mod service_enrichment;
 pub mod service_execution;
@@ -44,6 +45,7 @@ mod service_publication;
 pub mod service_resource_observations;
 pub mod service_resources;
 mod shared_models;
+pub mod source_observations;
 pub mod source_watch;
 pub mod storage;
 #[cfg(feature = "local-inference")]

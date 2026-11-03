@@ -1,14 +1,22 @@
 # AIRK documentation
 
-**1.9.0 P4 locally qualified:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Local acceptance, measured cost and remaining platform limits are in the [ledger](research/implementation-v190.md).
+**1.8.8 manual-test working build:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Earlier P4 acceptance and current validation limits are in the [ledger](research/implementation-v190.md).
 
-**1.9.0 development candidate:** [phase status and validation](releases/release-1.9.0.md), [implementation ledger](research/implementation-v190.md) and [approved plan](research/plan-v190.md). The candidate increment adds the supported 1.9 runtime line; later features remain gated by their phases.
+The [1.8.8 working-build record](releases/release-1.8.8.md) tracks current validation. [1.9.0](releases/release-1.9.0.md) remains the planned promotion target after implementation and manual acceptance. The [approved plan](research/plan-v190.md) retains its phase names and gates.
+
+P5's catalog upgrade foundation passed local isolated qualification. The [storage boundary](storage-formats.md#development-catalog-boundary)
+records candidate-owned migration and recovery limits; normal activation remains disabled.
+
+The dated [1.8.7 external audit](issue-analysis/audit-report.md) and
+[open-issue analysis](issue-analysis/open-issue-analysis.md) retain their reported
+platform findings and source checkpoints. They do not qualify the current working
+build or establish that the reported release issues have been fixed.
 
 P1 repairs compact plan bindings/aggregation and nested object schemas; the
 [interface contract](read-interface-parity.md#regression-evidence) records original
 locations, explicit rich symbol-ID lookups, guards and transport/export coverage.
 
-[Lean/Rich replies in 1.9.0](reply-detail.md) explains independent per-read
+[Lean/Rich replies](reply-detail.md) explains independent per-read
 projection, legacy defaults/flags, Workbench choices, CLI/MCP examples and limits.
 
 [P3 design contracts](research/contracts-v190/README.md), [ADR 002](decisions/002-projects-indexes-and-query-scope.md), [ADR 003](decisions/003-dated-saved-source-verification.md) and the [profile-family inventory](research/profile-family-inventory-v190.md) fix future scope, ownership, upgrade and verification boundaries; runtime activation remains gated.

@@ -1,6 +1,6 @@
 # Understanding missing or limited evidence
 
-The 1.9.0 candidate adds optional `guidance` to native read results when returned
+The 1.8.8 working build adds optional `guidance` to native read results when returned
 metadata identifies a limitation, or a query returns empty primary rows. It explains
 observations and suggests a next read. It is not a confidence score, a complete
 availability audit or proof that source bytes match the index.

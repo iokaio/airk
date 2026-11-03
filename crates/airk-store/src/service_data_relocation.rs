@@ -335,6 +335,32 @@ fn relocate_at(
             && data_scope::canonical_location(destination)? == destination,
         "index migration root is redirected"
     );
+    // Select only the refusal path from the raw header. Do not open a writable
+    // registry first: even a no-op legacy open may update SQLite's header. The
+    // saved reader then validates the full application/owner/schema before any
+    // result is trusted. Legacy rollback-journal recovery keeps its existing path.
+    let database = control.join("service-1.4.sqlite3");
+    let metadata = fs::symlink_metadata(&database)?;
+    crate::managed_collection::reject_file_aliases(&database, &metadata)?;
+    ensure!(
+        metadata.len() >= 100 && metadata.len() <= super::MAX_DATABASE_BYTES,
+        "invalid relocation registry size"
+    );
+    let mut header = [0; 100];
+    fs::File::open(&database)?.read_exact(&mut header)?;
+    if u32::from_be_bytes(header[60..64].try_into()?) == 12 {
+        let saved = ServiceRegistry::open_saved(control)?;
+        ensure!(
+            saved.catalog_state()?.is_some(),
+            "catalog relocation format changed"
+        );
+        if !exists(&control.join(INTENT))? && selected(control, source, destination)? {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "complete the owned legacy storage relocation before the schema-12 catalog upgrade; catalog backing identities cannot use the legacy rewriter"
+        );
+    }
     let _embedding = EmbeddingLease::acquire(control)?;
     let _source = SourceWatchLease::acquire(control)?;
     let mut registry = ServiceRegistry::open(control, retained_namespace(control)?)?;
@@ -347,6 +373,14 @@ fn relocate_at(
     if !exists(&intent_path)? && selected(control, source, destination)? {
         return Ok(());
     }
+    // This legacy rewriter changes matching values across every registry table.
+    // Managed installation must finish the historical rename before catalog
+    // admission. Never rewrite immutable catalog backing identities or leave a
+    // physical rename behind a failed SQL trigger.
+    ensure!(
+        registry.catalog_state()?.is_none(),
+        "complete the owned legacy storage relocation before the schema-12 catalog upgrade; catalog backing identities cannot use the legacy rewriter"
+    );
     let physical = if exists(source)? { source } else { destination };
     let _data = crate::quota::service_lifecycle_lease(physical, true)?;
     let _legacy_data = crate::quota::lifecycle_lease(physical, true)?;
@@ -566,6 +600,64 @@ mod tests {
     use super::*;
     use std::cell::Cell;
 
+    // Format-only fixture for legacy relocation admission, not upgrade evidence.
+    fn install_catalog_fixture(control: &Path, namespace: Incarnation) -> Result<()> {
+        use super::super::catalog;
+        let mut registry = ServiceRegistry::open(control, namespace)?;
+        let legacy = catalog::schema_digest(&registry.connection)?;
+        let tx = registry.connection.transaction()?;
+        catalog::install_schema(&tx)?;
+        tx.execute(
+            "INSERT INTO index_catalog_meta VALUES(1,1,1,0,0,0,?1,?2,?3)",
+            params![
+                Incarnation::from_bytes([82; 16]).to_string(),
+                legacy.to_string(),
+                Sha256Digest::from_bytes([83; 32]).to_string()
+            ],
+        )?;
+        tx.pragma_update(None, "user_version", 12)?;
+        tx.commit()?;
+        drop(registry);
+        Ok(())
+    }
+
+    #[test]
+    fn catalog_state_refuses_legacy_rewriting_before_intent_or_directory_move() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let control = base.join("control");
+        let source = base.join("service-1.4");
+        let destination = base.join("index-v1");
+        fs::create_dir(&control)?;
+        fs::create_dir(&source)?;
+        fs::write(source.join("sentinel"), b"do not move or rewrite")?;
+        install_catalog_fixture(&control, Incarnation::from_bytes([81; 16]))?;
+        let before = fs::read(control.join("service-1.4.sqlite3"))?;
+        let lease = ServiceLease::acquire(&control)?;
+        let error = relocate(&lease, &source, &destination).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("before the schema-12 catalog upgrade"),
+            "{error:#}"
+        );
+        assert_eq!(
+            fs::read(source.join("sentinel"))?,
+            b"do not move or rewrite"
+        );
+        assert!(!destination.exists());
+        assert!(!control.join(INTENT).exists());
+        assert!(require_settled(&control).is_ok());
+        assert_eq!(
+            framed_digest(
+                b"fixture-registry-bytes",
+                &[&fs::read(control.join("service-1.4.sqlite3"))?]
+            ),
+            framed_digest(b"fixture-registry-bytes", &[&before])
+        );
+        Ok(())
+    }
+
     #[test]
     fn interruptions_resume_without_replay_or_a_second_root() -> Result<()> {
         for stop in ["planned", "renamed", "metadata", "registry"] {
@@ -611,6 +703,11 @@ mod tests {
             assert!(require_settled(&control).is_ok());
             assert!(!source.exists());
             assert!(selected(&control, &source, &destination)?);
+            install_catalog_fixture(&control, namespace)?;
+            let before = fs::read(control.join("service-1.4.sqlite3"))?;
+            relocate(&lease, &source, &destination)?;
+            assert!(selected(&control, &source, &destination)?);
+            assert!(fs::read(control.join("service-1.4.sqlite3"))? == before);
         }
         Ok(())
     }

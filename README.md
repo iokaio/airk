@@ -1,6 +1,9 @@
 # AIRK: Local Search for Coding Agents
 
-**1.9.0 development candidate:** native/extension versions and lockfiles are synchronized; supported forward runtime activation includes 1.9. The [candidate record](docs/releases/release-1.9.0.md) and [implementation ledger](docs/research/implementation-v190.md) track completed phases and validation. Project/index management remains planned work. Saved-source verification passed P4 local qualification; see the [controls and limits](docs/source-verification.md).
+**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](docs/releases/release-1.8.8.md) and [implementation ledger](docs/research/implementation-v190.md) track implementation and validation toward the [planned 1.9.0 release](docs/research/plan-v190.md). Project/index management remains gated. Saved-source verification defaults to Report; see the [controls and limits](docs/source-verification.md).
+
+P5's catalog upgrade foundation passed local isolated qualification. Normal activation of
+the new hierarchy remains disabled; see the [storage boundary](docs/storage-formats.md#development-catalog-boundary).
 
 Compact discovery now feeds dependent plans and cited results;
 nested plan inputs are advertised as JSON objects. [Validation and limits](docs/read-interface-parity.md#regression-evidence)
@@ -65,7 +68,7 @@ The [parser-training fork guide](docs/parser-training.md) shows how to inspect t
 
 Workbench opens once after successful trusted setup. Its compact header provides history, settings and new-session icons; the composer’s **+** menu holds scope, recipes and tool forms. Explorer’s **Workbench** toolbar button, immediately left of Help, toggles secondary-sidebar visibility and shows a pressed state while visible. The project selector is available inside Overview and Management; its selection remains shared across Explorer screens. VS Code retains control of sidebar tab order and pending extension replacement may still require Reload Window.
 
-**Workbench implementation introduced in 1.7.2:** a secondary-sidebar evidence transcript with editable plans, recipes, cited results, copy/export and bounded local sessions. Agents can use the same native `parse` tool to prepare or execute explicit read-only plans. Learned requests propose an editable plan; review its operation and arguments, then explicitly run it. Automatic learned execution remains disabled pending qualification. See the [implementation record](docs/workbench/implementation.md). Native/extension source versions are synchronized at **1.9.0**; the release workflows verify publication separately.
+**Workbench implementation introduced in 1.7.2:** a secondary-sidebar evidence transcript with editable plans, recipes, cited results, copy/export and bounded local sessions. Agents can use the same native `parse` tool to prepare or execute explicit read-only plans. Learned requests propose an editable plan; review its operation and arguments, then explicitly run it. Automatic learned execution remains disabled pending qualification. See the [implementation record](docs/workbench/implementation.md). Native/extension source versions are synchronized at the **1.8.8 working version**; the planned 1.9.0 promotion and release workflows remain separate.
 
 **Version 1.6.4 — runtime upgrades, project cleanup and responsive diagnostics.** This public release consolidates the unpublished 1.6.1–1.6.3 branch work. Supported runtimes upgrade before connection checks; uninstall removes owned executables and recorded agent entries while preserving index data. Trusted open folders register and index automatically, subject to saved opt-out, pause and manual-update settings. Removing a project drains its workers and deletes its AIRK index and saved settings while preserving source files.
 

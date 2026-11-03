@@ -511,6 +511,50 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             command.args(args);
             return crate::native_process::forward_stdio(command);
         }
+        RuntimeCommand::CatalogUpgradeMigrate {
+            control_root,
+            upgrade_id,
+        } => {
+            ensure!(
+                airk_store::service::registry::catalog::upgrade::pending(control_root)?.is_some(),
+                "catalog admission is not fenced"
+            );
+            let installer = runtime_pair::engine_identity()?;
+            let namespace = airk_store::service::registry::catalog::upgrade::CatalogUpgrade::check_installer_resume(control_root, installer)?;
+            layout::validate_catalog_control(control_root, namespace)?;
+            let exclusion =
+                airk_store::service::registry::catalog::upgrade::PendingCatalogExclusion::acquire(
+                    control_root,
+                )?;
+            ensure!(
+                exclusion.upgrade_id() == *upgrade_id,
+                "catalog migration request differs from the admitted upgrade"
+            );
+            ensure!(
+                exclusion.namespace() == namespace,
+                "catalog namespace changed during native admission"
+            );
+            layout::validate_catalog_control(exclusion.control(), exclusion.namespace())?;
+            let owner = exclusion.into_upgrade(installer)?;
+            serde_json::to_value(owner.migrate()?)?
+        }
+        RuntimeCommand::CatalogUpgradeProbe {
+            control_root,
+            upgrade_id,
+            nonce,
+        } => {
+            let observation = airk_store::service::registry::catalog::upgrade::observe(
+                control_root,
+                *upgrade_id,
+                *nonce,
+            )?;
+            ensure!(
+                runtime_pair::engine_identity()? == observation.installer_identity,
+                "catalog candidate payload identity differs from the admitted installer"
+            );
+            layout::validate_catalog_control(control_root, observation.catalog.namespace)?;
+            serde_json::to_value(observation)?
+        }
         RuntimeCommand::SelfTest => {
             let main = std::env::current_exe()?;
             let helper = runtime_pair::verify_helper(&main)?;
@@ -518,7 +562,7 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
                 &helper,
                 &format!("airk-embed {}", env!("CARGO_PKG_VERSION")),
             )?;
-            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1,"activation_resume":1,"metadata_console":1,"io_worker_threads":2})
+            serde_json::json!({"protocol":1,"version":env!("CARGO_PKG_VERSION"),"self_test":"passed","state_layout":1,"foreground_dispatch":1,"managed_reference":1,"activation_resume":1,"metadata_console":1,"io_worker_threads":2,"index_catalog":airk_store::service::registry::catalog::capabilities()})
         }
     };
     println!("{}", serde_json::to_string(&output)?);

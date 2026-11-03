@@ -1,9 +1,9 @@
 # Architecture
 
-The 1.9.0 candidate adds [evidence guidance](evidence-guidance.md) as a pure Core
+The 1.8.8 working build adds [evidence guidance](evidence-guidance.md) as a pure Core
 projection of returned metadata. Native rendering and Kernel Workbench fallback
 share it; the extension only presents/preserves the result. It introduces no
-registry, source, model or indexing work. The [candidate record](releases/release-1.9.0.md)
+registry, source, model or indexing work. The [working-build record](releases/release-1.8.8.md)
 separates accepted phases from planned hierarchy changes and verification qualification.
 
 The P4 saved-source verifier adds typed controls, bounded reference inventory and
@@ -14,6 +14,20 @@ preserve that result. Inspector/Checker reuse native receipts and observe unsave
 buffers separately. No source refresh, inference, registry migration or writer
 operation is introduced by verification. [Controls and qualification](source-verification.md)
 remain separate from later Project/index implementation.
+
+P5 prepares an inactive normalized catalog behind an explicit upgrade fence.
+Core owns typed index/Project/source identities, scope and policy formats; Store
+owns the exact SQLite shape, bounded snapshots, imports, migration and recovery
+barriers. Kernel constructs persisted backfill identities from saved private
+configuration. The CLI installer owns process drain and verified payload choice;
+an internal candidate-process command owns an already admitted Store migration
+and returns the complete receipt, leaving readiness admission fenced. Pending
+resume verifies the payload before journal recovery and retains service ownership
+across that transition. Production activation remains disabled until P6; ordinary
+reads and service startup cannot initiate migration. Bounded native overlap and
+repository-marker observations remain internal until their authorized routes and
+consumer parity are implemented. See the [ledger](research/implementation-v190.md)
+and [storage boundary](storage-formats.md#development-catalog-boundary).
 
 **1.8.7 release candidate:** MCP `status` and `diagnostics` return `query_concurrency`, the configured evidence request limit observed at admission. It reuses the existing policy read, including for cached status; it is a capacity limit, not a count of free slots. This release includes the preceding unpublished MCP, Workbench and concurrent-request improvements. See the [1.8.7 release record](releases/release-1.8.7.md) for behavior and validation.
 

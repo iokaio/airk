@@ -4,14 +4,14 @@ Runtime installation and upgrades display a VS Code progress notification labele
 
 From 1.5.4, the installer records the exact activation intent before stopping the verified optional manager and terminating approved predecessor processes, including older versions and Windows clients holding the stable launcher. Captured native process identities prevent PID reuse from redirecting termination. All captured processes share a five-second exit wait; verification, manager control, copying and startup are additional. macOS retains its authenticated graceful shutdown path. See [installation](service-installation.md) for the ownership and platform limits.
 
-The current branch version is **1.9.0**, an unpublished development candidate. Publication is gated by successful CI on the exact merged main commit and the release workflows. [Storage formats](storage-formats.md) have independent identities: index-v1 and service-v1. Installation migrates registered historical default index roots to index-v1 while preserving publications; historical runtime/state locations and internal filenames retain their compatibility contracts. Fresh defaults use the separate format names. A patch increment does not require reindexing. The 1.9.0 extension admits forward upgrades within the supported 1.4, 1.5, 1.6, 1.7, 1.8 and 1.9 lines; installed-artifact acceptance is recorded separately. Downgrades and unknown lines remain blocked from automatic activation. A rollback to another minor line requires its matching extension. The shipped 1.6.0 extension omitted its own line from this policy; 1.6.1 corrects that installer defect.
+The current branch version is **1.8.8**, the unpublished working version selected on 3 November 2026 for implementation and manual testing before promotion to **1.9.0**. See the [working-build record](releases/release-1.8.8.md). Publication follows manual acceptance, successful CI on the exact promoted main source and the release workflows. [Storage formats](storage-formats.md) retain their independent identities: index-v1 and service-v1. Existing directory migrations preserve publications and historical ownership contracts; a numeric version adjustment does not require reindexing. The working extension retains supported forward runtime lines 1.4 through 1.9. Downgrades and unknown lines remain blocked from automatic activation, and a supported numeric line cannot bypass a schema or capability refusal. A rollback to another minor line requires its matching extension. The shipped 1.6.0 extension omitted its own line from this policy; 1.6.1 corrected that installer defect.
 
-Use one numeric `major.minor.patch` version for the Rust workspace, every local AIRK crate in `Cargo.lock`, `packages/vscode/package.json`, and both root package entries in `packages/vscode/package-lock.json`. The native main, inference helper, runtime metadata, native ZIP, VSIX, Marketplace version and GitHub release tag must agree. For this branch, release dispatch uses `1.9.0` with channel `stable` (Marketplace release, not pre-release), and the public tag is `v1.9.0`.
+Use one numeric `major.minor.patch` version for the Rust workspace, every local AIRK crate in `Cargo.lock`, `packages/vscode/package.json`, and both root package entries in `packages/vscode/package-lock.json`. Compiled main/helper, runtime metadata, native ZIP and VSIX must agree with that source version. Current manual-test artifacts use `1.8.8`; the planned release dispatch/tag is `1.9.0` / `v1.9.0` after promotion and fresh validation. The working-version adjustment authorizes no CI dispatch or publication.
 
 The generated offline template catalog in `crates/airk-mcp/src/explorer_templates.json` also embeds the extension version. After synchronizing manifests, compile the extension TypeScript modules and run `node packages/vscode/scripts/build-explorer.cjs --write-mcp-catalog`; review the generated diff. Normal extension compilation rejects catalog drift.
 
-The initial 1.9.0 candidate increment introduces no registry or collection-policy
-migration. Later Project/index, deny and split formats require independent reviewed
+The numeric working-version adjustment introduces no registry or collection-policy
+migration. Project/index, deny and split formats require independent reviewed
 format admission and recovery gates; a supported application version alone cannot
 make an unsupported persistent format readable. Follow the [implementation
 ledger](research/implementation-v190.md) before activating later candidate features.
@@ -23,7 +23,7 @@ Increment the patch before handing testers another changed installable build. A 
 Update all four version-bearing files together before building. Do not edit executable versions, manifests, receipts or ZIP/VSIX contents after tests to make them match. Rebuild the native pair when its compiled version changes. Check agreement without network access or publication:
 
 ```console
-python scripts/release-version.py check --expected 1.9.0
+python scripts/release-version.py check --expected 1.8.8
 ```
 
 CI runs the same agreement check in its unconditional quick job. It rejects mismatched manifests/lockfiles and, when supplied, a mismatched `expected_version`. Local build, native packaging and extension packaging verify compiled identities and bind the exact payload/lock hashes. New changed installable candidates need the next unused numeric patch; the checked version is not bumped automatically on each CI rerun.
@@ -46,10 +46,15 @@ The optional previous VSIX selects the running-upgrade scenario. Without it, the
 
 ## CI and release handoff
 
+Finish and manually accept the identified 1.8.8 build first. Then synchronize the
+source and catalogs to 1.9.0 and rebuild under that identity before the steps below.
+Earlier 1.9.0 development pairs and newly tested 1.8.8 pairs retain their own exact
+versions and hashes; neither is relabeled as the final promoted artifact.
+
 1. Before a feature/fix PR, the maintainer reviews the patch increment, synchronized locks, README, documentation index, current release notes and Marketplace listing. A bump already made for that PR is not repeated. Keep dated earlier receipts and release records identifiable as history.
 2. Merge the reviewed, human DCO-signed changes through the protected PR flow. Run full CI on the exact final main commit before publication. Skipping full tests for local installer iteration does not waive CI release gates.
 3. Promote the complete platform candidate set from one authenticated successful main CI run/attempt/commit. Rebuilds of changed source need a new candidate/version; successful artifact retries retain their original identity. Dirty local installer artifacts are not publication inputs.
 4. Rehearse Marketplace and GitHub release using the checked-in version. Set the Extension release workflow's `version` to `1.9.0` for this branch, and select the intended channel. Rehearsal never increments or publishes. Verify all compiled versions, platform payloads, lock hashes, signing/provenance and qualification limits.
 5. After explicit publication authorization, publish the verified artifacts through the [release workflow](release-workflow.md). GitHub release uses `v1.9.0`; Marketplace uses `1.9.0`. Publication must not silently allocate or rewrite a version after testing. Complete partial publication with the original matching artifacts and retry only the failed jobs. Never overwrite an existing version with different bytes.
 
-The release-time draft version PR is a fallback when both destinations already contain a completed version. It does not replace the manual pre-PR increment or permit publishing before the new version's reviewed source and main CI are ready. Release workflows already honor an unused manually incremented version; do not add a second bump for this 1.9.0 change. See [CI and builds](ci-and-builds.md), [extension deployment](extension-deployment.md), and [Windows builds](windows-local-build.md).
+The release-time draft version PR is a fallback when both destinations already contain a completed version. It does not replace the maintainer's reviewed version choice or permit publishing before the promoted source and main CI are ready. Keep 1.8.8 as the requested working version until manual acceptance; the later planned promotion to 1.9.0 is a separate source/build step, not an automatic patch increase per phase. See [CI and builds](ci-and-builds.md), [extension deployment](extension-deployment.md), and [Windows builds](windows-local-build.md).

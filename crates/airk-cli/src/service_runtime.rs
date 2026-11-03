@@ -136,14 +136,21 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     local_ipc::prepare_root(root)?;
     let _ownership = Arc::new(airk_store::service::ServiceLease::acquire(root)?);
     crate::runtime_install::record_control_root(&_ownership)?;
-    if root.join("service-1.4.sqlite3").try_exists()?
-        && let Ok(registry) =
-            airk_store::service::registry::ServiceRegistry::open(root, new_instance_id()?)
-    {
-        ensure!(
-            !registry.service_explicitly_stopped()?,
-            "service_explicitly_stopped"
-        );
+    if root.join("service-1.4.sqlite3").try_exists()? {
+        match airk_store::service::registry::ServiceRegistry::open(root, new_instance_id()?) {
+            Ok(registry) => ensure!(
+                !registry.service_explicitly_stopped()?,
+                "service_explicitly_stopped"
+            ),
+            Err(error)
+                if error.is::<airk_store::service::registry::catalog::AdmissionPending>() =>
+            {
+                return Err(error);
+            }
+            // Preserve the existing diagnostic control path for other damaged or
+            // unavailable registries. Pending upgrades must start no supervisors.
+            Err(_) => {}
+        }
     }
     _ownership.prepare_control_endpoint()?;
     local_ipc::prepare_control_endpoint(&_ownership)?;

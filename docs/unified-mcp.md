@@ -1,8 +1,8 @@
 # One AIRK MCP connection
 
-**1.9.0 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
+**1.8.8 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
 
-The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
+The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
@@ -12,7 +12,7 @@ For detailed per-tool developer guidance, see the [MCP developer guide](mcp-deve
 
 
 
-The AIRK 1.9.0 development candidate retains one server named `airk`, with 28 unique, unprefixed tools (the preceding 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer.
+The AIRK 1.8.8 manual-test working build retains one server named `airk`, with 28 unique, unprefixed tools (the preceding 1.6.4 catalog has 27). Evidence tools answer from the configured index. `parse` prepares or executes a bounded read-only evidence plan without an editor. Help explains AIRK. Draft tools prepare suggestions that wait for the user in Explorer.
 
 P1 repairs compact discovery bindings inside `parse` and advertises its nested
 plan/recipe/budget/output inputs as JSON objects. See the [shared binding and

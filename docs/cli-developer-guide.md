@@ -1,10 +1,10 @@
 # CLI developer guide
 
-The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
+The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
-Current command behavior for the **AIRK 1.9.0 development candidate**, inheriting the 1.8.7 read contracts. This guide explains why each public command exists, how it behaves and where developers should follow its implementation. The generated [CLI reference](cli-reference.md) remains authoritative for every flag, default and complete parser help; [CLI workflows](cli.md) and [headless feature mapping](headless-cli.md) provide task-oriented walkthroughs. Current candidate qualification is tracked in the [1.9.0 record](releases/release-1.9.0.md); [1.8.7 evidence](releases/release-1.8.7.md) remains dated history.
+Current command behavior for the **AIRK 1.8.8 manual-test working build**, inheriting the 1.8.7 read contracts. This guide explains why each public command exists, how it behaves and where developers should follow its implementation. The generated [CLI reference](cli-reference.md) remains authoritative for every flag, default and complete parser help; [CLI workflows](cli.md) and [headless feature mapping](headless-cli.md) provide task-oriented walkthroughs. Current candidate qualification is tracked in the [1.8.8 record](releases/release-1.8.8.md); [1.8.7 evidence](releases/release-1.8.7.md) remains dated history.
 
 **Related developer reference: [MCP developer guide](mcp-developer-guide.md)** explains every unified MCP tool, inputs, examples, limitations and implementation/test ownership.
 
@@ -25,7 +25,7 @@ The public parser reference has 120 command sections including root and command 
 
 ## Developer contracts and examples
 
-In 1.9.0, the 15 native read aliases expose `--reply-detail lean|rich`.
+In 1.8.8, the 15 native read aliases expose `--reply-detail lean|rich`.
 Tools-call/shell use the native `reply_detail` JSON field. The selection is
 independent of retained indexing detail; omitted arguments preserve legacy
 defaults. See [reply detail](reply-detail.md) and the regenerated parser reference
@@ -529,7 +529,7 @@ Usage: airk outline [OPTIONS] <PATH>
 
 **Behavior and developer use:** Prepare mode returns a bounded plan for review. Only --execute requests execution. Finite parsed or explicitly confirmed plans use native evidence operations; learned proposals remain review-only.
 
-Explicit request files can also select `mode: execute`. In 1.9.0 compact symbol
+Explicit request files can also select `mode: execute`. In 1.8.8 compact symbol
 discovery supports cited aggregation and dependent file/location reads through
 the same consumer as MCP and Workbench. Nested plan/recipe/budget/output inputs
 are objects. See [compact binding and symbol-ID lookup rules](read-interface-parity.md#regression-evidence)

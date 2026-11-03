@@ -1,19 +1,19 @@
 # Workbench development branch
 
-**1.9.0 P4 development:** [Saved-source verification](../source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](../research/implementation-v190.md).
+**1.8.8 P4 development:** [Saved-source verification](../source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](../research/implementation-v190.md).
 
-The 1.9.0 candidate supplies optional [evidence guidance](../evidence-guidance.md)
+The 1.8.8 working build supplies optional [evidence guidance](../evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
-## 1.9.0 independent replies
+## 1.8.8 independent replies
 
 Tool forms expose **Reply detail** (Default/Lean/Rich) from the native operation
 catalog. Slash commands accept `--reply-detail lean|rich`. Default retains rich
 facts and focused search; explicit selection is independent of retained indexing
 detail. Session drafts, structured details and complete/selected exports retain
 choices without triggering a query on selection. See [reply semantics](../reply-detail.md)
-and the [candidate record](../releases/release-1.9.0.md) for actual validation.
+and the [candidate record](../releases/release-1.8.8.md) for actual validation.
 
 ## 1.8.7 full MCP response parity
 

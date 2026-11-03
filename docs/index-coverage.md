@@ -1,6 +1,6 @@
 # Workspace indexing coverage
 
-**1.9.0 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
+**1.8.8 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
 
 AIRK measures how much of a folder's eligible saved content matches its indexed revision. The VS Code footer displays that measurement for the active folder; clicking it queues **Index Now**. Coverage measures freshness and eligibility, not retrieval relevance or token savings.
 

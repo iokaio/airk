@@ -1,10 +1,10 @@
 # AIRK MCP developer guide
 
-The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
+The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
-This guide explains **all 28 public tools in the AIRK 1.9.0 development candidate**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current qualification is in the [1.9.0 candidate record](releases/release-1.9.0.md); the inherited 1.8.7 contracts and evidence remain in their [dated record](releases/release-1.8.7.md).
+This guide explains **all 28 public tools in the AIRK 1.8.8 manual-test working build**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current qualification is in the [1.8.8 working build record](releases/release-1.8.8.md); the inherited 1.8.7 contracts and evidence remain in their [dated record](releases/release-1.8.7.md).
 
 ## Start with the right layer
 
@@ -441,7 +441,7 @@ an explicit step choice overrides it. Effective arguments remain in the plan's
 digest and per-step reports. Rich cannot recreate evidence omitted at indexing.
 
 `plan`, `recipe`, `budgets` and `output` are advertised as optional JSON objects in
-1.9.0. For an explicit plan, pass an object such as
+1.8.8. For an explicit plan, pass an object such as
 `{"steps":[{"id":"ready","tool":"status","args":{}}]}`. Encoded strings,
 arrays and booleans are rejected. Refresh a client's catalog if it retains an old
 unconstrained/string declaration. Nested contents use canonical kernel validation.

@@ -1,8 +1,8 @@
 # MCP tools
 
-**1.9.0 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
+**1.8.8 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
 
-The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
+The 1.8.8 working build supplies optional [evidence guidance](evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.
 
@@ -150,7 +150,7 @@ defaults are preserved when omitted. CLI aliases use `--reply-detail`; Workbench
 forms and slash flags use the same native choice. See the [reply guide](reply-detail.md)
 for exact family mappings, conflicts, continuation rules and unsupported expansion.
 
-In 1.9.0, `parse` advertises nested `plan`, `recipe`, `budgets` and `output` as
+In 1.8.8, `parse` advertises nested `plan`, `recipe`, `budgets` and `output` as
 optional JSON objects. Compact discovery's shared file/provenance tables now
 resolve in the canonical plan consumer for dependent reads and cited aggregation.
 Original hashes, document locations and page/byte limits remain authoritative.

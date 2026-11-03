@@ -1,6 +1,55 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
 
+#[test]
+fn catalog_activation_checks_formats_instead_of_trusting_equal_application_versions() -> Result<()>
+{
+    use airk_core::{
+        identity::{Incarnation, Sha256Digest},
+        index_catalog::CatalogRevision,
+    };
+    let mut state = airk_store::service::registry::catalog::CatalogState {
+        schema: 12,
+        namespace: Incarnation::from_bytes([1; 16]),
+        revision: CatalogRevision::INITIAL,
+        activated: true,
+        accepted_new_writes: true,
+        authority_contract: 0,
+        policy_contract: 0,
+        upgrade_id: Incarnation::from_bytes([2; 16]),
+        legacy_schema_digest: Sha256Digest::from_bytes([3; 32]),
+        backup_digest: Sha256Digest::from_bytes([4; 32]),
+    };
+    let old = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"self_test":"passed"});
+    assert!(require_catalog_capabilities(&state, &old).is_err());
+    let current = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"index_catalog":airk_store::service::registry::catalog::capabilities()});
+    require_catalog_capabilities(&state, &current)?;
+    state.authority_contract = 1;
+    assert!(require_catalog_capabilities(&state, &current).is_err());
+    state.authority_contract = 0;
+    state.policy_contract = 1;
+    assert!(require_catalog_capabilities(&state, &current).is_err());
+    state.policy_contract = 0;
+    state.schema = 13;
+    assert!(require_catalog_capabilities(&state, &current).is_err());
+    Ok(())
+}
+
+#[test]
+fn legacy_catalog_admission_does_not_start_an_extra_payload_probe() -> Result<()> {
+    let (_owner, root, _) = unselected_fixture()?;
+    let control = layout::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    drop(airk_store::service::registry::ServiceRegistry::open(
+        &control,
+        airk_kernel::service_broker::new_instance_id()?,
+    )?);
+    let admission = quiescent(&root)?;
+    assert!(admission.catalog.is_none());
+    admission.require_catalog_compatible(&root.join("missing-payload-must-not-be-started"))?;
+    Ok(())
+}
+
 #[tokio::test]
 async fn stopped_upgrade_checks_v6_without_migration_and_reports_damage_immediately() -> Result<()>
 {

@@ -10,6 +10,53 @@ fn fixture() -> Result<(tempfile::TempDir, PathBuf, PathBuf)> {
 }
 
 #[test]
+fn catalog_validation_preserves_the_independent_namespace_pin_and_normal_admission_fence()
+-> Result<()> {
+    use airk_core::identity::{Incarnation, Sha256Digest};
+    use airk_store::service::{
+        ServiceLease,
+        registry::{
+            ServiceRegistry,
+            catalog::{AdmissionPending, upgrade::CatalogUpgrade},
+        },
+    };
+    let (_temporary, root, state) = fixture()?;
+    initialize(&root, Some(&state), RuntimeChannel::Stable)?;
+    let control = super::control(&root)?;
+    local_ipc::prepare_root(&control)?;
+    let lease = ServiceLease::acquire(&control)?;
+    record_control(&lease)?;
+    let namespace = Incarnation::from_bytes([181; 16]);
+    drop(ServiceRegistry::open(&control, namespace)?);
+    record_registry(&lease, namespace)?;
+    let owner = CatalogUpgrade::acquire_with_service(lease)?;
+    let installer = Sha256Digest::from_bytes([182; 32]);
+    airk_kernel::service_catalog_upgrade::prepare(&owner, installer)?;
+    let database = control.join("service-1.4.sqlite3");
+    let before = fs::read(&database)?;
+    assert!(super::control(&root).unwrap_err().is::<AdmissionPending>());
+    assert_eq!(
+        CatalogUpgrade::check_installer_resume(&control, installer)?,
+        namespace
+    );
+    validate_catalog_control(&control, namespace)?;
+    assert_eq!(catalog_control(&root, installer)?, control);
+    assert!(validate_catalog_control(&control, Incarnation::from_bytes([183; 16])).is_err());
+    let pin = state.join(registry_binding::PIN);
+    let saved_pin = fs::read(&pin)?;
+    fs::write(&pin, b"unrecognized independent namespace pin")?;
+    assert!(catalog_control(&root, installer).is_err());
+    assert_eq!(fs::read(&pin)?, b"unrecognized independent namespace pin");
+    fs::write(&pin, saved_pin)?;
+    assert!(
+        fs::read(&database)? == before,
+        "installer layout validation cannot write or recover SQLite"
+    );
+    assert!(super::control(&root).unwrap_err().is::<AdmissionPending>());
+    Ok(())
+}
+
+#[test]
 fn source_isolation_uses_both_real_layout_receipts_and_retains_proven_private_paths() -> Result<()>
 {
     let (owner, root, state) = fixture()?;

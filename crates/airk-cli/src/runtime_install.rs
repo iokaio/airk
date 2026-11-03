@@ -315,6 +315,25 @@ pub enum RuntimeCommand {
     },
     /// Bounded executable/paired-helper self-test, without collection access or inference.
     SelfTest,
+    /// Installer-only read of a fenced, inactive catalog upgrade. No activation.
+    #[command(hide = true)]
+    CatalogUpgradeProbe {
+        #[arg(long)]
+        control_root: PathBuf,
+        #[arg(long)]
+        upgrade_id: airk_core::identity::Incarnation,
+        #[arg(long)]
+        nonce: airk_core::identity::Incarnation,
+    },
+    /// Native owner for an already admitted installer migration. Leaves admission
+    /// fenced for imports/readiness; never initializes or activates a catalog.
+    #[command(hide = true)]
+    CatalogUpgradeMigrate {
+        #[arg(long)]
+        control_root: PathBuf,
+        #[arg(long)]
+        upgrade_id: airk_core::identity::Incarnation,
+    },
 }
 
 pub(crate) fn validate_control_root(control: &Path) -> Result<()> {
@@ -1240,6 +1259,10 @@ fn selection_record(root: &Path) -> Result<Selection> {
 }
 
 fn self_test(main: &Path) -> Result<()> {
+    self_test_observation(main).map(|_| ())
+}
+
+fn self_test_observation(main: &Path) -> Result<serde_json::Value> {
     struct Reaped(std::process::Child);
     impl std::ops::Deref for Reaped {
         type Target = std::process::Child;
@@ -1303,7 +1326,8 @@ fn self_test(main: &Path) -> Result<()> {
                 &runtime_pair::payload_root(main)?.join("airk-runtime.json"),
                 4096,
             )?)?;
-            return validate_self_test_result(&bytes, &pair.version);
+            validate_self_test_result(&bytes, &pair.version)?;
+            return Ok(serde_json::from_slice(&bytes)?);
         }
         if std::time::Instant::now() >= until {
             let _ = child.kill();
@@ -1731,6 +1755,15 @@ async fn ensure_running_locked_checked_after_settlement(
     // Preserve direct callers' settlement order: a pending STOP authenticates
     // saved identity and must not require a runnable payload just to drain it.
     payload_repair::require_settled(root)?;
+    setup::settle_then_checkpoint(
+        async {
+            activation::resume_catalog_before_lifecycle(root, None)
+                .await
+                .map(|_| ())
+        },
+        cancel,
+    )
+    .await?;
     setup::settle_then_checkpoint(lifecycle::settle(root), cancel).await?;
     if managed::read(root)?.is_some() {
         return managed::ensure_checked(root, cancel).await;
@@ -1888,10 +1921,40 @@ fn ownership_contention(error: &anyhow::Error) -> bool {
 }
 
 struct Quiescence {
+    catalog: Option<airk_store::service::registry::catalog::CatalogState>,
     _service: airk_store::service::ServiceLease,
     _projects: Vec<airk_store::service::ProjectLease>,
     _embedding: airk_store::service::EmbeddingLease,
     _source_watch: airk_store::service::SourceWatchLease,
+}
+
+impl Quiescence {
+    /// Called under the same exclusive leases before changing the launcher.
+    /// Legacy registries keep their existing path; only an activated new-format
+    /// catalog requires an actual candidate capability handshake.
+    fn require_catalog_compatible(&self, main: &Path) -> Result<()> {
+        let Some(state) = &self.catalog else {
+            return Ok(());
+        };
+        let observation = self_test_observation(main)?;
+        require_catalog_capabilities(state, &observation)
+    }
+}
+
+fn require_catalog_capabilities(
+    state: &airk_store::service::registry::catalog::CatalogState,
+    observation: &serde_json::Value,
+) -> Result<()> {
+    let capabilities:airk_core::index_catalog::CatalogCapabilities=serde_json::from_value(observation.get("index_catalog").cloned().context("selected runtime has no index catalog capability; preserve the current payload and resume or repair the upgrade")?)?;
+    ensure!(
+        capabilities.supports(
+            state.schema,
+            state.authority_contract,
+            state.policy_contract
+        ),
+        "selected runtime cannot enforce the saved index catalog contracts; restore the qualified snapshot before new writes or use forward repair afterwards"
+    );
+    Ok(())
 }
 
 fn quiescent(root: &Path) -> Result<Quiescence> {
@@ -1899,14 +1962,15 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
     local_ipc::prepare_root(&control)?;
     let service = airk_store::service::ServiceLease::acquire(&control)?;
     layout::validate_control(&control)?;
-    let bindings = if control.join("service-1.4.sqlite3").try_exists()? {
-        airk_store::service::registry::ServiceRegistry::open_saved(&control)?.bindings()?
+    let (bindings, catalog) = if control.join("service-1.4.sqlite3").try_exists()? {
+        let registry = airk_store::service::registry::ServiceRegistry::open_saved(&control)?;
+        (registry.bindings()?, registry.catalog_state()?)
     } else {
         ensure!(
             !control.join("service-1.4.owner.json").try_exists()?,
             "initialized service registry is missing"
         );
-        Vec::new()
+        (Vec::new(), None)
     };
     let projects = bindings
         .into_iter()
@@ -1914,6 +1978,7 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
         .collect::<Result<Vec<_>>>()?;
     let embedding = airk_store::service::EmbeddingLease::acquire(&control)?;
     Ok(Quiescence {
+        catalog,
         _service: service,
         _projects: projects,
         _embedding: embedding,
@@ -1942,6 +2007,9 @@ async fn activate_with_expected(
         return selection_record(root);
     }
     payload_repair::require_settled(root)?;
+    if activation::resume_catalog_before_lifecycle(root, Some(identity)).await? {
+        return selection_record(root);
+    }
     lifecycle::require_settled(root)?;
     lifecycle::require_start_allowed(root)?;
     activation::begin(root, identity).await

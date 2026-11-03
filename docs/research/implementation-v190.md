@@ -2,6 +2,9 @@
 
 **Started:** 2 November 2026. **Branch:** `feat/finetuning`.
 **Approved plan:** [phases, contracts and performance gates](plan-v190.md).
+**Current working version:** 1.8.8, selected 3 November 2026 for manual testing
+before later 1.9.0 promotion. Earlier checkpoints below retain their original
+versions and exact payload identities; they are not relabeled.
 The maintainer authorized sequential implementation and signed phase commits.
 Progress below is observed local evidence; it does not establish publication or
 cross-platform qualification.
@@ -39,8 +42,9 @@ cross-platform qualification.
 | P2a | Complete - `94f544a` | Independent reply detail; qualified native/transport/export and performance evidence below |
 | P2b | Complete - `1b623ce` | Bounded existing-observation guidance; matched quality/latency gates below |
 | P3 | Complete - `b72fbc8` | ADRs, schemas, authority/partition fixtures and upgrade fault boundaries |
-| P4 | Complete - local acceptance in this phase commit | Single-index saved-source verification; maintainer selected Report as the default, with explicit Off and Require |
-| P5–P7 | Not started | Safe metadata upgrade, Indexing/grants, then complete combined-read parity |
+| P4 | Complete - `a425ba0` | Single-index saved-source verification; maintainer selected Report as the default, with explicit Off and Require |
+| P5 | Complete — this locally qualified checkpoint | Inert normalized catalogs and owned U0–U6 upgrade/recovery; production activation disabled until P6 |
+| P6–P7 | Not started | Indexing/grants activation, then complete combined-read parity |
 | P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
 | P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
 | P13a/P13b | Conditional | Ranking/diversity only if frozen relevance/resource gates pass |
@@ -1140,3 +1144,530 @@ The pre-existing `rich:true` capability limitation above remains unresolved; the
 full default native catalog and actual CLI/MCP/Workbench input parity passed.
 No normal installation, production migration, push or publication occurred.
 P5 begins from this accepted commit, with production activation disabled until P6.
+
+
+## P5 — catalog and upgrade safety foundation (in progress)
+
+Entry commit: `a425ba01d048bca3ee5a7521a20a7448abd07983`, accepted P4.
+Core now defines prefixed random-identity wrappers, bounded metadata, positive
+SQLite-compatible revision counters and the inert source-policy format. These
+contracts activate no schema, source filter, permission or public capability.
+Random IDs will be allocated by Kernel and persisted in the upgrade intent before
+backfill so restart reuses them. No deterministic path-derived identity replaces
+the approved ADR. Production migration stays disabled until P6; public combined
+retrieval stays disabled until P7. P5 remains unaccepted while implementation,
+fault tests, actual predecessor probes and performance checks are unfinished.
+
+
+P5 foundation checks: the six initial Core format/predicate tests passed, followed
+by six Store schema/isolation/barrier tests. Schema validation includes implicit
+unique indexes and foreign-key DDL, rejects missing reverse indexes/extra triggers,
+and bounds untrusted metadata in UTF-8 bytes before Rust string allocation.
+Initial generated-DDL CRLF differences were normalized to LF; SQLite's empty-BLOB
+substring returning NULL required an explicit empty-BLOB fallback. The corrected
+Store run passed all six cases. Ordinary creation/reads remain schema 11; normal
+schema-12 readers/writers refuse pending activation or unknown authority/policy
+contracts, with exact database bytes unchanged on refusal. No production upgrade
+has been initiated. U0–U6 ownership, backup/import/recovery and actual predecessor
+probes remain implementation work, so P5 is not accepted.
+
+### P5 migration, import and recovery checkpoint — 3 November 2026
+
+The explicit Store adapter now holds the service, embedding, watcher and all
+saved/discovered worker leases before migrating. A durable owner-field fence
+refuses ordinary candidate reads and old readers before schema changes. Kernel
+allocates random Project/index/source IDs and persists the exact intent before
+backfill; restart reuses it. Unreadable private source configuration stays
+`pending_metadata`, with only the original primary source known. Migration does
+not scan source directories, initialize collection slots, extract or load models.
+
+SQLite's existing pinned safe backup API now produces a bounded, integrity- and
+foreign-key-checked schema-11 snapshot. File identity, complete-file SHA-256 and a
+typed digest of every legacy table bind recovery to that snapshot. An unclaimed
+backup file is preserved; at most four slots are attempted. Committed WAL is
+included before SQLite checkpoints it. The adapter recognizes bounded WAL frame
+checksums, commit boundaries and stale reset tails; it does not replay pages or
+manually remove sidecars. Hot rollback-journal recovery requires the matching
+saved migration/restoration intent, qualified backup and all ownership leases.
+
+The additive migration and exact legacy Project mapping commit atomically. Resume
+checks stored roots, aliases, membership atoms, defaults, counters and identity,
+not just row counts. Legacy jobs, pause/fencing state, watermarks and receipts are
+covered by the unchanged legacy-row digest. Context imports have explicit request
+identities, revision checks and bounded selections. Replays do not recreate deleted
+contexts; defaults outside the selected Projects are refused. Missing editor state
+can remain pending without guessed grouping or access grants.
+
+Readiness records bind a candidate observation to its installer identity and
+catalog revision, plus predecessor refusal evidence. An installer-only CLI probe
+returns the complete native observation and checks its running payload identity.
+This is a metadata qualification path, not a public Indexing/query capability.
+Production settlement remains disabled until P6. The underlying settlement logic
+is exercised in isolated tests on both sides of activation and fence clearing.
+Before the first settled write, restoration uses SQLite's backup API and touches
+only the registry; after any settled new or legacy write, the durable barrier
+requires forward repair and preserves new work.
+
+Observed checks at this checkpoint:
+
+- All **27 focused Store catalog tests passed**, including child-process exits
+  leaving real committed WAL and a real hot rollback journal, worker exclusion,
+  commit retries, authority changes, import replay and restoration boundaries.
+- The first settlement run passed 25/27: two restoration cases exposed a Windows
+  `sync_all` access error on a read-only file handle. Using an owned writable flush
+  handle corrected the path; the complete 27-test rerun passed.
+- Formatting, tracked whitespace checks and warnings-denied Clippy for Core,
+  Store, Kernel and CLI with all targets passed at the preceding checkpoint.
+  The subsequent actual CLI compatibility tests and Kernel preparation changes
+  still require their own completed runs and final combined checks.
+
+Actual retained predecessor/candidate process probes, the complete management and
+overlap contracts, activation integration, capacity/fault expansion, full suites
+and matched performance campaigns remain unfinished. Unit readiness digests are
+explicit fixtures and do not count as actual runtime compatibility evidence.
+P5 remains in progress and uncommitted; no normal installation or user state has
+been upgraded, and no P6+ capability is advertised.
+
+Subsequent P5 checks passed **30/30 focused Store cases**. Added cases preserve
+unclaimed partial-backup sidecars, reject overlays on an immutable qualified
+snapshot, refuse hot-journal recovery with a missing fence/wrong stage/changed
+backup, and reach the actual aggregate **32 MiB** registry limit. The capacity
+failure rolls back without evicting the existing index or legacy registration.
+The first negative-journal test used a noncanonical Windows fixture path when
+persisting its altered intent; that test setup was corrected to use the saved
+canonical control root, leaving the ancestry guard unchanged.
+
+The two actual CLI compatibility tests also passed, explicitly including the
+normally ignored retained-runtime campaign. They exercised the source-built
+debug candidate, frozen 1.8.7 runtime and accepted P4 1.9.0 runtime. Both retained
+main/helper pairs were checked against their existing payload receipts. Original
+schema-11 list/forget commands succeeded; after admission both reads and writes
+reached the owner-format refusal. Removing only the fence field in an isolated
+fixture forced both old payloads to reach and refuse the schema-12 floor. Control
+files and the source/collection sentinel stayed unchanged on refusal. The actual
+candidate's complete observation matched Store, a crossed payload identity was
+refused, and old readers worked again after qualified restoration. Production
+activation remained disabled. The initial transport run could not read held
+Windows zero-length ownership locks while recording fixture bytes; recording
+their verified empty length avoids reading the locked byte beyond EOF. The
+complete two-test rerun passed. These debug-process observations do not replace a
+fresh source-bound release pair, managed activation or installed-editor evidence.
+
+Managed activation/rollback now checks explicit catalog capabilities before
+changing the launcher for an activated schema-12 catalog. Equal application
+version strings do not establish grant/policy compatibility. The legacy-registry
+path does not start an extra executable probe. This additional integration and
+its tests are under validation; the broader three-library regression run and
+final workspace checks remain outstanding at this checkpoint.
+
+The subsequent all-feature `ci`-profile library checkpoints passed **707/707
+Core/Store/Kernel tests (5 skips)** and **303/303 CLI tests (7 skips)**. These runs
+precede the latest observation/startup additions and are not final P5 acceptance.
+Their ignored logs are `p5-foundation-libraries.log` and `p5-cli-libraries.log`.
+The new service admission check preserves the existing diagnostic path for other
+damaged registries, but propagates a typed pending-upgrade refusal before source,
+helper or project supervisors start. The actual two-test CLI campaign passed
+again with this startup assertion. Its initial run stopped earlier at the sandbox
+temporary directory's owner-only requirement; the successful rerun used the
+already qualified private fixture base, without relaxing permissions. The final
+debug-process log is `p5-catalog-native-private.log`.
+
+The Store catalog suite subsequently passed **31/31**, adding transfer of an
+already held service lease into migration and back without releasing service
+ownership. Normal admission remains fenced through that transfer. The next
+native startup integration can therefore avoid a release/reacquire gap.
+
+### P5 bounded source observations (implementation in progress)
+
+Core/Store now have an explicit saved-root relationship read, independent of
+evidence retrieval. It uses native path-component comparison (including Windows
+ordinal case rules), retains inactive roots, applies explicit binding selections,
+and binds pagination to the namespace, proposed root, selection and complete
+bounded metadata snapshot. It never opens source or collection files. Empty or
+unknown selections refuse; a changed cursor cannot broaden scope or restart at
+page one. The metadata pass is bounded by 1,024 indexes, 17 roots each, 8 MiB root
+metadata and a cooperative two-second deadline. Replies have independent row/byte
+limits, disclose omissions and retain exact matching counts when the metadata
+pass completed. Escaped JSON envelope size is included in byte admission.
+
+Legacy watcher caches explicitly leave alias completeness unknown. Schema-12
+observations retain stable index/source IDs, disabled retained roots and pending
+source imports. Missing legacy-to-index mappings fail instead of hiding roots.
+The **four focused Store relationship tests passed** at their checkpoint.
+
+Kernel now implements explicit repository-marker observations for a root and an
+optional sample of at most 128 direct child entries plus one lookahead. It does
+not recurse or execute Git. A narrow Ingest adapter reuses protected no-follow
+capture only for a root/direct-child `.git` file, with 4,097 bytes at most to
+distinguish the 4 KiB limit. Reported `gitdir:` targets are not followed. Native
+home, volume, conventional user-container, temporary and synced-folder hints use
+bounded location comparisons rather than opening candidate locations. These are
+hints, not a proof that an unflagged directory is safe or that a repository is
+understood. Source bytes, extraction, models, jobs and registrations are unchanged.
+The first three new Windows Kernel observation cases passed; reply/deadline
+expansion and the marker adapter test are being validated. The Unix alias case
+has not run on this Windows host. An intermediate Clippy run reported two nested
+conditionals in the new hint classifier; those were simplified and await the
+combined rerun.
+
+These are internal native contracts. Administrative and configured/granted
+observations must remain separate when actual CLI/MCP/Workbench routes are added;
+an agent-supplied binding is not authority. Transport/UI parity, remaining managed
+startup/upgrade integration, wider faults/capacity cases and performance campaigns
+are still required. No new public Indexing or combined-query capability is enabled.
+
+The next focused runs passed all five new Windows Kernel observation cases (plus
+one existing resource-observation case selected by the same filter) and the narrow
+Ingest marker-reader case. Expired requests perform zero marker captures/child
+enumeration; reply-byte, directory-sample and deadline cutoffs stay distinct.
+Workspace/all-target/all-feature Clippy with warnings denied then passed; its log
+is `p5-observations-clippy-final.log`. A combined all-feature focused regression
+run is in progress. The dated ADR 002 clarification records the explicit-read,
+administrative-versus-agent and future prefix/policy requirements. Routine status,
+Full status and configured `projects` retain their existing lightweight meanings.
+
+The combined all-feature focused run completed: **55/55 passed**, with 934 cases
+outside that selection (`p5-foundation-focused.log`). It includes the Core formats,
+31 catalog cases, four relationship cases, five new Windows repository-hint cases,
+the marker adapter and existing protected source-reader regressions.
+
+The next actual CLI campaign passed **3/3**, including the explicitly selected
+retained-runtime case (`p5-catalog-control-corrected.log`). An additional isolated
+schema-12 transport fixture served a real `RequestEpoch`, shut down and drained
+owned descendants, preserved the legacy pause setting and source sentinel, and
+created no paused index collection. Its native startup writes set the no-restore
+barrier; subsequent public Store restoration refused with forward repair and left
+database bytes unchanged. This fixture manually seeds an activated format solely
+to exercise ordinary native transport. It does **not** qualify managed activation
+or bypass the distributed production gate; actual Store settlement/recovery has
+the separate interruption tests above. The first compile of that added test used
+Debug formatting for a response type without Debug; diagnostics now serialize
+the complete response, and the corrected three-test run passed.
+
+The richer preservation suite then passed **33/33 catalog tests**
+(`p5-catalog-retention-qualified.log`). It now carries pending/running/failed jobs,
+idempotent request receipts, a cancellation, source outcomes, manual watcher
+watermarks and removal history through migration and restoration. Their complete
+typed legacy-table fingerprint remains unchanged. A private collection fixture
+also migrates its known alias while both source directories are offline, then
+restores the registry without recreating those sources or changing its roots and
+opaque saved extraction-policy bytes. This proves preservation; it does not claim
+to interpret an unknown extraction-policy version.
+
+Pending activation now also has a separate process-exclusion primitive. It pins
+all saved/discovered worker, helper, watcher and service leases without opening
+SQLite, so a drain/stop observation need not recover an interrupted journal.
+Database readiness and migration/recovery remain distinct. Its hot-journal
+non-mutation assertion and the factored ownership census await the next combined
+check; managed activation wiring remains outstanding.
+
+The combined preservation/exclusion run subsequently passed **57/57** focused
+all-feature cases (`p5-retention-exclusion-focused.log`). A further relocation
+audit found that the legacy all-table string rewriter could move a directory
+before immutable catalog identities rejected its SQL. Schema 12 now refuses
+that path before an intent or directory move; completed historical receipts
+remain usable. Its first regression run found that opening a writable registry
+before refusal still changed SQLite header bytes. The guard now selects a
+read-only, fully validated refusal path before that open. All **3/3** relocation
+cases passed (`p5-relocation-guard.log`). ADR 002 and the plan record the required
+legacy-relocation-before-catalog ordering, without enabling general relinking.
+
+Installer resume also checks its recorded payload identity **before** SQLite
+rollback-journal recovery. The process-exclusion guard transfers the service
+lease into the upgrade owner; subordinate ownership is reacquired and the intent
+rechecked before opening the database. The hot-journal case passed with both
+wrong-installer entry points preserving database/journal bytes and the matching
+installer recovering and resuming (`p5-installer-identity-recovery.log`).
+
+An internal native `runtime catalog-upgrade-migrate` command now owns U2/U3 for
+an already fenced, exact upgrade. It validates the control binding, upgrade ID
+and executable/pair identity, executes the canonical Store backup/migration and
+returns its complete receipt. It cannot initialize, admit, activate or start a
+service. This provides the candidate-process boundary needed by the managed
+coordinator; it is not an Indexing or MCP entry point. The first new process-test
+compile used equality on a receipt type without `PartialEq`; the assertions now
+compare complete serialized values. The corrected campaign passed **5/5** actual
+CLI cases, including explicitly selected retained 1.8.7/P4 predecessors
+(`p5-native-owner-predecessor-full.log`). It covers unadmitted/wrong-ID/wrong-payload
+refusal without mutation, exact migration replay without rebuilding, complete
+probe data, actual predecessor refusal, restoration and the separate activated
+format/startup write-barrier fixture. Production activation remains disabled;
+managed orchestration, public observation parity and final P5 qualification are
+still outstanding. A combined all-feature regression rerun is in progress.
+
+That combined run passed **60/60** selected native cases, with 932 outside the
+selection (`p5-native-owner-focused.log`). Workspace/all-target/all-feature
+Clippy with warnings denied passed (`p5-native-owner-clippy.log`). Repository
+checks passed for 1,548 public files, synchronized version 1.9.0 and all 43 design
+wire fixtures passed. Extension tests passed **547**, with **19 skipped**
+(`p5-extension-tests.log`). The first full Python run had one packaging provenance
+error because that process lacked the repository's required per-process Git
+safe-directory setting; no test assertion or repository identity was changed.
+With the setting supplied, the suite passed **309 cases, six skipped**
+(`p5-python-qualified.log`; initial failure retained in `p5-python-tests.log`).
+An initially mistyped design-check command pointed at a nonexistent Python file;
+the actual `scripts/check-v190-design.ps1` check subsequently passed. The full
+native workspace suite is compiling/linking; its result remains pending. None of
+these checks qualifies installed or non-Windows behavior, or accepts P5 yet.
+
+The relocation cases additionally replay completed legacy receipts against a
+schema-12 format fixture and verify unchanged registry bytes: **3/3 passed**
+(`p5-relocation-completed-receipt.log`). The format fixture does not qualify a
+catalog migration. Release license notices were generated for **366 packages**
+(`p5-license-notices.log`); the existing pinned SQLite dependency enables its
+backup API without a lockfile/version change. The dependency advisory audit could
+not complete: its normal path could not lock the read-only Cargo advisory cache;
+the cached/no-fetch attempt reached an unusable npm audit report. Both failures
+are retained (`p5-dependency-audit*.log`); no clean advisory result is claimed.
+
+Workspace doctest checks completed successfully for all eight crates (zero
+executable examples in these targets, `p5-workspace-doctests.log`). Store
+all-target/all-feature Clippy also passed after the additional completed-receipt
+fixture (`p5-store-completed-receipt-clippy.log`). An explicit self-review of this
+increment checked the native command's pre-admission/ID/payload refusal ordering,
+service-lease transfer, the absence of implicit activation and the read-only
+relocation guard. This is a local self-review, not independent or final P5 review.
+README, documentation index, architecture, storage guidance and the candidate
+record now consistently describe P5 as inactive and in progress; the existing
+Marketplace feature claims remain limited to implemented behavior.
+
+The full all-feature native workspace run then completed: **1,932 passed, 36
+skipped**, including four cases excluded by the CI profile's default filter
+(`p5-native-owner-workspace.log`, 65 binaries). The separately selected retained
+predecessor campaign above passed its normally ignored compatibility case. The
+full run compiled before the last completed-relocation-receipt fixture expansion;
+that test-only expansion has its separate passing targeted tests and Store
+Clippy result above. This is Windows regression evidence, not a resource campaign
+or cross-platform/installed qualification. P5 remains unaccepted and uncommitted:
+the managed installer coordinator and its recovery wiring, remaining authorized
+observation/consumer integration, source-bound release-pair measurements against
+the frozen/P4 controls and final phase review are still required. P6 has not
+started, and catalog production activation is still disabled.
+
+### P5 continuation: managed installer coordinator
+
+This continuation keeps P5 open until its staged activation, regression and
+performance gates complete. A passing intermediate test run is not a phase exit.
+
+The installer now has a gated catalog coordinator after legacy directory
+relocation and before activation completion, plus an earlier resume route before
+ordinary readiness/legacy metadata reads. Disabled production gates return
+without filesystem or payload work. The matching staged candidate performs the
+already admitted migration in its own contained process; the installer validates
+the complete returned receipt, probes actual candidate readiness and collects
+actual predecessor registry read/write refusal evidence. Parser and connection
+errors are not compatible refusal evidence. Existing context imports remain
+explicit; missing editor state is not inferred into grants or workspace groups.
+
+Review of this wiring identified the pre-fence admission gap and both U6
+settlement/restore receipt gaps. Strict installer acquisition now verifies its
+saved identity/namespace before SQLite access at all these boundaries, rechecks
+under service ownership and preserves actual later writes. In particular, a
+restore completed before its external receipt can finalize that receipt without
+copying the snapshot over resumed legacy writes. The **33 catalog tests passed**
+with these expanded cases (`p5-managed-restore-settlement.log`).
+
+Native command output uses private temporary files, monitored byte limits and
+owned child cleanup, avoiding blocked pipe-reader tasks. Complete output,
+overflow refusal, timeout cleanup and disabled-gate tests passed at the first
+targeted checkpoint. Windows containment-admission failure also now terminates
+and reaps the exact spawned child; the forwarding path shares that ownership
+adapter. Its process-handle witness test passed (`p5-containment-failure-corrected.log`);
+the initial compile lacked a test-only trait import, now fixed. An intermediate
+Clippy run flagged a redundant constant assertion in the new gate test; removing
+it retained the actual zero-work assertions. The corrected workspace/all-target/
+all-feature Clippy run passed (`p5-managed-coordinator-clippy-corrected.log`).
+
+The broader affected regression run and the isolated staged-pair installer
+campaign are next. The latter also covers U6 dispatch boundaries as explicit
+format fixtures; those fixtures do not substitute for actual enabled UI/grant
+cutover qualification in P6. Source-bound performance gates and final P5 review
+remain required before accepting or committing the phase.
+
+### Working identity changed to 1.8.8 — 3 November 2026
+
+The maintainer requested **1.8.8** as the working/manual-test version, retaining
+**1.9.0** for promotion after implementation and manual acceptance before CI and
+Marketplace release. Workspace, eight local Cargo lock entries, extension and
+both npm root lock entries now agree at 1.8.8. Extension TypeScript checks and
+catalog generation completed; the native template catalog's only generated
+change is `extension_version: 1.8.8`. The promotion-only release tooling's
+increasing-version guard remains intact.
+
+Current README/index, developer/user guides, version policy, plan and the new
+[1.8.8 working-build record](../releases/release-1.8.8.md) describe this choice.
+Earlier 1.9.0 records, artifacts and measured controls retain their exact original
+identities. The just-completed `p5-coordinator-debug-runtime` is one such 1.9.0
+build; it is not relabeled or used as a 1.8.8 qualification input. A new 1.8.8
+pair is being built in `p5-coordinator-188-debug-runtime`.
+
+The version audit found no 1.9-only feature check in the task/verification quality
+harnesses or extension feature paths. Forward supported runtime lines retain the
+planned 1.9 support and ordinary downgrade refusal. Extension tests explicitly
+include 1.8.7→1.8.8 acceptance and 1.9.0→1.8.8 refusal; the native same-version
+capability test now uses the actual compiled version. Storage/grant/policy
+compatibility remains independent from the application label.
+
+At this checkpoint, extension tests passed **547, 19 skipped**, and Python passed
+**309 cases, six skipped** (`p5-working-188-*-tests.log`). Repository checks passed
+for **1,550 public files**, all 43 design fixtures passed, version agreement passed
+at 1.8.8, and whitespace checks passed. The latest pre-adjustment affected native
+run passed **348/348** (462 outside that selection); its source/version remains
+the original 1.9.0 checkpoint (`p5-managed-coordinator-regressions.log`). Fresh
+native staged-pair and performance qualification for 1.8.8 is still pending.
+Nothing was installed, pushed, dispatched to CI or published.
+
+### P5 review boundary and installed-pin correction
+
+The maintainer now authorizes completing P5, committing and pushing this branch,
+including both files under `docs/issue-analysis/`, with **no PR**, followed by a
+stop for review. P6 must not start. The working version remains 1.8.8.
+
+The first actual staged installer campaign failed before migration: the ordinary
+installed namespace validator correctly refused the pending catalog fence, which
+also prevented the already admitted candidate from reaching its owned migration
+handler (`p5-working-188-staged-coordinator.log`). Raw development fixtures did not
+exercise this independent state-level namespace pin. The fix keeps ordinary
+validation strict and adds a read-only installer path that verifies the saved
+payload/namespace against the unchanged installed pin. It validates the pin again
+under native exclusion. Corrupt or mismatched pins are preserved and refused;
+there is no implicit repinning, SQLite recovery or directory creation. The new
+installed-pin non-mutation regression passed.
+
+The caller audit also found that ordinary lifecycle inspection precedes installer
+resume. A gated owned-catalog route now precedes that inspection only for the
+committed matching activation; disabled gates still perform no state work.
+Catalog admission rechecks saved Stop and pending lifecycle state before creating
+or arming an intent, so accepted recovery cannot bypass user stop policy. The
+initial/pre-fence Stop and pending-restart regression passed all four cases.
+The first edit had a missing delimiter and the early-resume wrapper initially
+returned the wrong unit type; both compile errors were corrected before running
+the affected suite. Source-bound staged-pair requalification and the final P5
+performance/review gates remain pending.
+
+The corrected debug staged campaign then reached every migration/readiness/U6
+dispatch/restore step, but its last pause assertion found a fixture error:
+`register_with_setup(..., Some(true))` enables watching; it does not pause. The
+fixture now registers and explicitly pauses through the canonical API and asserts
+that initial state before admission. The unchanged preservation assertions pass
+with the retained debug pair. The final source-bound release pair was rebuilt
+after that test-only correction; the earlier failed runs remain recorded.
+
+The final **1.8.8 release** pair has **784 native inputs**, source SHA-256
+`594438057cae526009b40e960ab443856bcdc6006c41ca9560379ff2175a6510`.
+Main SHA-256: `2697af91b1cfe70936a2802e5711944001cdbb3984fa148c6d931318b193152f`;
+helper: `31251b5569f201484c2948f97f5726d30b46477487c41a6f6946dae3e9df60c2`.
+Its immutable pair, build record, approved inventory and 366-package license
+notices are under `artifacts/v190/p5-188-qualified-runtime`. Both executable
+version probes return 1.8.8. The actual release staged installer campaign passed,
+and all **5/5** catalog transport cases passed against this pair and retained
+1.8.7/P4 predecessor images (`p5-188-release-staged-coordinator.log` and
+`p5-188-release-catalog-transports.log`). U6 dispatch's manually seeded boundary
+states remain format fixtures; Store's actual SQL interruption tests provide the
+separate cutover/restore evidence. Production activation is still disabled.
+
+Final workspace/all-target/all-feature Clippy passed with warnings denied, and
+all eight doctest targets passed with zero executable examples. The staged pair
+also passed **2/2** local managed suites at four logical processors, one pass each:
+native MCP smoke and clients (`p5-188-ci-local.log`). This is local Windows
+evidence, not installed-editor or macOS/Linux qualification. The final full
+workspace suite and uncontended performance/quality campaigns are still pending.
+
+The final full workspace/all-feature nextest run passed **1,939 tests, 37
+skipped**, across 65 binaries in 1,107.932 seconds
+(`p5-188-final-workspace.log`). The skipped count includes the four default
+profile exclusions; it is not an assertion that those workloads ran. Clippy,
+doctests, the actual staged release-pair campaign, retained-predecessor transport
+tests and the four-core managed smoke results above qualify this same frozen
+native source identity. No native changes were made during the performance run.
+
+The requested issue-research agent read both reports under `docs/issue-analysis/`
+and integrated an ordered P6a–P6f remediation sequence into `plan-v190.md`, carrying
+its regression obligations through P7–P14. The primary agent reviewed the plan
+diff against the stop boundary: it changes future implementation/testing order,
+not P5 acceptance or activation. Both original reports are included unchanged as
+dated evidence. This review neither reproduces their installed failures nor
+claims their fixes implemented. P6 implementation has not started.
+
+### P5 final local acceptance — 3 November 2026
+
+The frozen 1.8.8 release pair above completed the final uncontended campaign.
+The measurement shell verified 64 logical processors and unrestricted affinity,
+separately from the four-core smoke shell. No build or other heavy test ran
+concurrently. Raw receipts remain under ignored `artifacts/v190/`; no thresholds,
+corpus judgments, source files or binaries were changed to obtain a pass.
+
+| MCP task cohort | Candidate Off median / p95, ms | Candidate default Report median / p95, ms |
+| --- | --- | --- |
+| Fresh frontend, status first | 922.94 / 967.85 | 1465.32 / 1539.37 |
+| Fresh frontend, unprimed | 944.50 / 1012.14 | 1494.37 / 1549.06 |
+| Reused connection, status first | 931.10 / 1015.52 | 1541.12 / 1577.15 |
+
+Each candidate/control mode used three cohorts of 30 trials, nine calls per
+trial: **90 trials / 810 calls**, zero errors/retries and complete consistent
+publications/coverage with clean cleanup. Each default Report run returned
+**720 verified receipts**; Off returned none. Off passed against the frozen
+baseline and archived/contemporary P4 Off; Report passed against archived and
+contemporary P4 Report. All **60** comparisons passed, covering task and
+connection-inclusive median/p95 with unchanged allowances: median
+`reference + max(10%, 25 ms)`, p95 `reference + max(15%, 50 ms)`.
+
+Dedicated verification passed all five checks and **140** input-field parity
+comparisons (68 MCP/Workbench, 72 CLI/MCP). Sources, native inputs and source-work
+identity/watermarks stayed unchanged; frontend EOF was graceful and the owned
+service drained. At 30 samples per case/mode, Off / default Report medians were
+**66.89 / 134.87 ms** for 32 bytes, **67.46 / 131.55 ms** for 65,536 bytes,
+**66.77 / 135.59 ms** for 8,659,200 bytes, and **241.61 / 304.63 ms** for eight
+sources. All **16** median/p95 comparisons against P4 passed the same allowances.
+An initial ad hoc summary used `report` instead of the receipt's
+`default_report` key and failed with KeyError; correcting that reader required
+no new measurement or changed gate. The raw reports remain unchanged.
+
+The three-trial relevance run completed **75 query attempts** without failures.
+All **42** non-latency score comparisons matched P4 to absolute tolerance 1e-12,
+including development/held-out nDCG@10, Recall@10 and the lexical negative case.
+The corpus/source hashes and final binary hash matched. This small warm-cache
+corpus is regression evidence, not general relevance or cold-start qualification.
+
+Exact final measurement commands (run sequentially):
+
+```console
+python scripts/benchmark-mcp-investigation.py owned --runtime-dir artifacts/v190/p5-188-qualified-runtime --output artifacts/v190/p5-188-off-mcp --label candidate --samples 30 --concurrency 1 --verification off
+python scripts/benchmark-mcp-investigation.py owned --runtime-dir artifacts/v190/p4-final-qualified-runtime --output artifacts/v190/p5-188-control-off-mcp --label baseline --samples 30 --concurrency 1 --verification off
+python scripts/benchmark-mcp-investigation.py owned --runtime-dir artifacts/v190/p5-188-qualified-runtime --output artifacts/v190/p5-188-report-mcp --label candidate --samples 30 --concurrency 1
+python scripts/benchmark-mcp-investigation.py owned --runtime-dir artifacts/v190/p4-final-qualified-runtime --output artifacts/v190/p5-188-control-report-mcp --label baseline --samples 30 --concurrency 1
+python scripts/benchmark-source-verification.py --runtime-dir artifacts/v190/p5-188-qualified-runtime --output artifacts/v190/p5-188-verification --samples 30
+python scripts/check-retrieval-quality.py --binary artifacts/v190/p5-188-qualified-runtime/airk.exe --output artifacts/v190/p5-188-relevance.json --trials 3 --detail agent_lean --corpus scripts/fixtures/retrieval-v190.json --model-dir target/local-vector-model/minilm-l6-v2-u8-v1
+```
+
+`p5-188-gates.json` retains all 60 comparisons and 42 score comparisons, evaluated
+from the raw reports without reruns or noise waivers. Dedicated verification's
+raw cases retain all individual timings, bytes and receipts. Logical source-byte
+checks do not measure physical I/O, whole-process peak RSS or editor-save latency.
+
+The primary agent performed an explicit final review of the combined staged
+code, contracts, migration SQL, callers, fixtures, documentation and validation
+evidence. This was a self-review, not an independent code review. The separate
+research agent's plan integration was reviewed by the primary agent. The accepted
+P5 boundary is the locally qualified, **inactive** foundation: actual migration,
+imports, backup/recovery, predecessor refusal, settlement interruption and
+post-start write barriers are covered with the fixture distinctions above.
+No new public observation route, Indexing UI, grants enforcement, combined
+retrieval, permanent trim or split is enabled. Those remain P6 onward.
+
+The dependency advisory audit remains unavailable as recorded above; 366-package
+license notices passed. Installed-editor, macOS/Linux, signed-channel and general
+relevance qualification remain outstanding. The user's installed 1.8.7 service
+and its configuration were preserved. Working source stays **1.8.8**. After final
+repository checks, create the human DCO-signed P5 commit, push only
+`feat/finetuning`, create no PR and stop for maintainer review. Preserve the
+unrelated untracked `docs/reviews/shark-tank-todos.md` outside the commit.
+
+Final source review checks passed: `cargo fmt --all --check`,
+`python scripts/release-version.py check --expected 1.8.8`,
+`pwsh -NoProfile -File scripts/check-v190-design.ps1` (43 fixtures),
+`pwsh -NoProfile -File scripts/check-repo.ps1` (**1,551 public files**), both
+working/cached `git diff --check`, AGENTS/CLAUDE byte agreement and an independent
+recalculation of the qualified pair's **784-file** native source identity.
+README, documentation index, working/planned release records and Marketplace
+description distinguish accepted P5 foundations from disabled P6+ capabilities.

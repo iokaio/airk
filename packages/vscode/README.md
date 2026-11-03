@@ -1,6 +1,6 @@
 # AIRK: Local Search for Coding Agents
 
-**1.9.0 development candidate:** native/extension versions and lockfiles are synchronized; supported forward runtime activation includes 1.9. The [candidate record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.9.0.md) tracks phase completion and validation. Project/index management remains planned work. Saved-source verification passed P4 local qualification; see the [controls and limits](https://github.com/iokaio/airk/blob/main/docs/source-verification.md).
+**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) records local P5 foundation qualification toward the planned 1.9.0 release. Project/index management remains gated. Saved-source verification defaults to Report; see the [controls and limits](https://github.com/iokaio/airk/blob/main/docs/source-verification.md).
 
 Compact discovery now supplies cited evidence to dependent plans and Workbench
 results. Nested plan inputs are advertised as JSON objects. See the candidate

@@ -1,12 +1,23 @@
-# AIRK 1.9.0 development candidate
+# Planned AIRK 1.9.0 release and development checkpoints
 
 Started 2 November 2026 on `feat/finetuning`, from the 1.8.7 source baseline.
 Native workspace/local lock entries, extension manifest/npm lock entries and
-versioned MCP catalogs are synchronized at **1.9.0**. This is an unpublished
-candidate under sequential implementation; publication and installed-artifact
-acceptance require their separate authorized gates.
+versioned MCP catalogs initially used **1.9.0**. On 3 November the maintainer
+selected **1.8.8** as the working version for completion and manual testing before
+later promotion to **1.9.0**. See the [current working-build record](release-1.8.8.md).
+The checkpoint identities and measurements below retain their original tested
+versions. Publication and installed-artifact acceptance require separate gates.
 
 ## Accepted work and current behavior
+
+P5's foundation passed local isolated qualification at working version 1.8.8.
+Normal activation remains disabled. Its isolated catalog
+upgrade fixtures now exercise candidate-owned migration, retained predecessor
+refusal, bounded backup/import/recovery and the no-restore barrier after writes.
+The [storage boundary](../storage-formats.md#development-catalog-boundary)
+and [ledger](../research/implementation-v190.md) record qualified coordinator and
+performance results separately from the remaining UI/grant gates. Installing
+this candidate does not activate the new Project/index hierarchy.
 
 - **P0a — baseline:** signed commit `60f5c9d` freezes original relevance fixtures,
   source/runtime identities and uncontended native MCP measurements. It reproduces

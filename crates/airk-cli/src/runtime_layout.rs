@@ -386,6 +386,13 @@ fn require_control(control: &Path) -> Result<()> {
     Ok(())
 }
 fn control_binding(control: &Path) -> Result<Option<Layout>> {
+    control_binding_for_catalog(control, None)
+}
+
+fn control_binding_for_catalog(
+    control: &Path,
+    namespace: Option<airk_core::identity::Incarnation>,
+) -> Result<Option<Layout>> {
     let state = control.parent().context("control parent missing")?;
     let marker = state.join(CONTROL_OWNER);
     let partial = state.join(CONTROL_PART);
@@ -433,13 +440,45 @@ fn control_binding(control: &Path) -> Result<Option<Layout>> {
             );
         }
     }
-    registry_binding::validate(&owner, completed)?;
+    if let Some(namespace) = namespace {
+        registry_binding::validate_catalog(&owner, completed, namespace)?;
+    } else {
+        registry_binding::validate(&owner, completed)?;
+    }
     Ok(Some(owner))
 }
 /// Must run before directory creation, including explicit foreground startup.
 pub(super) fn validate_control(control: &Path) -> Result<()> {
     control_binding(&control_location(control)?)?;
     Ok(())
+}
+
+/// Installer-only validation with a namespace already checked against the saved
+/// catalog intent/owner. No pin repair, directory creation or SQLite open occurs.
+pub(super) fn validate_catalog_control(
+    control: &Path,
+    namespace: airk_core::identity::Incarnation,
+) -> Result<()> {
+    control_binding_for_catalog(&control_location(control)?, Some(namespace))?;
+    Ok(())
+}
+
+pub(super) fn catalog_control(
+    root: &Path,
+    installer: airk_core::identity::Sha256Digest,
+) -> Result<PathBuf> {
+    let layout = Layout::read(root)?.context("catalog installation layout missing")?;
+    ensure!(
+        layout.ready && layout.claimed()?,
+        "catalog state ownership is incomplete"
+    );
+    let control = layout.state.join("control");
+    let namespace =
+        airk_store::service::registry::catalog::upgrade::CatalogUpgrade::check_installer_resume(
+            &control, installer,
+        )?;
+    validate_catalog_control(&control, namespace)?;
+    Ok(control)
 }
 /// Log lookup may use verified layout ownership even when registry authority is unavailable.
 pub(super) fn saved_control(root: &Path) -> Result<PathBuf> {

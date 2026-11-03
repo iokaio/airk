@@ -41,7 +41,7 @@ impl Binding {
         value.checksum = value.digest()?;
         Ok(value)
     }
-    fn validate(&self, layout: &Layout) -> Result<()> {
+    fn validate_metadata(&self, layout: &Layout) -> Result<()> {
         ensure!(
             self.schema == 1
                 && self.layout == *layout
@@ -51,6 +51,11 @@ impl Binding {
         );
         let control = layout.state.join("control");
         require_control(&control)?;
+        Ok(())
+    }
+    fn validate(&self, layout: &Layout) -> Result<()> {
+        self.validate_metadata(layout)?;
+        let control = layout.state.join("control");
         if let Some(namespace) = self.namespace {
             ensure!(
                 retained_namespace(&control)? == namespace,
@@ -152,6 +157,28 @@ pub(super) fn validate(layout: &Layout, completed: bool) -> Result<()> {
             "earlier initialized control metadata is missing; restore its original registry"
         );
     }
+    Ok(())
+}
+
+/// A matching installer intent supplies the owner namespace without opening the
+/// pending registry. Retain the independent installed pin and all layout checks;
+/// ordinary readers continue to use `validate` and refuse the admission fence.
+pub(super) fn validate_catalog(
+    layout: &Layout,
+    completed: bool,
+    namespace: Incarnation,
+) -> Result<()> {
+    ensure!(
+        completed,
+        "catalog upgrade requires completed control ownership"
+    );
+    let path = layout.state.join(PIN);
+    let value: Binding = serde_json::from_slice(&read_bounded(&path, MAX_LAYOUT)?)?;
+    value.validate_metadata(layout)?;
+    ensure!(
+        value.ready && value.namespace == Some(namespace),
+        "installed catalog namespace differs; restore the original metadata"
+    );
     Ok(())
 }
 pub(super) fn begin(lease: &ServiceLease, layout: &Layout, completed: bool) -> Result<()> {

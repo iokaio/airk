@@ -1,6 +1,11 @@
 # CLI, MCP and Workbench read parity
 
-**1.9.0 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
+The current manual-test working version is **1.8.8**, implementing the planned
+1.9.0 work. Earlier 1.9.0 phase headings below identify original development
+checkpoints; their implemented interfaces remain in this branch. Current build
+validation is in the [working-build record](releases/release-1.8.8.md) and ledger.
+
+**1.8.8 working implementation:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
 
 **1.9.0 P2b:** optional [evidence guidance](evidence-guidance.md) is derived by one
 Core projection used in native reads and Kernel Workbench fallback. CLI aliases,
@@ -89,7 +94,7 @@ nested contents still use the canonical kernel contract.
   locations, malformed bindings, scope/revision rejection, ambiguity, clipping,
   explicit rich symbol-ID expansion and full/selected exports.
 
-These local regressions do not establish installed-editor acceptance or cross-platform qualification. Current run outcomes are in the [1.9.0 candidate record](releases/release-1.9.0.md); inherited qualification remains in the [dated 1.8.7 record](releases/release-1.8.7.md).
+These local regressions do not establish installed-editor acceptance or cross-platform qualification. Current run outcomes are in the [1.8.8 working-build record](releases/release-1.8.8.md); original 1.9.0 checkpoints and inherited 1.8.7 qualification remain in their dated records.
 
 
 Independent optional readiness probes can differ in availability between requests:

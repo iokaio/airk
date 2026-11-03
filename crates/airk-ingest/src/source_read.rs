@@ -7,6 +7,27 @@ use std::{
     path::{Component, Path},
 };
 
+/// Read only a `.git` marker at the selected root or one direct child, using
+/// protected no-follow traversal. At most 4097 bytes are returned; the extra byte
+/// reports truncation and must never be parsed as a complete gitdir reference.
+/// This starts no discovery, extraction, model, writer or indexing operation.
+pub fn read_git_marker(root: &Path, relative: &Path) -> Result<Vec<u8>> {
+    ensure!(
+        root.is_absolute() && relative.as_os_str().len() <= 4096,
+        "invalid repository marker root or locator size"
+    );
+    let components = relative.components().take(3).collect::<Vec<_>>();
+    ensure!(
+        (1..=2).contains(&components.len())
+            && components
+                .iter()
+                .all(|part| matches!(part, Component::Normal(_)))
+            && relative.file_name().is_some_and(|name| name == ".git"),
+        "invalid repository marker locator"
+    );
+    read(root, &root.join(relative), 4096, 4097)
+}
+
 /// Hash a complete saved source without discovery, extraction or publication work.
 /// The caller supplies current authorized roots/policy and retains its read permit
 /// until this cooperative operation returns, even when a filesystem call blocks.
@@ -398,6 +419,26 @@ fn unchanged(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repository_marker_reads_are_fixed_name_shallow_and_bounded() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().canonicalize()?;
+        std::fs::create_dir(root.join("child"))?;
+        std::fs::write(root.join(".git"), "gitdir: outside\n")?;
+        std::fs::write(root.join("child/.git"), vec![b'x'; 9000])?;
+        assert_eq!(
+            read_git_marker(&root, Path::new(".git"))?,
+            b"gitdir: outside\n"
+        );
+        assert_eq!(read_git_marker(&root, Path::new("child/.git"))?.len(), 4097);
+        for invalid in ["secret.txt", "../.git", "child/deeper/.git"] {
+            assert!(read_git_marker(&root, Path::new(invalid)).is_err());
+        }
+        assert!(read_git_marker(&root, &root.join(".git")).is_err());
+        assert_eq!(std::fs::metadata(root.join("child/.git"))?.len(), 9000);
+        Ok(())
+    }
 
     #[test]
     fn verification_hashes_complete_raw_sources_and_keeps_failures_unchecked() -> Result<()> {

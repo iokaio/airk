@@ -143,7 +143,7 @@ fn component_equal(left: &std::ffi::OsStr, right: &std::ffi::OsStr) -> Result<bo
         Ok(left == right)
     }
 }
-fn contains(parent: &Path, child: &Path) -> Result<bool> {
+pub(super) fn contains(parent: &Path, child: &Path) -> Result<bool> {
     let mut child = child.components();
     for component in parent.components() {
         let Some(next) = child.next() else {

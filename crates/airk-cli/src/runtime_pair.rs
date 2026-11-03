@@ -50,6 +50,17 @@ pub fn engine_identity() -> Result<airk_core::identity::Sha256Digest> {
         .map_err(|_| anyhow::anyhow!("verified runtime identity is unavailable for maintenance"))
 }
 
+/// Installer observation using the same identity as the running candidate.
+/// Authenticity and paired-helper admission remain installer responsibilities.
+/// This does not start either executable or load a model.
+pub fn engine_identity_at(main: &Path) -> Result<airk_core::identity::Sha256Digest> {
+    let main = main.canonicalize()?;
+    engine_identity_from_receipt(
+        &payload_root(&main)?.join("airk-runtime.json"),
+        digest_file(&main)?,
+    )
+}
+
 fn engine_identity_from_receipt(
     manifest: &Path,
     digest: String,

@@ -7,14 +7,14 @@ use airk_core::{
     service_lifecycle::{LifecycleAction, LifecycleRequest},
 };
 
-struct NativeFixture {
+pub(super) struct NativeFixture {
     _owner: tempfile::TempDir,
-    root: PathBuf,
-    control: PathBuf,
-    identity: String,
+    pub(super) root: PathBuf,
+    pub(super) control: PathBuf,
+    pub(super) identity: String,
 }
 impl NativeFixture {
-    async fn new() -> Result<Self> {
+    pub(super) async fn new() -> Result<Self> {
         let source = PathBuf::from(
             std::env::var_os("AIRK_F03_RUNTIME")
                 .context("AIRK_F03_RUNTIME must name a freshly built approved sealed pair")?,
@@ -27,7 +27,12 @@ impl NativeFixture {
             runtime_pair::digest_file(&source.join("airk-install.json"))? == approved,
             "fresh approved pair identity mismatch"
         );
-        let owner = tempfile::tempdir()?;
+        let owner = match std::env::var_os("AIRK_PRIVATE_CENSUS_BASE") {
+            Some(base) => tempfile::Builder::new()
+                .prefix("airk-native-install-")
+                .tempdir_in(base)?,
+            None => tempfile::tempdir()?,
+        };
         let root = owner.path().canonicalize()?.join("install");
         local_ipc::prepare_root(&root)?;
         layout::initialize(
@@ -91,7 +96,7 @@ impl NativeFixture {
         })?;
         Ok(())
     }
-    async fn cleanup(&self) -> Result<()> {
+    pub(super) async fn cleanup(&self) -> Result<()> {
         // Version/namespace are the freshly owned fixture's, never installed defaults.
         let _ = service_runtime::request_for_version(
             &self.control,

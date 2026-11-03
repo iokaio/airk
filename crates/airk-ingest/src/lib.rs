@@ -42,7 +42,7 @@ mod repository_syntax;
 mod scss;
 mod semantic_projection;
 mod source_read;
-pub use source_read::verify_saved_source;
+pub use source_read::{read_git_marker, verify_saved_source};
 pub mod source_scope;
 mod specialist_business;
 mod specialist_gpu;

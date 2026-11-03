@@ -1,6 +1,6 @@
 # Lean and Rich replies
 
-The 1.9.0 candidate adds optional `reply_detail: "lean" | "rich"` on native reads.
+The 1.8.8 working build adds optional `reply_detail: "lean" | "rich"` on native reads.
 It selects a projection of evidence already available in the current publication.
 It changes neither retained indexing detail nor search mode, source scope,
 authorization, publication, model selection or live-source verification.

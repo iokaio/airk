@@ -241,6 +241,51 @@ Production activation is **disabled until complete P6**; public combined reads
 remain **disabled until complete P7**. Old executables reject newer schema;
 new legacy API adapters preserve one-index semantics without weakening fences.
 
+Complete the existing owned control-layout/default-storage relocation while the
+registry is still in its supported legacy format, before catalog admission. The
+historical data-root rewriter replaces matching values across registry tables;
+it cannot rewrite immutable catalog backing identities. Schema-12 calls must
+refuse before creating a relocation intent or moving data. Already completed
+relocation receipts remain valid. A later catalog-aware relocation implementation
+would need its own typed identity/mapping transaction and qualification; general
+root relinking remains outside this feature. P6 activation must preserve this
+ordering and resume a pending catalog with its matching candidate before normal
+readiness probes, rather than starting a predecessor or relocating partial state.
+
+### Dated implementation clarification — 3 November 2026
+
+Source observations are explicit bounded reads. They must not add filesystem
+inspection or a registry-wide comparison to routine status, including Full status,
+or change the legacy configured-binding `projects` catalog. Native administrative
+library observations and configured/granted agent observations are separate:
+the native administrative read may explicitly select the library; scoped adapters
+must supply their authorized bindings and source prefixes. An agent-supplied ID
+or an omitted selection is not authority. Actual CLI/MCP/Workbench contracts and
+transport tests remain required before exposing equivalent reads.
+
+Saved-root comparisons describe registry metadata rather than live filesystem
+identity. Legacy watcher caches cannot prove all configured aliases are known;
+missing schema-12 mappings or source imports cannot become a reassuring absence
+of overlap. Continuations bind the complete bounded metadata snapshot and scope.
+Root/alias metadata and response bytes have separate limits; disclose both row
+and byte omissions. No other collection or source is opened for these comparisons.
+
+Run observations for explicit setup/detail requests, not once per library row or
+on each Recommendations/status refresh. Batch consumers must share the outer
+metadata/time budget and reuse already observed inputs; they cannot multiply the
+per-root allowance or trigger repository inspections as an implicit background
+cost. Qualify any new default observation work separately before enabling it.
+
+Repository hints inspect only the selected root and an explicitly requested
+bounded sample of direct children. The tiny `.git` marker-file capture uses the
+existing no-follow source reader; report its target without following it. Markers
+and conventional/environment-based broad-root hints grant no indexing permission
+and do not prove repository understanding or root safety. Marker-file reads must
+join the source-prefix/policy audit before agent exposure and P9 enforcement;
+they cannot provide a route around a source restriction. Native observation
+primitives implemented during P5 do not themselves enable an Indexing screen,
+new agent capability or production migration.
+
 ## Alternatives
 
 Folder-equals-index preserves the current confusion and duplicate work. Copying

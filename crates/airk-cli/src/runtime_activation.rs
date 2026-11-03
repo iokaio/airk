@@ -2,6 +2,9 @@
 //! Durable installer-owned activation; public selection follows exact candidate health.
 use super::*;
 
+#[path = "runtime_catalog_activation.rs"]
+mod catalog_upgrade;
+
 const INTENT: &str = "activation.json";
 const MAX_INTENT: u64 = 16384;
 
@@ -318,7 +321,11 @@ async fn rollback(root: &Path, intent: &Intent) -> Result<()> {
     }
     manager.require_stopped_for_maintenance()?;
     {
-        let _quiescence = quiescent(root)?;
+        let quiescence = quiescent(root)?;
+        if let Some(prior) = &intent.prior {
+            let (main, _) = verify_runtime(root, &prior.active)?;
+            quiescence.require_catalog_compatible(&main)?;
+        }
         // Abort only unfinished owned copying; finalize an already completed
         // rename before restoring the preceding verified launcher.
         launcher_repair::settle_for_uninstall(root)?;
@@ -336,11 +343,57 @@ async fn rollback(root: &Path, intent: &Intent) -> Result<()> {
 
 /// Caller holds the installation lock. Every durable phase can be repeated after
 /// process death; a committed public selection is never silently undone.
+pub(super) async fn resume_catalog_before_lifecycle(
+    root: &Path,
+    expected: Option<&str>,
+) -> Result<bool> {
+    if !airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED {
+        return Ok(false);
+    }
+    let Some(intent) = pending(root)? else {
+        return Ok(false);
+    };
+    if intent.phase != Phase::Probe || selection(root)? != Some(intent.selected()) {
+        return Ok(false);
+    }
+    let control = match layout::control(root) {
+        Ok(control) => control,
+        Err(error) if error.is::<airk_store::service::registry::catalog::AdmissionPending>() => {
+            catalog_upgrade::control_for_resume(root, &intent)?
+        }
+        Err(error) => return Err(error),
+    };
+    let Some(receipt) = airk_store::service::registry::catalog::upgrade::pending(&control)? else {
+        return Ok(false);
+    };
+    if matches!(
+        receipt.stage,
+        airk_store::service::registry::catalog::upgrade::UpgradeStage::Settled
+            | airk_store::service::registry::catalog::upgrade::UpgradeStage::Restored
+    ) {
+        return Ok(false);
+    }
+    ensure!(
+        expected.is_none_or(|candidate| candidate == intent.candidate),
+        "another candidate owns the pending catalog activation"
+    );
+    resume(root).await?;
+    Ok(true)
+}
+
+/// Resume under the same installer ownership, preserving the public selection.
 pub(super) async fn resume(root: &Path) -> Result<()> {
     let mut intent = pending(root)?.context("no pending activation")?;
     result(root)?;
+    let control = match layout::control(root) {
+        Ok(control) => control,
+        Err(error) if error.is::<airk_store::service::registry::catalog::AdmissionPending>() => {
+            catalog_upgrade::control_for_resume(root, &intent)?
+        }
+        Err(error) => return Err(error),
+    };
     ensure!(
-        layout::control(root)? == intent.control,
+        control == intent.control,
         "activation state location changed"
     );
     managed::require_unmanaged(root)?;
@@ -373,9 +426,10 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     }
     if intent.phase == Phase::Launcher {
         owner.require_stopped_for_maintenance()?;
-        let _quiescence = quiescent(root)?;
-        launcher_repair::repair(root, &intent.candidate)?;
+        let quiescence = quiescent(root)?;
         let (main, approval) = verify_runtime(root, &intent.candidate)?;
+        quiescence.require_catalog_compatible(&main)?;
+        launcher_repair::repair(root, &intent.candidate)?;
         if approval.version == env!("CARGO_PKG_VERSION") {
             crate::process_roles::install(&main)?;
         }
@@ -383,6 +437,12 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
     }
     let (main, approval) = verify_runtime(root, &intent.candidate)?;
     let committed = selection(root)? == Some(intent.selected());
+    // A fenced catalog cannot pass ordinary readiness or legacy directory
+    // lookup. Resume its exact candidate before either of those operations.
+    if committed && catalog_upgrade::resume_if_enabled(root, &intent).await? {
+        probe(root, &approval, &main, intent.manager).await?;
+        return complete_selected(root, &intent);
+    }
     if committed && data_migration::needed(root)? {
         migrate_selected(root, &intent, &main, &approval).await?;
     }
@@ -396,6 +456,9 @@ pub(super) async fn resume(root: &Path) -> Result<()> {
             // rather than automatically rolling back to an older metadata reader.
             if data_migration::needed(root)? {
                 migrate_selected(root, &intent, &main, &approval).await?;
+                probe(root, &approval, &main, intent.manager).await?;
+            }
+            if catalog_upgrade::begin_if_enabled(root, &intent).await? {
                 probe(root, &approval, &main, intent.manager).await?;
             }
             complete_selected(root, &intent)

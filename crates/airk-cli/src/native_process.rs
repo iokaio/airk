@@ -15,9 +15,9 @@ pub(crate) fn forward_stdio(mut command: Command) -> anyhow::Result<()> {
     }
     #[cfg(not(unix))]
     {
-        let mut child = spawn(&mut command)?;
-        let _containment = crate::child_job::ChildJob::attach(&mut child)?;
+        let mut child = ContainedChild::spawn(&mut command)?;
         let status = child.wait()?;
+        drop(child);
         std::process::exit(status.code().unwrap_or(1));
     }
 }
@@ -44,14 +44,28 @@ impl ContainedChild {
     pub fn spawn(command: &mut Command) -> anyhow::Result<Self> {
         #[cfg(windows)]
         {
-            let mut child = spawn(command)?;
-            let containment = crate::child_job::ChildJob::attach(&mut child)?;
-            Ok(Self { child, containment })
+            Self::attach(spawn(command)?, crate::child_job::ChildJob::attach)
         }
         #[cfg(unix)]
         Ok(Self {
             child: airk_process::GroupChild::spawn(command)?,
         })
+    }
+
+    #[cfg(windows)]
+    fn attach(
+        mut child: Child,
+        attach: impl FnOnce(&mut Child) -> anyhow::Result<crate::child_job::ChildJob>,
+    ) -> anyhow::Result<Self> {
+        let containment = match attach(&mut child) {
+            Ok(containment) => containment,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+        Ok(Self { child, containment })
     }
 }
 impl std::ops::Deref for ContainedChild {
@@ -231,11 +245,66 @@ pub(crate) fn spawn_detached(
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    use anyhow::Context;
     use std::{
         io::Read,
         process::Stdio,
         time::{Duration, Instant},
     };
+
+    #[test]
+    fn containment_admission_failure_terminates_and_reaps_the_spawned_child() -> anyhow::Result<()>
+    {
+        use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+        use windows_sys::Win32::{
+            Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, WAIT_OBJECT_0},
+            System::Threading::{GetCurrentProcess, WaitForSingleObject},
+        };
+        let mut command = Command::new(std::env::current_exe()?);
+        command
+            .args([
+                "--exact",
+                "native_process::tests::detached_child_fixture",
+                "--nocapture",
+            ])
+            .env("AIRK_DETACHED_PIPE_FIXTURE", "1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut witness: Option<OwnedHandle> = None;
+        let result = ContainedChild::attach(spawn(&mut command)?, |child| {
+            let mut duplicate = std::ptr::null_mut();
+            // SAFETY: duplicate this exact owned child's live process handle,
+            // avoiding PID reuse; the new handle is adopted once below.
+            let copied = unsafe {
+                DuplicateHandle(
+                    GetCurrentProcess(),
+                    child.as_raw_handle(),
+                    GetCurrentProcess(),
+                    &mut duplicate,
+                    0,
+                    0,
+                    DUPLICATE_SAME_ACCESS,
+                )
+            };
+            anyhow::ensure!(
+                copied != 0,
+                "duplicate fixture process handle: {}",
+                std::io::Error::last_os_error()
+            );
+            // SAFETY: successful DuplicateHandle returned a new owned handle.
+            witness = Some(unsafe { OwnedHandle::from_raw_handle(duplicate) });
+            anyhow::bail!("injected containment admission failure")
+        });
+        assert!(result.is_err());
+        let witness = witness.context("fixture process witness missing")?;
+        // SAFETY: the witness remains owned and valid through this observation.
+        assert_eq!(
+            unsafe { WaitForSingleObject(witness.as_raw_handle(), 0) },
+            WAIT_OBJECT_0
+        );
+        Ok(())
+    }
 
     #[test]
     fn detached_child_fixture() {
