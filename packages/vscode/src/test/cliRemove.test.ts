@@ -89,3 +89,17 @@ test('Windows removal calls PowerShell through the system runner, never the AIRK
     assert.equal(system.mock.callCount(), 1); assert.equal(airk.mock.callCount(), 0);
     assert.deepEqual(result.removed, ['Removed 1 AIRK entry from the user PATH.']);
 });
+
+test('uninstall order with default candidates first still deletes startup files that AIRK created', async context => {
+    const root = await fixture(context), home = path.join(root, 'home'), storage = path.join(path.sep, 'opt', 'airk-fixture-storage');
+    await fs.mkdir(home);
+    const [current] = ownedCommandDirectories(storage);
+    const touched: ShellTouch[] = [];
+    const env = { SHELL: '/bin/zsh', XDG_CONFIG_HOME: path.join(home, '.config') };
+    assert.deepEqual(await configureShellPath(current, home, env, 'all', touched), []);
+    const created = touched.filter(entry => entry.created).map(entry => entry.file);
+    assert.ok(created.includes(path.join(home, '.profile')) && created.includes(path.join(home, '.zshrc')), 'setup records the files it created');
+    // extensionUninstall lists the default candidates (created: false) before the setup receipts.
+    await removeShellIntegration(storage, [...defaultProfiles(home, env), ...touched], 'linux', { wrappers: false });
+    for (const file of created) { await assert.rejects(fs.access(file), /ENOENT/, `an emptied file that AIRK created is removed: ${file}`); }
+});

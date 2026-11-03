@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { automaticUpgrade, NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
+import { automaticUpgrade, InstallFolderPermissionError, NativeRunner, RuntimeHost, RuntimeOptions, verifyBundledRuntime } from '../serviceBootstrap';
 import { RecordValue, ServiceClient, ServiceError, record } from '../serviceClient';
 import { nativePayloadDirectory } from './nativeServiceFixture';
 const sha=(bytes:Buffer|string)=>createHash('sha256').update(bytes).digest('hex');
@@ -136,7 +136,7 @@ test('Mac bundle verification resolves the same two native roles and refuses an 
 });
 
 async function transitionFixture(version='1.4.0'){
-    const f=await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(undefined,version),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     await fs.mkdir(path.join(install,'control'));
     const calls:string[][]=[];let active='ab'.repeat(32),pending:RecordValue|null=null,candidateVersion=version,selectedVersion=version;
     const inspection=()=>({selection:{active,previous:'cd'.repeat(32)},executable:path.join(install,'runtimes',active,f.main),launcher:path.join(install,'airk-launcher'),
@@ -329,7 +329,7 @@ test('invalid trusted payloads fail before any native invocation or user install
 });
 
 test('damaged selected payload exposes saved metadata but cannot be launched or silently restaged',async()=>{
-    const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install'),calls:string[][]=[];await fs.mkdir(install,{mode:0o700});
     const run:NativeRunner=async(command,args)=>{
         assert.equal(command,path.join(f.source,f.main),'only the verified distribution runs');calls.push(args);
         switch(args[1]){
@@ -378,7 +378,7 @@ test('discovery does not install/start and concurrent first use shares one appro
     const run:NativeRunner=async(_command,args)=>{calls.push([...args]);switch(args[1]){
         case'self-test':return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
         case'location':return {protocol:1,install_dir:install};
-        case'stage':assert.equal(args[args.indexOf('--approved-sha256')+1],f.digest);await fs.mkdir(install);return {};
+        case'stage':assert.equal(args[args.indexOf('--approved-sha256')+1],f.digest);await fs.mkdir(install,{mode:0o700});return {};
         case'activate':selected=true;return {};
         case'inspect':assert.ok(selected);return inspection();
         case'diagnose':return {live_service_health:'not_checked'};
@@ -405,7 +405,7 @@ test('runtime bootstrap rechecks authorization after asynchronous native observa
     }finally {await f.cleanup();}
 });
 test('managed policy conflicts do not stage payloads, change a pin or start a competing owner',async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);const calls:string[][]=[];
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});const calls:string[][]=[];
     const options:RuntimeOptions={channel:'stable',installDir:install,managed:{source:f.source,approvedSha256:f.digest,lifecycle:'external'}};
     const run:NativeRunner=async(_command,args)=>{calls.push(args);if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
         if(args[1]==='location')return {protocol:1,install_dir:install};if(args[1]==='inspect')return {selection:{active:f.digest},managed_policy:null};return {};};
@@ -418,7 +418,7 @@ test('managed policy conflicts do not stage payloads, change a pin or start a co
 });
 
 test('automatic bootstrap respects an approved same-version pin and a persistent explicit stop',async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     const pinned='ef'.repeat(32),calls:string[][]=[];let stopped=true;
     const run:NativeRunner=async(_command,args)=>{
         calls.push(args);switch(args[1]){
@@ -444,7 +444,7 @@ test('automatic bootstrap respects an approved same-version pin and a persistent
 });
 
 test('managed agent setup prepares a user client launcher while preserving external lifecycle ownership',async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     const calls:string[][]=[];let launcher:string|null=null;
     const approval={version:'1.4.0',manifest_sha256:f.digest,verification_basis:'organization_digest'};
     const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install,
@@ -496,7 +496,7 @@ test('activation admits supported forward upgrades and rejects downgrades, unkno
 
 
 test('healthy authenticated connection discovery does not wait for optional diagnostics', {timeout:30000},async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     const inspection={selection:{active:f.digest},approval:{manifest_sha256:f.digest,version:'1.4.0',verification_basis:'trusted_distribution'},
         executable:path.join(f.source,f.main),launcher:path.join(install,'launcher'),control_dir:path.join(install,'control'),payload_verified:true,
         lifecycle:{explicitly_stopped:false,pending:null},payload_repair:{phase:'none'},registry_namespace:'12'.repeat(16),
@@ -533,7 +533,7 @@ test('connection discovery refuses mandatory self-test failure before diagnostic
 
 test('pending or unavailable current recovery observation keeps diagnostics in the connection barrier',{timeout:30000},async()=>{
     for(const connection_observation of [undefined,{schema:1,activation_pending:true,launcher_repair_pending:false}]){
-        const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+        const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
         let release!:()=>void,entered!:()=>void,done=false,health=0;
         const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
         const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
@@ -554,7 +554,7 @@ test('pending or unavailable current recovery observation keeps diagnostics in t
 
 
 test('explicit Stop refuses the connection shortcut while optional diagnose is still blocked',{timeout:30000},async()=>{
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);let release!:()=>void,entered!:()=>void;
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});let release!:()=>void,entered!:()=>void;
     const held=new Promise<void>(resolve=>{release=resolve;}),began=new Promise<void>(resolve=>{entered=resolve;});
     const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(_command,args)=>{
         if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
@@ -573,7 +573,7 @@ test('explicit Stop refuses the connection shortcut while optional diagnose is s
 
 function lazySignal<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done;});return {promise,resolve};}
 async function lazyDiscoveryFixture(){
-    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install);
+    const f=await fixture(),install=path.join(f.root,'install');await fs.mkdir(install,{mode:0o700});
     const calls:string[][]=[];let healthCalls=0,disposed=0;
     const state={failSelfTest:false,stopped:false,healthError:undefined as Error|undefined,
         health:undefined as undefined|((number:number)=>Promise<void>)};
@@ -636,4 +636,32 @@ test('connection waiters share mandatory work until the last health completes ev
         release[1].resolve();await second;
         await f.host.discover();assert.equal(f.count('inspect'),2);assert.equal(f.count('diagnose'),2);
     }finally{release.forEach(gate=>gate.resolve());await Promise.allSettled([first,second,third]);await f.cleanup();}
+});
+
+test('an existing install folder that other users can reach fails before setup with the folder and the fix',{skip:process.platform==='win32'},async()=>{
+    const f=await fixture(),install=path.join(f.root,'install');
+    try{
+        await fs.mkdir(install,{mode:0o755});await fs.chmod(install,0o755);
+        const run:NativeRunner=async(_command,args)=>{
+            if(args[1]==='self-test')return {protocol:1,version:'1.4.0',self_test:'passed',metadata_console:1};
+            if(args[0]==='runtime'&&args[1]==='location')return {protocol:1,install_dir:install};
+            throw new Error(`Unexpected native call: ${args.join(' ')}`);
+        };
+        const host=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},run);
+        await assert.rejects(host.discover(),(error:any)=>error instanceof ServiceError&&error.code==='runtime_install_dir_not_owner_only'
+            &&error.message.includes(install)&&error.message.includes('chmod 700')&&error.message.includes('755'));
+        await fs.chmod(install,0o700);
+        const fresh=new RuntimeHost(f.root,'1.4.0',{channel:'stable',installDir:install},async(command,args,timeout,input)=>{
+            if(args[0]==='runtime'&&args[1]==='inspect')throw new ServiceError('runtime_selection_unavailable');
+            if(args[0]==='runtime'&&args[1]==='snapshot')return {};
+            return run(command,args,timeout,input);
+        });
+        assert.equal((await fresh.discover()).installed,true,'an owner-only folder passes the check');
+    }finally{await f.cleanup();}
+});
+
+test('the install folder fix quotes the folder for a POSIX shell',()=>{
+    const message=new InstallFolderPermissionError("/tmp/AIRK's runtime",0o40755).message;
+    assert.ok(message.includes(`chmod 700 '/tmp/AIRK'\\''s runtime'`),message);
+    assert.ok(message.includes('mode 755'),message);
 });

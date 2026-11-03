@@ -178,6 +178,13 @@ export async function verifyBundledRuntime(extensionPath:string,version:string,
     if(payload[main]!==files[main]||payload[helper]!==files[helper]||!files[main]||!files[helper]){throw new ServiceError('runtime_pair_missing');}
     return {main:path.join(source,main),helper:path.join(source,helper),source,digest,version,platform};
 }
+/** An existing install folder that the native runtime will refuse. The message names the folder and the fix. */
+export class InstallFolderPermissionError extends ServiceError {
+    constructor(readonly directory:string,mode:number){
+        super('runtime_install_dir_not_owner_only');
+        this.message=`The AIRK install folder ${directory} must belong to you and be owner-only (mode 700); it has mode ${(mode&0o777).toString(8)}. Run chmod 700 '${directory.replace(/'/g,`'\\''`)}', or set airk.service.installDir to a folder that does not exist yet`;
+    }
+}
 export class RuntimeHost {
     private bundle?:Promise<VerifiedBundle>;
     private preparing?:Promise<RuntimeBinding>;
@@ -266,7 +273,9 @@ export class RuntimeHost {
         if(location.protocol!==1){throw new ServiceError('runtime_locator_protocol_mismatch');}
         const installDir=this.options.installDir??safePath(location.install_dir);
         const observation:BootstrapObservation={bundle,installDir,location,installed:false};
-        try {const metadata=await fs.lstat(installDir);if(!metadata.isDirectory()||metadata.isSymbolicLink()){throw new ServiceError('unsafe_runtime_install_location');}}
+        try {const metadata=await fs.lstat(installDir);if(!metadata.isDirectory()||metadata.isSymbolicLink()){throw new ServiceError('unsafe_runtime_install_location');}
+            // The native runtime refuses an existing install root that is not owned by this user and owner-only; report it before setup starts.
+            if(process.platform!=='win32'&&((metadata.mode&0o077)!==0||(typeof process.geteuid==='function'&&metadata.uid!==process.geteuid())))throw new InstallFolderPermissionError(installDir,metadata.mode);}
         catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return observation;throw error;}
         observation.installed=true;
         try {observation.inspection=await this.invoke(bundle.main,['runtime','inspect','--install-dir',installDir]);}
