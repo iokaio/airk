@@ -234,6 +234,25 @@ class VsixContracts(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "payload differs"):
                 package.verify_vsix(archive, expected, "airk")
 
+    def test_mac_standalone_launcher_image_keeps_its_executable_permission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "fixture.vsix"
+            name = "native/runtime/AIRK.app/Contents/MacOS/airk-launcher-image"
+            body = b"fictional standalone launcher"
+            expected = {name: hashlib.sha256(body).hexdigest()}
+            for mode in (0o100755, 0o100644):
+                with zipfile.ZipFile(archive, "w") as zipped:
+                    info = zipfile.ZipInfo("extension/" + name)
+                    info.external_attr = mode << 16
+                    zipped.writestr(info, body)
+                    zipped.writestr("[Content_Types].xml", "<Types/>")
+                    zipped.writestr("extension.vsixmanifest", '<PackageManifest><Identity Id="airk" Publisher="iokaio"/></PackageManifest>')
+                if mode == 0o100755:
+                    package.verify_vsix(archive, expected, "airk")
+                else:
+                    with self.assertRaisesRegex(ValueError, "native executable permission"):
+                        package.verify_vsix(archive, expected, "airk")
+
     def test_path_escape_refused(self):
         for name in ("../private", "/private", "native/../../private", "C:/private", "native\\private",
                      "native/./airk", "native//airk", "", "native/airk/"):

@@ -106,6 +106,7 @@ class RetrievalQualityTests(unittest.TestCase):
                                     "--output", str(output), "--trials", "2"]), \
                     patch.object(QUALITY, "source_identity", return_value={"fixture": "fixed"}), \
                     patch.object(QUALITY.subprocess, "check_output", return_value="airk fixture"), \
+                    patch.object(QUALITY.platform, "platform", return_value="fixture platform"), \
                     patch.object(QUALITY, "fixture", side_effect=RuntimeError("private path and source")), \
                     contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaisesRegex(SystemExit, "qualification failed"):
@@ -113,6 +114,7 @@ class RetrievalQualityTests(unittest.TestCase):
             receipt = json.loads(output.read_text(encoding="utf-8"))
             self.assertFalse(receipt["passed"])
             self.assertEqual(receipt["failure_class"], "RuntimeError")
+            self.assertEqual(receipt["platform"], "fixture platform")
             self.assertNotIn("private path and source", output.read_text(encoding="utf-8"))
 
 

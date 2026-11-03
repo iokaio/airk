@@ -123,6 +123,9 @@ impl Session {
         }
     }
     fn wait_source_idle(&mut self, id: u64) -> anyhow::Result<()> {
+        self.wait_source_state(id, "idle")
+    }
+    fn wait_source_state(&mut self, id: u64, state: &str) -> anyhow::Result<()> {
         let deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
             let reply = self.read_retry(id, "status", json!({"response_mode":"full"}))?;
@@ -135,7 +138,7 @@ impl Session {
                     .as_str()
                     .ok_or_else(|| anyhow::anyhow!("missing status: {reply}"))?,
             )?;
-            if observed["freshness"]["state"] == "idle" {
+            if observed["freshness"]["state"] == state {
                 return Ok(());
             }
             anyhow::ensure!(
@@ -410,44 +413,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             a.as_object_mut().unwrap().remove("result");
             b.as_object_mut().unwrap().remove("result");
         }
-        // Readiness is an independent dated observation, not part of the
-        // publication. Retain equality whenever both observations are available.
-        if (a["discovery_observation"] == "unavailable_after_read")
-            != (b["discovery_observation"] == "unavailable_after_read")
-        {
-            for value in [&mut a, &mut b] {
-                if let Some(readiness) = value.get("discovery_readiness") {
-                    let _: airk_core::readiness::DiscoveryReadiness =
-                        serde_json::from_value(readiness.clone())?;
-                    assert_eq!(readiness["state"], "ready");
-                    assert_eq!(readiness["committed_artifacts"], 2);
-                    let _: airk_core::readiness::SemanticReadiness =
-                        serde_json::from_value(value["semantic_readiness"].clone())?;
-                    assert_eq!(value["semantic_readiness"]["state"], "disabled");
-                } else {
-                    assert_eq!(value["discovery_observation"], "unavailable_after_read");
-                }
-                if value.get("source_verification").is_some() {
-                    let mut projection = value.clone();
-                    projection
-                        .as_object_mut()
-                        .unwrap()
-                        .remove("source_verification");
-                    let expected = airk_core::verification::receipt_budget_for_reply(&projection)?;
-                    assert_eq!(
-                        value["source_verification"]["limits"]["receipt_bytes_budget"],
-                        expected
-                    );
-                    // Only headroom derived from these differently timed metadata
-                    // observations varies; all requested/effective work budgets stay.
-                    value["source_verification"]["limits"]["receipt_bytes_budget"] = 0.into();
-                }
-                let fields = value.as_object_mut().unwrap();
-                fields.remove("discovery_readiness");
-                fields.remove("semantic_readiness");
-                fields.remove("discovery_observation");
-            }
-        }
+        common::read_retry::normalize_dated_readiness_pair(&mut a, &mut b, 2)?;
         stable(&mut a);
         stable(&mut b);
         assert_eq!(a, b);
@@ -483,6 +449,19 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             reply["result"]["content"][0]["text"].as_str().unwrap(),
         )?)
     };
+    // These are single-execution dependent plans, so a writer between their steps
+    // correctly produces a partial result rather than authorizing whole-plan replay.
+    // Freeze this parity fixture's completed source work through the public control
+    // contract; source/update and publication-busy behavior have separate fixtures.
+    session.wait_source_idle(19)?;
+    assert!(matches!(
+        service.request(airk_core::service::ControlMethod::Pause {
+            project: service.project.binding,
+            paused: true,
+        }),
+        airk_core::service::ControlResponse::Registered { project } if project.paused
+    ));
+    session.wait_source_state(19, "paused")?;
     let request = json!({"schema":"airk.parse.request/1","plan":prepared["plan"]});
     let mcp_prepared = decode(session.read_retry(2, "parse", request.clone())?)?;
     assert_eq!(mcp_prepared["plan"], prepared["plan"]);
@@ -510,9 +489,6 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     assert_eq!(cli["plan"], mcp["plan"]);
     assert_eq!(cli["evidence"], mcp["evidence"]);
     assert!(!cli["evidence"].as_array().unwrap().is_empty());
-    // Compare observations only after the fixture's initial source job settles;
-    // retain freshness fields rather than deleting a real running/idle difference.
-    session.wait_source_idle(19)?;
     session.send(json!({"jsonrpc":"2.0","id":18,"method":"tools/list","params":{}}))?;
     let catalog = session.receive(18)?;
     let parse = catalog["result"]["tools"]
@@ -1117,6 +1093,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
                 .as_str()
                 .expect("tool payload"),
         )?;
+        common::read_retry::normalize_dated_readiness_pair(&mut expected, &mut actual, 2)?;
         for response in [&mut expected, &mut actual] {
             common::read_retry::evidence_for_comparison(response)?;
         }
@@ -1175,6 +1152,7 @@ fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Res
         "airk_changes",
         json!({"selectors":[{"kind":"path","path":"aurora.py"}]}),
     )?)?;
+    common::read_retry::normalize_dated_readiness_pair(&mut expected, &mut actual, 1)?;
     for value in [&mut expected, &mut actual] {
         assert!(
             value.get("freshness").is_some(),

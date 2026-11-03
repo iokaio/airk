@@ -29,6 +29,9 @@ const ROLES: [Role; 3] = [Role::Service, Role::Index, Role::Source];
 
 /// Only these fixed aliases, with exactly the approved main image's digest, are owned.
 pub(crate) fn inventory(files: &mut BTreeMap<String, String>) {
+    if cfg!(target_os = "macos") && files.contains_key(crate::runtime_install::MAC_LAUNCHER_IMAGE) {
+        return; // The sealed Mac main must run in its bundle, not as role copies.
+    }
     if let Some(hash) = files.get(crate::runtime_install::main_name()).cloned() {
         for role in ROLES {
             files.insert(role.name().into(), hash.clone());
@@ -38,6 +41,9 @@ pub(crate) fn inventory(files: &mut BTreeMap<String, String>) {
 
 pub(crate) fn install(main: &Path) -> Result<()> {
     let root = crate::runtime_pair::payload_root(main)?;
+    if standalone_mac_layout(main)? {
+        return require_no_bundle_aliases(root);
+    }
     let hash = crate::runtime_pair::digest_file(main)?;
     for role in ROLES {
         let destination = root.join(role.name());
@@ -72,6 +78,35 @@ pub(crate) fn install(main: &Path) -> Result<()> {
     Ok(())
 }
 
+fn standalone_mac_layout(main: &Path) -> Result<bool> {
+    if !cfg!(target_os = "macos") {
+        return Ok(false);
+    }
+    let image =
+        crate::runtime_pair::payload_root(main)?.join(crate::runtime_install::MAC_LAUNCHER_IMAGE);
+    match fs::symlink_metadata(&image) {
+        Ok(_) => {
+            crate::runtime_install::safe_file(&image)?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn require_no_bundle_aliases(root: &Path) -> Result<()> {
+    for role in ROLES {
+        match fs::symlink_metadata(root.join(role.name())) {
+            Ok(_) => anyhow::bail!(
+                "unexpected process alias beside sealed Mac payload; preserve and inspect it"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
 /// Resolve helper/build metadata through the original image, including macOS's sealed app.
 pub(crate) fn main_image(executable: &Path) -> Result<PathBuf> {
     if !ROLES
@@ -85,6 +120,10 @@ pub(crate) fn main_image(executable: &Path) -> Result<PathBuf> {
         .context("process alias parent missing")?
         .join(crate::runtime_install::main_name());
     ensure!(
+        !standalone_mac_layout(&main)?,
+        "process alias is not supported for a sealed Mac payload"
+    );
+    ensure!(
         crate::runtime_pair::digest_file(executable)? == crate::runtime_pair::digest_file(&main)?,
         "process alias differs from its engine"
     );
@@ -93,6 +132,10 @@ pub(crate) fn main_image(executable: &Path) -> Result<PathBuf> {
 
 pub(crate) fn executable(main: &Path, role: Role) -> Result<PathBuf> {
     let main = main_image(main)?;
+    if standalone_mac_layout(&main)? {
+        require_no_bundle_aliases(crate::runtime_pair::payload_root(&main)?)?;
+        return Ok(main);
+    }
     let path = crate::runtime_pair::payload_root(&main)?.join(role.name());
     match fs::symlink_metadata(&path) {
         Ok(_) => {
@@ -111,6 +154,31 @@ pub(crate) fn executable(main: &Path, role: Role) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn sealed_mac_payload_runs_in_bundle_without_copying_process_roles() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().join("payload");
+        let main = root.join(crate::runtime_install::main_name());
+        fs::create_dir_all(main.parent().unwrap())?;
+        fs::write(&main, b"sealed main fixture")?;
+        fs::write(
+            root.join(crate::runtime_install::MAC_LAUNCHER_IMAGE),
+            b"standalone fixture",
+        )?;
+        install(&main)?;
+        for role in ROLES {
+            assert_eq!(executable(&main, role)?, main);
+            assert!(!root.join(role.name()).exists());
+        }
+        let alias = root.join(Role::Index.name());
+        fs::write(&alias, b"unrecognized alias preserved")?;
+        assert!(install(&main).is_err());
+        assert!(executable(&main, Role::Index).is_err());
+        assert!(main_image(&alias).is_err());
+        assert_eq!(fs::read(alias)?, b"unrecognized alias preserved");
+        Ok(())
+    }
     #[test]
     fn roles_share_bytes_resolve_metadata_and_refuse_changed_aliases() -> Result<()> {
         let owner = tempfile::tempdir()?;

@@ -159,8 +159,9 @@ pub(super) fn pending(root: &Path) -> Result<Option<String>> {
 
 #[cfg(test)]
 fn begin(root: &Path, runtime: &str) -> Result<Intent> {
-    let (main, _) = verify_runtime(root, runtime)?;
-    begin_verified(root, runtime, &main)
+    let (main, _, inventory) = verify_runtime_inventory(root, runtime)?;
+    let image = launcher_image(runtime_pair::payload_root(&main)?, &inventory)?;
+    begin_verified(root, runtime, &image)
 }
 
 fn begin_verified(root: &Path, runtime: &str, main: &Path) -> Result<Intent> {
@@ -277,11 +278,36 @@ pub(super) fn repair(root: &Path, runtime: &str) -> Result<()> {
     // One complete payload verification belongs to this locked operation. A
     // resumed intent revalidates exactly as a fresh one does; do not hash every
     // embedding payload twice when creating the initial intent.
-    let (main, _) = verify_runtime(root, runtime)?;
+    let (main, _, inventory) = verify_runtime_inventory(root, runtime)?;
+    let main = launcher_image(runtime_pair::payload_root(&main)?, &inventory)?;
+    repair_verified(root, runtime, &main)
+}
+
+/// Prepare Client owns the installer lock and an exact fully verified selection.
+/// On Mac, replacing only this private standalone client copy cannot change the
+/// service's sealed executable, manager state, selected payload or source data.
+/// Unlike activation repair, this route neither needs nor acquires service drain.
+pub(super) fn repair_client_verified(root: &Path, runtime: &str, image: &Path) -> Result<()> {
+    ensure!(
+        cfg!(target_os = "macos"),
+        "standalone client refresh is Mac-only"
+    );
+    if !exists(&root.join(INTENT))?
+        && exists(&launcher_path(root))?
+        && exists(&root.join("launcher.json"))?
+        && runtime_pair::digest_file(&verified_launcher(root)?)?
+            == runtime_pair::digest_file(image)?
+    {
+        return Ok(());
+    }
+    repair_verified(root, runtime, image)
+}
+
+fn repair_verified(root: &Path, runtime: &str, main: &Path) -> Result<()> {
     let intent = if exists(&root.join(INTENT))? {
         Intent::read(root)?
     } else {
-        begin_verified(root, runtime, &main)?
+        begin_verified(root, runtime, main)?
     };
     ensure!(
         intent.runtime == runtime,
@@ -289,14 +315,14 @@ pub(super) fn repair(root: &Path, runtime: &str) -> Result<()> {
     );
     intent.inspect_receipt(root)?;
     ensure!(
-        runtime_pair::digest_file(&main)? == intent.target
-            && fs::metadata(&main)?.len() == intent.bytes,
+        runtime_pair::digest_file(main)? == intent.target
+            && fs::metadata(main)?.len() == intent.bytes,
         "pending launcher repair no longer matches approved payload"
     );
     if intent.inspect_destination(root)?.as_deref() == Some(&intent.target) {
         return finish(root, &intent);
     }
-    copy(root, &intent, &main)?;
+    copy(root, &intent, main)?;
     intent.inspect_receipt(root)?;
     intent.inspect_destination(root)?;
     let partial = intent.partial(root);

@@ -2,10 +2,12 @@
 """Offline native lifecycle fixture; installs only into its owned temporary directory."""
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -48,6 +50,91 @@ def check_login_plan(plan, install, platform=sys.platform):
         raise RuntimeError(f"Optional startup plan has an unexpected platform entry: {plan}")
 
 
+def runtime_builder():
+    specification = importlib.util.spec_from_file_location("installer_runtime_builder", Path(__file__).with_name("build-service-runtime.py"))
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    return module
+
+
+def check_image(path, expected):
+    """Assert exact approved bytes, regular unaliased ownership and native mode."""
+    try:
+        metadata = path.lstat()
+    except OSError as error:
+        raise RuntimeError(f"Installed approved image is missing or unavailable: {path.name}") from error
+    if (not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+            or sha256(path) != expected or os.name != "nt" and metadata.st_mode & 0o111 == 0):
+        raise RuntimeError(f"Installed image is missing, aliased, nonexecutable or modified: {path.name}")
+
+
+def check_installed_images(payload, installed, inventory, invoke):
+    builder = runtime_builder()
+    operating_system, version = inventory["os"], inventory["version"]
+    main, helper = builder.runtime_names(operating_system)
+    launcher = builder.launcher_name(operating_system, version)
+    current_mac = operating_system == "macos" and launcher != main
+    required = {main, helper, launcher}
+    if not required.issubset(inventory["files"]):
+        raise RuntimeError("Approved executable inventory is incomplete")
+    for name in required:
+        check_image(installed / name, inventory["files"][name])
+    if current_mac:
+        # A sealed main carries its resource envelope. Service/worker copies are
+        # deliberately absent; the standalone launcher has independent approval.
+        for role in ("airk-service", "airk-index", "airk-source"):
+            if os.path.lexists(installed / role):
+                raise RuntimeError("Sealed Mac payload must not create process-role aliases")
+            if os.path.lexists(payload / role):
+                raise RuntimeError("Installer modified distribution payload with role copies")
+        if invoke(installed / main, "runtime", "self-test").get("self_test") != "passed":
+            raise RuntimeError("Sealed main cannot resolve its verified helper")
+        if invoke(installed / launcher, "--version", raw=True) != f"airk {version}":
+            raise RuntimeError("Standalone launcher image lost its executable identity")
+    else:
+        for role in ("airk-service", "airk-index", "airk-source"):
+            name = role + (".exe" if operating_system == "windows" else "")
+            check_image(installed / name, inventory["files"][main])
+            if invoke(installed / name, "runtime", "self-test").get("self_test") != "passed":
+                raise RuntimeError("Role image cannot resolve its verified helper")
+            if os.path.lexists(payload / name):
+                raise RuntimeError("Installer modified distribution payload with role copies")
+    return current_mac, inventory["files"][launcher]
+
+
+def check_payload_unchanged(payload, inventory, identity):
+    if sha256(payload / "airk-install.json") != identity:
+        raise RuntimeError("Lifecycle fixture changed the source installer inventory")
+    expected_paths = set(inventory["files"]) | {"airk-install.json"}
+    observed = set()
+    for path in payload.rglob("*"):
+        if path.is_symlink():
+            raise RuntimeError("Lifecycle fixture introduced a source payload alias")
+        if path.is_file():
+            observed.add(path.relative_to(payload).as_posix())
+            if len(observed) > len(expected_paths):
+                raise RuntimeError("Lifecycle fixture changed source payload topology")
+    if observed != expected_paths:
+        raise RuntimeError("Lifecycle fixture changed source payload topology")
+    for name, expected in inventory["files"].items():
+        path = payload / name
+        if path.is_symlink() or not path.is_file() or sha256(path) != expected:
+            raise RuntimeError(f"Lifecycle fixture changed source payload: {name}")
+
+
+def check_copied_mac_launcher(path, expected, invoke, version, verify_signature=None):
+    check_image(path, expected)
+    if verify_signature is None:
+        def verify_signature(image):
+            result = subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(image)],
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode:
+                raise RuntimeError(f"Copied launcher signature is invalid: {result.stderr[-4096:]}")
+    verify_signature(path)
+    if invoke(path, "--version", raw=True) != f"airk {version}":
+        raise RuntimeError("Copied Mac launcher changed version/stdio")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", type=Path, required=True)
@@ -57,7 +144,8 @@ def main():
     if not binary.is_file():
         binary = payload / "AIRK.app/Contents/MacOS/airk"
     identity = sha256(payload / "airk-install.json")
-    version = json.loads((payload / "airk-install.json").read_text(encoding="utf-8"))["version"]
+    inventory = json.loads((payload / "airk-install.json").read_text(encoding="utf-8"))
+    version = inventory["version"]
     environment = dict(os.environ, HTTP_PROXY="http://127.0.0.1:1",
                        HTTPS_PROXY="http://127.0.0.1:1", ALL_PROXY="http://127.0.0.1:1")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -116,18 +204,9 @@ def main():
             first = run("activate", "--install-dir", install, "--runtime-sha256", identity)
             if first["active"] != identity:
                 raise RuntimeError("First activation lost approved identity")
-            print("Checking installed process names without duplicate distribution images...", flush=True)
+            print("Checking approved installed images and platform role layout...", flush=True)
             installed_payload = install / "runtimes" / identity
-            for role in ("airk-service", "airk-index", "airk-source"):
-                alias = installed_payload / (role + (".exe" if os.name == "nt" else ""))
-                if not alias.is_file() or alias.is_symlink() or sha256(alias) != sha256(binary):
-                    raise RuntimeError("Installed role image is missing or differs from the approved engine")
-                if alias.stat().st_nlink != 1:
-                    raise RuntimeError("Role images weakened unaliased-file ownership")
-                if invoke(alias, "runtime", "self-test").get("self_test") != "passed":
-                    raise RuntimeError("Role image cannot resolve its verified helper")
-                if (payload / alias.name).exists():
-                    raise RuntimeError("Installer modified distribution payload with role copies")
+            current_mac, launcher_digest = check_installed_images(payload, installed_payload, inventory, invoke)
             if sha256(installed_payload / "airk-install.json") != identity:
                 raise RuntimeError("Role installation rewrote approved inventory")
             health = run("ensure", "--install-dir", install)
@@ -141,6 +220,8 @@ def main():
             state_owner = state / "airk-state-1.4.owner.json"
             state_owner_digest = sha256(state_owner)
             launcher = Path(inspection["launcher"])
+            if current_mac:
+                check_copied_mac_launcher(launcher, launcher_digest, invoke, version)
             print("Checking client shutdown preserves other sessions and the service...", flush=True)
             client_lifetime(launcher, user_data, control)
             universal = fixture / "universal"
@@ -150,6 +231,8 @@ def main():
             (universal / "airk-launcher.json").write_text(json.dumps({
                 "schema": 1, "install": str(install.resolve()), "launcher_sha256": sha256(entrypoint)
             }), encoding="utf-8")
+            if current_mac:
+                check_copied_mac_launcher(entrypoint, launcher_digest, invoke, version)
             client_lifetime(entrypoint, user_data, control)
             if run("ensure", "--install-dir", install)["instance"] != health["instance"]:
                 raise RuntimeError("MCP client shutdown disturbed the shared service")
@@ -184,6 +267,8 @@ def main():
                 raise RuntimeError("Missing launcher could not be repaired from approved offline bytes")
             if sha256(launcher) != before_launcher:
                 raise RuntimeError("Repaired launcher has the wrong approved identity")
+            if current_mac:
+                check_copied_mac_launcher(launcher, launcher_digest, invoke, version)
             actual = invoke(launcher, "runtime", "launch", "--install-dir", install,
                             "--", "--version", raw=True)
             if actual != f"airk {version}":
@@ -293,6 +378,7 @@ def main():
                 raise RuntimeError("Runtime uninstall changed project data")
             if not control.is_dir() or sha256(state_owner) != state_owner_digest:
                 raise RuntimeError("Runtime uninstall removed durable service state or ownership")
+            check_payload_unchanged(payload, inventory, identity)
             print("Offline runtime staging, election, exact payload health, upgrade, rollback, stable launcher repair, and resumable uninstall passed.")
         finally:
             # Never operate on an installed user service: this exact private control

@@ -14,7 +14,7 @@ AIRK uses one elected service per user/machine installation and independent coll
 | `airk service console …` | Persistent private control transport for Explorer's management operations. | Extension-owned connection, separate from its evidence MCP connection. It is not another broker or project indexer. |
 | `airk-launcher` | Resolves the selected installation/runtime and forwards arguments, stdio and exit status. It performs no indexing or inference. | Connection-owned forwarding process on Windows; Unix replaces it with the selected command. |
 
-Role names are owned copies of the approved runtime executable, not separate independently installed engines. A Task Manager row named `airk.exe` needs its command line to distinguish MCP, console and short-lived CLI commands. Original source files remain outside process/runtime ownership.
+On Windows/Linux and historical Mac layouts, role names are owned copies of the approved runtime executable. From the macOS 1.8.8 layout onward, service/source/index roles execute the sealed main inside `AIRK.app`; command arguments identify the role, and no role copies are created. Only the separately signed launcher image is copied outside that bundle. A Task Manager row named `airk.exe` needs its command line to distinguish MCP, console and short-lived CLI commands. Original source files remain outside process/runtime ownership.
 
 ## Why Windows can show two launchers for one connection
 
@@ -34,7 +34,7 @@ Windows cannot use Unix `exec` to replace the launcher. The current forwarding a
 
 The current universal router skips the installation-launcher hop when both verified launcher binaries are byte-identical, the arguments permit direct routing, and a valid selected runtime is available. That route has **one waiting Windows launcher plus the frontend**. Unknown/different launcher implementations and repair paths retain delegation; removing the hop unconditionally would bypass the selected launcher's compatibility behavior.
 
-The universal binary is deliberately retained across upgrades; its pointer changes. Therefore, an older retained universal copy can continue to use the longer route even after the installation launcher is updated. The existing shortcut does not establish that every installed connection uses one launcher. Unix forwarding replaces the process at each hop, so this Windows process-count multiplication does not apply there.
+The Windows/Linux universal binary is deliberately retained across upgrades; its pointer changes. Therefore, an older retained universal copy can continue to use the longer route even after the installation launcher is updated. Mac publication refreshes a recognized image from the approved standalone launcher, preserving unknown bytes and coordinating publishers/retirements with one directory lock. The existing shortcut does not establish that every installed connection uses one launcher. Unix forwarding replaces the process at each hop, so this Windows process-count multiplication does not apply there.
 
 Both launcher layers are not intrinsically required to execute an MCP request. They are required by this retained compatibility route. Reducing that overhead further needs a verified launcher-refresh/migration design that preserves active clients, unknown-file protection, selected-runtime verification and repair compatibility; killing or deleting the installed launchers is not that migration.
 

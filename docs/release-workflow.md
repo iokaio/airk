@@ -1,10 +1,10 @@
 # Protected PRs, GitHub downloads and extension release
 
-The current package version is **1.8.7**; see [its release and validation record](releases/release-1.8.7.md). To check a published package yourself, follow [release verification](release-verification.md). Prior build and qualification records below retain their original scope.
+The current manual-test working version is **1.8.8**, with later promotion to 1.9.0; see [the working-build record](releases/release-1.8.8.md). To check a published package yourself, follow [release verification](release-verification.md). Prior build and qualification records below retain their original scope.
 
-For current behavior and upgrade guidance, see the [1.8.7 release notes](releases/release-1.8.7.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](releases/release-1.3.2.md); the [1.3.0 release notes](releases/release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](releases/release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases/releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
+For current behavior and upgrade guidance, see the [1.8.8 working-build record](releases/release-1.8.8.md) and [versioning process](versioning.md). For historical behavior, see the [1.3.2 release notes](releases/release-1.3.2.md); the [1.3.0 release notes](releases/release-1.3.0.md) cover the preceding storage-format change. The [1.2.2 semantic indexing fix](releases/release-1.2.2.md) updated both the bundled helper and extension. The [October 17 release summary](releases/releases-2026-10-17.md) records earlier 1.1 releases. Documentation changes alone do not dispatch these workflows.
 
-Marketplace and GitHub publication are independent manual actions. A merge starts CI and eligible validation/site jobs; it does not publish either destination. To release GitHub downloads without Marketplace publication, dispatch only **GitHub release**. Its `publish` input controls GitHub downloads, not Marketplace.
+Marketplace and GitHub publication are separately authorized manual actions; Marketplace now requires matching published GitHub assets first. A merge starts CI and eligible validation/site jobs; it does not publish either destination. To release GitHub downloads without Marketplace publication, dispatch only **GitHub release**. Its `publish` input controls GitHub downloads, not Marketplace.
 
 Normal release promotion authenticates the producer at preflight and immediately before publication. Read-only GitHub API calls and downloads retry recognized transient HTTP/network failures up to four attempts within 90 seconds, truncating partial downloads before retry. Digest/provenance failures, malformed JSON, authorization errors and permanent failures are not retried. Create/upload/publish mutations are not automatically replayed.
 
@@ -14,7 +14,7 @@ The [GitHub release workflow](../.github/workflows/github-release.yml) promotes 
 
 Changes to the release workflow or its release/signing contracts on `main` also run a short validation job without signing credentials. This explicit push event registers and validates the workflow independently of manual dispatch. Push runs skip release preflight and all dependent build, signing, publication and deployment jobs; those remain available only through manual dispatch.
 
-New release tags match the checked-in package version (for this branch, **`v1.8.7`**), with no workflow build suffix. Cargo, the extension and both lockfiles must agree. Workflow run IDs/attempts stay in provenance records, not public version names. Existing `-build.N` releases remain supported by tag validation and the downloads page; they are never renamed or overwritten.
+New release tags match the checked-in package version, with no workflow build suffix. This branch keeps 1.8.8 unpublished for manual testing; its planned release tag is **`v1.9.0`** after source promotion and fresh qualification. Cargo, the extension and both lockfiles must agree. Workflow run IDs/attempts stay in provenance records, not public version names. Existing `-build.N` releases remain supported by tag validation and the downloads page; they are never renamed or overwritten.
 
 Both manual release workflows check Marketplace and GitHub before promotion when **publish** is enabled:
 
@@ -114,19 +114,47 @@ The new required check names become available when a PR runs these workflow chan
 
 ## Build manually
 
-Open **Actions → Extension release → Run workflow**. Enter the exact checked-in version (`1.8.7`), select `stable` (the default), and leave `publish` false. Promotion requires `main`; use the CI workflow to build and review feature-branch candidates.
+The working source is 1.8.8 for manual testing toward 1.9.0. The procedure below
+is for a separately authorized release after promotion and qualification; it
+does not authorize dispatching or publishing the working build.
 
-The [release workflow](../.github/workflows/extension-release.yml) authenticates a successful main [CI workflow](../.github/workflows/ci.yml) containing native tests, actual-helper extension tests, packaging checks and container validation. It rebuilds only the small TypeScript/VSIX layer for the selected channel using those tested native packages. Candidate artifacts expire after seven days; `candidate_run_id` selects an explicit successful manual CI rebuild when needed.
+First run **GitHub release** on protected `main` for the exact tested source and
+chosen channel. That workflow authenticates the CI producer, signs the native
+payloads and assembles the complete native/VSIX bundle. A non-publishing run can
+rehearse signing and packaging. Keep its run ID and exact assembly artifact.
 
-After reviewing a successful rehearsal, publish its exact VSIX files by supplying its numeric Actions run ID as **rehearsal_run_id**, keeping the same version/channel, and enabling **publish**. The rehearsal and publishing run must use the same exact main commit. This skips all four packaging jobs; publication downloads the rehearsed archives by authenticated artifact IDs and hashes, verifies their version/channel, payloads and native provenance again, then passes those files to VSCE. The publishing job still installs the pinned publishing tool but does not compile TypeScript or Rust.
+Then run **Extension release** on that same `main` commit, supplying the canonical
+GitHub release's numeric run ID as **signed_run_id**, the exact checked-in version
+and the same channel. Leave `publish` false for rehearsal. Marketplace no longer
+rebuilds TypeScript, regenerates VSIXs or selects unsigned CI native packages.
+It authenticates the signed assembly's workflow, commit, successful job, attempt,
+artifact ID and server digest; validates the complete native/VSIX provenance; and
+copies the exact signed producer's VSIX and manifest bytes.
 
-For example, substitute the reviewed rehearsal's actual run ID:
+For final publication, **publish GitHub first**, then select that successful
+published producer in Extension release and enable `publish`. The Marketplace
+job requires the matching GitHub tag/channel/commit and exact complete asset
+digests, including `release.json`, before granting packages to VSCE. An unpublished
+signing rehearsal can qualify a Marketplace rehearsal but cannot be published
+directly to Marketplace. A new signing run produces new bytes and must not be
+substituted for an existing published release.
+
+After separate release authorization, substitute the reviewed producer's real
+run ID and the promoted version, for example:
 
 ~~~console
-gh workflow run extension-release.yml --ref main -f version=1.8.7 -f channel=stable -f publish=true -f rehearsal_run_id=123456789
+gh workflow run extension-release.yml --ref main -f version=1.9.0 -f channel=stable -f publish=true -f signed_run_id=123456789
 ~~~
 
-Only successful, non-publishing rehearsals qualify: preflight and all four packaging jobs must succeed, while publication and identity-only jobs must be skipped. Artifact upload times must belong to those successful jobs in the selected attempt. Preflight records the attempt, artifact IDs and server digests; publication rechecks that record before and after downloading. Rerunning the rehearsal, expired/missing artifacts, another commit, or a mismatched package version/channel stops publication without silently repackaging. Create and review a new rehearsal if needed. Leaving **rehearsal_run_id** empty preserves the existing build-and-publish path. Supplying it for a non-publishing or identity-only run is rejected.
+`signed_run_id` replaces Marketplace's previous `candidate_run_id` and
+`rehearsal_run_id` inputs; there is no unsigned build-and-publish fallback.
+Missing/expired artifacts, changed assembly identity, another commit or mismatched
+version/channel stop staging. Producer identity is rechecked before and after
+download and again by the publishing job. Marketplace preflight records are
+scoped to the current run attempt: if a failed-job-only rerun has no current
+preflight record, rerun all of these inexpensive jobs with the same signed
+producer instead of starting another native build or accepting a foreign record.
+Identity-only verification remains separate and needs no signed producer.
 
 Ordinary CI, local packaging and release dispatchers default to stable packages. Preview packaging remains an explicit option for a distinct future preview version; do not publish the same version in both channels. The source version/display name are never silently edited by a publishing job; review them before selecting a channel. See the [1.5.5 release notes](releases/release-1.5.5.md); the [1.2 qualification record](indexingenhancements.md#final-12-qualification) remains historical.
 

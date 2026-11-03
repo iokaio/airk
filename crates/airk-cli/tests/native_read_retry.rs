@@ -14,6 +14,111 @@ fn envelope(hint: Value) -> Value {
     json!({"isError":true,"content":[{"type":"text","text":hint.to_string()}]})
 }
 
+fn readiness_pair() -> Result<(Value, Value)> {
+    use airk_core::{identity::Sha256Digest, verification::*};
+    let mut available = json!({
+        "request_id":"one", "items":["x".repeat(4096)],
+        "discovery_readiness":{"version":1,"state":"ready","epoch":"00".repeat(16),
+            "processed_artifacts":2,"committed_artifacts":2,"total_artifacts":2,"failure":null},
+        "semantic_readiness":{"version":1,"state":"disabled","default_search_policy":"partial_hybrid",
+            "selected_artifacts":0,"completed_artifacts":0,"selected_units":null,"completed_units":0,
+            "first_ready_unix_ms":null,"fully_ready_unix_ms":null,
+            "selection_digest":airk_core::vector_selection::VectorSelectionPolicy::default().digest()?,
+            "pipeline_digest":null,"failure":null}
+    });
+    let mut unavailable = available.clone();
+    let fields = unavailable.as_object_mut().unwrap();
+    fields.remove("discovery_readiness");
+    fields.remove("semantic_readiness");
+    fields.insert(
+        "discovery_observation".into(),
+        json!("unavailable_after_read"),
+    );
+    fields.insert("request_id".into(), json!("two"));
+    for value in [&mut available, &mut unavailable] {
+        let mut limits: VerificationLimits =
+            VerificationControls::default().resolve()?.unwrap().into();
+        limits.receipt_bytes_budget = receipt_budget_for_reply(value)?;
+        value["source_verification"] = serde_json::to_value(VerificationReceipt {
+            schema: "airk.saved-source-verification/1".into(),
+            method: "sha256-full-saved-source/1".into(),
+            mode: VerificationMode::Report,
+            status: "verified".into(),
+            scope_digest: Sha256Digest::from_bytes([1; 32]),
+            selection_digest: Sha256Digest::from_bytes([2; 32]),
+            observed_from_unix_ms: 1,
+            observed_to_unix_ms: 2,
+            publication_fence: "current".into(),
+            inventory_complete: true,
+            all_references_accounted: true,
+            source_rows_omitted: 0,
+            requirements_satisfied: Some(true),
+            counts: VerificationCounts::default(),
+            limits,
+            origins: vec![],
+            sources: vec![],
+            references: vec![],
+            qualifications: vec![],
+            error: None,
+        })?;
+    }
+    Ok((available, unavailable))
+}
+
+#[test]
+fn optional_readiness_normalization_checks_original_headroom_and_fixture_state() -> Result<()> {
+    let (mut available, mut unavailable) = readiness_pair()?;
+    assert_ne!(
+        available["source_verification"]["limits"]["receipt_bytes_budget"],
+        unavailable["source_verification"]["limits"]["receipt_bytes_budget"]
+    );
+    read_retry::normalize_dated_readiness_pair(&mut available, &mut unavailable, 2)?;
+    read_retry::evidence_for_comparison(&mut available)?;
+    read_retry::evidence_for_comparison(&mut unavailable)?;
+    assert_eq!(available, unavailable);
+    for (pointer, value) in [
+        ("/source_verification/limits/receipt_bytes_budget", json!(1)),
+        ("/discovery_readiness/committed_artifacts", json!(3)),
+        ("/discovery_readiness/state", json!("partial")),
+        ("/semantic_readiness/state", json!("ready")),
+    ] {
+        let (mut a, mut b) = readiness_pair()?;
+        *a.pointer_mut(pointer).unwrap() = value;
+        let original = (a.clone(), b.clone());
+        assert!(read_retry::normalize_dated_readiness_pair(&mut a, &mut b, 2).is_err());
+        assert_eq!((a, b), original, "failed validation mutated the inputs");
+    }
+    let (mut a, mut b) = readiness_pair()?;
+    a["semantic_readiness"]["unexpected"] = json!(true);
+    assert!(read_retry::normalize_dated_readiness_pair(&mut a, &mut b, 2).is_err());
+    let (mut a, mut b) = readiness_pair()?;
+    b["discovery_readiness"] = a["discovery_readiness"].clone();
+    assert!(read_retry::normalize_dated_readiness_pair(&mut a, &mut b, 2).is_err());
+    Ok(())
+}
+
+#[test]
+fn optional_readiness_normalization_retains_evidence_and_work_budget_differences() -> Result<()> {
+    for (pointer, value) in [
+        ("/source_verification/limits/max_sources", json!(7)),
+        ("/source_verification/scope_digest", json!("03".repeat(32))),
+        ("/source_verification/counts/checked_sources", json!(1)),
+    ] {
+        let (mut a, mut b) = readiness_pair()?;
+        *b.pointer_mut(pointer).unwrap() = value;
+        read_retry::normalize_dated_readiness_pair(&mut a, &mut b, 2)?;
+        read_retry::evidence_for_comparison(&mut a)?;
+        read_retry::evidence_for_comparison(&mut b)?;
+        assert_ne!(a, b);
+    }
+    let (mut a, _) = readiness_pair()?;
+    let mut b = a.clone();
+    b["discovery_readiness"]["epoch"] = json!("01".repeat(16));
+    read_retry::normalize_dated_readiness_pair(&mut a, &mut b, 2)?;
+    assert_ne!(a, b, "two available observations must compare exactly");
+    Ok(())
+}
+
 #[test]
 fn only_complete_typed_read_rejections_authorize_replay() {
     let hint = json!({"status":"retry","code":"publication_busy","retryable":true,

@@ -318,7 +318,7 @@ pub(super) fn stage_locked(
     local_ipc::prepare_root(&runtimes)?;
     let destination = runtimes.join(approved);
     if destination.try_exists()? {
-        let (main, approval) = verify_runtime(root, approved)?;
+        let (main, approval, inventory) = verify_runtime_inventory(root, approved)?;
         if StageIntent::path(root, approved).try_exists()? {
             let (intent, _) = StageIntent::read(root, approved)?;
             ensure!(
@@ -329,7 +329,7 @@ pub(super) fn stage_locked(
             sync_directory(root)?;
         }
         if launcher {
-            prepare_launcher(root, &main)?;
+            prepare_launcher(root, &main, &inventory)?;
         }
         return Ok(approval);
     }
@@ -466,11 +466,13 @@ fn copy_payload(
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(
                 &partial,
-                fs::Permissions::from_mode(if name == main_name() || name == helper_name() {
-                    0o700
-                } else {
-                    0o600
-                }),
+                fs::Permissions::from_mode(
+                    if name == main_name() || name == helper_name() || name == MAC_LAUNCHER_IMAGE {
+                        0o700
+                    } else {
+                        0o600
+                    },
+                ),
             )?;
         }
         output.sync_all()?;
@@ -533,7 +535,7 @@ fn copy_payload(
     fs::remove_file(StageIntent::path(root, &intent.approval.manifest_sha256))?;
     sync_directory(root)?;
     if launcher {
-        prepare_launcher(root, &destination.join(main_name()))?;
+        prepare_launcher(root, &destination.join(main_name()), inventory)?;
     }
     Ok(intent.approval.clone())
 }

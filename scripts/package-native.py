@@ -138,7 +138,10 @@ def validate_runtime(runtime, version, target, source):
         raise ValueError("Runtime build receipt differs from current source/pair")
     builder = runtime_builder()
     main, helper = builder.runtime_names(operating_system)
-    allowed = {main, helper, "airk-install.json", "airk-runtime.json", "airk-build.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
+    launcher = builder.launcher_name(operating_system, version)
+    if launcher != main and launcher not in files:
+        raise ValueError("Runtime standalone launcher image is missing")
+    allowed = {main, helper, launcher, "airk-install.json", "airk-runtime.json", "airk-build.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
     required = allowed | {"notices/inventory.json", "notices/bom.cdx.json", "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"}
     if not required.issubset(files):
         raise ValueError("Runtime pair legal/notice inventory is incomplete")
@@ -177,7 +180,7 @@ def validate_runtime(runtime, version, target, source):
         raise ValueError("Unexpected runtime payload outside native/legal allowlist")
     if pair.get("airk_sha256") != files.get(main) or pair.get("embed_sha256") != files.get(helper) or not files.get(main) or not files.get(helper):
         raise ValueError("Runtime pair executable digests differ")
-    return files, (main, helper)
+    return files, tuple(dict.fromkeys((main, helper, launcher)))
 
 
 def source_packaging_metadata(path, target, signed):
@@ -228,7 +231,7 @@ def main():
         runtime, signing = signer.read_verified_pair(args.signed_dir.resolve(strict=True), runtime, args.target,
                                                      capture("git", "rev-parse", "HEAD"), sha256(ROOT / "Cargo.lock"), args.signtool)
         files, executables = validate_runtime(runtime, version, args.target, builder.source_identity())
-    executable, helper = executables
+    executable, helper = executables[:2]
     output = (args.output or ROOT / "artifacts" / "native" / args.target).resolve()
     if not output.is_relative_to((ROOT / "artifacts").resolve()) or output == (ROOT / "artifacts").resolve():
         raise SystemExit("Candidate output must be a fresh subdirectory of artifacts/")
@@ -259,7 +262,8 @@ def main():
                 shutil.copyfileobj(source, output_file, length=1_048_576)
     for name in executables:
         (smoke / name).chmod(0o755)
-        if capture(str(smoke / name), "--version") != Path(name).stem + " " + version:
+        identity = "airk" if name.endswith("/airk-launcher-image") else Path(name).stem
+        if capture(str(smoke / name), "--version") != identity + " " + version:
             raise SystemExit("Archived executable version differs")
     result = json.loads(capture(str(smoke / executable), "runtime", "self-test"))
     if result.get("self_test") != "passed" or result.get("version") != version:

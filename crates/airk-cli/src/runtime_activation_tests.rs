@@ -70,8 +70,14 @@ fn installed_role_aliases_preserve_inventory_and_retire_with_the_owned_payload()
     crate::process_roles::install(&main)?;
     assert_eq!(fs::read(directory.join("airk-install.json"))?, original);
     verify_runtime(&root, &intent.candidate)?;
-    let alias = crate::process_roles::executable(&main, crate::process_roles::Role::Service)?;
-    fs::remove_file(&alias)?;
+    let selected = crate::process_roles::executable(&main, crate::process_roles::Role::Service)?;
+    let alias = if cfg!(target_os = "macos") {
+        assert_eq!(selected, main);
+        directory.join(crate::process_roles::Role::Service.name())
+    } else {
+        fs::remove_file(&selected)?;
+        selected
+    };
     fs::write(&alias, b"modified alias must be preserved")?;
     assert!(verify_runtime(&root, &intent.candidate).is_err());
     assert!(retirement::remove(&root, &intent.candidate).is_err());

@@ -307,13 +307,15 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
         RuntimeCommand::PrepareClient { install_dir } => {
             let _lock = install_lock(install_dir)?;
             activation::require_settled(install_dir)?;
-            launcher_repair::require_settled(install_dir)?;
+            if !cfg!(target_os = "macos") {
+                launcher_repair::require_settled(install_dir)?;
+            }
             ensure!(
                 !managed::detaching(install_dir)?,
                 "finish managed detachment before preparing a client launcher"
             );
-            let (_, main, _) = selected(install_dir)?;
-            prepare_launcher(install_dir, &main)?;
+            let (_, main, approval, inventory) = selected_inventory(install_dir)?;
+            prepare_client_launcher(install_dir, &main, &approval, &inventory)?;
             serde_json::json!({"launcher":verified_launcher(install_dir)?,"service_lifecycle_changed":false})
         }
         RuntimeCommand::Inspect { install_dir } => {

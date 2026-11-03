@@ -4,6 +4,33 @@ Signing is opt-in and operates on a fresh copy under ignored `artifacts/`. It do
 
 The runtime builder gives macOS development/CI candidates ad-hoc signatures with runtime flags cleared. Ad-hoc code has no Team ID, so hardened-runtime library validation would reject its bundled ONNX library even after successful signature verification. A small native helper/library load test covers this boundary on Mac hosts. Developer ID release signing applies the requested identity and hardened runtime to both executables and the ONNX library, then verifies the team, timestamp and enclosing app before notarization. See [Apple's library-validation rules](https://developer.apple.com/documentation/BundleResources/Entitlements/com.apple.security.cs.disable-library-validation).
 
+The 1.8.8 working layout also includes an independently signed copy of the
+compiled main at `AIRK.app/Contents/MacOS/airk-launcher-image`. The app-sealed main
+depends on its resource envelope and cannot be copied out as a valid standalone
+launcher. Sign the separate image before sealing the app; native/VSIX inventories
+bind its exact bytes and executable permission. Installer staging and repair copy
+only this approved image into stable launchers. Mac services and workers execute
+the sealed main in its bundle rather than creating bundle-bound process-role
+copies. RuntimePair and service-health contracts still identify the sealed main
+and helper; the full approved install inventory separately binds the launcher image.
+Historical layouts through 1.8.7 retain their original inventories.
+
+Signing and re-verification check a byte-identical standalone copy of the image
+with strict Developer ID/team/runtime/timestamp validation and `--version` before
+recording `copied_launcher` evidence. Ad-hoc fixture success is separate from
+Developer ID, notarization and installed-editor qualification. The additional
+image has a packaging/storage cost; it introduces no new model or retrieval work.
+Current results and any remaining signing limits are in the
+[implementation ledger](research/implementation-v190.md).
+
+Universal launcher publication and retirement share a private directory lock,
+including requests from different installation roots. Busy requests refuse before
+mutation. Uninstall retains its zero-byte lock inode after removing the owned
+launcher/pointer, preventing a second owner from locking a replacement inode.
+Known Mac copies can refresh from the selected approved image; unknown bytes are
+preserved. Interrupted image/pointer updates fail closed and resume only from the
+matching source. Preparing a client copy does not change service lifecycle policy.
+
 On Windows, provision a trusted code-signing identity in the current user's certificate store, then run:
 
 ```powershell
@@ -43,7 +70,7 @@ Both hosted Mac signing workflows use the same [ticket-network action](../.githu
 
 The [numbered GitHub release workflow](release-workflow.md#numbered-github-releases) also uses this Apple environment, signing the exact native candidates from its successful CI run. It requires accepted notarization for both architectures before any release is published.
 
-[Signed macOS candidates](../.github/workflows/macos-signing.yml) is a separate, manual workflow for `main`. It builds/tests both Apple Silicon and Intel on their native hosted runners, then signs, notarizes and packages native ZIPs and stable VSIX files. Artifacts are retained for seven days. It does not publish a release or Marketplace extension. Ordinary PR CI and Extension release continue to create unsigned candidates.
+[Signed macOS candidates](../.github/workflows/macos-signing.yml) is a separate, manual workflow for `main`. It builds/tests both Apple Silicon and Intel on their native hosted runners, then signs, notarizes and packages native ZIPs and stable VSIX files. Artifacts are retained for seven days. It does not publish a release or Marketplace extension. Ordinary PR CI continues to create development candidates. Extension release consumes the canonical GitHub release's verified signed native/VSIX assembly without rebuilding or re-signing; final Marketplace publication requires matching published GitHub assets. See the [handoff](release-workflow.md#build-manually).
 
 Before dispatching, configure the repository environment **macos-signing** with a deployment branch policy allowing only the `main` branch (not tags), and these environment secrets:
 

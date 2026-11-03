@@ -7,11 +7,21 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Cannot enumerate repository files' }
     if ($airkFiles | Where-Object { $_ -match '(^|/)(temp|\.airk)(/|$)' }) { throw 'Private reference/index material is eligible for Git' }
     if ((Get-FileHash AGENTS.md).Hash -ne (Get-FileHash CLAUDE.md).Hash) { throw 'AGENTS.md and CLAUDE.md differ' }
+    # cargo-vet's locked check requires its canonical generated-data headers;
+    # its formatter removes an SPDX prefix. Keep this exception to these two
+    # exact data files. All source and other TOML retain the SPDX requirement.
+    $airkGeneratedHeaders = @{
+        'supply-chain/config.toml' = '# cargo-vet config file'
+        'supply-chain/audits.toml' = '# cargo-vet audits file'
+    }
     foreach ($airkFile in $airkFiles) {
         if (-not (Test-Path -LiteralPath $airkFile -PathType Leaf)) { continue }
         if ($airkFile -match '\.(rs|toml|py|ps1|ya?ml|ts|tsx|js|cjs|mjs|css)$') {
             $airkFirstLine = Get-Content -LiteralPath $airkFile -TotalCount 1
-            if ($airkFirstLine -notmatch 'SPDX-License-Identifier: Apache-2.0') { throw "Missing SPDX: $airkFile" }
+            if ($airkGeneratedHeaders.ContainsKey($airkFile)) {
+                $airkDataHeader = Get-Content -LiteralPath $airkFile -TotalCount 2 | Where-Object { $_ -ne '' } | Select-Object -First 1
+                if ($airkDataHeader -cne $airkGeneratedHeaders[$airkFile]) { throw "Unexpected generated-data header: $airkFile" }
+            } elseif ($airkFirstLine -notmatch 'SPDX-License-Identifier: Apache-2.0') { throw "Missing SPDX: $airkFile" }
         }
         if ($airkFile -like '*.md') {
             $airkText = Get-Content -LiteralPath $airkFile -Raw

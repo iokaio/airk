@@ -57,6 +57,101 @@ def rehearsal_api(run, jobs, artifacts, workflow_id=42):
 
 
 class CandidateTests(unittest.TestCase):
+    def signed_release_fixture(self):
+        run = {**run_fixture(), "event": "workflow_dispatch", "path": ".github/workflows/github-release.yml"}
+        job = dict(name="assemble", conclusion="success", started_at="2026-11-03T01:00:00Z",
+                   completed_at="2026-11-03T01:02:00Z")
+        artifact = dict(id=9, name=f"airk-release-{COMMIT}-123-1", expired=False,
+                        digest="sha256:" + "a" * 64, created_at="2026-11-03T01:01:00Z",
+                        workflow_run=dict(id=123, head_sha=COMMIT, head_branch="main"))
+        def respond(path, paginate=False):
+            if path == "actions/runs/123":
+                return run
+            if path == "actions/workflows/github-release.yml":
+                return dict(id=42)
+            if path == "actions/runs/123/attempts/1/jobs?per_page=100":
+                return [dict(jobs=[job])]
+            if path == "actions/runs/123/artifacts?per_page=100":
+                return [dict(artifacts=[artifact])]
+            raise AssertionError(path)
+        return run, job, artifact, respond
+
+    def test_signed_release_pins_successful_exact_attempt_and_upload_interval(self):
+        for mutation in (None, "unsigned_workflow", "workflow_id", "failed", "not_complete", "job_failed",
+                         "branch", "fork", "expired", "wrong_attempt", "digest", "origin", "old_upload"):
+            run, job, artifact, respond = self.signed_release_fixture()
+            if mutation == "unsigned_workflow": run["path"] = ".github/workflows/extension-release.yml"
+            elif mutation == "workflow_id": run["workflow_id"] = 99
+            elif mutation == "failed": run["conclusion"] = "failure"
+            elif mutation == "not_complete": run["status"] = "in_progress"
+            elif mutation == "job_failed": job["conclusion"] = "failure"
+            elif mutation == "branch": run["head_branch"] = "feature"
+            elif mutation == "fork": run["head_repository"]["full_name"] = "foreign/airk"
+            elif mutation == "expired": artifact["expired"] = True
+            elif mutation == "wrong_attempt": artifact["name"] = f"airk-release-{COMMIT}-123-2"
+            elif mutation == "digest": artifact["digest"] = "sha256:bad"
+            elif mutation == "origin": artifact["workflow_run"]["head_sha"] = "b" * 40
+            elif mutation == "old_upload": artifact["created_at"] = "2026-11-02T01:01:00Z"
+            with self.subTest(mutation=mutation), patch.object(candidates, "api", side_effect=respond):
+                if mutation:
+                    with self.assertRaises(ValueError): candidates.attest_signed_release(123, COMMIT)
+                else:
+                    record = candidates.attest_signed_release(123, COMMIT)
+                    self.assertEqual(record["artifact"], dict(id=9, digest="sha256:" + "a" * 64))
+                    self.assertEqual(record["attempt"], "1")
+
+    def test_signed_release_rechecks_identity_before_emitting_packages(self):
+        _, _, _, respond = self.signed_release_fixture()
+        with patch.object(candidates, "api", side_effect=respond):
+            record = candidates.attest_signed_release(123, COMMIT)
+        with tempfile.TemporaryDirectory() as temporary:
+            destination = Path(temporary) / "out"
+            with patch.object(candidates, "attest_signed_release", side_effect=[record, {**record, "attempt": "2"}]), \
+                    patch.object(candidates, "download") as download:
+                with self.assertRaisesRegex(ValueError, "changed during download"):
+                    candidates.download_signed_release(record, COMMIT, destination, "1.8.8", "stable")
+                download.assert_called_once()
+                self.assertFalse(destination.exists())
+            for bad in ({**record, "commit": "b" * 40}, {**record, "repository": "foreign/airk"}):
+                with self.assertRaisesRegex(ValueError, "another commit/schema"):
+                    candidates.download_signed_release(bad, COMMIT, destination, "1.8.8", "stable")
+
+    def test_failed_publish_only_retry_retains_original_signed_assembly_identity(self):
+        run, _, artifact, respond = self.signed_release_fixture()
+        with patch.object(candidates, "api", side_effect=respond):
+            original = candidates.attest_signed_release(123, COMMIT)
+            # Only publish/downloads reran; attempt two has no new assembly.
+            run["run_attempt"] = 2
+            self.assertEqual(candidates.attest_signed_release(123, COMMIT), original)
+            with patch.object(candidates, "download") as download:
+                candidates.release_bundle(COMMIT, "123", "2", Path("unused"))
+                download.assert_called_once_with(artifact, Path("unused"))
+
+    def test_new_assembly_invalidates_old_preflight_instead_of_reusing_original_bytes(self):
+        run, job, artifact, respond = self.signed_release_fixture()
+        with patch.object(candidates, "api", side_effect=respond):
+            original = candidates.attest_signed_release(123, COMMIT)
+        run["run_attempt"] = 2
+        replacement = {**artifact, "id": 10, "name": f"airk-release-{COMMIT}-123-2", "digest": "sha256:" + "b" * 64}
+        def updated(path, paginate=False):
+            if path == "actions/runs/123/artifacts?per_page=100":
+                return [dict(artifacts=[artifact, replacement])]
+            if path == "actions/runs/123/attempts/2/jobs?per_page=100":
+                return [dict(jobs=[job])]
+            return respond(path, paginate)
+        with tempfile.TemporaryDirectory() as temporary, patch.object(candidates, "api", side_effect=updated):
+            current = candidates.attest_signed_release(123, COMMIT)
+            self.assertEqual(current["attempt"], "2")
+            self.assertEqual(current["artifact"]["id"], 10)
+            with patch.object(candidates, "download") as download:
+                with self.assertRaisesRegex(ValueError, "changed after preflight"):
+                    candidates.download_signed_release(original, COMMIT, Path(temporary) / "out", "1.8.8", "stable")
+                download.assert_not_called()
+            # A damaged superseding upload is not permission to choose old bytes.
+            replacement["expired"] = True
+            with self.assertRaisesRegex(ValueError, "expired"):
+                candidates.attest_signed_release(123, COMMIT)
+
     def test_rehearsal_requires_successful_main_origin_and_all_build_jobs(self):
         for corruption in (None, "workflow", "branch", "commit", "fork", "event", "running", "failed",
                            "published", "identity", "missing", "duplicate", "build_failed"):
@@ -245,7 +340,9 @@ class CandidateTests(unittest.TestCase):
                         self.assertEqual((destination / "manifest.json").read_bytes(), b"original fixture")
 
     def test_publish_retry_requires_a_successful_assembly_from_same_run(self):
-        artifact = dict(id=9, name=f"airk-release-{COMMIT}-123-1", expired=False, digest="sha256:" + "a" * 64)
+        artifact = dict(id=9, name=f"airk-release-{COMMIT}-123-1", expired=False, digest="sha256:" + "a" * 64,
+                        created_at="2026-11-03T01:01:00Z",
+                        workflow_run=dict(id=123, head_sha=COMMIT, head_branch="main"))
         for conclusion in ("success", "failure", "cancelled"):
             def api(path, paginate=False):
                 if path == "actions/runs/123":
@@ -253,7 +350,8 @@ class CandidateTests(unittest.TestCase):
                             "event": "workflow_dispatch", "status": "in_progress", "run_attempt": 2}
                 if "/jobs?" in path:
                     self.assertIn("/attempts/1/", path)
-                    return [dict(jobs=[dict(name="assemble", conclusion=conclusion)])]
+                    return [dict(jobs=[dict(name="assemble", conclusion=conclusion,
+                                           started_at="2026-11-03T01:00:00Z", completed_at="2026-11-03T01:02:00Z")])]
                 return [dict(artifacts=[artifact])]
             with self.subTest(conclusion=conclusion), patch.object(candidates, "api", side_effect=api), \
                     patch.object(candidates, "download") as download:

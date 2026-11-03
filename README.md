@@ -5,6 +5,16 @@
 P5's catalog upgrade foundation passed local isolated qualification. Normal activation of
 the new hierarchy remains disabled; see the [storage boundary](docs/storage-formats.md#development-catalog-boundary).
 
+P6a implements the macOS copied-launcher correction, shared signed release
+producer and offline contributor bootstrap. Local gates passed, including the
+actual Developer ID signed installer lifecycle and all 60 latency comparisons.
+Notarization, installed-editor acceptance and remaining
+platform gates are recorded in the [implementation ledger](docs/research/implementation-v190.md).
+
+Contributor dependency checks now include pinned `cargo-deny` and `cargo-vet`,
+with committed policy and visible unreviewed baseline exemptions. See the
+[supply-chain policy](docs/dependency-advisories.md) for coverage and limits.
+
 Compact discovery now feeds dependent plans and cited results;
 nested plan inputs are advertised as JSON objects. [Validation and limits](docs/read-interface-parity.md#regression-evidence)
 remain recorded per phase.
@@ -16,7 +26,7 @@ defaults; Rich cannot restore evidence omitted during indexing.
 [Evidence guidance](docs/evidence-guidance.md) explains returned limitations and
 useful next reads without extra queries or automatic indexing.
 
-P3 now records the [Project/index, migration and verification design contracts](docs/research/contracts-v190/README.md). These are implementation safeguards; management and verification remain gated by later phases.
+P3 records the [Project/index, migration and verification design contracts](docs/research/contracts-v190/README.md). Project/index management remains gated; P4 implemented saved-source verification.
 
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](docs/releases/release-1.8.7.md) for current behavior and dated validation.
 
@@ -169,7 +179,7 @@ The MCP provider advertises only reviewed bindings. **Connect Coding Agent** cre
 
 The console separately reviews old login startup and offers ownership-verified removal with its own approval and resumable receipts. Review never executes the old command. Startup removal preserves sources, settings and indexes; candidate process matches do not authorize stopping unrelated workers. A separate [offline CLI preview and deletion](docs/service-legacy-transition.md) retires owner-verified 1.3 derived files while preserving sources, settings and usage history. Mac loaded-registration proof is implemented; actual native removal qualification remains pending.
 
-Approved managed payloads can remain read-only. Their client launcher copies only the lightweight main into user metadata; the provider retains control of its payload and external service lifecycle. Development test evidence and remaining gates are recorded in [cutover qualification](docs/service-cutover-qualification.md).
+Approved managed payloads can remain read-only. Their client launcher copies the approved lightweight image into user metadata (the separately signed launcher image on macOS 1.8.8 onward); the provider retains control of its payload and external service lifecycle. Development test evidence and remaining gates are recorded in [cutover qualification](docs/service-cutover-qualification.md).
 
 ## Native CLI
 

@@ -21,6 +21,45 @@ use std::{
 
 pub const CONFIG: &str = "airk-launcher.json";
 const CONFIG_LIMIT: u64 = 4096;
+const PUBLICATION_LOCK: &str = "airk-launcher-publish.lock";
+
+/// All publishers/retirements share this directory-level lease even when their
+/// installation roots differ. Keep the zero-byte lock inode after uninstall:
+/// unlinking a locked file could admit a second owner through a new inode.
+fn publication_lock(directory: &Path) -> Result<fs::File> {
+    crate::local_ipc::prepare_root(directory)?;
+    let path = directory.join(PUBLICATION_LOCK);
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            crate::runtime_install::safe_file(&path)?;
+            ensure!(
+                fs::metadata(&path)?.len() == 0,
+                "unrecognized universal publication lock"
+            );
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(&path)?;
+    crate::runtime_install::safe_file(&path)?;
+    ensure!(
+        file.metadata()?.len() == 0,
+        "unrecognized universal publication lock"
+    );
+    file.try_lock().context(
+        "universal launcher publication or retirement is in progress; retry after it finishes",
+    )?;
+    crate::local_ipc::require_existing_root(directory)?;
+    crate::runtime_install::safe_file(&path)?;
+    Ok(file)
+}
 
 /// `airk-launcher.json`: which installation the universal launcher forwards to.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -148,8 +187,10 @@ pub fn run(executable: &Path, args: Vec<OsString>) -> Result<()> {
 }
 
 /// Install or refresh the universal launcher in `directory` for `install`. The binary is
-/// copied once from the installation's verified launcher and then kept; only the pointer
-/// changes. An unrecognized binary at the destination is never replaced.
+/// copied from the installation's verified launcher. Mac updates refresh a known
+/// image because old bundle-bound signatures may not execute after copying.
+/// Other platforms retain the image and change only the pointer. Unknown bytes
+/// at the destination are never replaced.
 pub fn publish_at(directory: &Path, install: &Path) -> Result<PathBuf> {
     let install = install.canonicalize()?;
     let source = crate::runtime_install::verified_launcher(&install)?;
@@ -158,13 +199,17 @@ pub fn publish_at(directory: &Path, install: &Path) -> Result<PathBuf> {
 
 /// `publish_at` with the installation's verified launcher already resolved.
 fn publish_from(directory: &Path, install: &Path, source: &Path) -> Result<PathBuf> {
+    publish_from_checkpoint(directory, install, source, || Ok(()))
+}
+
+fn publish_from_checkpoint(
+    directory: &Path,
+    install: &Path,
+    source: &Path,
+    checkpoint: impl FnOnce() -> Result<()>,
+) -> Result<PathBuf> {
+    let _publication = publication_lock(directory)?;
     let install = install.to_path_buf();
-    fs::create_dir_all(directory)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
-    }
     let executable = directory.join(launcher_name());
     let config = directory.join(CONFIG);
     let existing: Option<Pointer> = if config.try_exists()? {
@@ -175,7 +220,8 @@ fn publish_from(directory: &Path, install: &Path, source: &Path) -> Result<PathB
     } else {
         None
     };
-    let launcher_sha256 = if executable.try_exists()? {
+    let source_sha256 = digest(source)?;
+    let previous_sha256 = if executable.try_exists()? {
         let metadata = fs::symlink_metadata(&executable)?;
         ensure!(
             metadata.is_file(),
@@ -186,11 +232,21 @@ fn publish_from(directory: &Path, install: &Path, source: &Path) -> Result<PathB
             .as_ref()
             .map(|pointer| pointer.launcher_sha256.as_str());
         ensure!(
-            known == Some(current.as_str()) || current == digest(source)?,
+            known == Some(current.as_str()) || current == source_sha256,
             "unrecognized universal launcher; refusing replacement"
         );
-        current
+        Some(current)
     } else {
+        None
+    };
+    // Prior signed Mac copies may be bundle-bound and cannot run to delegate to
+    // the repaired stable launcher. Refresh only a recognized Mac image; other
+    // platforms retain the existing keep-once version-free entry point.
+    let replace_known = cfg!(target_os = "macos")
+        && previous_sha256
+            .as_ref()
+            .is_some_and(|hash| hash != &source_sha256);
+    let launcher_sha256 = if previous_sha256.is_none() || replace_known {
         let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
         std::io::copy(&mut fs::File::open(source)?, &mut temporary)?;
         temporary.as_file().sync_all()?;
@@ -203,12 +259,27 @@ fn publish_from(directory: &Path, install: &Path, source: &Path) -> Result<PathB
         }
         let copied = digest(temporary.path())?;
         ensure!(
-            copied == digest(source)?,
+            copied == source_sha256 && digest(source)? == source_sha256,
             "stable launcher changed while publishing the universal launcher"
         );
-        temporary.persist_noclobber(&executable)?;
+        if replace_known {
+            let observed: Pointer = serde_json::from_slice(&read_bounded(&config)?)?;
+            ensure!(
+                Some(digest(&executable)?) == previous_sha256
+                    && existing.as_ref() == Some(&observed),
+                "universal launcher changed during refresh; preserving current files"
+            );
+            temporary.persist(&executable)?;
+        } else {
+            temporary.persist_noclobber(&executable)?;
+        }
         copied
+    } else {
+        previous_sha256.context("universal launcher identity missing")?
     };
+    #[cfg(unix)]
+    fs::File::open(directory)?.sync_all()?;
+    checkpoint()?;
     let pointer = Pointer {
         schema: 1,
         install,
@@ -226,6 +297,8 @@ fn publish_from(directory: &Path, install: &Path, source: &Path) -> Result<PathB
                 .set_permissions(fs::Permissions::from_mode(0o600))?;
         }
         temporary.persist(&config)?;
+        #[cfg(unix)]
+        fs::File::open(directory)?.sync_all()?;
     }
     Ok(executable)
 }
@@ -271,6 +344,22 @@ fn retire_at(directory: &Path, install: &Path) -> Result<()> {
     let receipt = install.join("universal-uninstall.json");
     let executable = directory.join(launcher_name());
     let config = directory.join(CONFIG);
+    if !receipt.try_exists()? {
+        let image_exists = executable.try_exists()?;
+        let config_exists = config.try_exists()?;
+        // A custom installation has no authority over an unrelated user's
+        // universal entry point, including its directory or publication lock.
+        // These read-only exits do not require creating or validating that lock.
+        if !image_exists && !config_exists {
+            return Ok(());
+        }
+        if image_exists && config_exists && resolve(&executable)? != install.canonicalize()? {
+            return Ok(());
+        }
+    }
+    // Incomplete publication still enters the shared lease. Once acquired, repeat
+    // every ownership/identity check before recording or removing anything.
+    let _publication = publication_lock(directory)?;
     let pointer: Pointer = if receipt.try_exists()? {
         crate::runtime_install::safe_file(&receipt)?;
         serde_json::from_slice(&read_bounded(&receipt)?)?
@@ -322,6 +411,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unrelated_uninstall_never_creates_or_claims_a_universal_publication_lock() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let install = owner.path().canonicalize()?.join("install");
+        let other = owner.path().canonicalize()?.join("other-install");
+        crate::local_ipc::prepare_root(&install)?;
+        crate::local_ipc::prepare_root(&other)?;
+        let directory = owner.path().join("launcher");
+        retire_at(&directory, &install)?;
+        assert!(!directory.exists());
+        crate::local_ipc::prepare_root(&directory)?;
+        let lock = directory.join(PUBLICATION_LOCK);
+        fs::write(&lock, b"unrecognized existing lock")?;
+        retire_at(&directory, &install)?;
+        assert_eq!(fs::read(&lock)?, b"unrecognized existing lock");
+        let executable = directory.join(launcher_name());
+        fs::write(&executable, b"another installation's launcher")?;
+        let pointer = Pointer {
+            schema: 1,
+            install: other,
+            launcher_sha256: digest(&executable)?,
+        };
+        write_pointer(&directory, &pointer)?;
+        let config = fs::read(directory.join(CONFIG))?;
+        retire_at(&directory, &install)?;
+        assert_eq!(fs::read(&executable)?, b"another installation's launcher");
+        assert_eq!(fs::read(directory.join(CONFIG))?, config);
+        assert_eq!(fs::read(&lock)?, b"unrecognized existing lock");
+        assert!(!install.join("universal-uninstall.json").exists());
+        // The same unknown lock must still block actual owned removal.
+        assert!(retire_at(&directory, &pointer.install).is_err());
+        assert_eq!(fs::read(&executable)?, b"another installation's launcher");
+        assert_eq!(fs::read(directory.join(CONFIG))?, config);
+        assert!(!pointer.install.join("universal-uninstall.json").exists());
+        Ok(())
+    }
+
+    #[test]
     fn uninstall_removes_only_the_owned_entry_point_and_resumes_partial_removal() -> Result<()> {
         let owner = tempfile::tempdir()?;
         let install = owner.path().canonicalize()?.join("install");
@@ -368,6 +494,95 @@ mod tests {
             fs::set_permissions(directory.join(CONFIG), fs::Permissions::from_mode(0o600))?;
             fs::set_permissions(directory, fs::Permissions::from_mode(0o700))?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn publishers_from_different_installations_share_one_lease_and_recover_owned_output()
+    -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let directory = owner.path().join("launcher");
+        let first = owner.path().join("first-install");
+        let second = owner.path().join("second-install");
+        for root in [&first, &second] {
+            fs::create_dir(root)?;
+        }
+        let first = first.canonicalize()?;
+        let second = second.canonicalize()?;
+        let a = first.join(launcher_name());
+        let b = second.join(launcher_name());
+        fs::write(&a, b"first approved launcher")?;
+        fs::write(&b, b"second approved launcher")?;
+        let (ready, entered) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let (worker_directory, worker_first, worker_a) =
+            (directory.clone(), first.clone(), a.clone());
+        let worker = std::thread::spawn(move || {
+            publish_from_checkpoint(&worker_directory, &worker_first, &worker_a, || {
+                ready.send(()).unwrap();
+                released.recv().unwrap();
+                anyhow::bail!("injected interruption after image publication")
+            })
+        });
+        entered.recv_timeout(std::time::Duration::from_secs(10))?;
+        let busy_publish = publish_from(&directory, &second, &b);
+        let busy_retire = retire_at(&directory, &first);
+        release.send(())?;
+        let interrupted = worker
+            .join()
+            .map_err(|_| anyhow::anyhow!("publisher fixture panicked"))?;
+        assert!(
+            busy_publish
+                .unwrap_err()
+                .to_string()
+                .contains("in progress")
+        );
+        assert!(busy_retire.unwrap_err().to_string().contains("in progress"));
+        assert!(
+            interrupted
+                .unwrap_err()
+                .to_string()
+                .contains("injected interruption")
+        );
+        // A different source cannot claim the first image after its owner exits.
+        assert!(publish_from(&directory, &second, &b).is_err());
+        assert_eq!(
+            fs::read(directory.join(launcher_name()))?,
+            b"first approved launcher"
+        );
+        let image = publish_from(&directory, &first, &a)?;
+        assert_eq!(resolve(&image)?, first);
+        publish_from(&directory, &second, &b)?;
+        assert_eq!(resolve(&image)?, second);
+        let pointer: Pointer = serde_json::from_slice(&fs::read(directory.join(CONFIG))?)?;
+        assert_eq!(pointer.launcher_sha256, digest(&image)?);
+        retire_at(&directory, &second)?;
+        assert!(
+            directory.join(PUBLICATION_LOCK).exists(),
+            "retain the shared lock inode across lifecycle transitions"
+        );
+        assert!(!image.exists() && !directory.join(CONFIG).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn unrecognized_publication_lock_is_preserved_without_touching_launchers() -> Result<()> {
+        let owner = tempfile::tempdir()?;
+        let directory = owner.path().join("launcher");
+        crate::local_ipc::prepare_root(&directory)?;
+        let source = owner.path().join("source");
+        fs::write(&source, b"approved source")?;
+        fs::write(
+            directory.join(PUBLICATION_LOCK),
+            b"unrecognized lock contents",
+        )?;
+        assert!(publish_from(&directory, owner.path(), &source).is_err());
+        assert_eq!(
+            fs::read(directory.join(PUBLICATION_LOCK))?,
+            b"unrecognized lock contents"
+        );
+        assert!(!directory.join(launcher_name()).exists());
+        assert!(!directory.join(CONFIG).exists());
         Ok(())
     }
 
@@ -461,7 +676,7 @@ mod tests {
     }
 
     #[test]
-    fn publishing_copies_once_then_only_moves_the_pointer() -> Result<()> {
+    fn publishing_preserves_known_identity_and_refreshes_mac_copies_only() -> Result<()> {
         let directory = tempfile::tempdir()?;
         let universal = directory.path().join("launcher");
         let (old, new) = (
@@ -476,12 +691,16 @@ mod tests {
         let executable = publish_from(&universal, &old.canonicalize()?, &old_launcher)?;
         assert_eq!(fs::read(&executable)?, b"1.5 launcher");
         assert_eq!(resolve(&executable)?, old.canonicalize()?);
-        // A later installation repoints the pointer and keeps the published binary.
+        // Mac repairs refresh the known signed image; other hosts retain it.
         publish_from(&universal, &new.canonicalize()?, &new_launcher)?;
         assert_eq!(
             fs::read(&executable)?,
-            b"1.5 launcher",
-            "the universal binary is never replaced"
+            if cfg!(target_os = "macos") {
+                b"2.0 launcher"
+            } else {
+                b"1.5 launcher"
+            },
+            "only recognized Mac copies are refreshed"
         );
         assert_eq!(resolve(&executable)?, new.canonicalize()?);
         // A foreign binary at the destination is refused, and the pointer is left as it was.
@@ -490,6 +709,28 @@ mod tests {
         assert!(error.to_string().contains("refusing replacement"));
         let pointer: Pointer = serde_json::from_slice(&fs::read(universal.join(CONFIG))?)?;
         assert_eq!(pointer.install, new.canonicalize()?);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn mac_pointer_mismatch_after_image_refresh_fails_closed_and_resumes_exact_source() -> Result<()>
+    {
+        let owner = tempfile::tempdir()?;
+        let directory = owner.path().join("launcher");
+        let install = owner.path().join("install");
+        fs::create_dir(&install)?;
+        let source = install.join(launcher_name());
+        fs::write(&source, b"preceding signed fixture")?;
+        let image = publish_from(&directory, &install.canonicalize()?, &source)?;
+        fs::write(&source, b"new standalone signed fixture")?;
+        // Format-level interruption fixture: the refreshed image is durable but
+        // the old pointer has not yet been replaced. No invocation can use it.
+        fs::write(&image, fs::read(&source)?)?;
+        assert!(resolve(&image).is_err());
+        publish_from(&directory, &install.canonicalize()?, &source)?;
+        assert_eq!(resolve(&image)?, install.canonicalize()?);
+        assert_eq!(fs::read(image)?, b"new standalone signed fixture");
         Ok(())
     }
 

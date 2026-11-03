@@ -149,7 +149,22 @@ def runtime_names(operating_system):
 
 def signing_names(operating_system, version="1.6.0"):
     names = runtime_names(operating_system)
-    return names + (("AIRK.app/Contents/MacOS/libonnxruntime.dylib",) if operating_system == "macos" and int8_version(version) else ())
+    if operating_system == "macos":
+        if int8_version(version):
+            names += ("AIRK.app/Contents/MacOS/libonnxruntime.dylib",)
+        if standalone_launcher_version(version):
+            names += (launcher_name(operating_system, version),)
+    return names
+
+
+def standalone_launcher_version(version):
+    return tuple(int(v) for v in version.split(".")) >= (1, 8, 8)
+
+
+def launcher_name(operating_system, version):
+    if operating_system == "macos" and standalone_launcher_version(version):
+        return "AIRK.app/Contents/MacOS/airk-launcher-image"
+    return runtime_names(operating_system)[0]
 
 
 def int8_version(version):
@@ -196,6 +211,13 @@ def arrange_macos_bundle(staging, version):
         target = staging / destination
         target.parent.mkdir(parents=True, exist_ok=True)
         (staging / source).rename(target)
+    if standalone_launcher_version(version):
+        # Outer bundle signing binds CFBundleExecutable to its resource seal.
+        # Keep a distinct nested standalone image, signed before sealing the app;
+        # only this separately inventoried file is copied into the stable launcher.
+        image = staging / launcher_name("macos", version)
+        shutil.copyfile(staging / executables[0], image)
+        image.chmod(0o755)
     for name, data in macos_bundle_files(version).items():
         target = staging / name
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -212,6 +234,10 @@ def sign_development_macos_bundle(staging):
                     str(staging / "AIRK.app/Contents/MacOS/libonnxruntime.dylib")], check=True)
     subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "0",
                     "--timestamp=none", str(staging / runtime_names("macos")[1])], check=True)
+    image = staging / "AIRK.app/Contents/MacOS/airk-launcher-image"
+    if image.exists():
+        subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "0",
+                        "--timestamp=none", str(image)], check=True)
     subprocess.run(["/usr/bin/codesign", "--force", "--sign", "-", "--options", "0",
                     "--timestamp=none", str(staging / "AIRK.app")], check=True)
     subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(staging / "AIRK.app")], check=True)

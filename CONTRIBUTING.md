@@ -1,5 +1,20 @@
 # Contributing to AIRK
 
+## Clone to checks
+
+From a clone with the prerequisites below installed, run `pwsh -File scripts/bootstrap.ps1 --download` on Windows or `sh scripts/bootstrap.sh --download` on Linux/macOS.
+Omit `--download` to verify supplied offline inputs and use only cached Cargo/npm dependencies; `--check-only` checks installed tools without provisioning or creating logs.
+`--no-tests` provisions/verifies and builds; `--fast` skips Clippy and does not satisfy full phase acceptance.
+The wrapper reuses pinned provisioning/build/test owners, changes no global tools/PATH and starts no installed AIRK service.
+Per-run logs, actual suite summaries and a JSON receipt are under ignored `artifacts/bootstrap/`; on failure start with its last step log and the actionable prerequisite message.
+Fresh-machine duration and test counts depend on platform/cache/source and are **not yet qualified**; historical phase counts are in the [ledger](docs/research/implementation-v190.md).
+Skipped tests and separately gated fixtures remain visible in the [ignore inventory](docs/testing/ignore-triage.md); a completed wrapper run is not installed-editor or cross-platform qualification.
+
+Bootstrap also requires cargo-audit 0.22.2, cargo-deny 0.20.2 and cargo-vet 0.10.3.
+Prepare these tools explicitly using the [dependency-check setup](docs/dependency-advisories.md#contributor-setup-and-offline-checks).
+The wrapper checks their exact versions and runs the canonical dependency gate before provisioning or building project dependencies.
+Offline results disclose that npm advisories and fresh/yanked Rust coverage were not checked; they cannot qualify a fresh release audit.
+
 Main normally promotes the merged PR's tested Linux, Windows and Apple Silicon candidates for an identical source tree and builds macOS Intel; see [CI and builds](docs/ci-and-builds.md#checks-selected-by-the-change). The narrowly pinned [1.4.4 release-tool repair](docs/release-workflow.md#pinned-144-release-tool-repair) is the only other exception to rebuilding native candidates on main. Complete diff, version, ancestry and runtime-identity checks must prove that only the permitted release tooling/tests/docs changed. Its PR/main gates still run quick checks and all four host contract suites; source or extension changes restore normal CI. It applied only to the pinned 1.4.4 source and cannot apply to 1.5.0 or later sources; removing its tooling is a separate change.
 
 Inference-helper builds embed the two pinned INT8 MiniLM exports; the default main CLI excludes native inference and MiniLM weights. Workbench embeds a separate 852,116-byte fixed intent scorer; it has no ONNX dependency. Before Cargo checks/builds, run `python scripts/provision-local-model.py --destination target/local-vector-model --download`, or supply verified offline assets there (or through `AIRK_BUNDLED_MODEL_DIR`). Also run `python scripts/provision-onnx-runtime.py --download` to prepare the pinned CPU libraries and notices. These are explicit build-time downloads; offline builders can transfer the verified inputs. Cargo never downloads model assets or runtime libraries. See [model provisioning](docs/onnx-models.md).

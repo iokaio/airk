@@ -14,6 +14,46 @@ spec.loader.exec_module(package)
 
 
 class ArchiveContracts(unittest.TestCase):
+    def test_current_mac_archive_requires_and_preserves_standalone_launcher_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            builder = package.runtime_builder()
+            version = "1.8.8"
+            for name in ("airk", "airk-embed"):
+                (root / name).write_bytes(name.encode())
+            builder.arrange_macos_bundle(root, version)
+            main, helper = builder.runtime_names("macos")
+            launcher = builder.launcher_name("macos", version)
+            for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md", "notices/bom.cdx.json", "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json"):
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(b"fictional fixture legal metadata")
+            (root / "notices/inventory.json").write_text("[]", encoding="utf-8")
+            source = {"sha256": "1" * 64, "files": 4}
+            pair = {"schema": 1, "version": version, "os": "macos", "arch": "aarch64",
+                    "airk_sha256": package.sha256(root / main), "embed_sha256": package.sha256(root / helper)}
+            (root / "airk-runtime.json").write_text(json.dumps(pair), encoding="utf-8")
+            (root / "airk-build.json").write_text(json.dumps({"schema": 1, "source": source, "runtime": pair}), encoding="utf-8")
+            install = {key: pair[key] for key in ("schema", "version", "os", "arch")}
+            def seal():
+                install["files"] = {name: value for name, value in package.inventory(root).items() if name != "airk-install.json"}
+                (root / "airk-install.json").write_text(json.dumps(install), encoding="utf-8")
+            seal()
+            # These original format fixtures isolate launcher inventory/modes;
+            # they do not qualify inference assets or actual signatures.
+            with patch.object(package, "runtime_builder", return_value=builder), patch.object(builder, "inference_assets", return_value={}):
+                files, executables = package.validate_runtime(root, version, "aarch64-apple-darwin", source)
+                self.assertEqual(executables, (main, helper, launcher))
+                archive = root / "candidate.zip"
+                package.write_archive(root, archive, files, executables)
+                with zipfile.ZipFile(archive) as zipped:
+                    self.assertEqual((zipped.getinfo(launcher).external_attr >> 16) & 0o777, 0o755)
+                archive.unlink()
+                (root / launcher).unlink()
+                seal()
+                with self.assertRaisesRegex(ValueError, "launcher image is missing"):
+                    package.validate_runtime(root, version, "aarch64-apple-darwin", source)
+
     def test_signed_packaging_reuses_ci_metadata_without_invoking_rust(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

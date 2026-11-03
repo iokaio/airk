@@ -129,6 +129,11 @@ def read_verified_pair(directory, source, target, commit, lock_digest, signtool=
             run(["/usr/bin/xcrun", "stapler", "validate", runtime / "AIRK.app"])
     if receipt.get("install_manifest_sha256") != digest(runtime / "airk-install.json"):
         raise ValueError("Signed pair installer digest differs")
+    if "apple" in target and package.runtime_builder().standalone_launcher_version(signed.get("version", "0")):
+        launcher = package.runtime_builder().launcher_name("macos", signed["version"])
+        observed = verify_copied_launcher(runtime, signed["version"], components[launcher], signtool)
+        if receipt.get("copied_launcher") != observed:
+            raise ValueError("Signed pair lacks matching standalone launcher evidence")
     return runtime, receipt
 
 
@@ -147,9 +152,35 @@ def verify_app_bundle(runtime, team):
          f'=anchor apple generic and certificate leaf[subject.OU] = "{team}" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', runtime / "AIRK.app"])
 
 
+def verify_copied_launcher(runtime, version, component, signtool="signtool"):
+    """Exercise the exact post-seal bytes at the installer's standalone location.
+
+    No signing, aliases, installed defaults or native storage are modified. The
+    admitted binary is first signature-checked, then only --version is executed.
+    This is a necessary signed-copy gate, not installed-editor qualification.
+    """
+    main = runtime / pair_package().runtime_builder().launcher_name("macos", version)
+    expected = component["binary_sha256"]
+    if main.is_symlink() or not main.is_file() or digest(main) != expected:
+        raise ValueError("Copied launcher source differs from the signed component")
+    with tempfile.TemporaryDirectory(prefix="airk-signed-launcher-") as temporary:
+        launcher = Path(temporary) / "airk-launcher"
+        shutil.copyfile(main, launcher)
+        launcher.chmod(0o700)
+        if digest(launcher) != expected:
+            raise ValueError("Copied launcher bytes differ from the signed component")
+        verify(launcher, component, signtool)
+        if run([launcher, "--version"], timeout=30).strip() != f"airk {version}":
+            raise ValueError("Copied launcher version differs from the signed pair")
+        if digest(launcher) != expected or digest(main) != expected:
+            raise ValueError("Signed launcher changed during standalone verification")
+    return {"schema": 1, "binary_sha256": expected, "version": version,
+            "strict_signature": True, "standalone_version_probe": True}
+
+
 def stapled_app_ticket(components):
     receipts = [component.get("notarization") for component in components.values()]
-    return (len(receipts) in (2, 3) and all(isinstance(value, dict) and value.get("status") == "Accepted"
+    return (len(receipts) in (2, 3, 4) and all(isinstance(value, dict) and value.get("status") == "Accepted"
             and value.get("stapled") is True and value.get("scope") == "AIRK.app" and isinstance(value.get("id"), str) and value["id"] for value in receipts)
             and len({value["id"] for value in receipts}) == 1)
 
@@ -218,6 +249,9 @@ def finish_pair(source, output, target, components, commit, lock_digest, signtoo
     receipt = {"schema": "airk-service-pair-signing/1", "target": target, "commit": commit,
                "cargo_lock_sha256": lock_digest, "source_install_sha256": digest(source / "airk-install.json"),
                "install_manifest_sha256": digest(runtime / "airk-install.json"), "components": components}
+    if "apple" in target and package.runtime_builder().standalone_launcher_version(original_install["version"]):
+        launcher = package.runtime_builder().launcher_name("macos", original_install["version"])
+        receipt["copied_launcher"] = verify_copied_launcher(runtime, original_install["version"], components[launcher], signtool)
     package.validate_runtime(runtime, original_install["version"], target, original_build["source"])
     if package.inventory(source) != files:
         raise ValueError("Tested source changed during signing")
@@ -253,7 +287,8 @@ def sign_pair(args):
         components[name] = receipt
     if "apple" in args.target:
         keychain = ["--keychain", str(args.keychain)] if args.keychain else []
-        # Seal the enclosing app after its two nested executables. Hashes remain
+        # Seal the app after signing its standalone launcher, helper and library.
+        # CFBundleExecutable alone becomes bundle-bound; hashes remain
         # outside the signed bundle, avoiding a signature/resource digest cycle.
         run(["/usr/bin/codesign", "--force", "--sign", args.identity, "--options", "runtime", "--timestamp", *keychain, runtime / "AIRK.app"])
         components[executables[0]]["binary_sha256"] = digest(runtime / executables[0])
@@ -310,7 +345,7 @@ def main():
     source = args.source_file or ROOT / "target" / args.target / "release" / ("airk.exe" if windows else "airk")
     if args.source_file:
         source = source.resolve(strict=True)
-        expected = ("airk.exe", "airk-embed.exe") if windows else ("airk", "airk-embed", "libonnxruntime.dylib")
+        expected = ("airk.exe", "airk-embed.exe") if windows else ("airk", "airk-embed", "airk-launcher-image", "libonnxruntime.dylib")
         owner = source.parent
         if not windows and source.parent.name == "MacOS":
             owner = source.parents[3]

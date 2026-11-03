@@ -1,22 +1,41 @@
 # SPDX-License-Identifier: Apache-2.0
-# Advisory checks for the locked Cargo and npm graphs. Separate from routine CI:
-# it runs only when lockfiles or the policy change, weekly, and on request.
+# Locked advisory, source/license and review checks. Separate from routine CI:
+# runs only when dependency inputs or policy change, weekly, and on request.
 name: Dependency audit
 on:
   pull_request:
     paths:
+      - Cargo.toml
       - Cargo.lock
+      - 'crates/**/Cargo.toml'
+      - rust-toolchain.toml
+      - packages/vscode/package.json
       - packages/vscode/package-lock.json
+      - deny.toml
+      - 'supply-chain/**'
       - .cargo/audit-exceptions.json
+      - .cargo/config.toml
       - scripts/dependency-audit.py
+      - scripts/tests/test_dependency_audit.py
+      - scripts/tests/test_supply_chain.py
       - .github/workflows/dependency-audit.yml
   push:
     branches: [main]
     paths:
+      - Cargo.toml
       - Cargo.lock
+      - 'crates/**/Cargo.toml'
+      - rust-toolchain.toml
+      - packages/vscode/package.json
       - packages/vscode/package-lock.json
+      - deny.toml
+      - 'supply-chain/**'
       - .cargo/audit-exceptions.json
+      - .cargo/config.toml
       - scripts/dependency-audit.py
+      - scripts/tests/test_dependency_audit.py
+      - scripts/tests/test_supply_chain.py
+      - .github/workflows/dependency-audit.yml
   schedule:
     - cron: '17 6 * * 1'
   workflow_dispatch:
@@ -40,13 +59,27 @@ jobs:
         with:
           node-version: '24.15.0'
           package-manager-cache: false
-      - name: Install pinned cargo-audit
+      - name: Install repository-pinned Rust toolchain
+        run: rustup show
+      - name: Install pinned dependency policy tools
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
-          tool: cargo-audit@0.22.2
+          tool: |
+            cargo-audit@0.22.2
+            cargo-deny@0.20.2
+            cargo-vet@0.10.3
+          checksum: true
       - name: Policy tests
-        run: python -m unittest scripts/tests/test_dependency_audit.py -v
-      # Reads lockfiles only; installs nothing and runs no project or dependency code.
-      # Exit 1 is an undisposed finding; exit 2 is a scanner/network failure, not a pass.
+        run: python -m unittest scripts/tests/test_dependency_audit.py scripts/tests/test_supply_chain.py -v
+      # Metadata/license reads are locked; no dependency build code or automatic vet approvals.
+      # Exit 1 is a policy finding; exit 2 is unavailable/changed input, never a pass.
       - name: Audit locked dependencies
-        run: python scripts/dependency-audit.py
+        run: python scripts/dependency-audit.py --require-fresh --output artifacts/dependency-policy/check.json
+      - name: Preserve complete dependency policy receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dependency-policy
+          path: artifacts/dependency-policy/check.json
+          if-no-files-found: warn
+          retention-days: 14

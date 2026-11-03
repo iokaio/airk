@@ -1,0 +1,24 @@
+{
+  "schema": "airk.cargo-vet-tool/1",
+  "version": "0.10.3",
+  "release": "https://github.com/mozilla/cargo-vet/releases/tag/v0.10.3",
+  "platforms": {
+    "aarch64-apple-darwin": {
+      "url": "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-aarch64-apple-darwin.tar.xz",
+      "sha256": "a83f7d6f48a069890743ba61f7637660c8577f263efd64fee47e673632f0e423"
+    },
+    "x86_64-apple-darwin": {
+      "url": "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-apple-darwin.tar.xz",
+      "sha256": "d06a5078c3f4c589211ce011dc9329a5849c8153a41b6624112e7318d93c0b6d"
+    },
+    "x86_64-pc-windows-msvc": {
+      "url": "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-pc-windows-msvc.zip",
+      "sha256": "855fda4724dada8ba235aec7c0da7d3b28d1697c946627733143fe37444dd510"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "url": "https://github.com/mozilla/cargo-vet/releases/download/v0.10.3/cargo-vet-x86_64-unknown-linux-gnu.tar.xz",
+      "sha256": "e83878b80913fbe43629c28768e14ab51f4e86a4ba8f9dd08cc25b8dbc503c19"
+    }
+  },
+  "local_windows_binary_sha256": "08d373877e7a7cae253e208c98ebbf12de66ed1f39670c80a9d217568bd11e82"
+}

@@ -763,6 +763,38 @@ pub fn main_name() -> &'static str {
         "airk"
     }
 }
+pub(crate) const MAC_LAUNCHER_IMAGE: &str = "AIRK.app/Contents/MacOS/airk-launcher-image";
+
+/// The separately signed Mac image survives copying outside the sealed bundle.
+/// Legacy payloads keep their original inventory and launcher source.
+fn standalone_launcher_name(os: &str, version: &str) -> Result<Option<&'static str>> {
+    if os != "macos" {
+        return Ok(None);
+    }
+    let numbers = version
+        .split('.')
+        .map(str::parse::<u64>)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    ensure!(numbers.len() == 3, "invalid Mac runtime version");
+    Ok((numbers.as_slice() >= [1, 8, 8].as_slice()).then_some(MAC_LAUNCHER_IMAGE))
+}
+
+/// Call only with the inventory from the same completed approved payload check.
+/// Recheck the selected image at its use boundary; its own file cannot grant approval.
+fn launcher_image(directory: &Path, inventory: &InstallManifest) -> Result<PathBuf> {
+    let name = standalone_launcher_name(&inventory.os, &inventory.version)?.unwrap_or(main_name());
+    let expected = inventory
+        .files
+        .get(name)
+        .context("approved launcher image missing")?;
+    let source = payload_path(directory, name)?;
+    safe_file(&source)?;
+    ensure!(
+        runtime_pair::digest_file(&source)? == *expected,
+        "approved launcher image digest mismatch"
+    );
+    Ok(source)
+}
 fn helper_name() -> &'static str {
     if cfg!(windows) {
         "airk-embed.exe"
@@ -944,6 +976,12 @@ fn manifest_metadata(root: &Path, approved: &str) -> Result<(Vec<u8>, InstallMan
             "offline payload is missing {name}"
         );
     }
+    if let Some(name) = standalone_launcher_name(&manifest.os, &manifest.version)? {
+        ensure!(
+            manifest.files.contains_key(name),
+            "offline payload is missing {name}"
+        );
+    }
     ensure!(
         manifest
             .files
@@ -1086,7 +1124,9 @@ pub fn stage(
     staging::stage(source, root, approved, basis)
 }
 
-fn prepare_launcher(root: &Path, main: &Path) -> Result<()> {
+fn prepare_launcher(root: &Path, main: &Path, inventory: &InstallManifest) -> Result<()> {
+    let image = launcher_image(runtime_pair::payload_root(main)?, inventory)?;
+    let main = image.as_path();
     let destination = launcher_path(root);
     let receipt = root.join("launcher.json");
     if destination.try_exists()? && receipt.try_exists()? {
@@ -1141,6 +1181,21 @@ fn prepare_launcher(root: &Path, main: &Path) -> Result<()> {
         "launcher.json",
         &LauncherReceipt { schema: 1, sha256 },
     )
+}
+
+fn prepare_client_launcher(
+    root: &Path,
+    main: &Path,
+    approval: &Approval,
+    inventory: &InstallManifest,
+) -> Result<()> {
+    if standalone_launcher_name(&inventory.os, &inventory.version)?.is_some() {
+        let image = launcher_image(runtime_pair::payload_root(main)?, inventory)?;
+        launcher_repair::repair_client_verified(root, &approval.manifest_sha256, &image)
+    } else {
+        launcher_repair::require_settled(root)?;
+        prepare_launcher(root, main, inventory)
+    }
 }
 
 pub fn verified_launcher(root: &Path) -> Result<PathBuf> {

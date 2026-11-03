@@ -44,7 +44,8 @@ cross-platform qualification.
 | P3 | Complete - `b72fbc8` | ADRs, schemas, authority/partition fixtures and upgrade fault boundaries |
 | P4 | Complete - `a425ba0` | Single-index saved-source verification; maintainer selected Report as the default, with explicit Off and Require |
 | P5 | Complete — this locally qualified checkpoint | Inert normalized catalogs and owned U0–U6 upgrade/recovery; production activation disabled until P6 |
-| P6–P7 | Not started | Indexing/grants activation, then complete combined-read parity |
+| P6 | In progress — P6a source and actual Mac validation | Operational remediation, then Indexing/grants activation; production activation remains disabled |
+| P7 | Not started | Complete combined-read parity after P6 |
 | P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
 | P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
 | P13a/P13b | Conditional | Ranking/diversity only if frozen relevance/resource gates pass |
@@ -1671,3 +1672,322 @@ working/cached `git diff --check`, AGENTS/CLAUDE byte agreement and an independe
 recalculation of the qualified pair's **784-file** native source identity.
 README, documentation index, working/planned release records and Marketplace
 description distinguish accepted P5 foundations from disabled P6+ capabilities.
+
+## P6 — operational foundation and management
+
+**Entry:** P5 was DCO-signed and pushed as `1f66ad1`. The maintainer committed
+the selected Shark Tank integration as `7567bdc`, then authorized continuing
+P6 onward with commits and pushes per accepted phase, **no PR until all phases
+are complete**. The working version remains 1.8.8; normal catalog activation
+stays disabled until the complete P6 management/grant gate. The earlier P5 stop
+instruction is superseded by this continuation.
+
+### P6a — launcher and immutable release producer
+
+The maintainer explicitly authorized Mac ARM builds/tests on the previously used
+Mac **neo**. Its verified SSH connection and existing prerequisite paths are
+retained privately, outside the repository. Neo is Apple A18 Pro, six logical
+processors, 8 GiB RAM, macOS 26.5.1 (25F80). A fresh task directory and independent
+APFS copy-on-write build-cache clone preserve earlier builds, the installed
+runtime, source data and global configuration. No publication or notarization
+upload has been performed.
+
+The initial proposed embedded-plist fix failed actual Mac tests. A first run
+using system Python 3.9.6 failed six imports because `tomllib` requires the
+documented newer interpreter. Reusing the previously provisioned Python 3.13.18
+and pinned Node 24.15.0 resolved that prerequisite. The six-case Mac runtime-build
+campaign then passed four cases and failed two: the copied app-sealed executable
+failed strict verification with **invalid resource directory**, and Developer ID
+signing returned **errSecInternalComponent**. Embedding the plist did not remove
+the app resource seal; Windows mocks/skips could not establish this property.
+
+The implementation therefore switched to an explicitly inventoried, separately
+signed duplicate launcher image before sealing the enclosing app. A corrected
+actual ad-hoc fixture passed: it rejects a copy of app-sealed main while verifying
+and executing the independently signed copied image. This is a fictional native
+fixture, not qualification of a real Rust payload or installed editor. Installer
+and copied service-role paths are being audited together before acceptance.
+The first source snapshot (785 native inputs,
+`2e2c5f2091c2332e024166c0fae497804b197dd0c5e015574962f356265c146b`)
+belongs to the rejected prototype and cannot qualify the corrected design.
+
+Neo has the existing Developer ID identity. Noninteractive inspection of the
+separate AIRK signing keychain reported **User interaction is not allowed**;
+the maintainer was asked to unlock it locally. No password was requested in chat,
+key exported, ACL changed or credential store reset. Developer ID, notarization,
+real installed-editor and final Rust-pair evidence remain pending. Failed fixture
+logs are retained alongside subsequent attempts; no signature assertion was
+weakened to accept the prototype.
+
+The corrected layout adds `AIRK.app/Contents/MacOS/airk-launcher-image` for
+macOS 1.8.8 onward: a copy of the existing compiled main, independently signed
+before app sealing. The installer stages/repairs its admitted digest, while
+services/workers retain the sealed main and its existing pair/health identity.
+The copied process-role aliases were audited too and are not created for this
+layout. Native archive, VSIX and CI transfer checks require the image and its
+executable mode. Earlier payload layouts remain supported. A real ad-hoc fixture
+on neo now proves the separate image survives sealing, copying, strict signature
+verification and execution, while a copy of sealed main is correctly refused.
+
+Primary review found two sibling paths needing correction: old known universal
+launchers must refresh on Mac, and publishers/retirements from different install
+roots need one shared lock across image/pointer transitions. The final correction
+retains an owner-private zero-byte coordination inode, fails busy/unknown owners
+before mutation and qualifies exact-source interruption recovery. Mac Prepare
+Client resumes only the selected approved image through the canonical copier,
+without changing service/manager/explicit-Stop policy. Targeted Windows checks
+passed **142/142**, with CLI Clippy/formatting/whitespace passing; final workspace
+and actual final Mac source runs remain separate gates.
+
+The intermediate Windows workspace passed **1,939 tests, 37 skipped** in
+1,110.110 seconds, with workspace Clippy and all eight doctest targets passing.
+This precedes the final shared-lock correction and is not final source evidence.
+The first corrected neo Rust pair built successfully and passed Mac CLI Clippy
+plus **311 CLI tests, six ignored**. Its Python run had **336 cases, two errors,
+ten skips**; both errors came from global subprocess mocks intercepting macOS
+`platform.platform()` byte decoding, including an existing retrieval-quality
+fixture. Both fixtures now isolate their platform observation and explicitly
+assert the recorded platform. Their **17** focused tests pass on Windows; the
+same corrected suite is rerunning on neo. The earlier R2 pipeline stopped before
+native-client/installer smoke rather than reporting those unrun stages as passing.
+
+The full Windows Python run passed **328 cases, eight skipped** (336 total);
+the two subsequent fixture-only corrections passed the focused 17-case run.
+The final native source is **784 inputs**,
+`7880013e0fd55b6cc9bb5505c16e052f123f72ee64caf8893081bff6c46db6cd`.
+The independently verified final full snapshot contains 1,558 source files;
+archive SHA-256 is `89d66c38a0507ac4548c410562f3e795dcc025bb7120e88bac9065b75c798a38`.
+The private remote runner initially had Windows CRLF conversion; normalizing that
+runner to LF changed no product bytes or checks. The corrected Mac and Windows
+campaigns retain their own logs; no native source edits are planned during them.
+
+Release-producer source tests passed **22 candidate tests** and **55 release
+tests**, plus actionlint. Marketplace now selects `signed_run_id` and consumes
+the canonical signed GitHub assembly without rebuilding/re-signing/repackaging.
+Final Marketplace publication requires matching published GitHub assets first.
+Primary review caught a publication-only retry problem; both consumers now share
+the successful retained assembly selector, pinning its actual attempt/artifact
+ID/digest. Publication/site-only retries preserve original bytes; a newer assembly
+invalidates an older preflight. Missing/expired/damaged provenance refuses rather
+than falling back. These are local contract tests, not an executed hosted release.
+
+Subsequent 3 November observations supersede the pending-run descriptions above:
+
+- The Windows final-source workspace campaign ran **1,942 tests: 1,941 passed,
+  one failed, 37 skipped**, in 1,059.286 seconds. The durable-key CLI/MCP parity
+  comparison differed in an optional post-read readiness observation and its
+  derived verification-receipt headroom. The complete original responses and
+  existing paired-comparison contract are being reviewed before correction;
+  this run is not a passing workspace gate. Workspace formatting and Clippy passed.
+- Windows Python passed **335 cases, eight skipped** (343 total). An additional
+  bootstrap reporting correction now retains nextest failed/flaky/skipped counts
+  independently; its ten focused tests pass. This does not convert the failed
+  workspace run into success.
+- Neo's R4 campaign passed Python **326 cases, ten skipped** (336 total) and the
+  actual native-client smoke, including source-byte preservation. Its installer
+  smoke correctly stopped at an obsolete copied-role assertion. The smoke now
+  checks the versioned Mac layout, exact admitted images, strict signatures on
+  stable/universal/repaired copies and unchanged distribution bytes; ten focused
+  tests pass. The corrected actual lifecycle run remains pending.
+- R4's Mac CLI test count did not include the new publication-lock tests:
+  transferred Windows source timestamps could precede the reused Cargo cache.
+  Its CLI count/Clippy result therefore cannot qualify the final correction.
+  R5 verifies the full source manifest, refreshes CLI compilation-input timestamps
+  without changing bytes, and explicitly requires the new Mac/lock tests to run.
+  Its starting native identity remains the 784-input hash above. The later
+  bootstrap parser/test transfer is a separate Python-only delta.
+- Actual Developer ID signing of the R4 Rust pair succeeded in neo's existing
+  GUI security session using the matching identity in its unlocked login
+  keychain. All four components passed team, hardened-runtime and secure-timestamp
+  checks. Independent receipt re-verification passed. A byte-identical standalone
+  launcher copy passed strict signature verification and executed as **1.8.8**;
+  its SHA-256 is
+  `3e517a8a6a4520d9e5258d7fe91edecfb52f6d80bc5d2e9c5f76bedefce4f037`.
+  The signed receipt SHA-256 is
+  `a2e5bf89e3b377ba94c969d5579a9abb7291b6464032903e4290dafe130d71cd`.
+  The exact temporary GUI job was removed and its absence verified. No password
+  was read by tooling, credential changed, certificate imported, or user service
+  altered. Notarization was not submitted; installed-editor/agent qualification,
+  the final fresh-source campaign and performance comparisons remain pending.
+
+The R4 standalone image is **171,367,216 bytes** before distribution compression.
+It deliberately reuses the compiled CLI instead of adding a second launcher
+implementation or crate. This increases the distribution inventory by one image;
+the new installed Mac payload also removes the three former full-size role
+copies. Download/compressed-archive cost must be recorded separately from installed
+disk use. No retrieval-time extraction, model work or source hashing is added by
+this layout; the ordinary performance gates still apply. The release assembler
+now also requires the exact post-seal copied-launcher receipt, with negative
+digest/version/schema/boolean tests, through the same validator used by Marketplace
+staging. Its 22 candidate and 55 release tests pass after this correction.
+
+R5 on neo completed successfully: fresh Mac CLI Clippy, **314 CLI tests passed,
+six ignored**, Python **334 passed, ten skipped** (344 total), actual native
+clients in 87.38 seconds and the complete corrected installer lifecycle. The
+runner explicitly confirmed the new publication-lock and Mac launcher tests ran.
+The separate actual Developer ID signed R4 pair then passed the same isolated
+installed lifecycle in **140.92 seconds**: strict stable/universal/repaired
+launcher checks, helper/self-test, independent client lifetime, foreground
+dispatch, upgrade/rollback, retirement and resumable uninstall. Critical scripts,
+signed images and receipt hashes remained unchanged, and no matching fixture
+processes or target directories remained afterward. This signed pair retains its
+original `788001…` native identity; it is not relabeled as a later build.
+
+The parity correction changes three CLI test files, not executable production
+code. Shared paired normalization validates each original readiness projection
+and derived receipt headroom before excluding only the documented dated
+observation difference; negative cases preserve scope, evidence and requested
+work-budget comparisons. A subsequent prepared-plan test exposed a separate
+fixture race: a writer between plan steps correctly returns a partial result with
+`publication_busy`. This fixture now publicly pauses settled source updates
+before any plan executes. Production partial-result and single-execution contracts
+are unchanged. All **21** affected actual CLI/MCP and retry tests passed in
+42.497 seconds, with targeted Clippy, formatting and whitespace passing.
+
+The final native input identity is **784 files**,
+`59bb1d92290f07a20949d9ea5e322f578118516bc2079c32a4b083eab24e15af`;
+the hash changes because tests are included in the declared input inventory.
+Windows formatting and workspace Clippy passed again; the final workspace run
+and current-identity release pair are pending. The latest full Windows Python
+suite passed **336 cases, eight skipped** (344 total), followed by the focused
+release-receipt checks above. Versions and repository checks passed at **1.8.8**,
+and AGENTS/CLAUDE remain byte-identical. A separate final-identity Mac pair and the
+changed actual integration tests are running without repeating the completed R5
+library/Python campaign. Notarization, installed-editor acceptance and final
+performance comparisons remain pending; no publication or user installation has
+been performed.
+
+That final-identity Mac R6 pair built successfully. Its actual CLI/MCP integration
+targets passed **12 + 9 tests**, in 78.80 and 4.62 seconds, and source identity
+was checked before and after. All four R6 unsigned component hashes exactly match
+the unsigned R4 inputs to the successful Developer ID signing and installed
+lifecycle campaign. This resolves the earlier release-binary cache uncertainty
+without a redundant re-sign/install run; the original signed receipts retain
+their R4 identity. The final standalone input digest is
+`1a2d6530c30c83e8c199bfe20c5b45c2d595370d0ddc045f5d0794197ac4247b`;
+signing changes it to the separately recorded signed-image digest above.
+
+#### Final P6a source and policy qualification — 3 November 2026
+
+A final ownership review found that retiring an unrelated custom installation
+must not create or validate the user's universal publication lock. Read-only
+early exits now preserve an absent or differently owned entry point; actual
+owned retirement still acquires the shared lease and repeats its identity checks.
+The new native input identity is **784 files**,
+`e261824ba5cf5e93286de5cee5a1b36a68cbc735990b1985bde50bae01ca6ad7`.
+It supersedes the R6 source for final qualification without relabeling prior
+signed artifacts.
+
+The Windows R7 campaign passed formatting, workspace Clippy, **1,945 native
+tests with 37 skipped** in 1,116.686 seconds, and all eight doctest targets
+(zero executable examples). The final Python suite passed **360 cases with nine
+skipped** (369 total) in 19.633 seconds. Its first sandbox run had one Git-tree
+observation error because Git rejected the checkout's ownership; rerunning with
+a process-only `safe.directory` override passed without test/source changes.
+Repository checks passed **1,567 public files**, version agreement at **1.8.8**,
+43 design fixtures, actionlint, whitespace and AGENTS/CLAUDE byte agreement.
+The fresh Windows release pair retained that same native source identity:
+main `397b59a1c812a85027f6c22c26c69b4922bd4e09965b341f577754acc9d4cb84`,
+helper `d0e6076126f9936ed77f10de4c3022adc21194de65b5541e1e51563443afa8fe`.
+Release-mode license notices passed for **366 third-party packages** after
+adding the existing Cargo tool directory to this shell's PATH; the first attempt
+reported missing Cargo and changed no project inputs.
+
+Neo R7 passed a fresh release build, CLI Clippy, **315 CLI tests with six ignored**,
+the actual CLI/MCP integration targets and the complete isolated installer
+lifecycle. The runner explicitly required the new ownership/publication-lock
+tests and checked exact source identity before and after. The changed production
+bytes were then freshly Developer ID signed in the previously qualified GUI
+login-keychain session. Independent receipt re-verification and the copied
+standalone strict-signature/version probe passed. The receipt SHA-256 is
+`2de96f5e21f76e8bf4df7d8aeedae9b200a870de9ce739764d6ac11ff59a7a6b`;
+the signed standalone launcher SHA-256 is
+`6e781de8fad7cad3115ccbb57e98b20a3f334f791328c633bc7cc3ccc29616c7`.
+The temporary GUI job was removed and its absence verified. Notarization and
+installed-editor qualification remain outstanding; no user installation changed.
+The exact signed R7 pair then passed the complete isolated installer lifecycle in
+**139.54 seconds**: strict copied-image checks, client lifetime/EOF, repair,
+foreground dispatch, upgrade/rollback, retirement and resumable uninstall.
+Its recorded fixture scripts, signed images and signing receipt remained unchanged.
+
+The canonical dependency gate now checks source identity before Cargo metadata
+may inspect new sources, then retains full cargo-audit/npm, cargo-deny and
+cargo-vet outcomes plus before/after input hashes. Source-policy tests also reject
+same-name/version local replacements, new glob members, target/patch/replace
+path dependencies and linked aliases. The dedicated workflow explicitly prepares
+the repository-pinned Rust toolchain before the checker, which deliberately
+never auto-installs it. Bootstrap checks the same exact tool pins and runs this
+gate before dependency provisioning/building; setup instructions name private
+tool locations and distinguish fresh from cached/offline evidence.
+
+The final fresh Windows policy receipt passed every requested check, with RustSec
+revision `6c5fedf8ff03c485ed674d8f941e0180f3f72d70` and three findings covered by
+the existing dated dispositions (`paste`, `ttf-parser`, `minimatch`). No exception
+was added to hide a new finding. Cargo-vet covers **366 third-party versions**:
+**46 fully**, **one partially**, and **319 with baseline exemptions**; these
+exemptions are explicitly unreviewed, not independent audits. The separate
+offline receipt passed only its requested cached Rust checks and disclosed
+omitted npm, fresh advisory and yanked-package coverage. The source graph and
+review store stayed unchanged. Raw receipts remain under ignored
+`artifacts/dependency-policy/`; no private state is part of the committed policy.
+The final offline attempt inside the sandbox could not identify the existing
+advisory checkout and correctly returned unavailable. Repeating with access to
+that existing cache passed the explicitly limited checks; the failed receipt
+was retained separately and no permission or cache configuration was changed.
+
+The final Windows pair passed one complete `ci-local.ps1 -SkipBuild -RuntimeDir
+artifacts/v190/p6a-qualified-runtime -Repeat 1` campaign: managed MCP **58.50 s**,
+native clients **26.60 s**, installer lifecycle **102.30 s**, all three passing
+under four logical processors with no load workers. This is one deliberate
+local campaign, not the default five repetitions or an installed-editor result.
+
+The separate serial measurement shell retained **64 logical processors and
+unrestricted affinity**. No build, heavy test or source edit ran during the
+measurements. Each candidate/control mode completed **90 trials / 810 calls**,
+zero errors/retries, complete consistent coverage/publications and clean cleanup.
+Each Report campaign returned **720 verified-source receipts**; Off returned none.
+All **60** task and connection-inclusive median/p95 comparisons passed against
+the frozen baseline and archived/contemporary P5, with unchanged allowances:
+median `reference + max(10%, 25 ms)`, p95 `reference + max(15%, 50 ms)`.
+
+| MCP task cohort | Candidate Off median / p95, ms | Candidate default Report median / p95, ms |
+| --- | --- | --- |
+| Fresh frontend, status first | 908.13 / 947.80 | 1447.49 / 1521.69 |
+| Fresh frontend, unprimed | 900.74 / 970.70 | 1460.23 / 1505.14 |
+| Reused connection, status first | 876.88 / 944.30 | 1469.01 / 1527.36 |
+
+The first control launch was refused before measurement because the archived P5
+runtime belongs to the earlier sandbox account. That existing owner copied its
+**675 exact inventory files** into fresh staging; both inventories and source
+bytes were verified unchanged without changing any ACL. The remaining campaigns
+used that byte-identical control. The passing candidate Off campaign was not
+repeated, and the failed access log remains retained separately. Control source
+identity is `594438057cae526009b40e960ab443856bcdc6006c41ca9560379ff2175a6510`;
+main is `2697af91b1cfe70936a2802e5711944001cdbb3984fa148c6d931318b193152f`.
+Commands used `benchmark-mcp-investigation.py owned --samples 30 --concurrency 1`
+with candidate `p6a-qualified-runtime`, control `p6a-p5-control-copy`, and explicit
+`--verification off` only for Off. Raw reports and the unchanged evaluator's
+`p6a-gates.json` remain in ignored `artifacts/v190/`. These are small fictional
+warm-cache regressions, not general retrieval relevance or resource qualification.
+
+The actual signed R7 launcher is **171,367,360 bytes**. With the native archive's
+compression settings its added member is **23,595,371 compressed bytes**
+(23,595,555 bytes for a one-member ZIP). This measures the added member, not a
+complete notarized download. Removing three former installed role copies avoids
+**514,102,176 bytes** for this pair, separately from the new distribution member
+and stable/universal copies. Signed source bytes stayed unchanged during measurement.
+
+The acting primary agent reviewed the complete combined implementation and
+evidence, including the separately authored source-policy guard. A separate
+read-only reviewer found no additional blocking issue across native lifecycle,
+producer, policy/bootstrap, parity fixtures and evidence. That reviewer authored
+the guard correction; the primary's separate review covers that component.
+The final documentation audit corrected old Mac role-copy descriptions and
+keeps README, documentation index, working/planned release records and Marketplace
+description aligned at **1.8.8**.
+
+P6a's local source gates are complete. Notarization, real installed-editor/agent
+acceptance, hosted release execution and unexercised platform/security cases
+remain explicitly unqualified release gates. No publication, PR or user-runtime
+installation occurred. The plan permits independent P6b onward work with these
+limits retained; normal catalog/grant activation remains disabled until P6f.

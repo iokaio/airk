@@ -209,7 +209,7 @@ def verify_vsix(archive, expected, executable, platform=None, version=None, pre_
         if payload != normalized or set(names) != {"extension/" + name for name in normalized} | generated:
             raise ValueError("VSIX payload differs from the allowlisted stage")
         for name in expected:
-            if name in ("native/airk", "native/runtime/airk", "native/runtime/airk-embed", "native/runtime/AIRK.app/Contents/MacOS/airk", "native/runtime/AIRK.app/Contents/MacOS/airk-embed") and not (zipped.getinfo("extension/" + name).external_attr >> 16) & stat.S_IXUSR:
+            if name in ("native/airk", "native/runtime/airk", "native/runtime/airk-embed", "native/runtime/AIRK.app/Contents/MacOS/airk", "native/runtime/AIRK.app/Contents/MacOS/airk-embed", "native/runtime/AIRK.app/Contents/MacOS/airk-launcher-image") and not (zipped.getinfo("extension/" + name).external_attr >> 16) & stat.S_IXUSR:
                 raise ValueError("VSIX lost native executable permission: " + name)
         if "extension/readme.md" in names:
             verify_listing_images(zipped.read("extension/readme.md").decode("utf-8"))
@@ -273,6 +273,7 @@ def main():
     specification.loader.exec_module(builder)
     operating_system = "windows" if "windows" in args.target else "macos" if "apple" in args.target else "linux"
     executable, helper = builder.runtime_names(operating_system)
+    launcher = builder.launcher_name(operating_system, manifest["version"])
     inference_assets = builder.inference_assets(operating_system, "aarch64" if args.target.startswith("aarch64-") else "x86_64")
     builder.load_script("int8-policy").verify_embedded(manifest.get("embedded_models", {}))
     mac_resources = set(builder.macos_bundle_files(manifest["version"])) | {"AIRK.app/Contents/_CodeSignature/CodeResources", "AIRK.app/Contents/CodeResources"} if operating_system == "macos" else set()
@@ -281,7 +282,7 @@ def main():
             raise SystemExit("Native archive inventory differs")
         for name, expected in manifest["payload"].items():
             safe_name(name)
-            if name not in (executable, helper, "airk-build.json", "airk-runtime.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and name not in mac_resources and name not in inference_assets and not name.startswith("notices/"):
+            if name not in (executable, helper, launcher, "airk-build.json", "airk-runtime.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md") and name not in mac_resources and name not in inference_assets and not name.startswith("notices/"):
                 raise SystemExit("Unexpected native payload path: " + name)
             data = zipped.read(name)
             if digest(data) != expected:
@@ -304,7 +305,7 @@ def main():
     inventory = {name: value for name, value in manifest["payload"].items() if name != "airk-install.json"}
     if install.get("files") != inventory or install_digest != manifest.get("install_manifest_sha256"):
         raise SystemExit("Native pair installer inventory differs")
-    for name in (executable, helper):
+    for name in dict.fromkeys((executable, helper, launcher)):
         if name not in inventory:
             raise SystemExit("Native pair executable missing: " + name)
         (runtime / name).chmod(0o755)

@@ -2,6 +2,91 @@
 use super::*;
 
 #[test]
+fn launcher_source_selection_binds_the_declared_mac_image_and_preserves_legacy_layouts()
+-> Result<()> {
+    assert_eq!(standalone_launcher_name("macos", "1.8.7")?, None);
+    assert_eq!(
+        standalone_launcher_name("macos", "1.8.8")?,
+        Some(MAC_LAUNCHER_IMAGE)
+    );
+    assert_eq!(
+        standalone_launcher_name("macos", "1.9.0")?,
+        Some(MAC_LAUNCHER_IMAGE)
+    );
+    assert_eq!(standalone_launcher_name("linux", "1.9.0")?, None);
+    assert_eq!(standalone_launcher_name("windows", "1.9.0")?, None);
+    for version in ["1.8", "1.8.8.1", "1.8.8-dev"] {
+        assert!(standalone_launcher_name("macos", version).is_err());
+    }
+    let owner = tempfile::tempdir()?;
+    let directory = owner.path().canonicalize()?;
+    fs::create_dir_all(directory.join("AIRK.app/Contents/MacOS"))?;
+    fs::write(directory.join(main_name()), b"bundled main fixture")?;
+    fs::write(
+        directory.join(MAC_LAUNCHER_IMAGE),
+        b"independently signed image fixture",
+    )?;
+    let mut inventory = InstallManifest {
+        schema: 1,
+        version: "1.8.8".into(),
+        os: "macos".into(),
+        arch: std::env::consts::ARCH.into(),
+        files: BTreeMap::from([
+            (
+                main_name().into(),
+                runtime_pair::digest_file(&directory.join(main_name()))?,
+            ),
+            (
+                MAC_LAUNCHER_IMAGE.into(),
+                runtime_pair::digest_file(&directory.join(MAC_LAUNCHER_IMAGE))?,
+            ),
+        ]),
+    };
+    assert_eq!(
+        launcher_image(&directory, &inventory)?,
+        directory.join(MAC_LAUNCHER_IMAGE)
+    );
+    let expected = inventory.files.remove(MAC_LAUNCHER_IMAGE).unwrap();
+    assert!(launcher_image(&directory, &inventory).is_err());
+    inventory.files.insert(MAC_LAUNCHER_IMAGE.into(), expected);
+    fs::write(
+        directory.join(MAC_LAUNCHER_IMAGE),
+        b"changed image must not inherit approval",
+    )?;
+    assert!(launcher_image(&directory, &inventory).is_err());
+    inventory.version = "1.8.7".into();
+    assert_eq!(
+        launcher_image(&directory, &inventory)?,
+        directory.join(main_name())
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn mac_initial_and_repaired_launchers_use_the_independently_admitted_image() -> Result<()> {
+    let (_owner, root, identity) = unselected_fixture()?;
+    let (main, _, inventory) = verify_runtime_inventory(&root, &identity)?;
+    let image = launcher_image(runtime_pair::payload_root(&main)?, &inventory)?;
+    assert_ne!(
+        runtime_pair::digest_file(&image)?,
+        runtime_pair::digest_file(&main)?
+    );
+    prepare_launcher(&root, &main, &inventory)?;
+    assert_eq!(
+        runtime_pair::digest_file(&verified_launcher(&root)?)?,
+        runtime_pair::digest_file(&image)?
+    );
+    fs::remove_file(launcher_path(&root))?;
+    launcher_repair::repair(&root, &identity)?;
+    assert_eq!(
+        runtime_pair::digest_file(&verified_launcher(&root)?)?,
+        runtime_pair::digest_file(&image)?
+    );
+    Ok(())
+}
+
+#[test]
 fn catalog_activation_checks_formats_instead_of_trusting_equal_application_versions() -> Result<()>
 {
     use airk_core::{
@@ -89,6 +174,12 @@ pub(super) fn fixture(root: &Path) -> Result<String> {
     }
     fs::write(root.join(main_name()), b"Original inert main fixture.")?;
     fs::write(root.join(helper_name()), b"Original inert helper fixture.")?;
+    if cfg!(target_os = "macos") {
+        fs::write(
+            root.join(MAC_LAUNCHER_IMAGE),
+            b"Original inert standalone launcher fixture.",
+        )?;
+    }
     fs::write(root.join("LICENSE"), b"Original fictional license fixture.")?;
     fs::write(root.join("notices/inventory.json"), b"[]")?;
     let pair = runtime_pair::RuntimePair {
@@ -100,16 +191,20 @@ pub(super) fn fixture(root: &Path) -> Result<String> {
         embed_sha256: runtime_pair::digest_file(&root.join(helper_name()))?,
     };
     fs::write(root.join("airk-runtime.json"), serde_json::to_vec(&pair)?)?;
-    let files = [
+    let mut names = vec![
         main_name(),
         helper_name(),
         "LICENSE",
         "notices/inventory.json",
         "airk-runtime.json",
-    ]
-    .into_iter()
-    .map(|name| Ok((name.into(), runtime_pair::digest_file(&root.join(name))?)))
-    .collect::<Result<BTreeMap<_, _>>>()?;
+    ];
+    if cfg!(target_os = "macos") {
+        names.push(MAC_LAUNCHER_IMAGE);
+    }
+    let files = names
+        .into_iter()
+        .map(|name| Ok((name.into(), runtime_pair::digest_file(&root.join(name))?)))
+        .collect::<Result<BTreeMap<_, _>>>()?;
     let manifest = InstallManifest {
         schema: 1,
         version: pair.version,
@@ -570,8 +665,15 @@ fn locked_selection_keeps_full_topology_and_distinct_role_verification() -> Resu
     assert_eq!(verified.main_sha256, runtime_pair::digest_file(&main)?);
     let role =
         crate::process_roles::executable(&verified.main, crate::process_roles::Role::Service)?;
-    assert_ne!(role, verified.main);
-    fs::write(&role, b"modified independent service alias")?;
+    if cfg!(target_os = "macos") {
+        assert_eq!(role, verified.main);
+        let alias =
+            runtime_pair::payload_root(&main)?.join(crate::process_roles::Role::Service.name());
+        fs::write(&alias, b"unexpected independent service alias")?;
+    } else {
+        assert_ne!(role, verified.main);
+        fs::write(&role, b"modified independent service alias")?;
+    }
     assert!(
         crate::process_roles::executable(&verified.main, crate::process_roles::Role::Service)
             .is_err()

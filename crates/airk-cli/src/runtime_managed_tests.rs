@@ -66,12 +66,14 @@ fn managed_client_launcher_is_an_owned_main_copy_and_does_not_copy_helper_or_cha
     let (_owner, root, policy) = fixture(ManagedLifecycle::External)?;
     let before = fs::read(root.join(POLICY))?;
     let (main, _) = policy.verify()?;
-    prepare_launcher(&root, &main)?;
+    let (_, _, inventory) = policy.verify_inventory_checked(&|| Ok(()))?;
+    prepare_launcher(&root, &main, &inventory)?;
     assert_eq!(
         runtime_pair::digest_file(&verified_launcher(&root)?)?,
-        policy.executable_sha256
+        inventory.files
+            [standalone_launcher_name(&inventory.os, &inventory.version)?.unwrap_or(main_name())]
     );
-    prepare_launcher(&root, &main)?;
+    prepare_launcher(&root, &main, &inventory)?;
     assert_eq!(fs::read(root.join(POLICY))?, before);
     assert!(!root.join("airk-embed.exe").exists());
     assert!(!root.join("airk-embed").exists());
@@ -80,7 +82,7 @@ fn managed_client_launcher_is_an_owned_main_copy_and_does_not_copy_helper_or_cha
     assert!(!layout::control(&root)?.exists());
     assert!(require_unmanaged(&root).is_err());
     fs::write(launcher_path(&root), b"Changed owned client copy")?;
-    assert!(prepare_launcher(&root, &main).is_err());
+    assert!(prepare_launcher(&root, &main, &inventory).is_err());
     assert_eq!(
         fs::read(launcher_path(&root))?,
         b"Changed owned client copy"

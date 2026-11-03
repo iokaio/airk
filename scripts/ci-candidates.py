@@ -304,6 +304,80 @@ def download_rehearsal(record, commit, destination):
         raise ValueError("Rehearsal changed during download")
 
 
+def assembled_bundle(commit, run_id, maximum_attempt):
+    """Select the retained successful assembly, not the latest workflow attempt.
+
+    Failed publication/site-only retries leave the exact earlier signed bundle
+    authoritative. A newer assembly supersedes that selection and invalidates
+    any preflight pinned to older bytes; never silently fall back past it.
+    """
+    pattern = re.compile(rf"airk-release-{re.escape(commit)}-{run_id}-([1-9][0-9]*)")
+    artifacts = [(artifact, int(match.group(1))) for artifact in run_artifacts(run_id)
+                 if (match := pattern.fullmatch(artifact.get("name", "")))
+                 and int(match.group(1)) <= maximum_attempt]
+    if not artifacts:
+        raise ValueError("Signed release lacks a retained exact-attempt bundle")
+    attempt = max(attempt for _, attempt in artifacts)
+    matches_artifact = [artifact for artifact, owner_attempt in artifacts if owner_attempt == attempt]
+    if len(matches_artifact) != 1:
+        raise ValueError("Signed release lacks one exact-attempt bundle")
+    artifact = matches_artifact[0]
+    origin = artifact.get("workflow_run", {})
+    if (artifact.get("expired") is not False
+            or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", ""))
+            or origin.get("id") != run_id or origin.get("head_sha") != commit
+            or origin.get("head_branch") != "main"):
+        raise ValueError("Signed release artifact is expired or has different provenance")
+    jobs = [job for page in api(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100", True)
+            for job in page["jobs"]]
+    matches = [job for job in jobs if job.get("name") == "assemble"]
+    if len(matches) != 1 or matches[0].get("conclusion") != "success":
+        raise ValueError("Signed release assembly did not succeed exactly once")
+    try:
+        started, created, completed = (datetime.fromisoformat(value.replace("Z", "+00:00"))
+                                      for value in (matches[0]["started_at"], artifact["created_at"], matches[0]["completed_at"]))
+        if any(value.tzinfo is None for value in (started, created, completed)) or not started <= created <= completed:
+            raise ValueError("Upload outside assembly interval")
+    except (KeyError, TypeError, AttributeError, ValueError) as error:
+        raise ValueError("Signed release artifact is not bound to the successful assembly attempt") from error
+    return artifact, attempt
+
+
+def attest_signed_release(run_id, commit):
+    """Pin the canonical signed assembly, never an unsigned Marketplace rebuild."""
+    run_id = positive(run_id)
+    run = api(f"actions/runs/{run_id}")
+    verify_run(run, commit, "github-release.yml", ("workflow_dispatch",))
+    workflow = api("actions/workflows/github-release.yml")
+    if run.get("id") != run_id or run.get("workflow_id") != workflow.get("id"):
+        raise ValueError("Signed release workflow identity differs")
+    artifact, attempt = assembled_bundle(commit, run_id, positive(run["run_attempt"]))
+    return dict(schema="airk-signed-release-producer/1", repository=REPOSITORY, workflow_id=workflow["id"],
+                commit=commit, run_id=str(run_id), attempt=str(attempt), artifact_name=artifact["name"],
+                artifact=dict(id=positive(artifact["id"]), digest=artifact["digest"]))
+
+
+def download_signed_release(record, commit, destination, version, channel, *, tree=None, published_only=False):
+    if (record.get("schema") != "airk-signed-release-producer/1" or record.get("commit") != commit
+            or record.get("repository") != REPOSITORY):
+        raise ValueError("Signed producer record belongs to another commit/schema")
+    if destination.exists():
+        raise ValueError("Signed release destination must be fresh")
+    if attest_signed_release(record["run_id"], commit) != record:
+        raise ValueError("Signed release attempt or artifact changed after preflight")
+    with tempfile.TemporaryDirectory(prefix="airk-signed-release-") as temporary:
+        bundle = Path(temporary) / "bundle"
+        download(record["artifact"], bundle)
+        if attest_signed_release(record["run_id"], commit) != record:
+            raise ValueError("Signed release changed during download")
+        spec = importlib.util.spec_from_file_location("signed_release", Path(__file__).with_name("github-release.py"))
+        release = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(release)
+        release.stage_marketplace_bundle(bundle, destination, commit, version, channel,
+                                         record["run_id"], record["attempt"], tree=tree,
+                                         published_only=published_only)
+
+
 def unpack_artifact(archive, destination):
     if destination.exists():
         raise ValueError("Artifact destination must be fresh")
@@ -374,21 +448,9 @@ def release_bundle(commit, run_id, attempt, destination):
     # The current attempt is running, so authenticate its origin separately.
     origin = {**run, "status": "completed"}
     verify_run(origin, commit, "github-release.yml", ("workflow_dispatch",), success=False)
-    artifacts = [a for page in api(f"actions/runs/{run_id}/artifacts?per_page=100", True) for a in page["artifacts"]]
-    prefix = f"airk-release-{commit}-{run_id}-"
-    matches = [a for a in artifacts if a["name"].startswith(prefix)
-               and a["name"][len(prefix):].isdigit() and 0 < int(a["name"][len(prefix):]) <= attempt]
-    if not matches:
-        raise ValueError("No retained release bundle; rerun assembly explicitly")
-    chosen_attempt = max(int(a["name"][len(prefix):]) for a in matches)
-    chosen = [a for a in matches if a["name"] == prefix + str(chosen_attempt)]
-    if len(chosen) != 1 or chosen[0].get("expired") is not False:
-        raise ValueError("Ambiguous or expired release bundle")
-    jobs = [j for page in api(f"actions/runs/{run_id}/attempts/{chosen_attempt}/jobs?per_page=100", True) for j in page["jobs"]]
-    assembly = [j for j in jobs if j["name"] == "assemble"]
-    if len(assembly) != 1 or assembly[0].get("conclusion") != "success":
-        raise ValueError("Bundle assembly did not succeed")
-    download(chosen[0], destination)
+    artifact, _ = assembled_bundle(commit, run_id, attempt)
+    download(artifact, destination)
+
 
 
 def verify_tag(tag, commit):
@@ -420,13 +482,16 @@ def verify_tag(tag, commit):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("resolve", "download", "bundle", "tag", "rehearsal", "rehearsal-download", "promote", "release-inputs"))
+    parser.add_argument("command", choices=("resolve", "download", "bundle", "tag", "rehearsal", "rehearsal-download", "promote", "release-inputs", "signed-release", "signed-release-download"))
     parser.add_argument("--record", type=Path, default=Path("artifacts/producer.json"))
     parser.add_argument("--target", choices=TARGETS)
     parser.add_argument("--kind", choices=("native", "vsix"), default="native")
     parser.add_argument("--pinned", action="store_true", help="Use a protected preflight record and verify downloaded digests locally")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--run-id")
+    parser.add_argument("--version")
+    parser.add_argument("--channel", choices=("stable", "preview"), default="stable")
+    parser.add_argument("--published-only", action="store_true", help="Require exact matching published GitHub assets before Marketplace publication")
     args = parser.parse_args()
     commit = os.environ["GITHUB_SHA"]
     if args.command == "promote":
@@ -440,6 +505,19 @@ def main():
         args.output.mkdir(parents=True, exist_ok=False)
         (args.output / "promotion.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         print(f"Promoted PR #{record['pull_request']} CI {record['producer']['run_id']} for main tree {tree}")
+    elif args.command == "signed-release":
+        record = attest_signed_release(args.run_id, commit)
+        args.record.parent.mkdir(parents=True, exist_ok=True)
+        args.record.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        print(f"Verified signed release {record['run_id']}, attempt {record['attempt']}, exact commit {commit}")
+    elif args.command == "signed-release-download":
+        if args.output is None or args.version is None:
+            parser.error("signed-release-download requires --output and --version")
+        if subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip() != commit:
+            raise ValueError("Signed release staging requires the exact main checkout")
+        tree = subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], text=True).strip()
+        download_signed_release(json.loads(args.record.read_text(encoding="utf-8")), commit,
+                                args.output, args.version, args.channel, tree=tree, published_only=args.published_only)
     elif args.command == "rehearsal":
         record = attest_rehearsal(args.run_id, commit)
         args.record.parent.mkdir(parents=True, exist_ok=True)

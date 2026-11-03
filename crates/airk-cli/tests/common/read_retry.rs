@@ -297,6 +297,88 @@ pub async fn backend(
     }
 }
 
+/// Independently observed readiness may be unavailable after an otherwise complete
+/// read. Validate that precise fixture state and each original reply's derived
+/// receipt allocation before comparing their unchanged evidence and work budgets.
+pub fn normalize_dated_readiness_pair(
+    a: &mut Value,
+    b: &mut Value,
+    expected_artifacts: u64,
+) -> Result<()> {
+    use airk_core::readiness::{
+        DefaultSearchPolicy, DiscoveryReadiness, DiscoveryState, SemanticReadiness, SemanticState,
+    };
+    use anyhow::ensure;
+    if (a["discovery_observation"] == "unavailable_after_read")
+        == (b["discovery_observation"] == "unavailable_after_read")
+    {
+        return Ok(());
+    }
+    // Validate both projections before mutating either of them.
+    for value in [&*a, &*b] {
+        if value["discovery_observation"] == "unavailable_after_read" {
+            ensure!(value.get("discovery_readiness").is_none());
+            ensure!(value.get("semantic_readiness").is_none());
+        } else {
+            ensure!(value.get("discovery_observation").is_none());
+            let discovery: DiscoveryReadiness =
+                serde_json::from_value(value["discovery_readiness"].clone())?;
+            let semantic: SemanticReadiness =
+                serde_json::from_value(value["semantic_readiness"].clone())?;
+            ensure!(serde_json::to_value(&discovery)? == value["discovery_readiness"]);
+            ensure!(serde_json::to_value(&semantic)? == value["semantic_readiness"]);
+            ensure!(
+                discovery.version == 1
+                    && discovery.state == DiscoveryState::Ready
+                    && discovery.epoch.is_some()
+                    && discovery.processed_artifacts == expected_artifacts
+                    && discovery.committed_artifacts == expected_artifacts
+                    && discovery.total_artifacts == Some(expected_artifacts)
+                    && discovery.failure.is_none()
+            );
+            ensure!(
+                semantic.version == 1
+                    && semantic.state == SemanticState::Disabled
+                    && semantic.default_search_policy == DefaultSearchPolicy::PartialHybrid
+                    && semantic.selected_artifacts == 0
+                    && semantic.completed_artifacts == 0
+                    && semantic.selected_units.is_none()
+                    && semantic.completed_units == 0
+                    && semantic.first_ready_unix_ms.is_none()
+                    && semantic.fully_ready_unix_ms.is_none()
+                    && semantic.selection_digest
+                        == Some(
+                            airk_core::vector_selection::VectorSelectionPolicy::default()
+                                .digest()?
+                        )
+                    && semantic.pipeline_digest.is_none()
+                    && semantic.failure.is_none()
+            );
+        }
+        if let Some(receipt) = value.get("source_verification") {
+            let _: airk_core::verification::VerificationReceipt =
+                serde_json::from_value(receipt.clone())?;
+            let mut projection = value.clone();
+            projection
+                .as_object_mut()
+                .unwrap()
+                .remove("source_verification");
+            let expected = airk_core::verification::receipt_budget_for_reply(&projection)?;
+            ensure!(receipt["limits"]["receipt_bytes_budget"] == expected);
+        }
+    }
+    for value in [a, b] {
+        if let Some(receipt) = value.get_mut("source_verification") {
+            receipt["limits"]["receipt_bytes_budget"] = 0.into();
+        }
+        let fields = value.as_object_mut().unwrap();
+        fields.remove("discovery_readiness");
+        fields.remove("semantic_readiness");
+        fields.remove("discovery_observation");
+    }
+    Ok(())
+}
+
 pub fn evidence_for_comparison(value: &mut Value) -> Result<()> {
     let Some(fields) = value.as_object_mut() else {
         anyhow::bail!("expected evidence object")

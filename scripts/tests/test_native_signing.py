@@ -14,6 +14,43 @@ spec.loader.exec_module(signing)
 
 
 class SigningContracts(unittest.TestCase):
+    def test_copied_launcher_is_verified_before_execution_and_keeps_exact_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary)
+            main = runtime / "AIRK.app/Contents/MacOS/airk-launcher-image"
+            main.parent.mkdir(parents=True)
+            main.write_bytes(b"fictional sealed executable")
+            component = {"binary_sha256": signing.digest(main)}
+            verified = []
+            def verify(binary, receipt, _signtool):
+                self.assertEqual(receipt, component)
+                self.assertEqual(binary.name, "airk-launcher")
+                self.assertNotIn("AIRK.app", binary.parts)
+                self.assertEqual(binary.read_bytes(), main.read_bytes())
+                verified.append(binary)
+            def run(command, **kwargs):
+                self.assertEqual(command, [verified[-1], "--version"])
+                self.assertEqual(kwargs["timeout"], 30)
+                return "airk 1.8.8\n"
+            with patch.object(signing, "verify", side_effect=verify), patch.object(signing, "run", side_effect=run):
+                observed = signing.verify_copied_launcher(runtime, "1.8.8", component)
+            self.assertEqual(observed, {"schema": 1, "binary_sha256": component["binary_sha256"],
+                "version": "1.8.8", "strict_signature": True, "standalone_version_probe": True})
+            self.assertFalse(verified[0].exists())
+            self.assertEqual(main.read_bytes(), b"fictional sealed executable")
+            with patch.object(signing, "verify", side_effect=RuntimeError("invalid Info.plist")), patch.object(signing, "run") as execute:
+                with self.assertRaisesRegex(RuntimeError, "invalid Info.plist"):
+                    signing.verify_copied_launcher(runtime, "1.8.8", component)
+                execute.assert_not_called()
+            with patch.object(signing, "verify"), patch.object(signing, "run", return_value="airk 1.8.7"):
+                with self.assertRaisesRegex(ValueError, "version differs"):
+                    signing.verify_copied_launcher(runtime, "1.8.8", component)
+            main.write_bytes(b"changed payload")
+            with patch.object(signing, "verify") as native, patch.object(signing, "run") as execute:
+                with self.assertRaisesRegex(ValueError, "source differs"):
+                    signing.verify_copied_launcher(runtime, "1.8.8", component)
+                native.assert_not_called(); execute.assert_not_called()
+
     def test_new_mac_ticket_requires_matching_bundle_receipts_and_native_validation(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -57,6 +94,34 @@ class SigningContracts(unittest.TestCase):
                 save()
                 with self.assertRaisesRegex(ValueError, "stapled notarization receipts"):
                     signing.read_verified_pair(output, source, target, "fixture", "b" * 64)
+                components[names[1]]["notarization"]["id"] = "matching-native-job"
+                original["version"] = signed["version"] = "1.8.8"
+                launcher = signing.pair_package().runtime_builder().launcher_name("macos", "1.8.8")
+                for parent, body in [(source, b"original standalone image"), (runtime, b"signed standalone image")]:
+                    (parent / launcher).write_bytes(body)
+                original["files"][launcher] = signing.digest(source / launcher)
+                signed["files"][launcher] = signing.digest(runtime / launcher)
+                components[launcher] = {**components[names[0]], "source_sha256": original["files"][launcher], "binary_sha256": signed["files"][launcher]}
+                for parent, value in [(source, original), (runtime, signed)]:
+                    (parent / "airk-install.json").write_text(json.dumps(value), encoding="utf-8")
+                receipt["source_install_sha256"] = signing.digest(source / "airk-install.json")
+                receipt["install_manifest_sha256"] = signing.digest(runtime / "airk-install.json")
+                save()
+                copied = {"schema": 1, "binary_sha256": components[launcher]["binary_sha256"],
+                    "version": "1.8.8", "strict_signature": True, "standalone_version_probe": True}
+                with patch.object(signing, "verify_copied_launcher", return_value=copied) as standalone:
+                    with self.assertRaisesRegex(ValueError, "standalone launcher evidence"):
+                        signing.read_verified_pair(output, source, target, "fixture", "b" * 64)
+                    receipt["copied_launcher"] = copied
+                    save()
+                    signing.read_verified_pair(output, source, target, "fixture", "b" * 64)
+                    self.assertEqual(standalone.call_count, 2)
+                    self.assertEqual(standalone.call_args.args[:2], (runtime, "1.8.8"))
+                    self.assertEqual(standalone.call_args.args[2], {**components[launcher], "verification": {}})
+                    receipt["copied_launcher"] = {**copied, "binary_sha256": "c" * 64}
+                    save()
+                    with self.assertRaisesRegex(ValueError, "standalone launcher evidence"):
+                        signing.read_verified_pair(output, source, target, "fixture", "b" * 64)
     def test_pair_receipt_binds_both_components_and_preserves_unrelated_payload(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

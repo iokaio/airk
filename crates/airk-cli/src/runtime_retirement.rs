@@ -24,15 +24,20 @@ mod previous_tests {
         let main = directory.join(main_name());
         crate::process_roles::install(&main)?;
         let paths = uninstall_process_paths(&root, std::slice::from_ref(&identity))?;
-        assert_eq!(paths.len(), 5);
-        for name in [
-            main_name(),
-            helper_name(),
-            crate::process_roles::Role::Service.name(),
-            crate::process_roles::Role::Index.name(),
-            crate::process_roles::Role::Source.name(),
-        ] {
+        assert_eq!(paths.len(), if cfg!(target_os = "macos") { 3 } else { 5 });
+        for name in [main_name(), helper_name()] {
             assert!(paths.contains(&directory.join(name)));
+        }
+        if cfg!(target_os = "macos") {
+            assert!(paths.contains(&directory.join(MAC_LAUNCHER_IMAGE)));
+        } else {
+            for role in [
+                crate::process_roles::Role::Service,
+                crate::process_roles::Role::Index,
+                crate::process_roles::Role::Source,
+            ] {
+                assert!(paths.contains(&directory.join(role.name())));
+            }
         }
         fs::write(
             directory.join(crate::process_roles::Role::Index.name()),
@@ -529,6 +534,7 @@ fn uninstall_process_paths(root: &Path, runtimes: &[String]) -> Result<Vec<PathB
         for name in [
             main_name(),
             helper_name(),
+            MAC_LAUNCHER_IMAGE,
             crate::process_roles::Role::Service.name(),
             crate::process_roles::Role::Index.name(),
             crate::process_roles::Role::Source.name(),

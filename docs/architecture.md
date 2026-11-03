@@ -29,6 +29,15 @@ repository-marker observations remain internal until their authorized routes and
 consumer parity are implemented. See the [ledger](research/implementation-v190.md)
 and [storage boundary](storage-formats.md#development-catalog-boundary).
 
+P6a's macOS installer uses an independently signed duplicate main image for
+standalone launchers; service/worker processes retain the sealed bundle main.
+The owning CLI adapters verify the complete inventory, serialize universal
+publication/retirement and preserve lifecycle policy during client-only repair.
+Build/sign/package adapters bind the additional image and its executable mode.
+Marketplace consumes the canonical signed GitHub assembly rather than producing
+another native build. These changes add no retrieval work, grant authority or
+catalog activation; actual platform/signing results remain in the ledger.
+
 **1.8.7 release candidate:** MCP `status` and `diagnostics` return `query_concurrency`, the configured evidence request limit observed at admission. It reuses the existing policy read, including for cached status; it is a capacity limit, not a count of free slots. This release includes the preceding unpublished MCP, Workbench and concurrent-request improvements. See the [1.8.7 release record](releases/release-1.8.7.md) for behavior and validation.
 
 The unreleased CI diagnostic adapter stays in `airk-cli`: an explicitly enabled worker-stderr collector drains bounded tails under the existing child owner and records observed exit after native containment drains. The MCP transport can emit a bounded underlying connection failure on stderr; public read results and retry authority remain unchanged. CI tooling owns source-bound build handoffs and numeric runner reports; no scheduler or dependency enters Core, Store or Kernel. See [the CI follow-up](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).

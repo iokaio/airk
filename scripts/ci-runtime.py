@@ -88,7 +88,9 @@ def restore(transfer, runtime, target):
     # Authenticate every entry before extraction or execution. The existing
     # packager enforces exact inventory, per-file hashes and executable modes.
     operating_system = "windows" if "windows" in target else "macos" if "apple" in target else "linux"
-    executables = package.runtime_builder().runtime_names(operating_system)
+    builder = package.runtime_builder()
+    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+    executables = tuple(dict.fromkeys((*builder.runtime_names(operating_system), builder.launcher_name(operating_system, version))))
     with zipfile.ZipFile(archive) as zipped:
         if sum(info.file_size for info in zipped.infolist()) > package.MAX_PAYLOAD_BYTES:
             raise ValueError("Transfer payload exceeds installer budget")

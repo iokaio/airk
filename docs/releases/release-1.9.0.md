@@ -19,6 +19,17 @@ and [ledger](../research/implementation-v190.md) record qualified coordinator an
 performance results separately from the remaining UI/grant gates. Installing
 this candidate does not activate the new Project/index hierarchy.
 
+P6a implements the copied Mac launcher correction, shared signed release
+producer and offline contributor bootstrap. Local tests, actual Developer ID
+signed installation and all 60 latency comparisons passed. The current [working-build record](release-1.8.8.md)
+and [ledger](../research/implementation-v190.md) retain its tests and pending
+qualification separately from the completed P5 checkpoint.
+
+The maintainer also requested committed dependency policy and review checks using
+`cargo-deny` and `cargo-vet`. The [working-build rationale](release-1.8.8.md#dependency-supply-chain-checks)
+explains their distinct roles, visible unreviewed baseline and non-Rust limits.
+Their validated implementation will carry forward into 1.9.0.
+
 - **P0a — baseline:** signed commit `60f5c9d` freezes original relevance fixtures,
   source/runtime identities and uncontended native MCP measurements. It reproduces
   the compact chained-plan failure and retains negative cases and all failures.

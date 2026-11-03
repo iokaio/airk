@@ -7,6 +7,15 @@ The [1.8.8 working-build record](releases/release-1.8.8.md) tracks current valid
 P5's catalog upgrade foundation passed local isolated qualification. The [storage boundary](storage-formats.md#development-catalog-boundary)
 records candidate-owned migration and recovery limits; normal activation remains disabled.
 
+P6a's copied Mac launcher, shared signed release producer and offline contributor
+bootstrap passed local gates, including actual Developer ID signed installation
+and all 60 latency comparisons. The [ledger](research/implementation-v190.md)
+separates those results from pending notarization, editor and platform qualification.
+
+The [dependency supply-chain policy](dependency-advisories.md) adds pinned
+`cargo-deny` and `cargo-vet` checks, visible unreviewed baseline exemptions and
+review requirements for changed Rust dependencies alongside existing advisories.
+
 The dated [1.8.7 external audit](issue-analysis/audit-report.md) and
 [open-issue analysis](issue-analysis/open-issue-analysis.md) retain their reported
 platform findings and source checkpoints. They do not qualify the current working
@@ -26,7 +35,7 @@ reasons, empty-result limits and inert next reads across CLI/MCP/Workbench.
 
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](releases/release-1.8.7.md) for current behavior and dated validation.
 
-Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes the separate build/validation jobs, complete-attempt release rule, focused repetitions and remaining Intel failure. Product versions are synchronized at 1.9.0 for the current development candidate.
+Unreleased developer workflow: [native build reuse and Darwin failure diagnostics](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics) describes the separate build/validation jobs, complete-attempt release rule, focused repetitions and remaining Intel failure. Product versions remain synchronized at 1.8.8 for manual testing before later 1.9.0 promotion.
 
 Developer references: [MCP tools](mcp-developer-guide.md) covers all 28 public tools with inputs, examples, evidence limits and implementation/test links. [CLI commands](cli-developer-guide.md) covers each command, its purpose, native ownership and guarded workflows. Both explain why `airk tools list` has 18 native tools while unified MCP has 28, and map the remaining capabilities to separate terminal commands.
 
@@ -236,7 +245,10 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [Observed validation and historical receipts](validation.md)
 - [Local usage, performance and estimated context reduction](usage-reporting.md)
 
-Contributor guidance: [CONTRIBUTING.md](../CONTRIBUTING.md). Implemented, proposed and unqualified behavior must remain distinguishable.
+Contributor guidance and offline-first bootstrap: [CONTRIBUTING.md](../CONTRIBUTING.md).
+The [ignored-test/profile-exclusion inventory](testing/ignore-triage.md) separates
+helper entry points, gated qualification and actual runner evidence. Implemented,
+proposed and unqualified behavior must remain distinguishable.
 
 Development helper recovery now preserves project workers and rebinds retained direct model sessions with bounded retries and explicit stop/start controls; see [shared embedding](service-embedding.md). Default adapter cutover and installed-platform qualification remain open.
 

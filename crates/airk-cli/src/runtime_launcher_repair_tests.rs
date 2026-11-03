@@ -42,13 +42,77 @@ fn old_launcher(root: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+fn image(root: &Path, runtime: &str) -> Result<PathBuf> {
+    let (main, _, inventory) = verify_runtime_inventory(root, runtime)?;
+    launcher_image(runtime_pair::payload_root(&main)?, &inventory)
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn selected_mac_client_refresh_and_exact_resume_preserve_explicit_stop_and_unknown_bytes()
+-> Result<()> {
+    let (_owner, root, identity) = fixture()?;
+    let (main, approval, inventory) = verify_runtime_inventory(&root, &identity)?;
+    let expected = image(&root, &identity)?;
+    let control = root.join("independent-control-fixture");
+    local_ipc::prepare_root(&control)?;
+    let namespace = airk_kernel::service_broker::new_instance_id()?;
+    drop(airk_store::service::registry::ServiceRegistry::open(
+        &control, namespace,
+    )?);
+    let database = control.join("service-1.4.sqlite3");
+    let connection = rusqlite::Connection::open(&database)?;
+    connection.execute(
+        "UPDATE service_lifecycle_state SET stopped=1 WHERE id=1",
+        [],
+    )?;
+    drop(connection);
+    let stopped_bytes = fs::read(&database)?;
+    let old = old_launcher(&root)?;
+    prepare_client_launcher(&root, &main, &approval, &inventory)?;
+    assert_ne!(fs::read(launcher_path(&root))?, old);
+    assert_eq!(
+        runtime_pair::digest_file(&verified_launcher(&root)?)?,
+        runtime_pair::digest_file(&expected)?
+    );
+    assert!(!root.join("selected.json").exists());
+    assert!(!root.join("activation.json").exists());
+    assert!(fs::read(&database)? == stopped_bytes);
+    assert!(
+        airk_store::service::registry::ServiceRegistry::open_saved(&control)?
+            .service_explicitly_stopped()?
+    );
+    // A durable matching client-copy intent resumes without starting the service.
+    old_launcher(&root)?;
+    let mut intent = begin(&root, &identity)?;
+    fs::write(intent.partial(&root), b"owned unfinished copy")?;
+    intent.runtime = "f".repeat(64);
+    replace_json(&root, INTENT, &intent)?;
+    let partial_before = fs::read(intent.partial(&root))?;
+    assert!(prepare_client_launcher(&root, &main, &approval, &inventory).is_err());
+    assert_eq!(fs::read(intent.partial(&root))?, partial_before);
+    intent.runtime = identity;
+    replace_json(&root, INTENT, &intent)?;
+    prepare_client_launcher(&root, &main, &approval, &inventory)?;
+    assert!(pending(&root)?.is_none());
+    assert!(fs::read(&database)? == stopped_bytes);
+    fs::write(launcher_path(&root), b"unrecognized client image")?;
+    assert!(prepare_client_launcher(&root, &main, &approval, &inventory).is_err());
+    assert_eq!(
+        fs::read(launcher_path(&root))?,
+        b"unrecognized client image"
+    );
+    assert!(!root.join(INTENT).exists());
+    Ok(())
+}
+
 #[cfg(windows)]
 #[test]
 fn launcher_in_use_is_rejected_before_any_repair_intent() -> Result<()> {
     use std::os::windows::fs::OpenOptionsExt;
     let (_owner, root, identity) = fixture()?;
     let old = old_launcher(&root)?;
-    let main = verify_runtime(&root, &identity)?.0;
+    let main = image(&root, &identity)?;
     let held = OpenOptions::new()
         .read(true)
         .share_mode(1)
@@ -77,7 +141,7 @@ fn missing_launcher_and_owned_partial_repair_from_approved_payload() -> Result<(
     let unknown = root.join(".airk-launcher-user-note.part");
     fs::write(&unknown, b"Preserve unrelated user bytes.")?;
     repair(&root, &identity)?;
-    let main = verify_runtime(&root, &identity)?.0;
+    let main = image(&root, &identity)?;
     assert_eq!(
         runtime_pair::digest_file(&verified_launcher(&root)?)?,
         runtime_pair::digest_file(&main)?
@@ -131,7 +195,7 @@ fn launcher_rename_child_fixture() -> Result<()> {
     let identity = std::env::var("AIRK_LAUNCHER_RUNTIME_FIXTURE")?;
     let _guard = install_lock(&root)?;
     let intent = begin(&root, &identity)?;
-    copy(&root, &intent, &verify_runtime(&root, &identity)?.0)?;
+    copy(&root, &intent, &image(&root, &identity)?)?;
     fs::rename(intent.partial(&root), launcher_path(&root))?;
     sync_directory(&root)?;
     std::process::exit(80);
@@ -173,7 +237,7 @@ fn uninstall_settles_only_existing_owned_repair_bytes() -> Result<()> {
     settle_for_uninstall(&root)?;
     assert_eq!(fs::read(launcher_path(&root))?, old);
     let intent = begin(&root, &identity)?;
-    copy(&root, &intent, &verify_runtime(&root, &identity)?.0)?;
+    copy(&root, &intent, &image(&root, &identity)?)?;
     fs::rename(intent.partial(&root), launcher_path(&root))?;
     settle_for_uninstall(&root)?;
     verified_launcher(&root)?;

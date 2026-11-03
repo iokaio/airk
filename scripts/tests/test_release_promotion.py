@@ -33,6 +33,111 @@ def producer():
 
 
 class PromotionContracts(unittest.TestCase):
+    def signed_bundle(self, root):
+        record = producer()
+        for target in release.native.TARGETS:
+            original_dir = root / "originals" / target
+            fixtures.pair_fixture(original_dir, target)
+            release.write_source_record(root / "in" / f"airk-source-{target}-{COMMIT}-456",
+                                        original_dir, record, target, COMMIT)
+            signed = target in release.SIGNED_TARGETS
+            prefix = "airk-signed" if signed else "airk"
+            native_dir = root / "in" / f"{prefix}-native-{target}-{COMMIT}-456"
+            files, receipt, executables = fixtures.pair_fixture(native_dir, target, signed)
+            fixtures.pair_vsix(root / "in" / f"{prefix}-vsix-{target}-{COMMIT}-456",
+                               native_dir, files, receipt, executables)
+        release.assemble(root / "in", root / "bundle", COMMIT, VERSION, "v" + VERSION,
+                         "stable", "456", "1", record, pinned=True, source_records=True)
+        return record
+
+    def test_marketplace_copies_exact_signed_release_vsixs_and_rechecks_native_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            producer_record = self.signed_bundle(root)
+            with patch.object(release.producers, "verify_record") as verify:
+                release.stage_marketplace_bundle(root / "bundle", root / "out", COMMIT, VERSION,
+                                                 "stable", "456", "1")
+                verify.assert_called_once_with(producer_record, COMMIT)
+            for target, platform in release.native.TARGETS.items():
+                name = f"airk-{VERSION}-{platform}.vsix"
+                self.assertEqual((root / "out" / target / name).read_bytes(),
+                                 (root / "bundle" / name).read_bytes())
+                native = json.loads((root / "bundle" / f"airk-{VERSION}-{target}.native-manifest.json").read_text())
+                self.assertEqual(native["signed_distribution"], target in release.SIGNED_TARGETS)
+            with patch.object(release.producers, "verify_record"):
+                with self.assertRaisesRegex(ValueError, "different channel"):
+                    release.stage_marketplace_bundle(root / "bundle", root / "wrong", COMMIT, VERSION,
+                                                     "preview", "456", "1")
+            self.assertFalse((root / "wrong").exists())
+
+    def test_marketplace_refuses_unsigned_native_even_with_resealed_bundle_hashes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.signed_bundle(root)
+            target = "aarch64-apple-darwin"
+            manifest = root / "bundle" / f"airk-{VERSION}-{target}.native-manifest.json"
+            receipt = json.loads(manifest.read_text())
+            receipt["signed_distribution"] = False
+            manifest.write_text(json.dumps(receipt))
+            record_path = root / "bundle/release.json"
+            record = json.loads(record_path.read_text())
+            record["assets"][manifest.name] = release.digest(manifest)
+            record_path.write_text(json.dumps(record))
+            paths = sorted(p for p in (root / "bundle").iterdir() if p.name != "SHA256SUMS")
+            (root / "bundle/SHA256SUMS").write_text("".join(f"{release.digest(p)}  {p.name}\n" for p in paths))
+            with patch.object(release.producers, "verify_record"):
+                with self.assertRaisesRegex(ValueError, "provenance or signing"):
+                    release.stage_marketplace_bundle(root / "bundle", root / "out", COMMIT, VERSION,
+                                                     "stable", "456", "1")
+            self.assertFalse((root / "out").exists())
+
+    def test_marketplace_publication_requires_exact_already_published_signed_set(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.signed_bundle(root)
+            published = dict(draft=False, tag_name="v" + VERSION, target_commitish=COMMIT, prerelease=False,
+                             assets=[dict(name=p.name, digest="sha256:" + release.digest(p))
+                                     for p in (root / "bundle").iterdir()])
+            tag = dict(object=dict(sha=COMMIT))
+            for mutation in (None, "missing", "draft", "tag", "channel", "different_signed_run", "duplicate"):
+                altered = json.loads(json.dumps(published))
+                altered_tag = tag
+                if mutation == "missing": altered = None
+                elif mutation == "draft": altered["draft"] = True
+                elif mutation == "tag": altered_tag = dict(object=dict(sha="b" * 40))
+                elif mutation == "channel": altered["prerelease"] = True
+                elif mutation == "different_signed_run": altered["assets"][0]["digest"] = "sha256:" + "b" * 64
+                elif mutation == "duplicate": altered["assets"].append(altered["assets"][0])
+                output = root / (mutation or "valid")
+                with self.subTest(mutation=mutation), patch.object(release.producers, "verify_record"), \
+                        patch.object(release, "github", side_effect=[altered, altered_tag]):
+                    if mutation:
+                        with self.assertRaises(ValueError):
+                            release.stage_marketplace_bundle(root / "bundle", output, COMMIT, VERSION,
+                                                             "stable", "456", "1", published_only=True)
+                        self.assertFalse(output.exists())
+                    else:
+                        release.stage_marketplace_bundle(root / "bundle", output, COMMIT, VERSION,
+                                                         "stable", "456", "1", published_only=True)
+                        self.assertEqual(len(list(output.iterdir())), 4)
+
+    def test_marketplace_detects_byte_drift_during_final_copy(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.signed_bundle(root)
+            copytree = release.shutil.copytree
+            def changed(source, destination, *args, **kwargs):
+                result = copytree(source, destination, *args, **kwargs)
+                if Path(source).name == "vsix":
+                    path = Path(destination) / "x86_64-pc-windows-msvc" / f"airk-{VERSION}-win32-x64.vsix"
+                    path.write_bytes(b"changed after verification")
+                return result
+            with patch.object(release.producers, "verify_record"), \
+                    patch.object(release.shutil, "copytree", side_effect=changed):
+                with self.assertRaisesRegex(ValueError, "changed the signed producer"):
+                    release.stage_marketplace_bundle(root / "bundle", root / "out", COMMIT, VERSION,
+                                                     "stable", "456", "1")
+
     def test_assembly_inputs_require_same_run_digests_and_all_platform_outputs(self):
         run = {**candidates.run_fixture(), "id": 456, "event": "workflow_dispatch",
                "path": ".github/workflows/github-release.yml", "status": "in_progress", "conclusion": None}
@@ -235,3 +340,10 @@ class PromotionContracts(unittest.TestCase):
                 self.assertIn("if: ${{ inputs.repair_1_4_4 }}", step)
         self.assertIn("--pinned-producer --source-records", workflow)
         self.assertIn("--source-manifest artifacts/tested-native/manifest.json", workflow)
+        self.assertIn("signed_run_id:", marketplace)
+        self.assertIn("signed-release-download --record artifacts/signed-producer.json", marketplace)
+        self.assertNotIn("scripts/package-extension.py", marketplace)
+        self.assertNotIn("run: npm run compile", marketplace)
+        self.assertNotIn("scripts/ci-candidates.py download --target", marketplace)
+        self.assertNotIn("rehearsal_run_id", marketplace)
+        self.assertIn("--output artifacts/release --published-only", marketplace)

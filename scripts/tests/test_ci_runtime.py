@@ -71,6 +71,48 @@ class RuntimeTransferTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fresh"):
             runtime.restore(self.transfer, self.root / "restored", TARGET)
 
+    def test_current_mac_transfer_preserves_and_requires_launcher_executable_mode(self):
+        target = "aarch64-apple-darwin"
+        version = "1.8.8"
+        (self.root / "Cargo.toml").write_text(f'[workspace.package]\nversion="{version}"\n', encoding="utf-8")
+        original = self.root / "mac-original"
+        original.mkdir()
+        for name in ("airk", "airk-embed", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md",
+                     "notices/bom.cdx.json", "notices/all-MiniLM-L6-v2/LICENSE", "notices/all-MiniLM-L6-v2/provenance.json", "notices/inventory.json"):
+            destination = original / name
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(self.original / name, destination)
+        self.builder.arrange_macos_bundle(original, version)
+        main, helper = self.builder.runtime_names("macos")
+        launcher = self.builder.launcher_name("macos", version)
+        pair = dict(schema=1, version=version, os="macos", arch="aarch64",
+                    airk_sha256=runtime.package.sha256(original / main), embed_sha256=runtime.package.sha256(original / helper))
+        (original / "airk-runtime.json").write_text(json.dumps(pair), encoding="utf-8")
+        (original / "airk-build.json").write_text(json.dumps(dict(schema=1, source=self.source, runtime=pair, profile="release", rustc="host: " + target)), encoding="utf-8")
+        install = {key: pair[key] for key in ("schema", "version", "os", "arch")}
+        install["files"] = runtime.package.inventory(original)
+        (original / "airk-install.json").write_text(json.dumps(install), encoding="utf-8")
+        transfer = self.root / "mac-transfer"
+        destination = self.root / "mac-restored"
+        with patch.object(runtime, "identity", return_value={**IDENTITY, "target": target}), patch.object(self.builder, "inference_assets", return_value={}):
+            runtime.seal(original, transfer, target)
+            runtime.restore(transfer, destination, target)
+            self.assertEqual(runtime.package.inventory(original), runtime.package.inventory(destination))
+            if os.name != "nt":
+                self.assertEqual((destination / launcher).stat().st_mode & 0o777, 0o755)
+            # Simulate a producer dropping only the standalone image's execute
+            # bit; update the archive digest so the mode guard itself is tested.
+            archive = transfer / "runtime.zip"
+            archive.unlink()
+            payload = runtime.package.inventory(original)
+            runtime.package.write_archive(original, archive, payload, (main, helper))
+            receipt = json.loads((transfer / "transfer.json").read_text(encoding="utf-8"))
+            receipt["archive_sha256"] = runtime.package.sha256(archive)
+            (transfer / "transfer.json").write_text(json.dumps(receipt), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "executable permission"):
+                runtime.restore(transfer, self.root / "mac-refused", target)
+            self.assertFalse((self.root / "mac-refused").exists())
+
     def test_other_source_target_run_qualification_and_future_attempt_are_refused(self):
         original = self.receipt()
         for key, value in (("commit", "c" * 40), ("tree", "c" * 40), ("run_id", "124"),

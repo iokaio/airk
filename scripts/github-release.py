@@ -10,6 +10,7 @@ import re
 import shutil
 import stat
 import subprocess
+import tempfile
 import tomllib
 import zipfile
 
@@ -104,6 +105,8 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
     required = {executable, helper, "airk-runtime.json", "airk-build.json", "airk-install.json", "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"} if paired else {executable, "LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"}
     bundle_files = builder.macos_bundle_files(version) if paired and os_name == "macos" else {}
     required.update(bundle_files)
+    if paired:
+        required.add(builder.launcher_name(os_name, version))
     inference_assets = builder.inference_assets(os_name, "aarch64" if target.startswith("aarch64-") else "x86_64") if builder.int8_version(version) else {}
     required.update(inference_assets)
     if builder.int8_version(version):
@@ -144,7 +147,8 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
                     or pair.get("airk_sha256") != payload[executable] or pair.get("embed_sha256") != payload[helper]
                     or build.get("schema") != 1 or build.get("runtime") != pair or build.get("source") != receipt.get("source")):
                 raise ValueError("Native pair build/installer identities differ")
-    native.verify_archive(archive, payload, (executable, helper) if paired else executable)
+    executable_names = tuple(dict.fromkeys((executable, helper, builder.launcher_name(os_name, version)))) if paired else executable
+    native.verify_archive(archive, payload, executable_names)
     signing = receipt.get("signing")
     if signed:
         if paired:
@@ -158,6 +162,18 @@ def verify_native(directory, target, commit, version, signed, *, tree=None):
             components = signing["components"]
             if bundle_files and not signer.stapled_app_ticket(components):
                 raise ValueError("Mac service pair lacks matching stapled app notarization")
+            if os_name == "macos" and builder.standalone_launcher_version(version):
+                launcher = builder.launcher_name(os_name, version)
+                expected_copy = {"schema": 1, "binary_sha256": payload[launcher], "version": version,
+                                 "strict_signature": True, "standalone_version_probe": True}
+                copied = signing.get("copied_launcher")
+                # This is the signer's exact post-seal observation, not a new OS
+                # signature assertion on the Linux assembly/Marketplace host.
+                if (not isinstance(copied, dict) or copied != expected_copy
+                        or type(copied.get("schema")) is not int
+                        or copied.get("strict_signature") is not True
+                        or copied.get("standalone_version_probe") is not True):
+                    raise ValueError("Mac service pair lacks matching standalone copied-launcher evidence")
         else:
             components = {executable: signing}
         for component, signing in components.items():
@@ -196,6 +212,9 @@ def stage_signing(directory, target, commit, version, output_root=None, *, tree=
     paired = receipt["schema"] == "airk-native-candidate/2"
     executable = "airk.exe" if "windows" in target else "airk"
     executables = native.runtime_builder().runtime_names("windows" if "windows" in target else "macos") if paired else (executable,)
+    if paired:
+        builder = native.runtime_builder()
+        executables = tuple(dict.fromkeys((*executables, builder.launcher_name("windows" if "windows" in target else "macos", version))))
     root = ROOT if output_root is None else output_root
     output = root / "artifacts" / "runtime" / target if paired else root / "target" / target / "release"
     output.mkdir(parents=True, exist_ok=False)
@@ -400,6 +419,69 @@ def verify_bundle(directory, commit, version, tag, run_id, attempt):
     paths = sorted(p for p in directory.iterdir() if p.name != "SHA256SUMS")
     if (directory / "SHA256SUMS").read_text(encoding="utf-8") != "".join(f"{digest(p)}  {p.name}\n" for p in paths):
         raise ValueError("Release bundle checksums differ")
+    return record
+
+
+def stage_marketplace_bundle(directory, output, commit, version, channel, run_id, attempt, *, tree=None,
+                             published_only=False):
+    """Revalidate the signed producer's complete set and copy its exact VSIX bytes.
+
+    No compilation, signing, channel rewriting or package regeneration is allowed.
+    GitHub and Marketplace therefore share native and compiled extension identities.
+    """
+    record = verify_bundle(directory, commit, version, identity(version), run_id, attempt)
+    if record["channel"] != channel or record.get("release_tooling_repair") is not None:
+        raise ValueError("Signed bundle has a different channel or historical tooling repair")
+    producer = record.get("producer")
+    if producer is None:
+        raise ValueError("Signed release has no authenticated CI producer")
+    producers.verify_record(producer, commit)
+    if published_only:
+        published = github(f"releases/tags/{identity(version)}", missing=True)
+        tag = github(f"git/ref/tags/{identity(version)}", missing=True)
+        if (not published or published.get("draft") is not False
+                or published.get("tag_name") != identity(version)
+                or published.get("target_commitish") != commit
+                or published.get("prerelease") is not (channel == "preview")
+                or not tag or tag.get("object", {}).get("sha") != commit):
+            raise ValueError("Marketplace publication requires the matching published GitHub release first")
+        assets = published.get("assets", [])
+        actual = {asset.get("name"): asset.get("digest") for asset in assets}
+        expected = {path.name: "sha256:" + digest(path) for path in directory.iterdir()}
+        if len(actual) != len(assets) or actual != expected:
+            raise ValueError("Published GitHub assets differ from the selected signed producer")
+    if output.exists():
+        raise ValueError("Marketplace staging destination must be fresh")
+    with tempfile.TemporaryDirectory(prefix="airk-marketplace-verify-") as temporary:
+        staging = Path(temporary)
+        for target, platform in native.TARGETS.items():
+            native_dir = staging / "native" / target
+            vsix_dir = staging / "vsix" / target
+            for destination, archive_name, manifest_name in (
+                (native_dir, f"airk-{version}-{target}.zip", f"airk-{version}-{target}.native-manifest.json"),
+                (vsix_dir, f"airk-{version}-{platform}.vsix", f"airk-{version}-{platform}.vsix-manifest.json"),
+            ):
+                destination.mkdir(parents=True)
+                shutil.copyfile(directory / archive_name, destination / archive_name)
+                shutil.copyfile(directory / manifest_name, destination / "manifest.json")
+                (destination / "SHA256SUMS").write_text(
+                    f"{digest(destination / archive_name)}  {archive_name}\n"
+                    f"{digest(destination / 'manifest.json')}  manifest.json\n", encoding="utf-8")
+            receipt, _ = verify_native(native_dir, target, commit, version, target in SIGNED_TARGETS, tree=tree)
+            vsix_receipt, _ = candidate(vsix_dir)
+            if (vsix_receipt.get("native_manifest_sha256") != digest(native_dir / "manifest.json")
+                    or vsix_receipt.get("native_archive_sha256") != receipt["archive_sha256"]):
+                raise ValueError("Marketplace VSIX differs from the canonical signed native download")
+        extension.verify(staging / "vsix", commit, version, channel, tree=tree)
+        # Recheck complete source bytes after validation, before emitting anything.
+        verify_bundle(directory, commit, version, identity(version), run_id, attempt)
+        shutil.copytree(staging / "vsix", output)
+        for target, platform in native.TARGETS.items():
+            archive_name = f"airk-{version}-{platform}.vsix"
+            manifest_name = f"airk-{version}-{platform}.vsix-manifest.json"
+            if (digest(output / target / archive_name) != record["assets"][archive_name]
+                    or digest(output / target / "manifest.json") != record["assets"][manifest_name]):
+                raise ValueError("Marketplace staging changed the signed producer's package bytes")
     return record
 
 

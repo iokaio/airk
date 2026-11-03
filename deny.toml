@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+# Reviewed with cargo-deny 0.20.2 (MSRV 1.88; AIRK toolchain 1.98).
+# This complements scripts/dependency-audit.py and the release license bundle;
+# it does not replace exact-version, expiry and stale-exception enforcement.
+
+[graph]
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+]
+all-features = true
+exclude-dev = false
+exclude-unpublished = false
+
+[advisories]
+db-urls = ["https://github.com/RustSec/advisory-db"]
+# Keep this development cache in ignored workspace state, not the user's cache.
+db-path = "artifacts/dependency-policy/advisory-dbs"
+maximum-db-staleness = "P7D"
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+unused-ignored-advisory = "deny"
+# These are the two existing maintainer dispositions, not new approvals.
+# cargo-deny matches advisory IDs; dependency-audit.py remains responsible for
+# the exact package/version, review_by date and stale-exception checks.
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "Existing audit-exceptions.json: paste 1.0.15 is a tokenizers compile-time proc-macro; unmaintained notice, reviewed 2026-10-30, review_by 2027-01-31." },
+    { id = "RUSTSEC-2026-0192", reason = "Existing audit-exceptions.json: ttf-parser 0.25.1 is reached through pinned pdf-extract/lopdf in the bounded PDF subprocess; unmaintained notice, reviewed 2026-10-30, review_by 2027-01-31." },
+]
+
+[licenses]
+confidence-threshold = 0.95
+include-dev = true
+include-build = true
+unused-allowed-license = "warn"
+# License choices used by the locked graph and preserved in third_party/notices.
+# No blanket OSI/copyleft approval: new expressions fail until reviewed.
+allow = [
+    "Apache-2.0",
+    "MIT",
+    "BSD-3-Clause", # encoding_rs's conjunction requires the BSD notice too.
+    "ISC", # libloading and the Linux inotify adapters.
+    "Unicode-3.0", # ICU and unicode-ident data/implementation notices.
+    "Zlib", # foldhash and zlib-rs.
+]
+
+[[licenses.exceptions]]
+crate = "notify@8.2.0"
+# Existing pinned notify dependency and bundled CC0 declaration; do not grant
+# this license to unrelated future dependencies automatically.
+allow = ["CC0-1.0"]
+
+[bans]
+# Existing transitive major-version families cannot be unified safely just to
+# introduce this gate. Keep duplicates visible; dependency changes need review.
+multiple-versions = "warn"
+multiple-versions-include-dev = true
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "simplest-path"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+required-git-spec = "rev"
+# Existing SQLite 3.53.2 security bundle update; Cargo.toml pins the exact SHA.
+allow-git = ["https://github.com/rusqlite/rusqlite"]
