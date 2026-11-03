@@ -327,5 +327,25 @@ pub fn evidence_for_comparison(value: &mut Value) -> Result<()> {
     if let Some(observation) = fields.get("discovery_observation") {
         assert_eq!(observation, "unavailable_after_read");
     }
+    if let Some(receipt) = fields.get_mut("source_verification") {
+        let typed: airk_core::verification::VerificationReceipt =
+            serde_json::from_value(receipt.clone())?;
+        assert!(typed.observed_from_unix_ms > 0);
+        assert!(typed.observed_to_unix_ms >= typed.observed_from_unix_ms);
+        // Normalize only dated observations; keep all source identities,
+        // associations, budgets, failures and denominators in parity checks.
+        let fields = receipt.as_object_mut().expect("typed receipt");
+        fields.remove("observed_from_unix_ms");
+        fields.remove("observed_to_unix_ms");
+        for source in fields
+            .get_mut("sources")
+            .and_then(Value::as_array_mut)
+            .expect("typed source rows")
+        {
+            let fields = source.as_object_mut().expect("typed source");
+            fields.remove("observed_from_unix_ms");
+            fields.remove("observed_to_unix_ms");
+        }
+    }
     Ok(())
 }

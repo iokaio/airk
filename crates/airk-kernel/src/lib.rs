@@ -53,6 +53,7 @@ use remote_tokenization as tokenization;
 pub mod usage;
 pub mod usage_page;
 pub mod vectors;
+pub mod verification;
 pub mod watcher;
 pub mod workbench;
 use airk_retrieval::truncate_utf8;
@@ -71,6 +72,7 @@ fn unlinked_tempdir() -> Result<tempfile::TempDir> {
 
 #[derive(Clone)]
 pub struct Kernel {
+    verification_cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
     progress: Option<ProgressObserver>,
     root: PathBuf,
     collection: String,
@@ -314,6 +316,7 @@ impl Kernel {
             FileStore::new(directory.join("collections-1.2").join(collection))
         };
         let kernel = Self {
+            verification_cancellation: None,
             progress: None,
             root,
             collection: collection.into(),

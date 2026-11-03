@@ -97,7 +97,16 @@ mod tests {
     fn stable(value: &mut Value) {
         match value {
             Value::Object(fields) => {
-                for key in ["request_id", "observed_unix_ms", "cache_age_ms", "cached"] {
+                // Separate reads have different observation times; retain every
+                // verification outcome, identity, limit and association.
+                for key in [
+                    "request_id",
+                    "observed_unix_ms",
+                    "cache_age_ms",
+                    "cached",
+                    "observed_from_unix_ms",
+                    "observed_to_unix_ms",
+                ] {
                     fields.remove(key);
                 }
                 fields.values_mut().for_each(stable);
@@ -299,6 +308,11 @@ mod tests {
                 ("outline", json!({"path":"queue.rs"})),
             ] {
                 args["response_mode"] = json!("full");
+                // This compatibility check compares pre-verification reply
+                // projections. A dated receipt binds the exact projection,
+                // including reply_detail's echo, so it necessarily differs.
+                // Default Report and complete receipt parity are tested separately.
+                args["verification"] = json!("off");
                 let legacy = payload(
                     tools
                         .call(format!("airk_{tool}"), args.as_object().unwrap().clone())
@@ -607,7 +621,7 @@ mod tests {
                     .await?,
             )?;
             let request = json!({"schema":"airk.parse.request/1","mode":"execute",
-                "plan":{"steps":[{"id":"query","tool":tool,"args":args}]}});
+                "plan":{"verification_scope":"steps","steps":[{"id":"query","tool":tool,"args":args}]}});
             let envelope = payload(
                 tools
                     .call("airk_parse".into(), request.as_object().unwrap().clone())

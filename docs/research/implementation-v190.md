@@ -38,8 +38,8 @@ cross-platform qualification.
 | P1 | Complete — `d9eff91` | Compact-plan correctness and nested object inputs; no persistent format change |
 | P2a | Complete - `94f544a` | Independent reply detail; qualified native/transport/export and performance evidence below |
 | P2b | Complete - `1b623ce` | Bounded existing-observation guidance; matched quality/latency gates below |
-| P3 | Complete - signed checkpoint follows | ADRs, schemas, authority/partition fixtures and upgrade fault boundaries |
-| P4 | Not started | Opt-in single-index source verification |
+| P3 | Complete - `b72fbc8` | ADRs, schemas, authority/partition fixtures and upgrade fault boundaries |
+| P4 | Complete - local acceptance in this phase commit | Single-index saved-source verification; maintainer selected Report as the default, with explicit Off and Require |
 | P5–P7 | Not started | Safe metadata upgrade, Indexing/grants, then complete combined-read parity |
 | P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
 | P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
@@ -781,3 +781,362 @@ encoding mistake while updating the ledger was corrected from the unchanged HEAD
 ledger before applying the intended text edits; no user content was discarded.
 Recovery is an ordinary source revert. P4 is next; source verification remains
 unimplemented until its end-to-end acceptance. No install, push or publication.
+
+
+## P4 - saved-source verification in progress
+
+The maintainer explicitly selected Report as the default on 2 November 2026,
+superseding P3's original Off default. Evidence reads resolve omitted controls to
+8 distinct sources, 16 MiB aggregate raw bytes and a cooperative 2,000-ms deadline;
+Off remains an explicit no-hashing path. Metadata-only reads/plans skip capture.
+The [guide](../source-verification.md) records controls, receipts and limitations.
+
+Implemented, not yet accepted: bounded reference inventory; read-only native
+streamed SHA-256 capture with policy, identity and publication fences; complete
+dated receipts and required-check failures; native CLI/MCP/Workbench parity;
+response-wide plan deduplication or explicit per-step policies; complete/selected
+exports; Inspector/Checker native receipt reuse without duplicate hashing.
+Native capture does no extraction, inference, indexing or publication work.
+Existing source-work/global freshness retains its independent meaning.
+
+Focused checks before broad qualification: Core 4 passed, native verifier 4
+passed, Windows ingestion verification 2 passed, MCP 90 passed, extension 547
+passed/19 declared skips. The latest additions are included in the pending full
+workspace rerun. Workspace Clippy passed with all targets/features and warnings
+denied. Python suite: 308 tests, six declared skips, zero failures/errors.
+
+An earlier actual-CLI parity fixture used a public MCP short name for native CLI
+tools-call; it correctly refused that name. The fixture was corrected to the
+canonical CLI tool identity and passed. During the Report default transition,
+three MCP tests failed: one still rejected Report without explicit budgets, one
+compared response-wide verification with per-step verification, and one compared
+receipts for deliberately different reply projections. Those tests now exercise
+the new preset, equivalent policies, and the explicit Off compatibility path;
+complete default Report receipt parity has separate coverage. No result fields
+were removed to make transport parity pass; only documented observation timing
+and transport request identities are normalized.
+
+No staged P4 runtime or matched performance campaign has yet been accepted.
+The new dedicated verification measurement compares default Report with Off on
+original disposable small, medium, large and eight-source fixtures. The existing
+frozen MCP workload now supports a recorded argument override without changing
+fixture bytes, so explicit Off regression and intentional Report costs can be
+reported separately. P4 is not committed; P5 has not started.
+
+
+The first full workspace attempt is retained in
+`artifacts/v190/p4-workspace-current.log`: 1,868 run, 1,861 passed, seven failed
+and 35 declared skips. It exposed older
+comparison helpers that normalized source-work timing but not the new dated
+receipt timing, a generated CLI reference awaiting regeneration, and two legacy
+small-output assertions. The comparison helpers now keep every receipt field
+except observation times; the legacy 4-KiB clipping case explicitly tests Off,
+while enabled response verification admits at least an 8-KiB output budget.
+The dated warning points to receipt timing rather than embedding a second,
+transport-varying timestamp in prose. Qualification reruns remain pending.
+The audit also rejects per-step verification with an evidence-only view before
+checking sources, and maps response-wide Require plan failures to complete
+nonretryable native errors rather than a successful transport envelope.
+
+
+Corrected contract validation finished with 141 passed. The preceding focused
+attempt had 139 passes and two fixture failures: a remaining comparison needed
+explicit step scope, and the new scalar-sizing fixture had accidentally fitted
+its allowance after the budget field shortened. Both fixtures now exercise their
+intended contract. No receipt data is stripped from equivalent-policy checks.
+Python's final suite passed 309 tests with six declared skips. The final extension
+run passed 547 tests with 19 declared skips. A fresh source-bound release pair,
+final workspace run, final Clippy/doctests and uncontended performance acceptance
+are in progress; no P4 acceptance or commit is asserted yet.
+
+
+The fresh staged pair is `artifacts/v190/p4-qualified-runtime`:
+757 native build inputs, SHA-256
+`396c65041da5fd6ecb9659bded179cf3b1f8759c7bc05aa5e89c1e80a0052088`;
+main `e4209d771049a5660d4c94a3d782b284a0c816172b09406623046513f42a079e`;
+helper `7110903086bc4d750b82553cd8b0fa8212ac42912f8da9ab005eba9d8835c469`.
+The builder verified unchanged inputs across both builds. Final workspace Clippy
+passed with all features/targets and warnings denied. Serial doctest checks
+completed successfully for eight targets, each with zero executable examples.
+The staged `ci-local` smoke and client suites both passed (one pass each, four
+logical processors, no synthetic load workers); this is not installed-editor,
+macOS/Linux, remote-filesystem or concurrent editor-save qualification.
+
+The qualification harness additionally compares effective verification input
+schemas and requiredness through actual native CLI discovery, public SDK MCP
+and the canonical native Workbench catalog. Explanatory title/description
+annotations are excluded; types, enums, bounds and defaults remain exact.
+Before measurements, finish all tests/builds and preserve a fresh shell's CPU
+affinity; the four-core smoke restriction is not a matched baseline condition.
+
+
+The final workspace run passed all 1,868 tests with 35 declared skips. The first
+verification-harness preflights failed before accepted measurement: an unnecessary
+`rich:true` capability read returned the same direct-connection error in both
+P2b and P4 private runtimes. Default capabilities succeeded in both and contain
+the complete canonical Workbench input catalog (23,142 vs 29,358 serialized reply
+bytes in the isolated small-source probe). This pre-existing rich-read limitation
+remains unresolved; it is not claimed as successful transport qualification.
+The harness now uses the full default catalog and bounded typed-read handling.
+
+Later preflights exposed an initial pending management observation that settled
+to idle, rather than verification-created source work. The harness explicitly
+settles that observation before timed samples and records its warmup read count.
+Preflight 7 completed all source/hash/count/byte/Require checks, 68 MCP/Workbench
+and 72 CLI/MCP input-field comparisons, unchanged source-work observations and
+clean frontend/service drain. One-sample timings are not acceptance measurements.
+Its four actual native receipts validate against the canonical schema. File-info
+can reference its whole result using the valid empty JSON Pointer; the unpublished
+schema and positive/negative locator fixtures now cover that case and reject
+non-pointer locators. Design validation now covers 43 wire fixtures.
+
+
+### P4 performance investigation - 3 November 2026
+
+The pre-router candidate's graded corpus completed 75 attempts with exact frozen
+and P2b nDCG, recall, negative outcomes and source hashes. Explicit Off completed
+90 trials/810 calls with zero errors/retries, exact frozen fixture identity,
+complete coverage/cleanup and no verification receipts. Several original latency
+gates missed narrowly. A matched P2b diagnostic run was also slower than its
+historical record, but this did not waive the frozen limits. One confirmation
+campaign was declared in advance and combined with every original Off sample
+(60 per cohort); no failures were discarded and no thresholds changed. Combined
+unprimed/reused cohorts passed; fresh status-first median task time 1,057.47 ms
+still exceeded the frozen 1,045.04-ms and historical P2b 1,046.74-ms bounds. Its
+with-connection median also failed. P4 remains unaccepted and uncommitted.
+
+Default Report separately completed 90 trials/810 calls without errors/retries;
+all 720 evidence reads had verified receipts, totaling 746,010 logical raw-source
+bytes. Median nine-tool batch times were 1,640.87 / 1,679.00 / 1,638.53 ms for
+fresh primed / fresh unprimed / reused connections, versus Off's initial
+1,048.23 / 1,069.71 / 1,021.44 ms. This is intentional enabled-check cost,
+not unchanged default performance or physical disk-I/O qualification.
+
+The dedicated 30-sample paired file-size campaign completed all input-catalog,
+raw-hash, count/byte limit, Require, unchanged-source-work, provenance and cleanup
+checks. Warm-cache median Off / Report milliseconds were:
+
+| Fixture | Logical raw bytes per Report read | Off | Report |
+| --- | ---: | ---: | ---: |
+| Small file | 32 | 73.95 | 146.81 |
+| Medium file | 65,536 | 79.41 | 152.19 |
+| Large file | 8,659,200 | 77.62 | 152.90 |
+| Eight referenced files | 304 | 259.35 | 337.30 |
+
+All these measurements remain tied to the pre-router candidate's source/payload
+identity above. Raw receipts: `p4-qualified-relevance.json`, `p4-off-mcp/`,
+`p4-off-mcp-confirmation/`, `p4-off-pooled-gates.json`, `p4-report-mcp/`,
+`p4-diagnostic-p2b-mcp/` and `p4-qualified-verification/` under ignored artifacts.
+Other applications/OS caches remain uncontrolled; whole-process peak memory,
+physical I/O, other platforms and editor-save responsiveness remain unqualified.
+
+The cold-session audit found that each native direct client rebuilt identical
+tool-router schemas. Native sessions now clone cached immutable built-in routes;
+mutable route maps/schema changes stay caller-local. Kernels, grants/admission,
+client family, runtime/source-work context and response observations remain
+per server/session. The complete 92-test MCP suite passed, including independent
+raw-definition equality, mutation isolation and separate project-kernel dispatch.
+A new source-bound runtime and full CLI/Clippy validation are underway. Further
+acceptance measurements must use that new pair; old timings are not relabeled.
+
+
+The router-cache correction passed 92 MCP tests, including new route-definition,
+mutation and separate-kernel isolation coverage; the complete CLI suite passed
+412 cases with 11 declared skips. Formatting and workspace all-target/all-feature
+Clippy passed with warnings denied. The previously complete 1,868-case workspace
+run remains recorded above; unchanged extraction/storage suites were not repeated
+for this MCP-only correction. Repository/version/whitespace and 43 design wire
+fixtures passed again.
+
+Replacement pair: `artifacts/v190/p4-router-runtime`, 757 native inputs with
+SHA-256 `98cedcccab4f4010bda01f5262f235df7362e9fc8cb736c605eb45057867575b`;
+main `e65fdd79a705788bbd247ff3f87bd343d4f75aa7373026a1505241ae685af39e`;
+helper `29a96f8116f0c128562a97c9cbfae1d26a90b10e7160b09b0a567bf2654a76b4`.
+No installable candidate or normal runtime was replaced. Replacement smoke and
+performance qualification are still pending; P4 is not accepted or committed.
+
+
+### P4 matched-control investigation and final error review — 3 November 2026
+
+The router candidate completed staged smoke/client checks (2/2, four CPUs) and
+75 graded retrieval attempts with exact frozen/P2b quality and source identity.
+Its explicit-Off campaign completed 90 trials/810 calls without errors/retries.
+Historical-point comparisons still missed: fresh status-first task median
+1,049.39 ms exceeded frozen/P2b bounds of 1,045.04/1,046.74 ms; p95 1,158.83 ms
+exceeded P2b's 1,151.38-ms bound. With-connection median 1,140.37 ms exceeded
+the frozen 1,134.67-ms bound. These failures remain recorded, not relabeled passes.
+
+Following the frozen baseline's noise rule, both exact reference payloads were
+remeasured with the same fixture, model, concurrency and 64-CPU affinity. The
+frozen 1.8.7 binary itself now measured 1,065.05 ms fresh status-first versus
+950.04 ms archived. The preceding P2b binary measured 1,013.32 ms versus
+951.58 ms archived. Against these current executions of both immutable reference
+payloads, the router candidate passed all 24 original median/p95 task and
+with-connection gates (all three cohorts). Thresholds remain 10%/25 ms for
+medians and 15%/50 ms for p95; neither frozen JSON nor original receipts changed.
+This is matched-control evidence of environmental drift, not a historical-point
+pass or a general performance guarantee. Other applications/OS caches remain
+uncontrolled. Reports: `p4-router-off-gates.json`, `p4-diagnostic-frozen-mcp/`,
+`p4-diagnostic-p2b-mcp/`, `p4-router-matched-control-gates.json`.
+
+Router default Report completed 90 trials/810 calls with zero errors/retries;
+all 720 evidence reads were verified. Median nine-tool batches were
+1,631.25 / 1,626.64 / 1,631.16 ms (fresh primed/unprimed/reused). The dedicated
+paired campaign completed 30 samples per mode/fixture, all 140 actual input-field
+comparisons and all hash/count/byte/Require/source-work/cleanup checks:
+
+| Fixture | Raw bytes per Report read | Off median ms | Report median ms |
+| --- | ---: | ---: | ---: |
+| Small | 32 | 68.35 | 139.89 |
+| Medium | 65,536 | 68.61 | 141.91 |
+| Large | 8,659,200 | 69.20 | 140.04 |
+| Eight sources | 304 | 249.36 | 332.69 |
+
+Report's added checking cost is intentional and explicit; logical bytes do not
+measure physical disk I/O. Whole-process peak memory, other platforms, installed
+editors and concurrent editor-save responsiveness remain unqualified. Raw reports
+are `p4-router-report-mcp/`, `p4-router-verification/` and
+`p4-router-relevance.json`. These remain tied to the router payload identity above.
+
+The explicit final review found that late plan projection correctly refused a
+claim after removing a checked location, but direct/unified MCP could lose its
+typed error. Both callers now retain `verification_projection_changed` and
+`retryable:false`; an actual SDK regression exercises public/legacy aliases in
+both routing paths. All 93 MCP tests passed. A replacement source-bound pair and
+final qualification are in progress; earlier measurements are not relabeled.
+
+The same review covers whole-result pointers: a removed result serialized as JSON
+null now also invalidates its receipt, rather than being treated as an existing
+checked location. The SDK test uses this whole-result case. The final focused
+Core/MCP run passed all 168 tests; the four router campaign receipts also passed
+the current canonical schema. The superseded `p4-final-runtime` build was stopped
+and excluded after review changed its inputs; final evidence must name the
+replacement `p4-projection-runtime` identity.
+
+The error mapping was further narrowed to verification-specific refusals so that
+unrelated malformed backend plans retain their existing connection-failure
+boundary. A negative regression exercises both aliases. The intermediate
+`p4-projection-runtime` build was also stopped/excluded after this review change;
+only the final replacement pair can supply phase acceptance evidence. This is
+an explicit self-review, not an independent review. It covers the combined
+verification controls, source capture/policy/publication fences, bounded receipt
+and plan projection, native CLI/MCP error contracts, Workbench/Inspector exports,
+schema/fixture consistency and packaging/module lists. Earlier historical
+performance misses and platform/physical-I/O limits remain open observations.
+
+The combined final Core/MCP/CLI command initially omitted both the checked-in
+`ci` profile and all-feature qualification. That default-profile run completed
+568 tests: 566 passed, two failed, 11 skipped. The plan parity fixture exhausted
+its bounded read retries with `selection_busy`; the history fixture did not
+observe its expected expiry message under the unbounded parallel load. These
+failures are retained in `p4-final-contracts.log`. The corrected complete run uses
+`--profile ci --all-features --locked`, preserving the repository's four-thread
+and native-service groups, assertions, deadlines and zero retry policy. No
+product change or relaxed test assertion was made to address these observations.
+
+The prescribed all-feature Core/MCP/CLI run completed 581 tests: 578 passed,
+three failed, 11 declared skips (`p4-final-contracts-qualified.log`). It resolved
+the history expiry observation but exposed: (1) independent readiness availability
+and derived receipt-headroom differences in plan parity, (2) an acknowledged
+status receipt on a verification publication refusal, and (3) a usage-attribution
+fixture deliberately holding the writer while default Report attempted its
+publication fence. These are retained failures, not accepted qualification.
+
+The renderer now acknowledges observations only when verification produced a
+reply rather than an error. A deterministic oversized-reply refusal exercises
+this shared error path and requires the original session receipt unchanged.
+The usage fixture explicitly selects Off for its single measured attribution
+read under the held writer; exact client/count assertions remain. Verification
+with native writers and refusal receipts remains covered separately. Plan parity
+retains full native values and exact available-readiness equality. Only when
+one independently timed readiness probe explicitly reports unavailable does it
+validate the available typed ready/disabled fixture state and independently
+recompute receipt headroom from each original projection before normalizing
+those dated observations. Requested/effective work budgets, references, hashes,
+publications, failure/accounting fields and all other evidence remain compared.
+The focused native regressions and complete final suites must pass before build.
+
+All four focused native regressions passed under the all-feature `ci` profile:
+undelivered-observation refusal, full CLI/MCP dependent-plan parity, held-writer
+Explorer attribution and watcher/restart reads. The explicit post-correction
+review retains the prior connection-failure boundary, whole-result null fence
+and complete attempted Require failures. Full Core/MCP/CLI qualification,
+workspace formatting/Clippy, a fresh pair and staged smoke/client checks are now
+running sequentially. Performance measurements remain idle until they finish.
+
+The corrected complete Core/MCP/CLI run passed all 582 tests with 11 declared
+skips (`p4-settled-contracts.log`, all features, locked dependencies, unchanged
+`ci` profile). Formatting and workspace all-target/all-feature Clippy with warnings
+denied also passed. No full extraction/storage suite repeat was added after the
+MCP rendering correction; the preceding 1,868-test workspace pass remains recorded
+with its distinct source identity. The final pair build and staged checks follow
+these completed tests; no benchmark overlaps this build/test work.
+
+
+### P4 final local acceptance — 3 November 2026
+
+This checkpoint supersedes earlier pending P4 status; original failed runs and
+excluded intermediate builds above remain historical evidence. Final native
+build inputs: 757 files, SHA-256
+`55304dfa8cb2c4c5248cb24f9d7d6563b7416ad9b4771720534bd895cc3c6710`.
+Runtime `artifacts/v190/p4-final-qualified-runtime`: main
+`ea240bfec7b318b7cd604e106ddd47c74e59f19677d22d60ae24d0d499f63147`,
+helper `92dcef4ee40147ca45d7d7e75b0178e2c510456f74d6cc4aacfff1191e5e9576`.
+The builder verified unchanged inputs across both optimized builds and staged
+366 third-party notices. Smoke and client suites passed 2/2 at four CPUs,
+zero load workers (`artifacts/ci-local/20261103-013213-0c59ba82`).
+
+A fresh measurement shell confirmed 64 logical processors and affinity -1.
+No builds/tests or repository edits overlapped the sequential campaigns. Off
+and default Report each completed 90 trials/810 calls with zero errors/retries,
+complete coverage, clean owned-service/frontend drain and unchanged sources.
+Off returned no receipts; all 720 Report evidence reads had verified receipts.
+
+| Connection cohort | Off median / p95 task ms | Report median / p95 task ms |
+| --- | ---: | ---: |
+| Fresh status-first | 978.91 / 1,054.11 | 1,536.99 / 1,621.42 |
+| Fresh unprimed | 977.24 / 1,009.75 | 1,557.48 / 1,681.56 |
+| Reused status-first | 946.29 / 1,120.09 | 1,563.47 / 1,752.44 |
+
+Final Off passed **all 24 historical-point gates** against the unchanged frozen
+and preceding P2b receipts, plus all 24 comparisons against the exact remeasured
+reference payloads. Both task-only and with-connection median/p95 passed in all
+three cohorts, using the original allowances. No baseline reset, pooled-sample
+substitution or threshold change was necessary for this final candidate.
+Earlier candidates' historical misses remain failures, not relabeled passes.
+Raw evidence: `p4-final-off-mcp/`, `p4-final-report-mcp/`, `p4-final-gates.json`.
+
+The final dedicated campaign passed all source/count/byte/Require/provenance,
+unchanged source-work, cleanup and 140 actual input-field comparisons. Four
+actual receipts validate against the current canonical schema. Thirty samples
+per mode/fixture produced these warm-cache medians:
+
+| Fixture | Logical saved bytes per Report read | Off ms | Report ms |
+| --- | ---: | ---: | ---: |
+| Small | 32 | 66.67 | 135.76 |
+| Medium | 65,536 | 69.13 | 141.97 |
+| Large | 8,659,200 | 67.00 | 137.39 |
+| Eight sources | 304 | 245.17 | 322.57 |
+
+The graded corpus completed 75 attempts with 84 exact frozen/preceding metric
+comparisons (1e-12 tolerance), unchanged source hashes, negative-query outcomes,
+source identity and executable hash. Reports: `p4-final-verification/`,
+`p4-final-relevance.json`, `p4-final-quality-gates.json`.
+
+Final affected qualification passed 582 Core/MCP/CLI tests with 11 declared
+skips, formatting and workspace all-target/all-feature Clippy with warnings
+denied. Earlier complete workspace (1,868/1,868, 35 skips), serial doctest,
+Python (309, six skips) and extension (547, 19 skips) evidence remains recorded
+with its exact checkpoint. Unchanged Store/extraction/extension suites were not
+repeated after the final MCP-only refusal correction. Final pre-commit repository checks passed for 1,522 public files; native, extension
+and lockfile versions agree at 1.9.0; all 43 design fixtures and whitespace checks
+passed. AGENTS.md and CLAUDE.md remain byte-identical.
+
+Report's extra work is an intentional default change requested by the maintainer,
+not unchanged default latency. Logical saved bytes exclude policy/index metadata;
+physical I/O, whole-process peak memory, installed editors, concurrent Windows
+editor-save responsiveness, remote filesystems and macOS/Linux remain unqualified.
+The pre-existing `rich:true` capability limitation above remains unresolved; the
+full default native catalog and actual CLI/MCP/Workbench input parity passed.
+No normal installation, production migration, push or publication occurred.
+P5 begins from this accepted commit, with production activation disabled until P6.

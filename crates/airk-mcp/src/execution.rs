@@ -16,6 +16,15 @@ const CONTROL_WORKERS: u32 = 2;
 const MAX_QUEUED_REQUESTS: u64 = 16;
 const QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
+struct VerificationCancellation(Option<Arc<AtomicBool>>);
+impl Drop for VerificationCancellation {
+    fn drop(&mut self) {
+        if let Some(cancelled) = &self.0 {
+            cancelled.store(true, Ordering::Release);
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct Admission(Arc<State>);
 
@@ -192,6 +201,71 @@ impl AirkServer {
         T: Serialize + Send + 'static,
         F: FnOnce(airk_kernel::Kernel) -> anyhow::Result<T> + Send + 'static,
     {
+        self.execute_verified_policy(
+            operation,
+            options,
+            allow_diagnostics,
+            airk_core::verification::VerificationControls::off(),
+            false,
+            work,
+        )
+        .await
+    }
+
+    pub(crate) async fn execute_verified_response<T, F>(
+        &self,
+        operation: UsageOperation,
+        options: crate::response::ResponseArgs,
+        verification: airk_core::verification::VerificationControls,
+        work: F,
+    ) -> CallToolResult
+    where
+        T: Serialize + Send + 'static,
+        F: FnOnce(airk_kernel::Kernel) -> anyhow::Result<T> + Send + 'static,
+    {
+        self.execute_verified_policy(operation, options, true, verification, false, work)
+            .await
+    }
+
+    pub(crate) async fn execute_verification_aware<T, F>(
+        &self,
+        operation: UsageOperation,
+        options: crate::response::ResponseArgs,
+        track: bool,
+        work: F,
+    ) -> CallToolResult
+    where
+        T: Serialize + Send + 'static,
+        F: FnOnce(airk_kernel::Kernel) -> anyhow::Result<T> + Send + 'static,
+    {
+        self.execute_verified_policy(
+            operation,
+            options,
+            true,
+            airk_core::verification::VerificationControls::off(),
+            track,
+            work,
+        )
+        .await
+    }
+
+    async fn execute_verified_policy<T, F>(
+        &self,
+        operation: UsageOperation,
+        options: crate::response::ResponseArgs,
+        allow_diagnostics: bool,
+        verification: airk_core::verification::VerificationControls,
+        track_verification: bool,
+        work: F,
+    ) -> CallToolResult
+    where
+        T: Serialize + Send + 'static,
+        F: FnOnce(airk_kernel::Kernel) -> anyhow::Result<T> + Send + 'static,
+    {
+        let verification = match verification.resolve() {
+            Ok(budget) => budget,
+            Err(error) => return crate::response::error_result(&error),
+        };
         if self.plan_read {
             // This runs on the outer parse's blocking worker, under its permit.
             // Reuse the exact handlers without recursive transport/admission or usage entries.
@@ -201,11 +275,18 @@ impl AirkServer {
                 (span, false),
                 work(self.kernel.clone()),
                 &self.responses,
-                (crate::response::ResponseMode::Full, options.reply_detail),
+                (
+                    crate::response::ResponseMode::Full,
+                    options.reply_detail,
+                    verification,
+                ),
                 true,
                 operation,
             );
         }
+        let cancelled = (verification.is_some() || track_verification)
+            .then(|| Arc::new(AtomicBool::new(false)));
+        let _cancellation = VerificationCancellation(cancelled.clone());
         let responses = self.responses.clone();
         let mode = options.response_mode.unwrap_or(self.response_mode);
         let control = matches!(
@@ -228,7 +309,7 @@ impl AirkServer {
         };
         tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            let kernel = match kernel.refresh_service_snapshot() {
+            let mut kernel = match kernel.refresh_service_snapshot() {
                 Ok(kernel) => kernel,
                 Err(failure) => {
                     // Contention is a safe-to-repeat read refusal, including for
@@ -239,18 +320,19 @@ impl AirkServer {
                     if let Some((runtime, work)) = diagnostics && (runtime.is_some() || work.is_some()) {
                         let status = crate::unavailable_status(&kernel, runtime, work, "AIRK collection selection is busy or unavailable; retry against the current revision");
                         let span = kernel.usage_span(operation, client);
-                        return crate::render(&kernel, (span, true), Ok(status), &responses, (mode,options.reply_detail), true, operation);
+                        return crate::render(&kernel, (span, true), Ok(status), &responses, (mode,options.reply_detail,verification), true, operation);
                     }
                     // Other selection failures retain the path-free generic reply.
                     return error("AIRK collection selection is busy or unavailable; retry against the current revision");
                 },
             };
+            if let Some(cancelled)=cancelled {kernel=kernel.with_verification_cancellation(cancelled);}
             let span = kernel.usage_span(operation, client);
             let result =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(kernel.clone())))
                     .unwrap_or_else(|_| Err(anyhow::anyhow!("retrieval worker failed")));
             // Serialization and all optional usage I/O stay off the protocol executor.
-            crate::render(&kernel, (span, true), result, &responses, (mode,options.reply_detail), options.include_status || control, operation)
+            crate::render(&kernel, (span, true), result, &responses, (mode,options.reply_detail,verification), options.include_status || control, operation)
         })
         .await
         .unwrap_or_else(|_| error("retrieval worker failed"))

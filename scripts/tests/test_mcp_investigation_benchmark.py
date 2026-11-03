@@ -40,6 +40,30 @@ for line in sys.stdin:
 
 
 class InvestigationBenchmarkTests(unittest.TestCase):
+    def test_verification_observations_keep_cost_without_source_locations_or_prose(self):
+        receipt = {"schema": "airk.saved-source-verification/1", "mode": "report", "status": "partial",
+                   "counts": {"bytes_read": 4096, "matched_sources": 1, "requested_sources": None},
+                   "sources": [{"path": "private-source.txt", "reason": "private prose"}]}
+        observed = BENCH.observation({"structuredContent": {"source_verification": receipt}})["source_verification"]
+        self.assertEqual(observed["counts"]["bytes_read"], 4096)
+        self.assertEqual(observed["counts"]["matched_sources"], 1)
+        self.assertIsNone(observed["counts"]["requested_sources"])
+        self.assertNotIn("private", json.dumps(observed))
+
+    def test_verification_override_preserves_workload_and_metadata_arguments(self):
+        session = BENCH.Session({"verification_override": "off"}, 5)
+        observed = []
+        def request(method, params, deadline):
+            observed.append(params)
+            return {"content": [{"type": "text", "text": "{}"}]}, {}
+        session.request = request
+        arguments = {"query": "Session"}
+        session.tool(("search", arguments))
+        session.tool(("status", {}))
+        self.assertEqual(observed[0]["arguments"], {"query": "Session", "verification": "off"})
+        self.assertEqual(observed[1]["arguments"], {})
+        self.assertEqual(arguments, {"query": "Session"})
+
     def test_original_attempt_rows_and_summary_are_compared_without_rewriting(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "record.md"

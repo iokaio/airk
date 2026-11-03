@@ -5,7 +5,8 @@ import { explorerError } from './explorerErrors';
 import { absentFromIndex, EvidenceClient, EvidenceFailure, samePublication } from './explorerEvidence';
 import { RefRegistry } from './explorerSearch';
 import { FactHandles } from './explorerFacts';
-import { displayPath, liveCheck, sourceFile } from './explorerSource';
+import { displayPath, sourceFile } from './explorerSource';
+import { nativeVerification, verificationLabel } from './sourceVerification';
 
 type Value = Record<string, unknown>;
 const obj = (value: unknown): Value => value && typeof value === 'object' && !Array.isArray(value) ? value as Value : {};
@@ -15,21 +16,33 @@ const text = (value: unknown, max = 256): string | undefined => typeof value ===
 export type DirtyCheck = (file: string) => boolean;
 
 const LIVE_MESSAGE: Record<LiveCheck, string> = {
-    matches_index: 'Saved bytes match the indexed content hash.',
+    matches_index: 'Saved bytes matched the indexed content hash during the native check.',
     changed_since_index: 'Saved bytes differ from the indexed content hash; cited lines may have moved.',
     not_saved: 'The open editor has unsaved edits; the index describes the saved file.',
     missing: 'No file exists at the indexed location.',
     outside_workspace: 'The file is outside this window’s workspace folders.',
-    unchecked: 'The file was too large to compare.',
+    unchecked: 'Native saved-source verification was unavailable or incomplete.',
 };
 
-async function liveOf(info: Value, contentHash: string, dirty: DirtyCheck): Promise<{ live: LiveCheck; root?: string }> {
+async function liveOf(info: Value, contentHash: string, dirty: DirtyCheck): Promise<{ live: LiveCheck; root?: string; receipt?: Value; message?: string }> {
     const source = obj(info.source);
     if (typeof source.root !== 'string' || typeof source.relative_path !== 'string') { return { live: 'unchecked' }; }
+    const receipt = nativeVerification(info.source_verification);
+    const root = displayPath(source.root);
+    const observation = receipt ? { receipt, message: verificationLabel(receipt) } : {};
     try {
         const file = await sourceFile(source.root, source.relative_path);
-        return { live: await liveCheck(file, contentHash, dirty(file)), root: displayPath(source.root) };
-    } catch { return { live: 'unchecked' }; }
+        if (dirty(file)) { return { live: 'not_saved', root, ...observation }; }
+    } catch { return { live: 'unchecked', root, ...observation }; }
+    // The native capture owns source-byte I/O and race/policy checks. Never
+    // hash a second time in the extension or turn an old runtime's missing
+    // receipt into a new verification claim.
+    const sources = receipt && Array.isArray(receipt.sources) ? receipt.sources.map(obj) : [];
+    const target = sources.find(row => row.expected_hash === contentHash
+        && row.source_relative_path === source.relative_path && row.original_root === source.root);
+    const live: LiveCheck = target?.state === 'matched' && observation.message?.startsWith('Saved sources verified at ')
+        ? 'matches_index' : target?.state === 'mismatch' ? 'changed_since_index' : target?.state === 'missing' ? 'missing' : 'unchecked';
+    return { live, root, ...observation };
 }
 
 /** Evidence › Inspector: the full indexed record for one cited file, compared with its saved bytes. */
@@ -48,9 +61,10 @@ export async function inspect(session: EvidenceClient, refs: RefRegistry, projec
         id = refs.add(ref);
     }
     const indexedHash = typeof info.content_hash === 'string' ? info.content_hash : ref.contentHash;
-    const { live, root } = await liveOf(info, indexedHash, dirty);
+    const { live, root, receipt, message: observed } = await liveOf(info, indexedHash, dirty);
+    const description = live === 'not_saved' ? `${LIVE_MESSAGE[live]} ${observed ?? ''}` : observed ?? LIVE_MESSAGE[live];
     const message = indexedHash !== ref.contentHash
-        ? `${LIVE_MESSAGE[live]} The index was republished since this citation was captured.` : LIVE_MESSAGE[live];
+        ? `${description} The index was republished since this citation was captured.` : description;
     return {
         ref: id!, path: ref.path, startLine: ref.startLine, endLine: ref.endLine, contentHash: indexedHash, live, liveMessage: message,
         ...(result.publication ? { publication: result.publication } : {}),
@@ -60,11 +74,12 @@ export async function inspect(session: EvidenceClient, refs: RefRegistry, projec
         ...(count(info.source_bytes) !== undefined ? { sourceBytes: count(info.source_bytes) } : {}),
         ...(count(info.chunks) !== undefined ? { chunks: count(info.chunks) } : {}), ...(count(info.facts) !== undefined ? { facts: count(info.facts) } : {}),
         ...(root ? { sourceRoot: root } : {}),
+        ...(receipt ? { sourceVerification: receipt } : {}),
     };
 }
 
 const STATUS_MESSAGE: Record<CitationResult['status'], string> = {
-    valid: 'Indexed, in range, and the saved file matches the index.',
+    valid: 'Indexed, in range, and saved bytes matched during the native check.',
     changed_since_index: 'Indexed and in range, but the saved file changed since indexing.',
     not_saved: 'Indexed and in range; the open editor has unsaved edits.',
     missing: 'Indexed, but no file exists at its location now.',
@@ -82,7 +97,7 @@ const STATUS_MESSAGE: Record<CitationResult['status'], string> = {
 export async function checkCitations(session: EvidenceClient, refs: RefRegistry, project: string, input: string, dirty: DirtyCheck): Promise<CitationCheckView> {
     const parsed = parseCitations(input);
     const paths = [...new Set(parsed.citations.filter(entry => !entry.absolute).map(entry => entry.path))].slice(0, 25);
-    const records = new Map<string, { info?: Value; live?: LiveCheck; publication?: string }>();
+    const records = new Map<string, { info?: Value; live?: LiveCheck; publication?: string; receipt?: Value; message?: string }>();
     let publication: string | undefined;
     for (const path of paths) {
         try {
@@ -90,7 +105,8 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
             publication = samePublication(publication, result);
             if (absentFromIndex(result.payload)) { records.set(path, {}); continue; }
             const hash = typeof result.payload.content_hash === 'string' ? result.payload.content_hash : '';
-            records.set(path, { info: result.payload, live: hash ? (await liveOf(result.payload, hash, dirty)).live : 'unchecked', ...(result.publication ? { publication: result.publication } : {}) });
+            const observed = hash ? await liveOf(result.payload, hash, dirty) : { live: 'unchecked' as const };
+            records.set(path, { info: result.payload, ...observed, ...(result.publication ? { publication: result.publication } : {}) });
         } catch (error) {
             throw error;
         }
@@ -108,10 +124,12 @@ export async function checkCitations(session: EvidenceClient, refs: RefRegistry,
             : record.live === 'not_saved' ? 'not_saved' : record.live === 'missing' ? 'missing' : 'unchecked';
         const ref = typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash)
             ? refs.add({ project, path: entry.path, startLine: entry.startLine, endLine: entry.endLine, contentHash: hash, ...(record.publication ? { publication: record.publication } : {}) }) : undefined;
-        const message = STATUS_MESSAGE[status];
+        const message = `${STATUS_MESSAGE[status]}${record.message ? ` ${record.message}` : ''}`;
         return { ...base, status, message, ...(ref ? { ref } : {}) };
     });
-    return { supported: citations.length > 0, citations, limited: parsed.limited, ...(publication ? { publication } : {}) };
+    return { supported: citations.length > 0, citations, limited: parsed.limited, ...(publication ? { publication } : {}),
+        sourceVerifications: [...records].filter(([, record]) => record.receipt !== undefined)
+            .map(([path, record]) => ({ path, receipt: record.receipt! })) };
 }
 
 /** Evidence › Changes: bounded observed changes since an earlier publication token. */

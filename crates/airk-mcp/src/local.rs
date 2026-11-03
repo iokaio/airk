@@ -72,7 +72,7 @@ pub fn tools() -> Vec<Tool> {
 
 // Exact bundled definitions only; per-session projects/admission/runtime state stays outside.
 fn build_tools() -> Vec<Tool> {
-    let mut tools = AirkServer::tool_router().list_all();
+    let mut tools = AirkServer::shared_tool_router().list_all();
     tools.sort_by(|a, b| a.name.cmp(&b.name));
     tools
 }
@@ -349,6 +349,67 @@ fn retry_native_read<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_native_routes_keep_exact_definitions_and_isolate_router_mutations() {
+        let mut direct = AirkServer::tool_router().list_all();
+        direct.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(
+            serde_json::to_value(direct).unwrap(),
+            serde_json::to_value(tools()).unwrap()
+        );
+        let mut first = AirkServer::shared_tool_router();
+        let second = AirkServer::shared_tool_router();
+        assert!(std::sync::Arc::ptr_eq(
+            &first.map["airk_file_info"].call,
+            &second.map["airk_file_info"].call
+        ));
+        let route = first.map.get_mut("airk_file_info").unwrap();
+        std::sync::Arc::make_mut(&mut route.attr.input_schema)
+            .insert("caller-local".into(), serde_json::json!(true));
+        first.map.remove("airk_status");
+        let third = AirkServer::shared_tool_router();
+        assert!(third.map.contains_key("airk_status"));
+        assert!(
+            third.map["airk_file_info"]
+                .attr
+                .input_schema
+                .get("caller-local")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_routes_dispatch_only_to_the_current_servers_kernel() -> anyhow::Result<()> {
+        let owner = tempfile::tempdir()?;
+        let mut clients = Vec::new();
+        for name in ["first", "second"] {
+            let root = owner.path().join(name);
+            std::fs::create_dir(&root)?;
+            std::fs::write(
+                root.join(format!("{name}.rs")),
+                "pub struct SharedMarker;\n",
+            )?;
+            let kernel = Kernel::open(&root, Some(owner.path().join(format!("{name}-data"))))?;
+            kernel.configure_vectors(false)?;
+            kernel.index()?;
+            clients.push(LocalTools::new(kernel).await?);
+        }
+        let mut bindings = Vec::new();
+        for (index, name) in ["first", "second", "first"].iter().enumerate() {
+            let value = body(clients[index % 2].call("airk_symbols".into(),
+                serde_json::json!({"name":"SharedMarker","compact":false,"response_mode":"full"}).as_object().unwrap().clone()).await?)?;
+            assert_eq!(value["items"][0]["citation"]["path"], format!("{name}.rs"));
+            assert_eq!(value["source_verification"]["status"], "verified");
+            bindings.push(value["source_verification"]["origins"][0]["legacy_project"].clone());
+        }
+        assert_ne!(bindings[0], bindings[1]);
+        assert_eq!(bindings[0], bindings[2]);
+        for client in &mut clients {
+            client.close().await?;
+        }
+        Ok(())
+    }
+
     #[test]
     fn immutable_catalog_preserves_exact_definitions_and_isolates_caller_mutation() {
         let expected = serde_json::to_vec(&build_tools()).unwrap();

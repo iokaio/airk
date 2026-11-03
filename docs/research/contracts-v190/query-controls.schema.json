@@ -43,22 +43,26 @@
         "off",
         "report",
         "require"
-      ]
+      ],
+      "default": "report"
     },
     "verification_max_sources": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 256
+      "maximum": 256,
+      "default": 8
     },
     "verification_max_bytes": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 1073741824
+      "maximum": 1073741824,
+      "default": 16777216
     },
     "verification_deadline_ms": {
       "type": "integer",
       "minimum": 1,
-      "maximum": 30000
+      "maximum": 30000,
+      "default": 2000
     }
   },
   "required": [],
@@ -103,28 +107,6 @@
     },
     {
       "if": {
-        "required": [
-          "verification"
-        ],
-        "properties": {
-          "verification": {
-            "enum": [
-              "report",
-              "require"
-            ]
-          }
-        }
-      },
-      "then": {
-        "required": [
-          "verification_max_sources",
-          "verification_max_bytes",
-          "verification_deadline_ms"
-        ]
-      }
-    },
-    {
-      "if": {
         "anyOf": [
           {
             "required": [
@@ -144,9 +126,6 @@
         ]
       },
       "then": {
-        "required": [
-          "verification"
-        ],
         "properties": {
           "verification": {
             "enum": [

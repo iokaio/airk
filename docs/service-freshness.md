@@ -1,5 +1,7 @@
 # Service source freshness observations
 
+**1.9.0 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
+
 Service freshness describes saved source-work intent independently of authenticated index identity and extraction coverage. It does not verify live source files. The service registry combines its watcher state, pending/running source jobs and latest source outcome in one bounded read transaction. Verification, vector-only work and other derived maintenance cannot overwrite the latest source failure. Planned repair work reuses its existing durable source-job association.
 
 Explorer labels this observation **Source work**. From 1.5.5, native directory planning uses indexing's ignore policy, so an unreadable fully ignored output directory does not by itself make the watched source scope unavailable. Included-directory failures, ignore-rule errors and exhausted traversal budgets remain explicit. This changes notification scope, not semantic coverage or the meaning of a published revision; see [source watching](service-source-watching.md).

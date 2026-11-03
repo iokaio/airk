@@ -7,6 +7,196 @@ use std::{
     path::{Component, Path},
 };
 
+/// Hash a complete saved source without discovery, extraction or publication work.
+/// The caller supplies current authorized roots/policy and retains its read permit
+/// until this cooperative operation returns, even when a filesystem call blocks.
+pub fn verify_saved_source(
+    root: &Path,
+    relative: &Path,
+    expected: airk_core::identity::Sha256Digest,
+    max_bytes: u64,
+    deadline: std::time::Instant,
+    cancelled: &dyn Fn() -> bool,
+) -> airk_core::verification::SourceCheck {
+    use airk_core::verification::{STREAM_BYTES, SourceCheck, SourceCheckState as State};
+    use sha2::{Digest, Sha256};
+    let Some(logical) = relative.to_str() else {
+        return SourceCheck::unchecked(State::Unsupported, 0, "non_utf8_locator");
+    };
+    if !root.is_absolute()
+        || logical.is_empty()
+        || logical.contains(['\\', ':', '\0'])
+        || logical
+            .split('/')
+            .any(|part| matches!(part, "" | "." | ".."))
+        || !relative
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    {
+        return SourceCheck::unchecked(State::OutOfScope, 0, "invalid_source_locator");
+    }
+    let stopped = || cancelled() || std::time::Instant::now() >= deadline;
+    if stopped() {
+        return SourceCheck::unchecked(State::BudgetExhausted, 0, "deadline_or_cancellation");
+    }
+    let mut bytes_read = 0;
+    let attempt = (|| -> Result<SourceCheck> {
+        let mut held = open(root, relative)?;
+        let before = held.file.metadata()?;
+        ensure!(before.is_file(), "source is not a regular file");
+        let original_identity = identity(&held.file)?;
+        // Reserve one possible byte for an EOF probe. It consumes no raw-byte
+        // budget at EOF, but a growing/pseudo file must never exceed the limit
+        // or be certified merely because metadata reported the old length.
+        if before.len() >= max_bytes {
+            return Ok(SourceCheck::unchecked(
+                State::BudgetExhausted,
+                0,
+                "aggregate_byte_budget_including_eof_probe",
+            ));
+        }
+        let mut hasher = Sha256::new();
+        let mut buffer = [0_u8; STREAM_BYTES];
+        while bytes_read < before.len() {
+            if stopped() {
+                return Ok(SourceCheck::unchecked(
+                    State::BudgetExhausted,
+                    bytes_read,
+                    "deadline_or_cancellation",
+                ));
+            }
+            let count = usize::try_from((before.len() - bytes_read).min(STREAM_BYTES as u64))?;
+            let n = match held.file.read(&mut buffer[..count]) {
+                Ok(n) => n,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
+            };
+            if n == 0 {
+                return Ok(SourceCheck::unchecked(
+                    State::ChangedDuringCheck,
+                    bytes_read,
+                    "source_length_changed",
+                ));
+            }
+            bytes_read += n as u64;
+            hasher.update(&buffer[..n]);
+        }
+        loop {
+            if stopped() {
+                return Ok(SourceCheck::unchecked(
+                    State::BudgetExhausted,
+                    bytes_read,
+                    "deadline_or_cancellation",
+                ));
+            }
+            match held.file.read(&mut buffer[..1]) {
+                Ok(0) => break,
+                Ok(n) => {
+                    return Ok(SourceCheck::unchecked(
+                        State::ChangedDuringCheck,
+                        bytes_read + n as u64,
+                        "source_length_changed",
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if stopped() {
+            return Ok(SourceCheck::unchecked(
+                State::BudgetExhausted,
+                bytes_read,
+                "deadline_or_cancellation",
+            ));
+        }
+        let after = held.file.metadata()?;
+        if before.len() != after.len()
+            || before.modified()? != after.modified()?
+            || !unchanged(&before, &after)
+            || original_identity != identity(&held.file)?
+        {
+            return Ok(SourceCheck::unchecked(
+                State::ChangedDuringCheck,
+                bytes_read,
+                "source_metadata_changed",
+            ));
+        }
+        let current = match open(root, relative) {
+            Ok(current) => current,
+            Err(_) => {
+                return Ok(SourceCheck::unchecked(
+                    State::ChangedDuringCheck,
+                    bytes_read,
+                    "source_binding_changed",
+                ));
+            }
+        };
+        if original_identity != identity(&current.file)?
+            || held._directories.len() != current._directories.len()
+            || held
+                ._directories
+                .iter()
+                .zip(&current._directories)
+                .any(|(before, after)| {
+                    identity(before)
+                        .ok()
+                        .zip(identity(after).ok())
+                        .is_none_or(|(before, after)| before != after)
+                })
+        {
+            return Ok(SourceCheck::unchecked(
+                State::ChangedDuringCheck,
+                bytes_read,
+                "source_binding_changed",
+            ));
+        }
+        // Reopened handles still pin the binding. A second observation catches
+        // detectable writes during pathname validation on platforms permitting them.
+        let final_metadata = current.file.metadata()?;
+        if after.len() != final_metadata.len()
+            || after.modified()? != final_metadata.modified()?
+            || !unchanged(&after, &final_metadata)
+        {
+            return Ok(SourceCheck::unchecked(
+                State::ChangedDuringCheck,
+                bytes_read,
+                "source_metadata_changed",
+            ));
+        }
+        if stopped() {
+            return Ok(SourceCheck::unchecked(
+                State::BudgetExhausted,
+                bytes_read,
+                "deadline_or_cancellation",
+            ));
+        }
+        let observed = airk_core::identity::Sha256Digest::from_bytes(hasher.finalize().into());
+        Ok(SourceCheck {
+            state: if observed == expected {
+                State::Matched
+            } else {
+                State::Mismatch
+            },
+            observed_hash: Some(observed),
+            bytes_read,
+            reason: None,
+        })
+    })();
+    attempt.unwrap_or_else(|error| {
+        let state = error
+            .chain()
+            .find_map(|cause| cause.downcast_ref::<std::io::Error>())
+            .map_or(State::Unsupported, |cause| {
+                if cause.kind() == std::io::ErrorKind::NotFound {
+                    State::Missing
+                } else {
+                    State::Unreadable
+                }
+            });
+        SourceCheck::unchecked(state, bytes_read, "protected_source_capture_failed")
+    })
+}
+
 pub(crate) fn read(root: &Path, path: &Path, limit: usize, remaining: usize) -> Result<Vec<u8>> {
     let relative = path
         .strip_prefix(root)
@@ -92,11 +282,10 @@ fn open(root: &Path, relative: &Path) -> Result<Opened> {
                 flags,
             )
         };
-        ensure!(
-            fd >= 0,
-            "open source without following links: {}",
-            std::io::Error::last_os_error()
-        );
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error())
+                .context("open source without following links");
+        }
         let file = unsafe { File::from_raw_fd(fd) };
         if directory {
             directories.push(file);
@@ -211,6 +400,198 @@ mod tests {
     use super::*;
 
     #[test]
+    fn verification_hashes_complete_raw_sources_and_keeps_failures_unchecked() -> Result<()> {
+        use airk_core::{identity::Sha256Digest, verification::SourceCheckState as State};
+        use sha2::{Digest, Sha256};
+        use std::time::{Duration, Instant};
+        let source = tempfile::tempdir()?;
+        let root = source.path().canonicalize()?;
+        // Raw binary across several streaming buffers; no parser or text normalization.
+        let bytes: Vec<u8> = (0..196_619).map(|n| (n % 251) as u8).collect();
+        let expected = Sha256Digest::from_bytes(Sha256::digest(&bytes).into());
+        std::fs::write(root.join("raw.bin"), &bytes)?;
+        let deadline = || Instant::now() + Duration::from_secs(30);
+        let matched = verify_saved_source(
+            &root,
+            Path::new("raw.bin"),
+            expected,
+            bytes.len() as u64 + 1,
+            deadline(),
+            &|| false,
+        );
+        assert_eq!(matched.state, State::Matched);
+        assert_eq!(matched.observed_hash, Some(expected));
+        assert_eq!(matched.bytes_read, bytes.len() as u64);
+        let mismatch = verify_saved_source(
+            &root,
+            Path::new("raw.bin"),
+            Sha256Digest::from_bytes([0; 32]),
+            bytes.len() as u64 + 1,
+            deadline(),
+            &|| false,
+        );
+        assert_eq!(mismatch.state, State::Mismatch);
+        assert_eq!(mismatch.observed_hash, Some(expected));
+        let bounded = verify_saved_source(
+            &root,
+            Path::new("raw.bin"),
+            expected,
+            bytes.len() as u64 - 1,
+            deadline(),
+            &|| false,
+        );
+        assert_eq!(bounded.state, State::BudgetExhausted);
+        assert_eq!(bounded.bytes_read, 0);
+        assert!(bounded.observed_hash.is_none());
+        let exact = verify_saved_source(
+            &root,
+            Path::new("raw.bin"),
+            expected,
+            bytes.len() as u64,
+            deadline(),
+            &|| false,
+        );
+        assert_eq!(
+            exact.state,
+            State::BudgetExhausted,
+            "full EOF evidence needs one byte of prospective headroom"
+        );
+        assert_eq!(exact.bytes_read, 0);
+        std::fs::write(root.join("empty.bin"), b"")?;
+        let empty_hash = Sha256Digest::from_bytes(Sha256::digest(b"").into());
+        let empty = verify_saved_source(
+            &root,
+            Path::new("empty.bin"),
+            empty_hash,
+            1,
+            deadline(),
+            &|| false,
+        );
+        assert_eq!(empty.state, State::Matched);
+        assert_eq!(empty.bytes_read, 0);
+        let missing = verify_saved_source(
+            &root,
+            Path::new("missing.bin"),
+            expected,
+            10,
+            deadline(),
+            &|| false,
+        );
+        assert_eq!(missing.state, State::Missing);
+        let expired = verify_saved_source(
+            &root,
+            Path::new("raw.bin"),
+            expected,
+            u64::MAX,
+            Instant::now(),
+            &|| false,
+        );
+        assert_eq!(expired.state, State::BudgetExhausted);
+        assert_eq!(expired.bytes_read, 0);
+        for path in [
+            "../outside.bin",
+            "/outside.bin",
+            "a//b",
+            "a/./b",
+            "a/../b",
+            "raw.bin:stream",
+            "a\\b",
+            "raw.bin/",
+        ] {
+            let result = verify_saved_source(
+                &root,
+                Path::new(path),
+                expected,
+                u64::MAX,
+                deadline(),
+                &|| false,
+            );
+            assert_eq!(result.state, State::OutOfScope, "{path}");
+            assert_eq!(result.bytes_read, 0);
+        }
+        assert_eq!(std::fs::read(root.join("raw.bin"))?, bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn verification_cancellation_stops_between_buffers_without_a_partial_hash() -> Result<()> {
+        use airk_core::{
+            identity::Sha256Digest,
+            verification::{STREAM_BYTES, SourceCheckState as State},
+        };
+        use std::{
+            cell::Cell,
+            time::{Duration, Instant},
+        };
+        let source = tempfile::tempdir()?;
+        let root = source.path().canonicalize()?;
+        std::fs::write(root.join("large.bin"), vec![1; STREAM_BYTES * 3])?;
+        let checks = Cell::new(0);
+        let result = verify_saved_source(
+            &root,
+            Path::new("large.bin"),
+            Sha256Digest::from_bytes([0; 32]),
+            u64::MAX,
+            Instant::now() + Duration::from_secs(30),
+            &|| {
+                checks.set(checks.get() + 1);
+                checks.get() >= 3
+            },
+        );
+        assert_eq!(result.state, State::BudgetExhausted);
+        assert_eq!(result.bytes_read, STREAM_BYTES as u64);
+        assert_eq!(result.observed_hash, None);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verification_rejects_links_and_detects_writes_during_a_check() -> Result<()> {
+        use airk_core::{
+            identity::Sha256Digest,
+            verification::{STREAM_BYTES, SourceCheckState as State},
+        };
+        use std::{
+            cell::Cell,
+            time::{Duration, Instant},
+        };
+        let source = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let root = source.path().canonicalize()?;
+        std::fs::write(outside.path().join("secret.bin"), b"outside")?;
+        std::os::unix::fs::symlink(outside.path(), root.join("redirect"))?;
+        let no_link = verify_saved_source(
+            &root,
+            Path::new("redirect/secret.bin"),
+            Sha256Digest::from_bytes([0; 32]),
+            u64::MAX,
+            Instant::now() + Duration::from_secs(30),
+            &|| false,
+        );
+        assert!(!matches!(no_link.state, State::Matched | State::Mismatch));
+        assert_eq!(no_link.bytes_read, 0);
+        std::fs::write(root.join("large.bin"), vec![1; STREAM_BYTES * 3])?;
+        let checks = Cell::new(0);
+        let raced = verify_saved_source(
+            &root,
+            Path::new("large.bin"),
+            Sha256Digest::from_bytes([0; 32]),
+            u64::MAX,
+            Instant::now() + Duration::from_secs(30),
+            &|| {
+                checks.set(checks.get() + 1);
+                if checks.get() == 3 {
+                    std::fs::write(root.join("large.bin"), b"short").unwrap();
+                }
+                false
+            },
+        );
+        assert_eq!(raced.state, State::ChangedDuringCheck);
+        assert!(raced.observed_hash.is_none());
+        Ok(())
+    }
+
+    #[test]
     fn regular_sources_are_bounded_and_ancestors_cannot_redirect_reads() -> Result<()> {
         let source = tempfile::tempdir()?;
         let outside = tempfile::tempdir()?;
@@ -251,6 +632,26 @@ mod tests {
         assert!(std::fs::rename(root.join("nested"), root.join("replaced")).is_err());
         drop(held);
         std::fs::write(root.join("nested/source.txt"), b"changed")?;
+        use std::os::windows::fs::OpenOptionsExt;
+        let writer = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(root.join("nested/source.txt"))?;
+        let check = verify_saved_source(
+            &root,
+            Path::new("nested/source.txt"),
+            airk_core::identity::Sha256Digest::from_bytes([0; 32]),
+            1024,
+            std::time::Instant::now() + std::time::Duration::from_secs(1),
+            &|| false,
+        );
+        assert_eq!(
+            check.state,
+            airk_core::verification::SourceCheckState::Unreadable
+        );
+        assert_eq!(check.bytes_read, 0);
+        drop(writer);
         Ok(())
     }
 

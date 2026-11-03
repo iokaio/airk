@@ -1,5 +1,7 @@
 # MCP tools
 
+**1.9.0 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
+
 The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
 from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
 complete/selected exports retain applicable reasons without additional reads.

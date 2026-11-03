@@ -301,6 +301,9 @@ mod tests {
                 "plan":{"path_prefix":"allowed/","steps":[{"id":"find","tool":"symbols","args":{"name":"Queue","compact":true}}]}});
             if case == "bounded" {
                 request["output"] = json!({"max_bytes":4096});
+                // Keep the original small-output projection contract. Enabled
+                // verification needs separate space for its complete receipt.
+                request["verification"] = json!("off");
             }
             let result = kernel.evidence_plan_with_reader(
                 serde_json::from_value(request)?,

@@ -10,7 +10,21 @@ commits for each accepted phase. This plan synthesizes **five primary research i
 the three original notes, the fourth research area within this document, and
 the separate cross-project feature design. Dated observations retain their limits.
 
-P3 implementation decisions are captured in [ADR 002](../decisions/002-projects-indexes-and-query-scope.md), [ADR 003](../decisions/003-dated-saved-source-verification.md) and the executable [design contract pack](contracts-v190/README.md). These settle selector names, grants, persistent policy ownership, registry-12 upgrade stages, bounded receipt semantics and profile-family inputs. They enable no new runtime behavior. Enabled verification uses explicit resolved budgets; presets require P4 measurement.
+P3 implementation decisions are captured in [ADR 002](../decisions/002-projects-indexes-and-query-scope.md), [ADR 003](../decisions/003-dated-saved-source-verification.md) and the executable [design contract pack](contracts-v190/README.md). These settle selector names, grants, persistent policy ownership, registry-12 upgrade stages, bounded receipt semantics and profile-family inputs. They enable no new runtime behavior. Enabled verification uses explicit resolved budgets; P4 local measurements and qualification limits are recorded in the ledger.
+
+**P4 maintainer decision:** Report is the default for evidence reads and completed
+response-level plans. This is a user-requested change from the earlier Off design;
+context, retained profiles and reply detail do not choose the mode. Off explicitly
+skips source checking; Require remains the strict option. The initial bounded
+preset is eight distinct sources, 16 MiB of aggregate raw bytes and a cooperative
+2,000-ms checking deadline, with independent caller overrides and explicit unchecked
+outcomes. P4 measured this preset and passed local qualification as recorded in
+the ledger. Metadata/help reads do
+not acquire checks. Plans check final returned references once, deduplicated across
+steps; explicit per-step choices use a declared steps scope. Preserve the explicit
+Off path against frozen/preceding performance gates and separately record default
+Report's intentional I/O, latency and reply-byte cost; do not describe that cost
+as unchanged default behavior or silently fall back to Off.
 
 Review in this order: [phase schedule](#implementation-path-on-the-current-branch),
 [performance gates](#performance-protection-throughout-implementation),
@@ -42,7 +56,7 @@ Recommended order for addressing the research as implementation work:
 1. Freeze the current performance/quality baseline; then synchronize the future
    implementation branch to 1.9.0 and repair compact-plan consumers.
 2. Separate reply detail from retention, establish missing-evidence vocabulary,
-   and implement opt-in single-index verification with complete interface parity.
+   and implement bounded single-index verification with Report as the default with complete interface parity.
    Settle the Project/index and split/trim contracts before freezing schemas.
 3. Deliver safe metadata upgrade, the **Indexing** screen and enforced window
    grants, then expose combined queries only when their consumers are complete.
@@ -82,7 +96,7 @@ the linked ledger records completion. A row alone asserts no passing tests.
 | P2a — T1 replies | Expose independent reply projection everywhere, preserving absent-argument compatibility and existing Workbench defaults. | Actual transport and consumer parity, conflicting-argument errors, copies/exports, equivalent useful evidence and unchanged default work/bytes apart from documented identity/timing. |
 | P2b — T2a/G1 guidance | Adopt shared existing-observation reasons and bounded next-read guidance without changing storage profiles. | Unsupported, not-retained, pending, failed, stale, excluded and truncated fixtures; no full coverage scan or repeated diagnostics to explain an empty result. |
 | P3 — X0/M0/V0 and T2b design gates | Complete ADR 002/003, source/workspace fixtures, profile-family inventory, permanent-policy/partition ownership, scope enums and receipt schemas. Reconcile the feature design, registry-versus-collection versions and recommendation inputs. T2b reporting implementation remains P11a. | Resolve every schema/authorization/performance decision needed by P4–P10; reviewed migration and fault matrices, bounded algorithms and budgets. No live migration or new profile selection. |
-| P4 — V1/V2 verification | Deliver opt-in single-index source verification end to end, with future member identity slots. | All receipt states, source races, large-file budgets, unsaved-buffer limits and real transport/export parity. `off` adds no hashing; unchanged matches start no extraction, model, writer or indexing job. |
+| P4 — V1/V2 verification | Deliver single-index source verification with Report as the default end to end, with future member identity slots. | All receipt states, source races, large-file budgets, unsaved-buffer limits and real transport/export parity. `off` adds no hashing; unchanged matches start no extraction, model, writer or indexing job. |
 | P5 — X1 and U0–U6 safety foundation | Implement normalized catalogs, compatibility mappings, bounded overlap observations and the complete upgrade admission/backup/migration/import/readiness/recovery path in isolated fixtures. Design and guard collection policy formats separately. | Real predecessor/candidate activation and fault tests prove the safety-critical U0–U6 path, old-reader/writer refusal, idempotent imports, backup validity and no implicit rebuild. Keep production activation of the new schema disabled until P6 is ready; X6 later expands qualification, not basic safety. |
 | P6 — X2/X3 management and grants | Deliver Indexing library/detail/source/Project flows, reviewed window associations and native grants/revocation. Activate the qualified upgrade and explicit-setup cutover together; retain complete legacy single-index retrieval. | The mapped workspace scenarios, direct CLI and actual agent scope tests, empty/untrusted/manual/remote cases, stale reviews and no automatic folder scans or regrant. Run P5 upgrade tests against the complete UI/connection path before enabling it. |
 | P7 — X4/X5 combined retrieval | Expose multi-Project queries with optional index subsets, canonical prefix unions, unique-index execution and complete UI/parse/session/export/verification support in the same accepted phase. | Shared-index attribution and scoring, partial/failed members, cursor/publication/grant expiry, all input catalogs and actual transports. Compare one-index routing with the legacy path; prove unselected indexes are untouched and total budgets stay bounded. |
@@ -728,7 +742,7 @@ resource thresholds before candidate runs; keep held-out queries out of tuning.
 ### Shared policy names and decision records
 
 Adopt one enum style across the two independent controls: proposed
-`verification: off | report | require` (default `off`) and
+`verification: off | report | require` (default `report`) and
 `member_availability: report | require` (default `report` for explicitly selected
 combined reads). `verification=require` demands checks for all returned sources;
 `member_availability=require` demands outcomes from all selected members. Neither
@@ -916,7 +930,7 @@ component responsibilities change, preserving dependency direction.
 | Registry upgrade damages installed metadata or replays pending work | X1/X6, U0–U6 | Protected consistent backup, owner drain, atomic backfill, receipt recovery and fault tests; defer X rather than ship an unqualified migration |
 | Intermediate phase exposes incomplete schema/API behavior | P5–P7 activation gates | Complete operational upgrade safety before migration, combined-read consumers before advertisement, exact format/build fences and isolated fixtures; never assume a code revert repairs persisted state |
 | Old extension/build/profile reopens shared state | X3/X6, scenario 20 | Explicit version/schema fences, upgrade-required UX and no automatic old-runtime activation or grant expansion |
-| Verification dominates latency on large PDFs/remote files | V0–V2, E0 | Full-source hashing with measured byte/time admission, opt-in mode, explicit unchecked outcomes; no metadata-only substitute or blanket speed claim |
+| Verification dominates latency on large PDFs/remote files | V0–V2, E0 | Full-source hashing with measured byte/time admission, bounded default Report mode, explicit unchecked outcomes; no metadata-only substitute or blanket speed claim |
 | Lexical ranking needs FTS layout rebuild | S1 design gate | `detail=none`/`columnsize=0` may not provide chosen scoring inputs. Audit authenticated FTS schema and every publication/update path; any layout change needs a separately versioned collection lexical/index-v1 compatibility and rebuild/migration plan, quota/recovery/rollback tests and per-collection cost disclosure. It is not the X registry migration; keep current ranking if not qualified |
 | Split or trim leaves leaked evidence or incomplete ownership transfer | M0–M2/X6 | Durable deny fences, independent destination ownership, peak quota reservation, shared-Project review and phase-by-phase fault tests; no success while partition, grant or cleanup state is unknown |
 | New features undo current performance improvements | Every phase/E0/Q0 | Frozen 1.8.7 and previous-phase comparisons, deterministic work counters, controlled tail/resource campaigns and no unselected/disabled feature work; stop at an unexplained breached gate |
@@ -1001,7 +1015,7 @@ associated tests were read, not executed as a new runtime qualification:
    hashes, locations, extraction identities, selection and budgets. Verification
    is an explicit per-query/session choice, independent of Lean/Rich detail.
    Existing snapshot reads remain available. Use the proposed shared contract
-   `verification: off | report | require`, default `off`, as specified above.
+   `verification: off | report | require`, default `report`, as specified above.
 2. Enumerate every distinct source referenced by the returned evidence, including
    supplemental definition pointers and relationship endpoints where present.
    Deduplicate by collection/root binding, logical source and expected digest,
@@ -1110,7 +1124,7 @@ their existing dependency/build validity checks; a matching source file cannot
 renew stale external analysis. Require negative tests proving that no mismatch,
 unchecked reference or stale receipt receives the verified label.
 
-**Recommendation:** deliver bounded, opt-in read-only verification in 1.9.0 and
+**Recommendation:** deliver bounded read-only verification with Report as the default in 1.9.0 and
 make explicit refresh/requery the recovery path. This adds useful certainty
 without paying reindexing cost on every unchanged hit. Consider a default-on
 policy only after the measured latency and verification coverage meet agreed

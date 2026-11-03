@@ -224,8 +224,10 @@ fn explorer_mcp_client_info_is_recorded_as_its_own_family() -> Result<()> {
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
         None,
     )?;
+    // native read: one measured attribution call while the fixture deliberately
+    // holds the writer; saved-source publication fencing is tested separately.
     let reply = exchange(
-        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"airk_search","arguments":{"query":"explorer_fixture","mode":"lexical"}}}),
+        json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"airk_search","arguments":{"query":"explorer_fixture","mode":"lexical","verification":"off"}}}),
         Some(2),
     )?
     .unwrap();

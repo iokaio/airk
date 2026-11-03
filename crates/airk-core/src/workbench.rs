@@ -72,6 +72,10 @@ pub struct Step {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Plan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_scope: Option<crate::verification::VerificationScope>,
+    #[serde(flatten)]
+    pub verification: crate::verification::VerificationControls,
     pub schema: String,
     pub collection: String,
     pub path_prefix: String,
@@ -95,6 +99,8 @@ pub struct Recipe {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    #[serde(flatten)]
+    pub verification: crate::verification::VerificationControls,
     pub schema: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_detail: Option<crate::reply::ReplyDetail>,
@@ -131,6 +137,8 @@ pub struct RequiredInput {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ResultEnvelope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_verification: Option<crate::verification::VerificationReceipt>,
     pub schema: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_detail: Option<crate::reply::ReplyDetail>,

@@ -49,6 +49,60 @@ pub struct DirectoryIgnore {
     matcher: IncrementalIgnore,
 }
 
+/// One request's direct-path policy checks. Loads only ancestor ignore metadata;
+/// never enumerates siblings or opens a source document. Protected capture is
+/// still required after admission. Permanent native policy is an additional fence.
+pub struct SelectedSourcePolicy {
+    root: std::path::PathBuf,
+    data: std::path::PathBuf,
+    matcher: IncrementalIgnore,
+    credentials: CredentialDefaults,
+}
+
+impl SelectedSourcePolicy {
+    pub fn new(root: &Path, data: &Path) -> Self {
+        Self {
+            root: root.into(),
+            data: data.into(),
+            matcher: builder(root).build_matchers().remove(0),
+            credentials: CredentialDefaults::new(root),
+        }
+    }
+
+    pub fn allows(&mut self, logical: &str) -> Result<bool> {
+        ensure!(
+            !logical.is_empty()
+                && logical.len() <= 4096
+                && !logical.contains(['\\', ':', '\0'])
+                && logical
+                    .split('/')
+                    .all(|part| !matches!(part, "" | "." | "..")),
+            "invalid selected source locator"
+        );
+        let parts: Vec<_> = logical.split('/').collect();
+        ensure!(
+            parts.len() <= 256,
+            "selected source depth exceeds policy budget"
+        );
+        let mut relative = std::path::PathBuf::new();
+        for (index, part) in parts.iter().enumerate() {
+            relative.push(part);
+            if crate::excluded(part) || self.root.join(&relative).starts_with(&self.data) {
+                return Ok(false);
+            }
+            let is_dir = index + 1 != parts.len();
+            let (matched, error) = self.matcher.matched_with_errors(&relative, is_dir);
+            if let Some(error) = error {
+                return Err(error.into());
+            }
+            if matched.is_ignore() || self.credentials.excluded(&relative, is_dir) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+}
+
 impl DirectoryIgnore {
     pub fn new(root: &Path) -> Self {
         Self {
@@ -102,5 +156,38 @@ impl CredentialDefaults {
     pub(crate) fn excluded(&mut self, relative: &Path, is_dir: bool) -> bool {
         self.defaults.matched(relative, is_dir).is_ignore()
             && !self.user.matched(relative, is_dir).is_whitelist()
+    }
+}
+
+#[cfg(test)]
+mod selected_tests {
+    use super::*;
+
+    #[test]
+    fn selected_policy_matches_ancestor_ignores_without_discovery() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().canonicalize()?;
+        std::fs::create_dir(root.join("nested"))?;
+        std::fs::write(root.join(".gitignore"), "ignored/\n*.secret\n")?;
+        std::fs::write(root.join(".airkignore"), "!.npmrc\n")?;
+        std::fs::write(root.join("nested/.ignore"), "local.txt\n")?;
+        let mut policy = SelectedSourcePolicy::new(&root, &root.join("private-data"));
+        for path in [
+            "ignored/missing.rs",
+            "nested/local.txt",
+            "nested/x.secret",
+            "node_modules/a.js",
+            ".env",
+            "nested/.env.local",
+            "private-data/a.txt",
+            ".netrc",
+        ] {
+            assert!(!policy.allows(path)?, "{path}");
+        }
+        for path in [".npmrc", "src/not-yet-created.rs", "nested/visible.txt"] {
+            assert!(policy.allows(path)?, "{path}");
+        }
+        assert!(policy.allows("../outside").is_err());
+        Ok(())
     }
 }

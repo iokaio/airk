@@ -30,17 +30,19 @@ the observation interval. It does not establish extraction/OCR accuracy, truth,
 complete search, resolved calls, unsaved-buffer agreement or continued freshness.
 Serialized receipts are observations, never transferable authority or signatures.
 
-`verification: off | report | require` defaults to **off**. Keep it independent of
+`verification: off | report | require` defaults to **report**. Keep it independent of
 reply/retention detail, response encoding, search mode and
 `member_availability: report | require`. Off adds no source opens/hashes, identity
 lookups, jobs or receipt placeholders. Explicit checks start no extraction,
 embedding, writer lock, source update, publication or model provisioning.
 
-Canonical enabled requests carry a resolved explicit budget:
-`verification_max_sources`, `verification_max_bytes` (aggregate raw bytes), and
-`verification_deadline_ms`. All three are required with report/require; clients
-can expand a measured, published P4 preset before dispatch, but may not supply
-unqualified silent defaults. Keep fields flat for equivalent native schemas,
+The maintainer changed the default from Off to Report during P4 on 2 November
+2026. Native handlers resolve omitted budgets to the published bounded preset:
+8 distinct sources, 16 MiB of aggregate raw bytes and a cooperative 2,000-ms
+deadline. `verification_max_sources`, `verification_max_bytes` and
+`verification_deadline_ms` independently override those values. P4 measures the
+preset before acceptance. No context/profile heuristic enables or disables checks;
+Off is explicit. Resolved budgets are returned with each receipt. Keep fields flat for equivalent native schemas,
 CLI flags and Workbench numeric controls. Metadata/help reads do not acquire a
 whole-index verification meaning; advertise controls only on evidence reads and
 parse. The contract pack fixes safety ceilings; P4 measures presets before use.
@@ -164,7 +166,8 @@ fallback before admission, then requery one new publication and verify every new
 reference. Bound churn/requery attempts. Do not attach new hashes to old snippets
 or infer whole-workspace completeness from selected refresh.
 
-P4 compares off against frozen/preceding gates and instruments exact hash bytes,
+P4 compares explicit Off against frozen/preceding gates and separately measures
+the new default Report cost and instruments exact hash bytes,
 source attempts, extraction/model/publication counts (all zero on unchanged
 checks), large/slow/raced file budgets, cancellation and pipeline resources.
 Measure real native capture before choosing enabled presets. Retain physical-I/O,
@@ -175,7 +178,9 @@ platform and installed-editor unknowns; do not treat them as passing qualificati
 Reindexing/re-extracting every hit changes publication and adds unnecessary model
 and writer work. Metadata-only checks and cached coverage cannot prove fresh
 source equality. Re-extraction with the same parser is not independent accuracy
-certification. Always-on checking adds unchosen large-file/remote-I/O cost. Keeping
+certification. Unbounded checking adds large-file/remote-I/O cost. Default Report is the
+maintainer's selected tradeoff, with bounded unchecked outcomes and an explicit
+Off choice. Keeping
 only an editor implementation breaks agent/CLI parity. None is selected.
 
 ## Consequences and acceptance
@@ -189,3 +194,47 @@ useful without promising perfect extraction, exhaustive retrieval or future trut
 not implementation evidence. P4 must pass all receipt/race/budget/actual transport
 and export cases before public source verification; P7 extends member identities;
 P12 implements refresh. See the [phase ledger](../research/implementation-v190.md).
+
+
+## P4 implementation refinements
+
+Report defaults are canonical, shared by CLI/MCP/Workbench, and appear in live
+schemas/forms. Preparation performs no checking. A response-scope plan disables
+inner checks and verifies final returned references once. A plan using explicit
+per-step choices records `verification_scope: steps`; its resolved inherited and
+per-step budgets enter the prepared digest. Explicit Off disables that scope's
+checks; metadata-only plans add no default receipt. Existing prepared plans whose
+digests omit the newly resolved policy need preparation again.
+
+Full streaming includes an EOF probe: reserve one prospective byte of headroom
+per admitted file, charge only bytes actually read, and never exceed the raw-byte
+budget. Source rows retain original root/relative path even before stable root IDs
+are activated. Origins and references remain explicit and read-only.
+
+The existing native frame ceiling stays unchanged. Allocate receipt metadata
+before hashing, publish `receipt_bytes_budget` and the effective shared deadline,
+and admit source/association rows by linear encoded costs. Omitted rows prevent
+aggregate verification. A reply that cannot fit even the bounded receipt is
+refused before source checking with `verification_reply_budget`; it does not
+certify a subset. Native failures carry complete JSON text without a duplicate
+body on private IPC; the public frontend may materialize that same structured
+error after the bounded hop. Late output projection cannot leave a receipt
+pointing at removed evidence. Selected exports carry dated, rebound observations
+under a separate selected-observations schema and preserve original uncertainty;
+exporting does not run a new check.
+
+
+Per-step verification requires the raw plan output view, which retains each step's
+complete receipt. An evidence-only view must use response-wide verification;
+an enabled per-step/evidence-only combination is rejected before source checking.
+Response-wide Require failures use the same nonretryable MCP/CLI error envelope
+as direct reads, preserving the entire attempted plan and its native receipt.
+Per-step failures remain identified within their individual step outcomes.
+
+
+The selection digest identifies the producer's canonical evidence projection
+before receipt attachment, verification-result presentation and Terse compression;
+transport/request identities and changing readiness observations are normalized.
+It is not a checksum of the final serialized envelope, a representation validator
+or a signature. Reference pointers and original hashes/publications remain the
+explicit associations to the returned evidence.

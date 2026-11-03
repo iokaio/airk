@@ -202,6 +202,18 @@ def observation(envelope):
         return row.get("state") if isinstance(row, dict) else None
     freshness = value.get("freshness")
     hints = value.get("definitions", [])
+    receipt = value.get("source_verification")
+    verification = None
+    if isinstance(receipt, dict) and receipt.get("schema") == "airk.saved-source-verification/1":
+        counts = receipt.get("counts", {})
+        if not isinstance(counts, dict):
+            counts = {}
+        verification = {
+            "mode": receipt.get("mode") if receipt.get("mode") in ("off", "report", "require") else "unknown",
+            "status": receipt.get("status") if receipt.get("status") in ("verified", "partial", "unverified", "not_applicable", "requirements_unmet") else "unknown",
+            "counts": {key: count if type(count) is int and count >= 0 else None
+                       for key in ("references", "requested_sources", "checked_sources", "matched_sources", "mismatched_sources", "unchecked_sources", "bytes_read")
+                       for count in [counts.get(key)]}}
     return {"is_error": envelope.get("isError") is True, "code": code,
             "publication_token_sha256": digest_bytes(publication["token"].encode()) if isinstance(publication.get("token"), str) else None,
             "truncated": bool(evidence.get("truncated", False)) if isinstance(evidence, dict) else None,
@@ -210,7 +222,8 @@ def observation(envelope):
             "definition_hint_pointers": sum(len(hint.get("matches", [])) for hint in hints if isinstance(hint, dict) and isinstance(hint.get("matches"), list)) if isinstance(hints, list) else 0,
             "discovery_state": state("discovery_readiness"),
             "semantic_state": state("semantic_readiness"), "freshness_state": state("freshness"),
-            "live_source_verified": freshness.get("live_source_verified") if isinstance(freshness, dict) else None}
+            "live_source_verified": freshness.get("live_source_verified") if isinstance(freshness, dict) else None,
+            "source_verification": verification}
 
 
 class Session:
@@ -311,6 +324,9 @@ class Session:
         name, arguments = task
         if name not in ALLOWED:
             raise ValueError("non_read_tool_refused")
+        override = self.configuration.get("verification_override")
+        if override is not None and name != "status":
+            arguments = {**arguments, "verification": override}
         started = time.perf_counter()
         deadline = time.monotonic() + self.timeout
         attempts = []
@@ -468,6 +484,9 @@ def load_configuration(path, source):
 def run(args):
     source, manifest = load_fixture(args.fixture)
     configuration, config_digest = load_configuration(args.configuration, source)
+    override = getattr(args, "verification", None)
+    if override is not None:
+        configuration = {**configuration, "verification_override": override}
     output = Path(args.output).resolve()
     if output == source or source in output.parents or output in source.parents:
         raise ValueError("output_source_overlap")
@@ -475,6 +494,7 @@ def run(args):
     report = {"schema": SCHEMA, "label": args.label, "route": configuration["route"],
         "configuration_sha256": config_digest, "launcher_sha256": configuration["launcher_sha256"],
         "expected_version": configuration["expected_version"], "fixture_sha256": manifest["fixture_sha256"],
+        "effective_argument_overrides": {} if override is None else {"evidence_tools": {"verification": override}},
         "cohorts": [], "limitations": ["Cold means frontend connection only; service/model/filesystem caches are not flushed.",
             "This deterministic read-only replay does not measure a model's reasoning or proprietary client UI.",
             "Setup/queue/execution split requires separately correlated content-free native diagnostics; end-to-end times are measured here.",
@@ -599,6 +619,8 @@ def main():
         replay.add_argument("--samples", type=int, default=30)
         replay.add_argument("--concurrency", type=int, nargs="+", choices=(1, 4, 6, 8), default=[1, 4, 6, 8])
         replay.add_argument("--timeout", type=float, default=30)
+        replay.add_argument("--verification", choices=("off", "report", "require"),
+                            help="Explicit evidence-read override, recorded separately from frozen fixture identity; omission measures runtime defaults")
         replay.add_argument("--record", type=Path, help="Optional retained investigation to reconcile without editing it")
     args = parser.parse_args()
     if args.operation == "fixture":

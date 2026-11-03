@@ -1,6 +1,6 @@
 # AIRK: Local Search for Coding Agents
 
-**1.9.0 development candidate:** native/extension versions and lockfiles are synchronized; supported forward runtime activation includes 1.9. The [candidate record](docs/releases/release-1.9.0.md) and [implementation ledger](docs/research/implementation-v190.md) track completed phases and validation. Project/index management and source verification remain planned work.
+**1.9.0 development candidate:** native/extension versions and lockfiles are synchronized; supported forward runtime activation includes 1.9. The [candidate record](docs/releases/release-1.9.0.md) and [implementation ledger](docs/research/implementation-v190.md) track completed phases and validation. Project/index management remains planned work. Saved-source verification passed P4 local qualification; see the [controls and limits](docs/source-verification.md).
 
 Compact discovery now feeds dependent plans and cited results;
 nested plan inputs are advertised as JSON objects. [Validation and limits](docs/read-interface-parity.md#regression-evidence)

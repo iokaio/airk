@@ -149,8 +149,10 @@ the original remainder. Later relaxations require a new impact review.
 
 ## Verification safety and presentation
 
-Off is the existing fast path: no source lookup/hash/placeholder. Enabled calls
-require the full explicit flat budget tuple. Safety ceilings are 256 sources,
+The maintainer changed the default to Report during P4. Omitted controls resolve
+to the shared bounded preset: eight sources, 16 MiB raw bytes and a cooperative
+2,000-ms deadline. Any budget can be overridden independently. Explicit Off is
+the no-source-lookup/hash/placeholder path. Safety ceilings are 256 sources,
 1 GiB aggregate bytes and 30 seconds cooperative deadline. These are rejection
 ceilings, not default presets or latency promises. P4 measures real native capture
 before publishing client presets. Initial stream buffer is 64 KiB, concurrency one.
@@ -214,3 +216,29 @@ parity. P9/P10 prove all-read denial and crash-safe partition/resource bounds.
 P11a implements the legacy family inventory without scans; P11b separately
 migrates new profiles. Each phase retains the frozen and preceding performance
 gates. Design-fixture success is never substituted for those runtime tests.
+
+
+P4 resolves and records Report defaults rather than requiring every caller to
+supply a complete tuple. Source rows now include `original_root` and
+`source_relative_path`; limits disclose `effective_deadline_ms`, the allocated
+`receipt_bytes_budget` and one prospective EOF-probe byte. These refine the
+unpublished version-one design. An EOF probe consumes zero bytes at EOF; files
+need prospective byte headroom so unexpected growth never exceeds the limit.
+Response-scope plans check once; `verification_scope: steps` records explicit
+per-step checking. Preparation does no hashing. These additions remain subject
+to P4 runtime/transport/resource acceptance, separately from P3 design checks.
+
+
+Per-step verification requires the raw plan output view, which retains each step's
+complete receipt. An evidence-only view must use response-wide verification;
+an enabled per-step/evidence-only combination is rejected before source checking.
+Response-wide Require failures use the same nonretryable MCP/CLI error envelope
+as direct reads, preserving the entire attempted plan and its native receipt.
+Per-step failures remain identified within their individual step outcomes.
+
+
+Receipt reference locators use JSON Pointer syntax. The empty string addresses
+the entire result record (for example, file-info's top-level path/hash); it is
+valid and does not mean a missing locator. Child references retain slash-prefixed,
+escaped pointers. Positive root-pointer and negative non-pointer fixtures cover
+this unpublished P4 refinement.

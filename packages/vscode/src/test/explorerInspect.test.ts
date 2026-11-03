@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -63,6 +64,17 @@ test('checking citations reports real statuses from the index and the saved file
             'src/edited.ts': { content_hash: sha('original\n'), indexed_lines: 1, source: { root, relative_path: 'src/edited.ts' } },
             'src/gone.ts': { content_hash: sha('x\n'), indexed_lines: 5, source: { root, relative_path: 'src/gone.ts' } },
         };
+        const fixtures = JSON.parse(readFileSync(path.resolve(__dirname, '../../../../docs/research/contracts-v190/fixtures.json'), 'utf8'));
+        for (const [relative, record] of Object.entries(info)) {
+            const receipt = structuredClone(fixtures.receipt_cases.find((entry: any) => entry.name === 'single_index_match_and_supplement').value);
+            const source = receipt.sources[0];
+            source.original_root = root; source.source_relative_path = relative; source.path = relative;
+            source.expected_hash = record.content_hash;
+            source.observed_hash = relative.includes('same') ? record.content_hash : relative.includes('edited') ? sha('changed\n') : null;
+            source.state = relative.includes('same') ? 'matched' : relative.includes('edited') ? 'mismatch' : 'missing';
+            if (source.state !== 'matched') { receipt.status = 'unverified'; receipt.requirements_satisfied = false; }
+            record.source_verification = receipt;
+        }
         const calls: string[] = [];
         const session = { call: async (tool: string, args: any) => {
             assert.equal(tool, 'airk_file_info'); calls.push(args.path);
@@ -77,6 +89,8 @@ test('checking citations reports real statuses from the index and the saved file
         assert.deepEqual(calls.sort(), ['src/edited.ts', 'src/gone.ts', 'src/same.ts', 'src/unknown.ts'], 'one lookup per distinct path; absolute paths are never sent');
         assert.equal(refs.get(view.citations[0].ref!, project).path, 'src/same.ts');
         assert.equal(view.publication, 'airk-r1:p');
+        assert.equal(view.sourceVerifications?.length, 3, 'retain each complete native observation once per distinct path');
+        assert.match(view.citations[0].message, /1970-01-01T/);
         const dirty = await checkCitations(session, new RefRegistry(), project, 'src/same.ts:1', () => true);
         assert.equal(dirty.citations[0].status, 'not_saved');
         const prose = await checkCitations(session, new RefRegistry(), project, 'Everything was verified and all tests pass.', () => false);
@@ -90,6 +104,14 @@ test('checking citations reports real statuses from the index and the saved file
         assert.equal(inspected.live, 'matches_index');
         assert.equal(inspected.language, 'typescript');
         assert.equal(inspected.sourceRoot, root);
+        assert.deepEqual(inspected.sourceVerification, info['src/same.ts'].source_verification);
+        // Even after the saved bytes change, the adapter displays the original
+        // native observation instead of performing a second, undated hash.
+        await fs.writeFile(path.join(root, 'src', 'same.ts'), 'changed after native observation');
+        const historical = await inspect({ call: async () => ({ payload: info['src/same.ts'], publication: 'airk-r1:p' }) } as any,
+            refs, project, view.citations[0].ref!, () => false);
+        assert.equal(historical.live, 'matches_index');
+        assert.match(historical.liveMessage, /1970-01-01T/);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
 

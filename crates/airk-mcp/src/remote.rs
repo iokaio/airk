@@ -308,7 +308,7 @@ fn report_query_concurrency(result: &mut CallToolResult, tool: &str, limit: usiz
                     result.structured_content = Some(value);
                 }
                 Err(error) => {
-                    *result = CallToolResult::error(vec![ContentBlock::text(error.to_string())]);
+                    *result = crate::response::error_result(&error);
                 }
             }
         }
@@ -380,9 +380,9 @@ pub(crate) fn map_plan_results(
     if envelope.status == "partial" && !envelope.steps.iter().any(|s| s.status == "complete") {
         envelope.status = "failed".into();
     }
-    Ok(serde_json::to_value(
-        airk_kernel::workbench::bounded_result(envelope)?,
-    )?)
+    let value = serde_json::to_value(airk_kernel::workbench::bounded_result(envelope)?)?;
+    airk_core::verification::validate_projection(&value)?;
+    Ok(value)
 }
 
 pub async fn serve(backend: Arc<dyn RemoteTools>) -> anyhow::Result<()> {
@@ -570,6 +570,77 @@ mod tests {
             "steps":[{"id":"query","tool":"status","arguments":{},"elapsed_ms":6,
                 "status":"complete","error":null,"result":{"files":1414}}]
         })
+    }
+
+    #[tokio::test]
+    async fn sdk_preserves_typed_refusal_when_late_observations_remove_checked_evidence()
+    -> anyhow::Result<()> {
+        struct CheckedPlan;
+        impl RemoteTools for CheckedPlan {
+            fn call(
+                &self,
+                _: String,
+                _: serde_json::Map<String, serde_json::Value>,
+            ) -> RemoteFuture<'_> {
+                Box::pin(async {
+                    let mut value = plan_fixture();
+                    value["plan"]["budgets"]["max_bytes"] = 14.into();
+                    // Isolate the projection fence: this fixture's checked
+                    // location exists until the transport adds observations.
+                    let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+                        "../../../docs/research/contracts-v190/fixtures.json"
+                    ))?;
+                    let mut receipt = fixtures["receipt_cases"][0]["value"].clone();
+                    for reference in receipt["references"].as_array_mut().unwrap() {
+                        reference["result_pointer"] = "/steps/0/result".into();
+                    }
+                    value["source_verification"] = receipt;
+                    airk_core::verification::validate_projection(&value)?;
+                    Ok(crate::unified::success(value))
+                })
+            }
+        }
+        for unified in [false, true] {
+            let backend: Arc<dyn RemoteTools> = if unified {
+                let binding = "ab".repeat(32);
+                Arc::new(crate::unified::Unified::new(
+                    vec![crate::unified::Project {
+                        binding: binding.clone(),
+                        name: "fixture".into(),
+                        collection: "fixture".into(),
+                        backend: Arc::new(CheckedPlan),
+                    }],
+                    Some(binding),
+                    None,
+                )?)
+            } else {
+                Arc::new(CheckedPlan)
+            };
+            let (client_io, server_io) = tokio::io::duplex(65536);
+            let bridge = Bridge {
+                backend,
+                admission: Arc::new(Admission::default()),
+                response_mode: crate::response::ResponseMode::Full,
+            };
+            let (mut client, mut server) = tokio::try_join!(
+                async { Ok::<_, anyhow::Error>(().serve(client_io).await?) },
+                async { Ok::<_, anyhow::Error>(bridge.serve(server_io).await?) }
+            )?;
+            for alias in ["parse", "airk_parse"] {
+                let result = client.call_tool(CallToolRequestParams::new(alias)).await?;
+                assert_eq!(result.is_error, Some(true), "{result:?}");
+                let value: serde_json::Value = serde_json::from_str(
+                    &result.content[0].as_text().unwrap().text,
+                )
+                .map_err(|error| anyhow::anyhow!("unified={unified}: {error}; {result:?}"))?;
+                assert_eq!(value["error"]["code"], "verification_projection_changed");
+                assert_eq!(value["error"]["retryable"], false);
+                assert!(value.get("source_verification").is_none());
+            }
+            client.close().await?;
+            server.close().await?;
+        }
+        Ok(())
     }
 
     #[test]

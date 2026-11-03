@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
+import {nativeVerification,readResultBody,selectedVerification,verificationLabel} from './sourceVerification';
 import { Continuation, EvidenceCard, object, Value, WorkbenchSession, WorkbenchTurn } from './workbenchContracts';
 
 export function continuationCursor(raw:unknown):string|undefined {
@@ -23,6 +24,7 @@ export interface DiscoveryStepDetails {
     replyDetail?:'lean'|'rich';
     guidance?:Value;
     readGuidance?:Value;
+    sourceVerification?:Value;
     coverage?:Value;countUnit?:string;
     more:boolean;incompleteReason?:string;suggestions:{target:string;symbolId?:string;path?:string;coverage?:string}[];
     definitions:Value[];omittedFiles:number;omittedSuggestions:number;omittedDefinitions:number;
@@ -45,7 +47,7 @@ function canFollowResult(envelope:Value,report:Value):boolean {
     return envelope.executed===true&&['complete','partial'].includes(String(envelope.status))&&report.status==='complete'&&typeof envelope.publication==='string'&&envelope.publication.length>0&&token===envelope.publication;
 }
 function resultMetadata(raw:unknown):Value {
-    const result=object(raw),content=object(result.content),evidence=object(result.evidence);
+    const result=readResultBody(raw),content=object(result.content),evidence=object(result.evidence);
     const page=Object.keys(object(result.page)).length?object(result.page):Object.keys(object(content.page)).length?object(content.page):object(evidence.page);
     const source={...result,...content};
     return Object.fromEntries(Object.entries({
@@ -57,6 +59,7 @@ function resultMetadata(raw:unknown):Value {
         reply_detail:['lean','rich'].includes(String(source.reply_detail))?source.reply_detail:undefined,
         guidance:guidanceMetadata(source.guidance??evidence.guidance),
         read_guidance:Object.keys(object(source.read_guidance)).length?source.read_guidance:undefined,
+        source_verification:nativeVerification(source.source_verification),
     }).filter(([,value])=>value!==undefined));
 }
 /** Bounded display projection only; exports below retain the native metadata itself. */
@@ -70,6 +73,7 @@ export function discoveryDetails(envelope:Value):DiscoveryStepDetails[]{
             ...(metadata.reply_detail==='lean'||metadata.reply_detail==='rich'?{replyDetail:metadata.reply_detail}:{}),
             ...(metadata.guidance?{guidance:object(metadata.guidance)}:{}),
             ...(metadata.read_guidance?{readGuidance:object(metadata.read_guidance)}:{}),
+            ...(metadata.source_verification?{sourceVerification:object(metadata.source_verification)}:{}),
             ...(Object.keys(coverage).length?{coverage}:{}),...(typeof metadata.count_unit==='string'?{countUnit:metadata.count_unit}:{}),
             files:files.slice(0,100).flatMap(value=>{const file=object(value);return typeof file.path==='string'&&Number.isSafeInteger(file.count)&&Number(file.count)>=0?[{path:file.path,count:Number(file.count)}]:[];}),
             filesTruncated:metadata.files_truncated===true,more:metadata.more===true||continuationCursor(report.result)!==undefined,...(typeof metadata.incomplete_reason==='string'?{incompleteReason:metadata.incomplete_reason}:{}),
@@ -169,14 +173,17 @@ export function markdown(turn: WorkbenchTurn, selected?: Set<string>): string {
         return `### ${escape(card.path)}:${card.start}-${card.end}\n\nLocation: ${escape(JSON.stringify(card.location??null))}\n\nSource hash: ${card.hash}\n\n${fenced(card.text)}`;
     });
     const sourceCoverage=selected?selectedSourceCoverage(turn,selected):[];
+    const selectedRows=selected?cards.map(card=>(e.evidence as unknown[])[Number(card.id.slice('record-'.length))]):[];
+    const selectedChecks=selected?selectedVerification(e,cards):undefined;
     const metadata=selected?(sourceCoverage.length?[`### Original source request coverage for selected evidence\n\n${fenced(canonical(sourceCoverage))}`]:[]):(Array.isArray(e.steps)?e.steps:[]).flatMap(raw=>{
         const report=object(raw),details=resultMetadata(report.result);
         return Object.keys(details).length?[`### ${escape(String(report.tool??report.id??'Step'))} discovery details\n\n${fenced(canonical(details))}`]:[];
     });
     return [`## ${escape(turn.input.replaceAll('\n',' '))}`, `Status: ${escape(String(e.status ?? turn.error ?? 'trimmed'))}`, `Publication: ${escape(String(e.publication ?? 'not available'))}`,
         `Scope: ${escape(String(object(e.plan).path_prefix ?? ''))}`, ...(turn.trimmed ? ['Saved result was trimmed; re-run to collect current evidence.'] : []), ...content,
+        ...(selectedChecks?.requested?[`### Selected evidence and dated source observations\n\n${fenced(canonical({evidence:selectedRows,source_verification_observations:selectedChecks.observations,selected_verification_accounting:selectedChecks.accounting}))}`]:[]),
         ...metadata,...(turn.envelope && !selected ? [`### Complete response\n\n${fenced(canonical(e))}`] : []), `Warnings: ${escape(JSON.stringify(e.warnings ?? []))}`, `Completeness: ${escape(JSON.stringify(e.completeness ?? []))}`,
-        'Untrusted indexed evidence. Verify relevant live files before edits.'].join('\n\n');
+        ...(e.source_verification?[verificationLabel(e.source_verification),'Saved-byte observations retain their original dates. Extraction, coverage, relevance and unsaved buffers remain unverified; recheck before later edits.']:['Untrusted indexed evidence. Verify relevant live files before edits.'])].join('\n\n');
 }
 export function renderExport(session: WorkbenchSession, format: 'json'|'markdown', turnId?: string, selection?: string[]): string {
     const turns = session.turns.filter(turn => !turnId || turn.id === turnId);
@@ -184,6 +191,10 @@ export function renderExport(session: WorkbenchSession, format: 'json'|'markdown
     return canonical({ schema:'airk.workbench.export/1', project:session.project, omitted_turns:session.omitted, turns:turns.map(turn => {
         if (!selection || !turn.envelope) { return turn; }
         const sourceCoverage=selectedSourceCoverage(turn,new Set(selection));
-        return {...turn, envelope:{...turn.envelope, steps:[], evidence:(turn.envelope.evidence as unknown[] ?? []).filter((_,i)=>selection.includes(`record-${i}`)), selection:true,...(sourceCoverage.length?{source_coverage:sourceCoverage}:{})}};
+        const selectedCards=evidenceCards(turn.envelope).filter(card=>selection.includes(card.id));
+        const checks=selectedVerification(turn.envelope,selectedCards);
+        const {source_verification:_originalReceipt,...original}=turn.envelope;
+        return {...turn, envelope:{...original, steps:[], evidence:selectedCards.map(card=>(turn.envelope!.evidence as unknown[])[Number(card.id.slice('record-'.length))]), selection:true,
+            ...(checks.requested?{source_verification_observations:checks.observations,selected_verification_accounting:checks.accounting}:{}),...(sourceCoverage.length?{source_coverage:sourceCoverage}:{})}};
     }) });
 }

@@ -33,6 +33,23 @@ struct ReplyOptions {
 }
 
 #[derive(clap::Args, Default, serde::Serialize)]
+struct VerificationOptions {
+    /// Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking.
+    #[arg(long, value_parser = ["off", "report", "require"])]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification: Option<String>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=256))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_max_sources: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=1073741824))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_max_bytes: Option<u64>,
+    #[arg(long, value_parser = clap::value_parser!(u64).range(1..=30000))]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verification_deadline_ms: Option<u64>,
+}
+
+#[derive(clap::Args, Default, serde::Serialize)]
 struct SearchFilters {
     /// Exact indexed extraction-language label; not a filename-extension filter.
     #[arg(long)]
@@ -118,6 +135,8 @@ enum Command {
     /// Give a natural-language request as the TEXT argument, or a structured plan with --request FILE ('-' for stdin).
     /// Without --execute it only prints the plan; same contract as the MCP `parse` tool. Never writes sources.
     Parse {
+        #[command(flatten)]
+        verification: VerificationOptions,
         #[command(flatten)]
         reply: ReplyOptions,
         text: Option<String>,
@@ -209,6 +228,8 @@ enum Command {
     /// Report indexed changes since a revision token: added, modified and removed files, symbols and documents.
     Changes {
         #[command(flatten)]
+        verification: VerificationOptions,
+        #[command(flatten)]
         reply: ReplyOptions,
         #[arg(long)]
         since: Option<airk_core::identity::RevisionToken>,
@@ -237,6 +258,8 @@ enum Command {
     /// Inspect code facts and signatures with exact default name matching and bounded continuation.
     CodeFacts {
         #[command(flatten)]
+        verification: VerificationOptions,
+        #[command(flatten)]
         reply: ReplyOptions,
         #[command(flatten)]
         matching: NameMatchOptions,
@@ -264,6 +287,8 @@ enum Command {
     },
     /// Follow indexed relationships of a symbol in --direction, optionally of one --kind, up to --hops levels.
     Relationships {
+        #[command(flatten)]
+        verification: VerificationOptions,
         #[command(flatten)]
         reply: ReplyOptions,
         symbol: String,
@@ -301,6 +326,8 @@ enum Command {
     /// always works on a published index; vector and hybrid need ready vectors.
     Search {
         #[command(flatten)]
+        verification: VerificationOptions,
+        #[command(flatten)]
         reply: ReplyOptions,
         #[command(flatten)]
         filters: SearchFilters,
@@ -320,6 +347,8 @@ enum Command {
     /// List indexed files under --prefix, with continuation cursors.
     Files {
         #[command(flatten)]
+        verification: VerificationOptions,
+        #[command(flatten)]
         reply: ReplyOptions,
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
@@ -333,6 +362,8 @@ enum Command {
     },
     /// Read an indexed file's lines (--start-line/--end-line) from the published revision, with a citation.
     Read {
+        #[command(flatten)]
+        verification: VerificationOptions,
         #[command(flatten)]
         reply: ReplyOptions,
         #[command(flatten)]
@@ -366,6 +397,8 @@ enum Command {
     /// Show what the index knows about one file: language, size, extraction method and parse status.
     Info {
         #[command(flatten)]
+        verification: VerificationOptions,
+        #[command(flatten)]
         reply: ReplyOptions,
         path: String,
         #[command(flatten)]
@@ -373,6 +406,8 @@ enum Command {
     },
     /// Read one indexed file's structure in file order; this returns evidence, not an Explorer page proposal.
     Outline {
+        #[command(flatten)]
+        verification: VerificationOptions,
         #[command(flatten)]
         reply: ReplyOptions,
         /// Continue the same revision-bound discovery with unchanged filters.
@@ -391,6 +426,8 @@ enum Command {
     },
     /// Find definitions by exact name by default; use --name-match for suffix/contains variants.
     Symbol {
+        #[command(flatten)]
+        verification: VerificationOptions,
         #[command(flatten)]
         reply: ReplyOptions,
         #[command(flatten)]
@@ -414,6 +451,8 @@ enum Command {
     /// List import and dependency statements found under a path prefix.
     Imports {
         #[command(flatten)]
+        verification: VerificationOptions,
+        #[command(flatten)]
         reply: ReplyOptions,
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
@@ -426,6 +465,8 @@ enum Command {
     },
     /// List document facts (requirements, dates, decisions, features) extracted from indexed documents.
     Facts {
+        #[command(flatten)]
+        verification: VerificationOptions,
         #[command(flatten)]
         reply: ReplyOptions,
         /// False includes rich facts and durable IDs; independent of response mode.
@@ -452,6 +493,8 @@ enum Command {
     /// Find exact-case textual identifier uses; these are candidates, not resolved language references.
     Refs {
         #[command(flatten)]
+        verification: VerificationOptions,
+        #[command(flatten)]
         reply: ReplyOptions,
         #[command(flatten)]
         options: ReferenceOptions,
@@ -465,6 +508,8 @@ enum Command {
     },
     /// Read lines around --line in a file (--before/--after), with a citation.
     Context {
+        #[command(flatten)]
+        verification: VerificationOptions,
         #[command(flatten)]
         reply: ReplyOptions,
         #[command(flatten)]
@@ -1718,6 +1763,23 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
         | Command::Relationships { reply, .. } => reply.reply_detail.clone(),
         _ => None,
     };
+    let verification = match &command {
+        Command::Parse { verification, .. }
+        | Command::CodeFacts { verification, .. }
+        | Command::Changes { verification, .. }
+        | Command::Search { verification, .. }
+        | Command::Files { verification, .. }
+        | Command::Read { verification, .. }
+        | Command::Outline { verification, .. }
+        | Command::Symbol { verification, .. }
+        | Command::Imports { verification, .. }
+        | Command::Facts { verification, .. }
+        | Command::Info { verification, .. }
+        | Command::Refs { verification, .. }
+        | Command::Context { verification, .. }
+        | Command::Relationships { verification, .. } => serde_json::to_value(verification)?,
+        _ => json!({}),
+    };
     let (tool, mut value) = match command {
         Command::Status { .. } => ("airk_status", json!({})),
         Command::Parse {
@@ -1968,6 +2030,40 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             .context("read arguments must be an object")?
             .insert("reply_detail".into(), json!(detail));
     }
+    for (key, selected) in verification
+        .as_object()
+        .context("verification flags must be an object")?
+    {
+        if let Some(existing) = value.get(key) {
+            ensure!(
+                existing == selected,
+                "verification flag conflicts with request field {key}"
+            );
+        }
+        value
+            .as_object_mut()
+            .context("read arguments must be an object")?
+            .insert(key.clone(), selected.clone());
+    }
+    let controls: airk_core::verification::VerificationControls =
+        serde_json::from_value(Value::Object(
+            value
+                .as_object()
+                .context("read arguments must be an object")?
+                .iter()
+                .filter(|(key, _)| {
+                    matches!(
+                        key.as_str(),
+                        "verification"
+                            | "verification_max_sources"
+                            | "verification_max_bytes"
+                            | "verification_deadline_ms"
+                    )
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+        ))?;
+    controls.resolve()?;
     Ok((tool, value))
 }
 fn configuration(
@@ -2086,13 +2182,36 @@ mod tests {
                     if let Some(detail) = detail {
                         argv.extend(["--reply-detail", detail]);
                     }
-                    let cli = Cli::try_parse_from(argv)?;
-                    let (_, arguments) = query(cli.command)?;
-                    assert_eq!(
-                        arguments.get("reply_detail").and_then(Value::as_str),
-                        detail
-                    );
-                    serde_json::from_value::<$kind>(arguments)?;
+                    for verification in [None, Some("off"), Some("report"), Some("require")] {
+                        if stringify!($kind).ends_with("StatusArgs") && verification.is_some() {
+                            continue;
+                        }
+                        let mut argv = argv.clone();
+                        if let Some(mode) = verification {
+                            argv.extend(["--verification", mode]);
+                            if mode != "off" {
+                                argv.extend([
+                                    "--verification-max-sources",
+                                    "25",
+                                    "--verification-max-bytes",
+                                    "16777216",
+                                    "--verification-deadline-ms",
+                                    "2000",
+                                ]);
+                            }
+                        }
+                        let cli = Cli::try_parse_from(argv)?;
+                        let (_, arguments) = query(cli.command)?;
+                        assert_eq!(
+                            arguments.get("reply_detail").and_then(Value::as_str),
+                            detail
+                        );
+                        assert_eq!(
+                            arguments.get("verification").and_then(Value::as_str),
+                            verification
+                        );
+                        serde_json::from_value::<$kind>(arguments)?;
+                    }
                 }
             }};
         }

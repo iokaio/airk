@@ -76,9 +76,9 @@ export function applyWorkbenchUpdate(previous:WorkbenchState,message:WorkbenchUp
 }
 export interface WorkbenchToolField {
     name:string;label:string;type:'string'|'integer'|'boolean'|'json';required:boolean;
-    values?:string[];description?:string;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;
+    values?:string[];description?:string;defaultValue?:string|number|boolean;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;
 }
-const fieldLabels:Record<string,string>={path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
+const fieldLabels:Record<string,string>={path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',verification:'Saved-source verification',verification_max_sources:'Maximum sources to check',verification_max_bytes:'Raw-source byte budget',verification_deadline_ms:'Verification deadline (ms)',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
 /** Resolve only bundled local schema alternatives; no remote schema loading. */
 function fieldSchema(raw:unknown,root:Value,depth=0):Value {
     const schema=object(raw);if(depth>4)return {};
@@ -95,7 +95,7 @@ export function toolFormFields(raw:unknown):WorkbenchToolField[]{
     return Object.entries(object(schema.properties)).map(([name,value])=>{
         const spec=fieldSchema(value,schema),types=Array.isArray(spec.type)?spec.type:[spec.type];
         const type:WorkbenchToolField['type']=types.includes('boolean')?'boolean':types.includes('integer')?'integer':types.includes('array')||types.includes('object')?'json':'string';
-        return {name,label:fieldLabels[name]??name.replaceAll('_',' '),type,required:required.includes(name),
+        return {name,...(['string','number','boolean'].includes(typeof spec.default)?{defaultValue:spec.default as string|number|boolean}:{}),label:fieldLabels[name]??name.replaceAll('_',' '),type,required:required.includes(name),
             ...(Array.isArray(spec.enum)?{values:spec.enum.filter(item=>['string','number','boolean'].includes(typeof item)).map(String)}:{}),
             ...(typeof spec.description==='string'?{description:spec.description}:{}),
             ...(typeof spec.minLength==='number'?{minLength:spec.minLength}:{}),...(typeof spec.maxLength==='number'?{maxLength:Math.min(32768,spec.maxLength)}:type==='json'?{maxLength:32768}:{}),

@@ -180,6 +180,19 @@
           "minItems": 0,
           "maxItems": 6,
           "uniqueItems": true
+        },
+        "receipt_bytes_budget": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 32768
+        },
+        "eof_probe_reserve_bytes": {
+          "const": 1
+        },
+        "effective_deadline_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 30000
         }
       },
       "required": [
@@ -190,7 +203,10 @@
         "concurrency",
         "reference_inventory_max",
         "receipt_bytes_max",
-        "hit"
+        "hit",
+        "receipt_bytes_budget",
+        "eof_probe_reserve_bytes",
+        "effective_deadline_ms"
       ],
       "additionalProperties": false
     },
@@ -377,6 +393,23 @@
           "bytes_read": {
             "type": "integer",
             "minimum": 0
+          },
+          "original_root": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4096,
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)",
+            "minLength": 1
+          },
+          "source_relative_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 4096,
+            "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\/$)[^\\\\:\\u0000]+$"
           }
         },
         "required": [
@@ -393,7 +426,9 @@
           "reason",
           "observed_from_unix_ms",
           "observed_to_unix_ms",
-          "bytes_read"
+          "bytes_read",
+          "original_root",
+          "source_relative_path"
         ],
         "additionalProperties": false
       },
@@ -416,7 +451,8 @@
           },
           "result_pointer": {
             "type": "string",
-            "minLength": 1,
+            "minLength": 0,
+            "pattern": "^(?:/(?:[^~/]|~[01])*)*$",
             "maxLength": 4096
           },
           "kind": {
@@ -566,6 +602,14 @@
               "properties": {
                 "state": {
                   "const": "matched"
+                },
+                "original_root": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_relative_path": {
+                  "type": "string",
+                  "minLength": 1
                 }
               }
             }

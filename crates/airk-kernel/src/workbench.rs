@@ -1092,6 +1092,7 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
                     fields(tool)
                         .iter()
                         .copied()
+                        .chain(verification_fields(tool).iter().copied())
                         .find(|key| *key == name)
                         .context("unknown command option")?
                 }
@@ -1332,7 +1333,7 @@ fn fields(tool: &str) -> &'static [&'static str] {
 /// Forms and agents inspect the same closed argument inventory used by validation.
 pub fn operation_catalog() -> Value {
     let operations:Map<String,Value>=TOOLS.iter().map(|tool|{
-        let properties:Map<String,Value>=fields(tool).iter().copied().chain(std::iter::once("reply_detail")).map(|key|{
+        let properties:Map<String,Value>=fields(tool).iter().copied().chain(std::iter::once("reply_detail")).chain(verification_fields(tool).iter().copied()).map(|key|{
             let schema = argument_schema(key);
             (key.to_string(),schema)
         }).collect();
@@ -1344,6 +1345,18 @@ pub fn operation_catalog() -> Value {
 
 fn argument_schema(key: &str) -> Value {
     match key {
+        "verification" => {
+            json!({"type":"string","enum":["off","report","require"],"default":"report"})
+        }
+        "verification_max_sources" => {
+            json!({"type":"integer","minimum":1,"maximum":256,"default":8})
+        }
+        "verification_max_bytes" => {
+            json!({"type":"integer","minimum":1,"maximum":1073741824,"default":16777216})
+        }
+        "verification_deadline_ms" => {
+            json!({"type":"integer","minimum":1,"maximum":30000,"default":2000})
+        }
         "reply_detail" => {
             let mut values: Vec<Value> = airk_core::reply::ReplyDetail::ALL
                 .into_iter()
@@ -1399,6 +1412,52 @@ fn search_filters(args: &Map<String, Value>) -> Result<SearchFilters> {
     filters.validate()?;
     Ok(filters)
 }
+fn verification_fields(tool: &str) -> &'static [&'static str] {
+    if matches!(
+        tool,
+        "search"
+            | "symbols"
+            | "code_facts"
+            | "document_facts"
+            | "references"
+            | "files"
+            | "list_files"
+            | "read_file"
+            | "file_info"
+            | "context"
+            | "imports"
+            | "outline"
+            | "relationships"
+            | "changes"
+    ) {
+        &[
+            "verification",
+            "verification_max_sources",
+            "verification_max_bytes",
+            "verification_deadline_ms",
+        ]
+    } else {
+        &[]
+    }
+}
+fn verification_controls(
+    args: &Map<String, Value>,
+) -> Result<airk_core::verification::VerificationControls> {
+    Ok(serde_json::from_value(Value::Object(
+        args.iter()
+            .filter(|(key, _)| {
+                matches!(
+                    key.as_str(),
+                    "verification"
+                        | "verification_max_sources"
+                        | "verification_max_bytes"
+                        | "verification_deadline_ms"
+                )
+            })
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    ))?)
+}
 fn reply_detail(args: &Map<String, Value>) -> Result<Option<airk_core::reply::ReplyDetail>> {
     args.get("reply_detail")
         .cloned()
@@ -1412,12 +1471,18 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
         TOOLS.contains(&step.tool.as_str()),
         "operation is not read-only evidence"
     );
+    verification_controls(&step.args)?.resolve()?;
     for (key, value) in &step.args {
         ensure!(
-            key == "reply_detail" || fields(&step.tool).contains(&key.as_str()),
+            key == "reply_detail"
+                || fields(&step.tool).contains(&key.as_str())
+                || verification_fields(&step.tool).contains(&key.as_str()),
             "unknown {} argument {key}",
             step.tool
         );
+        if verification_fields(&step.tool).contains(&key.as_str()) {
+            continue;
+        }
         if key == "reply_detail" {
             serde_json::from_value::<Option<airk_core::reply::ReplyDetail>>(value.clone())?;
             continue;
@@ -1639,24 +1704,71 @@ fn clipped(value: &Value) -> bool {
 
 /// Reapply the output bound after a transport adds observations to a result.
 pub fn bounded_result(mut result: ResultEnvelope) -> Result<ResultEnvelope> {
-    // Clip whole records/payloads, never serialized JSON or a citation tuple.
-    while serde_json::to_vec(&result)?.len() > result.plan.output.max_bytes {
-        result.truncated = true;
-        if !result.completeness.iter().any(|r| r == "output clipped") {
-            result.completeness.push("output clipped".into());
-        }
-        if result.evidence.pop().is_none() {
-            if let Some(report) = result.steps.iter_mut().rev().find(|r| r.result.is_some()) {
-                report.result = None;
-            } else {
-                bail!("output budget cannot fit plan and reports");
-            }
-        }
-        if result.status == "complete" {
-            result.status = "partial".into();
+    // Preserve the existing whole-record removal order, with linear encoded
+    // cost accounting rather than serializing the full result after every pop.
+    let mut bytes = serde_json::to_vec(&result)?.len();
+    if bytes <= result.plan.output.max_bytes {
+        return Ok(result);
+    }
+    result.truncated = true;
+    if !result
+        .completeness
+        .iter()
+        .any(|reason| reason == "output clipped")
+    {
+        result.completeness.push("output clipped".into());
+    }
+    if result.status == "complete" {
+        result.status = "partial".into();
+    }
+    bytes = serde_json::to_vec(&result)?.len();
+    while bytes > result.plan.output.max_bytes {
+        if let Some(record) = result.evidence.pop() {
+            bytes -= serde_json::to_vec(&record)?.len() + usize::from(!result.evidence.is_empty());
+        } else if let Some(report) = result
+            .steps
+            .iter_mut()
+            .rev()
+            .find(|report| report.result.is_some())
+        {
+            // Null can be larger than a malformed scalar result. Replacing
+            // such a result must refuse safely rather than underflow sizing.
+            bytes = bytes
+                .saturating_sub(
+                    serde_json::to_vec(&report.result.take().expect("selected result"))?.len(),
+                )
+                .saturating_add(4);
+        } else {
+            bail!("output budget cannot fit plan and reports");
         }
     }
+    ensure!(
+        serde_json::to_vec(&result)?.len() <= result.plan.output.max_bytes,
+        "output budget accounting failed"
+    );
     Ok(result)
+}
+
+fn fit_verification_frame(mut result: ResultEnvelope, reserve: usize) -> Result<ResultEnvelope> {
+    let original = result.plan.output.max_bytes;
+    let reserve = reserve.min(original / 2);
+    let mut limit = original.saturating_sub(reserve + 2048);
+    for _ in 0..20 {
+        result.plan.output.max_bytes = limit;
+        result = bounded_result(result)?;
+        result.plan.output.max_bytes = original;
+        let bytes = serde_json::to_vec(&result)?.len();
+        let encoded = serde_json::to_vec(&serde_json::to_string(&result)?)?.len();
+        if encoded + reserve * 2 + 2048 <= airk_core::MAX_RESPONSE_BYTES
+            && bytes + reserve + 2048 <= original
+        {
+            return Ok(result);
+        }
+        limit = bytes.saturating_sub((bytes / 4).max(1024));
+    }
+    bail!(
+        "verification reply framing cannot fit; reduce the plan size or increase its output budget"
+    )
 }
 
 impl Kernel {
@@ -1758,6 +1870,74 @@ impl Kernel {
         if let Some(o) = request.output {
             plan.output = o;
         }
+        use airk_core::verification::{VerificationControls, VerificationMode, VerificationScope};
+        let global_explicit = request.verification.is_set() || plan.verification.is_set();
+        plan.verification = plan.verification.with_overrides(request.verification);
+        let root_budget = plan.verification.resolve()?;
+        let own_step_policy = plan
+            .steps
+            .iter()
+            .try_fold(false, |found, step| -> Result<bool> {
+                Ok(found || verification_controls(&step.args)?.is_set())
+            })?;
+        let verification_scope = plan.verification_scope.unwrap_or(
+            if own_step_policy && (!global_explicit || root_budget.is_none()) {
+                VerificationScope::Steps
+            } else {
+                VerificationScope::Response
+            },
+        );
+        plan.verification_scope = Some(verification_scope);
+        plan.verification = VerificationControls::resolved(root_budget);
+        let verification = if verification_scope == VerificationScope::Response
+            && plan.steps.iter().any(|step| is_evidence(&step.tool))
+        {
+            root_budget
+        } else {
+            None
+        };
+        let mut step_verification = false;
+        if verification.is_some() {
+            ensure!(
+                plan.output.max_bytes >= 8192,
+                "enabled plan verification needs an output budget of at least 8192 bytes to reserve receipt metadata"
+            );
+            ensure!(
+                !own_step_policy,
+                "choose response verification or explicit verification_scope:steps for per-step choices"
+            );
+        }
+        for step in &mut plan.steps {
+            if verification_fields(&step.tool).is_empty() {
+                continue;
+            }
+            if verification_scope == VerificationScope::Response {
+                continue;
+            }
+            let own = verification_controls(&step.args)?;
+            let effective = if verification_scope == VerificationScope::Steps {
+                if own.verification == Some(VerificationMode::Off) {
+                    own.resolve()?
+                } else {
+                    plan.verification.with_overrides(own).resolve()?
+                }
+            } else {
+                None
+            };
+            step_verification |= effective.is_some();
+            // Response verification inventories final output once. Inner reads
+            // explicitly bypass their own default Report check.
+            let controls = VerificationControls::resolved(effective);
+            for key in verification_fields(&step.tool) {
+                step.args.remove(*key);
+            }
+            step.args.extend(
+                serde_json::to_value(controls)?
+                    .as_object()
+                    .expect("controls object")
+                    .clone(),
+            );
+        }
         let b = &plan.budgets;
         ensure!(
             (1..=12).contains(&b.calls)
@@ -1770,6 +1950,10 @@ impl Kernel {
             matches!(plan.output.view.as_str(), "raw" | "evidence")
                 && (1024..=524288).contains(&plan.output.max_bytes),
             "invalid output selection"
+        );
+        ensure!(
+            !step_verification || plan.output.view == "raw",
+            "per-step verification requires output.view:raw to retain complete step receipts; use response verification for an evidence-only view"
         );
         ensure!(plan.steps.len() <= 6, "plan exceeds six steps");
         ensure!(
@@ -2060,7 +2244,7 @@ impl Kernel {
             }
         }
         plan.digest = digest(&plan)?;
-        let mut result = ResultEnvelope {schema: RESULT_SCHEMA.into(), reply_detail:request.reply_detail, collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
+        let mut result = ResultEnvelope {source_verification:None,schema: RESULT_SCHEMA.into(), reply_detail:request.reply_detail, collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
         result.requires_input.extend(choices);
         if unfenced_literal_symbols {
             result.status = "needs_input".into();
@@ -2168,6 +2352,31 @@ impl Kernel {
                         .min(remaining.saturating_sub(512))
                         .min(65536);
                     args.insert("max_bytes".into(), json!(cap));
+                }
+                if verification_scope == VerificationScope::Response
+                    && !verification_fields(&step.tool).is_empty()
+                {
+                    args.insert("verification".into(), json!("off"));
+                }
+                if !verification_fields(&step.tool).is_empty()
+                    && let Some(budget) = verification_controls(&args)?.resolve()?
+                {
+                    let remaining_ms = (started
+                        + std::time::Duration::from_secs(plan.budgets.seconds))
+                    .saturating_duration_since(Instant::now())
+                    .as_millis() as u64;
+                    if remaining_ms == 0 {
+                        result.truncated = true;
+                        result.completeness.push(format!(
+                            "{}: run deadline exhausted before verification",
+                            step.id
+                        ));
+                        break;
+                    }
+                    args.insert(
+                        "verification_deadline_ms".into(),
+                        json!(budget.deadline_ms.min(remaining_ms)),
+                    );
                 }
                 let bound_step = Step {
                     args: args.clone(),
@@ -2344,7 +2553,39 @@ impl Kernel {
                 report.result = None;
             }
         }
-        bounded_result(result)
+        if let Some(budget) = verification {
+            let mut result = fit_verification_frame(result, 4096)?;
+            let payload = serde_json::to_value(&result)?;
+            let allocated = result
+                .plan
+                .output
+                .max_bytes
+                .saturating_sub(serde_json::to_vec(&payload)?.len() + 2048)
+                .min(airk_core::verification::receipt_budget_for_reply(&payload)?);
+            let receipt = self.verify_returned_sources_before(
+                &payload,
+                budget,
+                Some(started + std::time::Duration::from_secs(result.plan.budgets.seconds)),
+                allocated,
+            )?;
+            if receipt.status == "requirements_unmet" {
+                result.status = "failed".into();
+                result
+                    .completeness
+                    .push("verification_required_unmet".into());
+            }
+            airk_core::verification::dated_warnings(&mut result.warnings, &receipt);
+            result.source_verification = Some(receipt);
+            ensure!(
+                serde_json::to_vec(&result)?.len() <= result.plan.output.max_bytes,
+                "verified plan exceeds output budget"
+            );
+            Ok(result)
+        } else if step_verification {
+            fit_verification_frame(result, 0)
+        } else {
+            bounded_result(result)
+        }
     }
 
     fn plan_read(
@@ -2409,7 +2650,7 @@ impl Kernel {
                 json!({"commands":"/search /symbols /code-facts /refs /read /outline /files /info /imports /facts /changes --since /status /diagnostics /capabilities /context /relationships /help","recipes":["definition","documents","impact","tests","component","readiness"],"parser":"deterministic rules; unsupported phrasing returns needs_input","navigation_options":"search/refs: --language, --evidence-kind, --exclude-path-prefix; symbols/imports/code-facts: --name-match, --include-count; refs: --cursor, --order, --include-files, --include-count; fact reads/outline: --compact. Boolean flags accept optional true/false. Workbench compact omission keeps rich facts; MCP compact discovery has its own default."})
             }
             "capabilities" => {
-                json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog(),"read_guidance":airk_core::guidance::catalog()})
+                json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog(),"read_guidance":airk_core::guidance::catalog(),"source_verification_capability":airk_core::verification::catalog()})
             }
             "search" => serde_json::to_value(
                 self.search_response_with_navigation(
@@ -2571,6 +2812,20 @@ impl Kernel {
         };
         airk_core::reply::ReplyDetail::annotate(&mut value, reply);
         airk_core::guidance::annotate(&mut value);
+        if !verification_fields(tool).is_empty()
+            && let Some(budget) = verification_controls(args)?.resolve()?
+        {
+            let receipt = self.verify_returned_sources(&value, budget).map_err(|error| {
+                if error.downcast_ref::<airk_core::verification::VerificationReplyBudget>().is_some() {
+                    let body=airk_core::verification::reply_budget_refusal();
+                    ReadFailure(json!({"isError":true,"content":[{"type":"text","text":body.to_string()}]})).into()
+                } else {error}
+            })?;
+            let failed = airk_core::verification::attach_response(&mut value, receipt)?;
+            if failed {
+                return Err(ReadFailure(json!({"isError":true,"content":[{"type":"text","text":serde_json::to_string(&value)?}]})).into());
+            }
+        }
         Ok(value)
     }
 }
@@ -3735,6 +3990,18 @@ mod tests {
         assert_eq!(run.steps.len(), 1);
         assert!(run.publication.is_some());
         assert!(!run.evidence.is_empty());
+        let mut scalar = run.clone();
+        scalar.source_verification = None;
+        scalar.evidence.clear();
+        scalar.steps[0].result = Some(json!(0));
+        scalar.plan.output.max_bytes = 1024;
+        scalar
+            .warnings
+            .push("Malformed scalar fixture. ".repeat(100));
+        assert!(
+            bounded_result(scalar).is_err(),
+            "malformed scalar output must refuse without sizing underflow"
+        );
         let short = kernel.evidence_plan(request("/read one.md"))?;
         assert_eq!(short.status, "complete", "{:?}", short.steps);
         assert_eq!(short.plan.steps[0].args["end_line"], 2);

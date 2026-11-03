@@ -496,7 +496,7 @@ impl RemoteTools for Unified {
                     } else {
                         None
                     };
-                    let value = crate::remote::map_plan_results(value, |tool, fields| {
+                    let mapped = crate::remote::map_plan_results(value, |tool, fields| {
                         if matches!(tool, "status" | "diagnostics") {
                             fields.insert("project".into(), json!(project.binding));
                         }
@@ -505,8 +505,33 @@ impl RemoteTools for Unified {
                         {
                             fields.insert("explorer".into(), explorer.clone());
                         }
-                    })?;
+                    });
+                    let value = match mapped {
+                        Ok(value) => value,
+                        Err(error)
+                            if error
+                                .is::<airk_core::verification::VerificationProjectionChanged>()
+                                || error
+                                    .is::<airk_core::verification::VerificationReplyBudget>() =>
+                        {
+                            return Ok(serde_json::to_value(crate::response::error_result(
+                                &error,
+                            ))?);
+                        }
+                        Err(error) => return Err(error),
+                    };
                     return Ok(success(value));
+                }
+                if result["isError"] == true
+                    && let Some(value) = body(&result)
+                    && value["error"]["code"] == "verification_required_unmet"
+                    && value["source_verification"]["schema"] == "airk.saved-source-verification/1"
+                {
+                    // Materialize the complete structured error only after the
+                    // bounded private native hop. Keep its original text/body.
+                    let mut result = result;
+                    result["structuredContent"] = value;
+                    return Ok(result);
                 }
                 return Ok(result);
             }
@@ -566,6 +591,32 @@ impl RemoteTools for Unified {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    #[tokio::test]
+    async fn malformed_backend_plan_preserves_connection_failure_boundary() -> Result<()> {
+        struct Malformed;
+        impl RemoteTools for Malformed {
+            fn call(&self, _: String, _: Map<String, Value>) -> RemoteFuture<'_> {
+                Box::pin(async { Ok(success(json!({"private_backend_detail":"invalid plan"}))) })
+            }
+        }
+        let binding = "ab".repeat(32);
+        let unified = Unified::new(
+            vec![Project {
+                binding: binding.clone(),
+                name: "fixture".into(),
+                collection: "fixture".into(),
+                backend: Arc::new(Malformed),
+            }],
+            Some(binding),
+            None,
+        )?;
+        for alias in ["parse", "airk_parse"] {
+            let error = unified.call(alias.into(), Map::new()).await.unwrap_err();
+            assert!(error.is::<serde_json::Error>(), "{error:#}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn common_instructions_keep_the_protocol_byte_budget_and_native_names() {
         for (catalog, instructions) in

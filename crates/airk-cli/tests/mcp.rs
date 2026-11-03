@@ -154,14 +154,25 @@ impl Drop for Session {
 }
 
 #[test]
-fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_writes()
+fn saved_source_verification_preserves_complete_results_through_cli_and_public_mcp()
 -> anyhow::Result<()> {
+    fn payload(envelope: &Value) -> anyhow::Result<Value> {
+        Ok(serde_json::from_str(
+            envelope["content"][0]["text"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("missing native JSON: {envelope}"))?,
+        )?)
+    }
     fn stable(value: &mut Value) {
         match value {
             Value::Object(fields) => {
+                // These alone vary by transport observation. Source hashes,
+                // scope/selection digests, watermarks and all outcomes remain.
                 for key in [
                     "request_id",
                     "observed_unix_ms",
+                    "observed_from_unix_ms",
+                    "observed_to_unix_ms",
                     "cache_age_ms",
                     "cached",
                     "elapsed_ms",
@@ -173,6 +184,274 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             Value::Array(rows) => rows.iter_mut().for_each(stable),
             _ => {}
         }
+    }
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let source = "# Saved evidence\nQueue records preserve exact source identity.\n";
+    fs::write(root.path().join("policy.md"), source)?;
+    let service = common::Service::start(root.path(), state.path(), "project-a");
+    assert!(matches!(
+        common::rpc(
+            &service.control,
+            airk_core::service::ControlMethod::ConfigureWatch {
+                project: service.project.binding,
+                enabled: false
+            }
+        ),
+        airk_core::service::ControlResponse::Watch { .. }
+    ));
+    common::call(root.path(), state.path(), "project-a", &["index"])?;
+    let mut session = Session::start(root.path(), state.path())?;
+    session.send(json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"verification-parity-fixture","version":"1"}}}))?;
+    assert!(session.receive(1)?.get("error").is_none());
+    session.send(json!({"jsonrpc":"2.0","method":"notifications/initialized"}))?;
+    session.wait_source_idle(2)?;
+    let args = json!({"path":"policy.md","verification":"report","verification_max_sources":25,"verification_max_bytes":16777216,"verification_deadline_ms":2000,"response_mode":"full"});
+    let mcp = session.read_retry(3, "file_info", args.clone())?;
+    assert_ne!(mcp["result"]["isError"], true, "{mcp}");
+    let native = payload(&mcp["result"])?;
+    assert_eq!(native["source_verification"]["status"], "verified");
+    assert_eq!(
+        native["source_verification"]["counts"]["bytes_read"],
+        source.len()
+    );
+    let alias = common::call(
+        root.path(),
+        state.path(),
+        "project-a",
+        &[
+            "info",
+            "policy.md",
+            "--verification",
+            "report",
+            "--verification-max-sources",
+            "25",
+            "--verification-max-bytes",
+            "16777216",
+            "--verification-deadline-ms",
+            "2000",
+        ],
+    )?;
+    let tools = common::call(
+        root.path(),
+        state.path(),
+        "project-a",
+        &[
+            "tools",
+            "call",
+            "airk_file_info",
+            "--args",
+            &serde_json::to_string(&args)?,
+        ],
+    )?;
+    let mut expected = native.clone();
+    stable(&mut expected);
+    for mut actual in [alias, payload(&tools)?] {
+        stable(&mut actual);
+        assert_eq!(actual, expected);
+    }
+    let default_args = json!({"path":"policy.md","response_mode":"full"});
+    let default_mcp = session.read_retry(30, "file_info", default_args.clone())?;
+    let mut default_expected = payload(&default_mcp["result"])?;
+    assert_eq!(default_expected["source_verification"]["mode"], "report");
+    assert_eq!(
+        default_expected["source_verification"]["limits"]["max_sources"],
+        8
+    );
+    stable(&mut default_expected);
+    let mut default_cli = common::call(
+        root.path(),
+        state.path(),
+        "project-a",
+        &["info", "policy.md"],
+    )?;
+    stable(&mut default_cli);
+    assert_eq!(default_cli, default_expected);
+    // Disable watching before the fixture edit, so this checks the returned old
+    // evidence rather than racing a background publication of the new bytes.
+    fs::write(root.path().join("policy.md"), "changed saved bytes\n")?;
+    let mut require = args.clone();
+    require["verification"] = json!("require");
+    let failed = session.call(4, "file_info", require.clone())?;
+    assert_eq!(failed["result"]["isError"], true, "{failed}");
+    let expected_failure = payload(&failed["result"])?;
+    assert_eq!(
+        failed["result"]["structuredContent"], expected_failure,
+        "the public transport must expose the complete required-check failure"
+    );
+    assert_eq!(
+        expected_failure["error"]["code"],
+        "verification_required_unmet"
+    );
+    assert_eq!(
+        expected_failure["source_verification"]["sources"][0]["state"],
+        "mismatch"
+    );
+    assert_eq!(expected_failure["publication"], native["publication"]);
+    assert!(common::read_retry::classify(&failed["result"]).is_none());
+    // native read: a required-check plan executes once and is never replayed.
+    let required_plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"require",
+        "plan":{"steps":[{"id":"check","tool":"file_info","args":{"path":"policy.md"}}]},"response_mode":"full"});
+    let failed_plan = session.call(31, "parse", required_plan.clone())?;
+    assert_eq!(failed_plan["result"]["isError"], true, "{failed_plan}");
+    let mut expected_plan = payload(&failed_plan["result"])?;
+    assert_eq!(
+        expected_plan["source_verification"]["status"],
+        "requirements_unmet"
+    );
+    stable(&mut expected_plan);
+    let output = common::read_retry::output(
+        common::command(root.path(), state.path(), "project-a").args([
+            "tools",
+            "call",
+            "airk_parse",
+            "--args",
+            &serde_json::to_string(&required_plan)?,
+        ]),
+    )?;
+    assert!(!output.status.success());
+    let output: Value = serde_json::from_slice(&output.stdout)?;
+    let mut actual_plan = payload(&output)?;
+    stable(&mut actual_plan);
+    assert_eq!(actual_plan, expected_plan);
+    for invocation in [
+        vec![
+            "info",
+            "policy.md",
+            "--verification",
+            "require",
+            "--verification-max-sources",
+            "25",
+            "--verification-max-bytes",
+            "16777216",
+            "--verification-deadline-ms",
+            "2000",
+        ],
+        vec!["tools", "call", "airk_file_info", "--args", "{}"],
+    ] {
+        let mut invocation: Vec<String> = invocation.into_iter().map(str::to_owned).collect();
+        if invocation[0] == "tools" {
+            *invocation.last_mut().unwrap() = serde_json::to_string(&require)?;
+        }
+        let output = common::read_retry::output(
+            common::command(root.path(), state.path(), "project-a").args(&invocation),
+        )?;
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let reply: Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(reply["isError"], true);
+        let mut actual = payload(&reply)?;
+        let mut expected = expected_failure.clone();
+        stable(&mut actual);
+        stable(&mut expected);
+        assert_eq!(actual, expected);
+    }
+    let mut shell = common::command(root.path(), state.path(), "project-a")
+        .args(["tools", "shell"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    writeln!(
+        shell.stdin.take().unwrap(),
+        "call airk_file_info {}\nquit",
+        serde_json::to_string(&require)?
+    )?;
+    let shell = shell.wait_with_output()?;
+    assert!(shell.status.success());
+    let shell_text = String::from_utf8(shell.stdout)?;
+    assert!(
+        shell_text.contains("verification_required_unmet")
+            && shell_text.contains("source_verification")
+            && shell_text.contains("mismatch")
+    );
+    let off = common::call(
+        root.path(),
+        state.path(),
+        "project-a",
+        &["info", "policy.md", "--verification", "off"],
+    )?;
+    assert!(off.get("source_verification").is_none());
+    assert_eq!(off["publication"], native["publication"]);
+    assert_eq!(off["content_hash"], native["content_hash"]);
+    Ok(())
+}
+
+#[test]
+fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_writes()
+-> anyhow::Result<()> {
+    fn stable(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                for key in [
+                    "request_id",
+                    "observed_unix_ms",
+                    "cache_age_ms",
+                    "cached",
+                    "elapsed_ms",
+                    "observed_from_unix_ms",
+                    "observed_to_unix_ms",
+                ] {
+                    fields.remove(key);
+                }
+                fields.values_mut().for_each(stable);
+            }
+            Value::Array(rows) => rows.iter_mut().for_each(stable),
+            _ => {}
+        }
+    }
+    fn compare_native(mut a: Value, mut b: Value) -> anyhow::Result<()> {
+        if a.get("result").is_some() && b.get("result").is_some() {
+            compare_native(a["result"].clone(), b["result"].clone())?;
+            a.as_object_mut().unwrap().remove("result");
+            b.as_object_mut().unwrap().remove("result");
+        }
+        // Readiness is an independent dated observation, not part of the
+        // publication. Retain equality whenever both observations are available.
+        if (a["discovery_observation"] == "unavailable_after_read")
+            != (b["discovery_observation"] == "unavailable_after_read")
+        {
+            for value in [&mut a, &mut b] {
+                if let Some(readiness) = value.get("discovery_readiness") {
+                    let _: airk_core::readiness::DiscoveryReadiness =
+                        serde_json::from_value(readiness.clone())?;
+                    assert_eq!(readiness["state"], "ready");
+                    assert_eq!(readiness["committed_artifacts"], 2);
+                    let _: airk_core::readiness::SemanticReadiness =
+                        serde_json::from_value(value["semantic_readiness"].clone())?;
+                    assert_eq!(value["semantic_readiness"]["state"], "disabled");
+                } else {
+                    assert_eq!(value["discovery_observation"], "unavailable_after_read");
+                }
+                if value.get("source_verification").is_some() {
+                    let mut projection = value.clone();
+                    projection
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("source_verification");
+                    let expected = airk_core::verification::receipt_budget_for_reply(&projection)?;
+                    assert_eq!(
+                        value["source_verification"]["limits"]["receipt_bytes_budget"],
+                        expected
+                    );
+                    // Only headroom derived from these differently timed metadata
+                    // observations varies; all requested/effective work budgets stay.
+                    value["source_verification"]["limits"]["receipt_bytes_budget"] = 0.into();
+                }
+                let fields = value.as_object_mut().unwrap();
+                fields.remove("discovery_readiness");
+                fields.remove("semantic_readiness");
+                fields.remove("discovery_observation");
+            }
+        }
+        stable(&mut a);
+        stable(&mut b);
+        assert_eq!(a, b);
+        Ok(())
     }
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
@@ -275,7 +554,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             discovery["compact"] = json!(compact);
         }
         let mut request = json!({"schema":"airk.parse.request/1","mode":"execute","response_mode":"full",
-        "plan":{"steps":[
+        "plan":{"verification_scope":"steps","steps":[
             {"id":"find","tool":"symbols","args":discovery},
             {"id":"structure","tool":"file_info","args":{},"bind":[{"arg":"path","from":"find","select":"unique_definition_path"}]},
             {"id":"excerpt","tool":"read_file","args":{},"bind":[{"arg":"location","from":"find","select":"hit_locations"}]}
@@ -356,24 +635,17 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                 assert_eq!(a["status"], b["status"]);
                 assert_eq!(a["arguments"], b["arguments"]);
                 // Compare complete native read data; only transport/cache observations vary.
-                let mut a = a.clone();
-                let mut b = b.clone();
-                stable(&mut a);
-                stable(&mut b);
-                assert_eq!(a, b);
+                compare_native(a.clone(), b.clone())?;
             }
         }
         if let Some(detail) = detail {
-            let mut alias = common::call(
+            let alias = common::call(
                 root.path(),
                 state.path(),
                 "project-a",
                 &["symbol", "QueueClient", "--reply-detail", detail],
             )?;
-            let mut expected = mcp["steps"][0]["result"].clone();
-            stable(&mut alias);
-            stable(&mut expected);
-            assert_eq!(alias, expected);
+            compare_native(alias, mcp["steps"][0]["result"].clone())?;
         }
     }
     for (offset, (detail, full)) in [
@@ -386,8 +658,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     .enumerate()
     {
         let args = json!({"query":"ScopeMarker","mode":"lexical","reply_detail":detail,"full_chunks":full,"limit":10,"max_bytes":8192,"response_mode":"full"});
-        let mut mcp =
-            decode(session.read_retry(60 + offset as u64, "airk_search", args.clone())?)?;
+        let mcp = decode(session.read_retry(60 + offset as u64, "airk_search", args.clone())?)?;
         let returned = mcp["hits"][0]["text"].as_str().unwrap();
         if full {
             assert_eq!(returned, passage);
@@ -413,12 +684,10 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                 &serde_json::to_string(&args)?,
             ],
         )?;
-        let mut tool: Value = serde_json::from_str(tool["content"][0]["text"].as_str().unwrap())?;
-        stable(&mut mcp);
-        stable(&mut tool);
-        assert_eq!(mcp, tool);
+        let tool: Value = serde_json::from_str(tool["content"][0]["text"].as_str().unwrap())?;
+        compare_native(mcp.clone(), tool)?;
         if !full {
-            let mut alias = common::call(
+            let alias = common::call(
                 root.path(),
                 state.path(),
                 "project-a",
@@ -431,8 +700,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                     detail,
                 ],
             )?;
-            stable(&mut alias);
-            assert_eq!(mcp, alias);
+            compare_native(mcp.clone(), alias)?;
         }
     }
     assert_eq!(
@@ -1157,7 +1425,14 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
     fn stable(value: &mut Value) {
         match value {
             Value::Object(fields) => {
-                for key in ["request_id", "observed_unix_ms", "cache_age_ms", "cached"] {
+                for key in [
+                    "request_id",
+                    "observed_unix_ms",
+                    "cache_age_ms",
+                    "cached",
+                    "observed_from_unix_ms",
+                    "observed_to_unix_ms",
+                ] {
                     fields.remove(key);
                 }
                 fields.values_mut().for_each(stable);

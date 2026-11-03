@@ -123,14 +123,14 @@
       "value": {
         "verification": "report"
       },
-      "valid": false
+      "valid": true
     },
     {
       "name": "budget_without_mode",
       "value": {
         "verification_max_sources": 1
       },
-      "valid": false
+      "valid": true
     },
     {
       "name": "unbounded_bytes",
@@ -417,7 +417,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -448,7 +451,9 @@
             "reason": null,
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 128
+            "bytes_read": 128,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -510,7 +515,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -541,7 +549,9 @@
             "reason": "fixture_mismatch",
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 128
+            "bytes_read": 128,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -607,7 +617,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -638,7 +651,9 @@
             "reason": "fixture_missing",
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 0
+            "bytes_read": 0,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -704,7 +719,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -735,7 +753,9 @@
             "reason": "fixture_unreadable",
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 0
+            "bytes_read": 0,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -801,7 +821,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -832,7 +855,9 @@
             "reason": "fixture_out_of_scope",
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 0
+            "bytes_read": 0,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -898,7 +923,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -929,7 +957,9 @@
             "reason": "fixture_changed_during_check",
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 128
+            "bytes_read": 128,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -995,7 +1025,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -1026,7 +1059,9 @@
             "reason": "fixture_budget_exhausted",
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 0
+            "bytes_read": 0,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -1092,7 +1127,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -1123,7 +1161,9 @@
             "reason": "fixture_publication_expired",
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 0
+            "bytes_read": 0,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -1189,7 +1229,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -1220,7 +1263,9 @@
             "reason": "fixture_unsupported",
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 0
+            "bytes_read": 0,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -1286,7 +1331,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -1346,7 +1394,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -1419,7 +1470,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -1450,7 +1504,9 @@
             "reason": null,
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 128
+            "bytes_read": 128,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -1512,7 +1568,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -1543,7 +1602,9 @@
             "reason": null,
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 128
+            "bytes_read": 128,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -1605,7 +1666,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -1636,7 +1700,9 @@
             "reason": null,
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 128
+            "bytes_read": 128,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -1698,7 +1764,10 @@
           "concurrency": 1,
           "reference_inventory_max": 4096,
           "receipt_bytes_max": 32768,
-          "hit": []
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
         },
         "origins": [
           {
@@ -1734,7 +1803,9 @@
             "reason": null,
             "observed_from_unix_ms": 1001,
             "observed_to_unix_ms": 1009,
-            "bytes_read": 128
+            "bytes_read": 128,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
           }
         ],
         "references": [
@@ -1760,6 +1831,202 @@
         ]
       },
       "valid": true
+    },
+    {
+      "name": "whole_file_info_record_root_pointer",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "report",
+        "status": "verified",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": true,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 1,
+          "matched_sources": 1,
+          "mismatched_sources": 0,
+          "unchecked_sources": 0,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "matched",
+            "reason": null,
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 128,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "invalid_non_pointer_reference_locator",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "report",
+        "status": "verified",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": true,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 1,
+          "matched_sources": 1,
+          "mismatched_sources": 0,
+          "unchecked_sources": 0,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": [],
+          "receipt_bytes_budget": 32768,
+          "eof_probe_reserve_bytes": 1,
+          "effective_deadline_ms": 2000
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "matched",
+            "reason": null,
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 128,
+            "original_root": "/fixtures/payments",
+            "source_relative_path": "src/queue.rs"
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "not/a/json-pointer",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ]
+      },
+      "valid": false
     }
   ],
   "graph": {

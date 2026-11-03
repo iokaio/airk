@@ -244,6 +244,7 @@ export interface InspectView {
     readonly chunks?: number;
     readonly facts?: number;
     readonly sourceRoot?: string;
+    readonly sourceVerification?: Record<string, unknown>;
 }
 
 export type CitationStatus = 'valid' | 'changed_since_index' | 'not_saved' | 'missing' | 'not_found' | 'line_out_of_range' | 'outside_collection' | 'unchecked';
@@ -257,6 +258,7 @@ export interface CitationResult {
     readonly ref?: string;
 }
 export interface CitationCheckView {
+    readonly sourceVerifications?: readonly { path: string; receipt: Record<string, unknown> }[];
     /** False when the text contains no supported citation: prose alone is never a pass. */
     readonly supported: boolean;
     readonly citations: readonly CitationResult[];

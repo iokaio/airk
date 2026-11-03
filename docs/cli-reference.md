@@ -291,22 +291,42 @@ Report indexed changes since a revision token: added, modified and removed files
 Usage: airk changes [OPTIONS]
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
+      --service-project <SERVICE_PROJECT>
 
 
       --since <SINCE>
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --selector <SELECTORS>
           Repeatable tagged JSON selector, e.g. {"kind":"path","path":"one.rs"}
@@ -314,16 +334,10 @@ Options:
       --path <PATHS>
           Remember an exact collection-relative indexed path
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --path-prefix <PATH_PREFIX>
           [default: ""]
 
       --include-symbols
-
-
-      --service-project <SERVICE_PROJECT>
 
 
       --include-documents
@@ -353,24 +367,44 @@ Inspect code facts and signatures with exact default name matching and bounded c
 Usage: airk code-facts [OPTIONS]
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
-
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
-
 
       --name-match <NAME_MATCH>
           Default exact lookup; suffix/contains match simple or qualified names case-sensitively
 
           [possible values: exact, suffix, contains]
 
-      --collection <COLLECTION>
-          [default: default]
+      --service-project <SERVICE_PROJECT>
+
 
       --include-count
           Request qualified match counts; a bounded partial scan can report an unknown total
@@ -380,14 +414,8 @@ Options:
 
           [possible values: true, false]
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
-
-      --service-project <SERVICE_PROJECT>
-
 
       --symbol-key <SYMBOL_KEY>
           Durable symbol key from indexed continuity evidence; excludes textual filters
@@ -464,22 +492,42 @@ Arguments:
 
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
-
-
       --revision <REVISION>
 
 
-      --collection <COLLECTION>
-          [default: default]
+      --service-project <SERVICE_PROJECT>
+
 
       --if-evidence <IF_EVIDENCE>
 
@@ -487,16 +535,10 @@ Options:
       --follow-moves
 
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --known-hash <KNOWN_HASH>
 
 
       --artifact-id <ARTIFACT_ID>
-
-
-      --service-project <SERVICE_PROJECT>
 
 
       --before <BEFORE>
@@ -881,24 +923,44 @@ Arguments:
           [default: ""]
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
-
-      --root <ROOT>
-          [default: .]
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
-      --data-dir <DATA_DIR>
+      --service-project <SERVICE_PROJECT>
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
@@ -906,17 +968,11 @@ Options:
       --document-key <DOCUMENT_KEY>
           Durable document key; excludes textual filters
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --name <NAME>
 
 
       --kind <KIND>
           Exact document fact category, such as requirement, date, architecture or feature
-
-      --service-project <SERVICE_PROJECT>
-
 
       --limit <LIMIT>
           [default: 50]
@@ -940,34 +996,48 @@ Arguments:
           [default: ""]
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --data-dir <DATA_DIR>
+      --service-project <SERVICE_PROJECT>
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --limit <LIMIT>
           [default: 10]
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
-
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
-      --service-project <SERVICE_PROJECT>
-
 
   -h, --help
           Print help
@@ -1012,33 +1082,47 @@ Arguments:
           [default: ""]
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
-
-      --root <ROOT>
-          [default: .]
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
-      --data-dir <DATA_DIR>
+      --service-project <SERVICE_PROJECT>
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
-
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
-      --service-project <SERVICE_PROJECT>
-
 
   -h, --help
           Print help
@@ -1088,22 +1172,42 @@ Arguments:
 
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
-
-
       --revision <REVISION>
 
 
-      --collection <COLLECTION>
-          [default: default]
+      --service-project <SERVICE_PROJECT>
+
 
       --if-evidence <IF_EVIDENCE>
 
@@ -1111,16 +1215,10 @@ Options:
       --follow-moves
 
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --known-hash <KNOWN_HASH>
 
 
       --artifact-id <ARTIFACT_ID>
-
-
-      --service-project <SERVICE_PROJECT>
 
 
   -h, --help
@@ -1264,22 +1362,42 @@ Arguments:
 
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --data-dir <DATA_DIR>
+      --service-project <SERVICE_PROJECT>
 
-
-      --collection <COLLECTION>
-          [default: default]
 
       --compact [<COMPACT>]
           Return minimal names/kinds/lines/signatures with shared original file/provenance bindings
@@ -1289,16 +1407,10 @@ Options:
       --revision <REVISION>
 
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --if-evidence <IF_EVIDENCE>
 
 
       --follow-moves
-
-
-      --service-project <SERVICE_PROJECT>
 
 
       --known-hash <KNOWN_HASH>
@@ -1331,22 +1443,42 @@ Arguments:
 
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
-
-
       --project <PROJECT>
           Configured native project binding (alias for global --service-project)
 
-      --collection <COLLECTION>
-          [default: default]
+      --service-project <SERVICE_PROJECT>
+
 
       --execute
 
@@ -1354,14 +1486,8 @@ Options:
       --request <REQUEST>
           Structured request file; '-' reads bounded JSON from stdin
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --path-prefix <PATH_PREFIX>
           [default: ""]
-
-      --service-project <SERVICE_PROJECT>
-
 
   -h, --help
           Print help (see a summary with '-h')
@@ -1438,22 +1564,42 @@ Arguments:
 
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
-
-
       --revision <REVISION>
 
 
-      --collection <COLLECTION>
-          [default: default]
+      --service-project <SERVICE_PROJECT>
+
 
       --if-evidence <IF_EVIDENCE>
 
@@ -1461,16 +1607,10 @@ Options:
       --follow-moves
 
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --known-hash <KNOWN_HASH>
 
 
       --artifact-id <ARTIFACT_ID>
-
-
-      --service-project <SERVICE_PROJECT>
 
 
       --start-line <START_LINE>
@@ -1498,22 +1638,42 @@ Arguments:
 
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
-
-
       --language <LANGUAGE>
           Exact indexed extraction-language label; not a filename-extension filter
 
-      --collection <COLLECTION>
-          [default: default]
+      --service-project <SERVICE_PROJECT>
+
 
       --evidence-kind <EVIDENCE_KIND>
           Indexed evidence classification; unknown includes unclassified extraction
@@ -1523,9 +1683,6 @@ Options:
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --cursor <CURSOR>
           Continue one exact publication with identical identifier, filters and ordering
 
@@ -1533,9 +1690,6 @@ Options:
           Omit for the legacy response; paged index order uses stable IDs, with path/code_first alternatives
 
           [possible values: index, path, code_first]
-
-      --service-project <SERVICE_PROJECT>
-
 
       --include-files
           Summarize returned page records by file; bounded metadata is additional to the text-byte budget
@@ -1568,22 +1722,42 @@ Arguments:
 
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
-
-
       --direction <DIRECTION>
           [default: incoming]
 
-      --collection <COLLECTION>
-          [default: default]
+      --service-project <SERVICE_PROJECT>
+
 
       --kind <KIND>
 
@@ -1591,17 +1765,11 @@ Options:
       --path-prefix <PATH_PREFIX>
           [default: ""]
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --hops <HOPS>
           [default: 1]
 
       --limit <LIMIT>
           [default: 10]
-
-      --service-project <SERVICE_PROJECT>
-
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
@@ -2954,22 +3122,42 @@ Arguments:
 
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
 
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
-
-
       --language <LANGUAGE>
           Exact indexed extraction-language label; not a filename-extension filter
 
-      --collection <COLLECTION>
-          [default: default]
+      --service-project <SERVICE_PROJECT>
+
 
       --evidence-kind <EVIDENCE_KIND>
           Indexed evidence classification; unknown includes unclassified extraction
@@ -2979,17 +3167,11 @@ Options:
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --mode <MODE>
           [possible values: lexical, vector, hybrid]
 
       --semantic
           Use the configured local embedding model and disk-backed vector graph
-
-      --service-project <SERVICE_PROJECT>
-
 
       --path-prefix <PATH_PREFIX>
 
@@ -4074,24 +4256,44 @@ Arguments:
 
 
 Options:
+      --root <ROOT>
+          [default: .]
+
+      --verification <VERIFICATION>
+          Dated saved-source checks; default Report, bounded to 8 sources, 16 MiB and 2000 ms. Off skips checking
+
+          [possible values: off, report, require]
+
+      --data-dir <DATA_DIR>
+
+
+      --verification-max-sources <VERIFICATION_MAX_SOURCES>
+
+
+      --collection <COLLECTION>
+          [default: default]
+
+      --verification-max-bytes <VERIFICATION_MAX_BYTES>
+
+
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
+
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
-
-      --root <ROOT>
-          [default: .]
-
-      --data-dir <DATA_DIR>
-
 
       --name-match <NAME_MATCH>
           Default exact lookup; suffix/contains match simple or qualified names case-sensitively
 
           [possible values: exact, suffix, contains]
 
-      --collection <COLLECTION>
-          [default: default]
+      --service-project <SERVICE_PROJECT>
+
 
       --include-count
           Request qualified match counts; a bounded partial scan can report an unknown total
@@ -4101,16 +4303,10 @@ Options:
 
           [possible values: true, false]
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
-
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
       --language <LANGUAGE>
-
-
-      --service-project <SERVICE_PROJECT>
 
 
       --path-prefix <PATH_PREFIX>

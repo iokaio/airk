@@ -4,7 +4,16 @@ The 1.9.0 candidate adds [evidence guidance](evidence-guidance.md) as a pure Cor
 projection of returned metadata. Native rendering and Kernel Workbench fallback
 share it; the extension only presents/preserves the result. It introduces no
 registry, source, model or indexing work. The [candidate record](releases/release-1.9.0.md)
-separates accepted phases from planned hierarchy/verification changes.
+separates accepted phases from planned hierarchy changes and verification qualification.
+
+The P4 saved-source verifier adds typed controls, bounded reference inventory and
+receipt contracts in Core. Ingest owns read-only no-follow streaming capture;
+Kernel owns source policy, publication fencing, deduplication and plan budgets;
+MCP owns canonical rendering and admitted cancellation; CLI and editor adapters
+preserve that result. Inspector/Checker reuse native receipts and observe unsaved
+buffers separately. No source refresh, inference, registry migration or writer
+operation is introduced by verification. [Controls and qualification](source-verification.md)
+remain separate from later Project/index implementation.
 
 **1.8.7 release candidate:** MCP `status` and `diagnostics` return `query_concurrency`, the configured evidence request limit observed at admission. It reuses the existing policy read, including for cached status; it is a capacity limit, not a count of free slots. This release includes the preceding unpublished MCP, Workbench and concurrent-request improvements. See the [1.8.7 release record](releases/release-1.8.7.md) for behavior and validation.
 

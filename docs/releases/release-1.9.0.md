@@ -43,6 +43,22 @@ They add no registry migration, new Project/index hierarchy, split/trim operatio
 recommendation screen or source-verification guarantee. Those capabilities remain
 planned until their implementation, parity and performance phases are accepted.
 
+## P4 locally qualified: dated saved-source verification
+
+Evidence reads now implement Report by default with a bounded native preset of
+8 sources, 16 MiB aggregate raw bytes and a cooperative 2-second deadline. Off
+explicitly skips checks; Require preserves full attempted evidence and a
+nonretryable failure when checks do not satisfy the requirement. Plans deduplicate
+final references, and Workbench/Inspector/Checker preserve original dates and
+uncertainty. No source refresh or schema upgrade occurs in P4. See the
+[guide](../source-verification.md) and [phase ledger](../research/implementation-v190.md).
+P4 passed local native/transport checks and frozen/preceding latency and relevance
+gates. Report adds intentional checking cost: small-file median 135.76 ms versus
+66.67 ms with Off in the final warm-cache campaign. This does not qualify installed
+editors, concurrent editor saves, physical disk I/O or other platforms. Earlier
+failures and their corrections remain in the ledger. Project/index management,
+upgrade activation, combined scope, recommendations, trim and split remain planned.
+
 ## Performance and validation evidence
 
 The [frozen 1.8.7 baseline](../research/baseline-v190.json) records 270 measured

@@ -1,5 +1,7 @@
 # CLI, MCP and Workbench read parity
 
+**1.9.0 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
+
 **1.9.0 P2b:** optional [evidence guidance](evidence-guidance.md) is derived by one
 Core projection used in native reads and Kernel Workbench fallback. CLI aliases,
 tools-call/shell, MCP, parse steps, structured Workbench details and full/selected
@@ -88,3 +90,15 @@ nested contents still use the canonical kernel contract.
   explicit rich symbol-ID expansion and full/selected exports.
 
 These local regressions do not establish installed-editor acceptance or cross-platform qualification. Current run outcomes are in the [1.9.0 candidate record](releases/release-1.9.0.md); inherited qualification remains in the [dated 1.8.7 record](releases/release-1.8.7.md).
+
+
+Independent optional readiness probes can differ in availability between requests:
+`discovery_observation: unavailable_after_read` retains uncertainty rather than
+inventing a state. Actual full replies and exports preserve that observation.
+The native parity fixture compares available readiness exactly; for an explicit
+available/unavailable timing difference it validates the typed fixture state and
+each original projection's calculated receipt headroom separately. Only those
+dated observations and derived headroom are normalized for equality. Requested
+verification budgets, evidence, counts, hashes, publication and origin identities
+remain exact. A native verifier refusal never acknowledges undelivered observations
+in the direct client's status receipt.

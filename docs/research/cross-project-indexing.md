@@ -482,7 +482,7 @@ after final bounded selection. Deduplicate checks only where physical source
 identity, expected digest and allowed scope agree; retain a receipt association
 for every index citation and permitted selected Project origin. A file checked through one grant does not authorize
 another. Adopt the shared proposed enum style:
-`verification: off | report | require` (default `off`) and
+`verification: off | report | require` (default `report`, changed by the maintainer during P4) and
 `member_availability: report | require` (default `report` for combined reads).
 The controls are independent; X0/V0 publish their semantics together. The earlier
 design's `failure_policy`/`require_all` names were never shipped and are replaced.

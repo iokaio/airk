@@ -56,6 +56,7 @@ export function InspectorScreen(props: ScreenProps) {
                         <span class="spacer" /><OpenButton ref_={view.value.ref} />
                     </div>
                     <p>{view.value.liveMessage}</p>
+                    {view.value.sourceVerification && <details><summary>Dated native source check</summary><pre>{JSON.stringify(view.value.sourceVerification, null, 2)}</pre></details>}
                     <Facts rows={[
                         ['Publication', <span title={view.value.publication}>{shortToken(view.value.publication)}</span>],
                         ['Indexed content hash', <code>{view.value.contentHash}</code>],
@@ -65,7 +66,7 @@ export function InspectorScreen(props: ScreenProps) {
                         ['Chunks · facts', `${observed(view.value.chunks)} · ${observed(view.value.facts)}`],
                         ['Source root', <code class="path">{view.value.sourceRoot ?? 'not observed'}</code>],
                     ]} />
-                    <p class="muted">The hash compares saved bytes only. A match shows the file is unchanged since indexing; it does not verify what the code does.</p>
+                    <p class="muted">A match records saved-byte agreement during the displayed native observation interval. Later changes and code behavior need their own checks.</p>
                 </article>
             )}
         </div>
@@ -104,6 +105,7 @@ export function CheckerScreen(props: ScreenProps) {
                             </tr>
                         ))}</tbody>
                     </table>
+                    {!!view.value.sourceVerifications?.length && <details><summary>Dated native source checks</summary><pre>{JSON.stringify(view.value.sourceVerifications, null, 2)}</pre></details>}
                 </div>
             )}
         </div>

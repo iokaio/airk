@@ -13,6 +13,20 @@ use std::sync::Mutex;
 pub(crate) const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep scopes, locations, exact tokens/hashes/validators; finish airk_changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: airk_symbols -> airk_references -> airk_read_file/airk_context; concepts: airk_search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. {ref:publication} is reply-local. Manage via CLI.";
 
 pub(crate) fn error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
+    if error
+        .downcast_ref::<airk_core::verification::VerificationProjectionChanged>()
+        .is_some()
+    {
+        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(serde_json::json!({"error":{"code":"verification_projection_changed","message":error.to_string(),"retryable":false}}).to_string())]);
+    }
+    if error
+        .downcast_ref::<airk_core::verification::VerificationReplyBudget>()
+        .is_some()
+    {
+        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+            airk_core::verification::reply_budget_refusal().to_string(),
+        )]);
+    }
     let text = airk_kernel::retrieval_retry::read_retry_hint(error)
         .and_then(|hint| serde_json::to_string(&hint).ok())
         .unwrap_or_else(|| error.to_string());
@@ -101,6 +115,67 @@ fn reply_detail_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
         .collect();
     values.push(Value::Null);
     schemars::json_schema!({"type":["string","null"],"enum":values})
+}
+
+/// Evidence-only opt-in controls; metadata/help schemas do not advertise hashing.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct VerificationArgs {
+    /// Report is the default: bounded dated saved-byte outcomes. Off skips source checks; require fails unless every returned file reference matches. No extraction, completeness or unsaved-buffer certification.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "airk_core::verification::present_value"
+    )]
+    #[schemars(schema_with = "verification_mode_schema")]
+    pub verification: Option<airk_core::verification::VerificationMode>,
+    /// Maximum whole-source checks, 1..256; default 8.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "airk_core::verification::present_value"
+    )]
+    #[schemars(schema_with = "verification_sources_schema")]
+    pub verification_max_sources: Option<usize>,
+    /// Aggregate raw-byte budget, 1..1073741824; default 16777216 (16 MiB).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "airk_core::verification::present_value"
+    )]
+    #[schemars(schema_with = "verification_bytes_schema")]
+    pub verification_max_bytes: Option<u64>,
+    /// Cooperative deadline, 1..30000 ms; default 2000. Blocking filesystem calls retain capacity until they return.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "airk_core::verification::present_value"
+    )]
+    #[schemars(schema_with = "verification_deadline_schema")]
+    pub verification_deadline_ms: Option<u64>,
+}
+
+impl VerificationArgs {
+    pub fn controls(self) -> airk_core::verification::VerificationControls {
+        airk_core::verification::VerificationControls {
+            verification: self.verification,
+            verification_max_sources: self.verification_max_sources,
+            verification_max_bytes: self.verification_max_bytes,
+            verification_deadline_ms: self.verification_deadline_ms,
+        }
+    }
+}
+
+fn verification_sources_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"integer","minimum":1,"maximum":256,"default":8})
+}
+fn verification_bytes_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"integer","minimum":1,"maximum":1073741824,"default":16777216})
+}
+fn verification_deadline_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"integer","minimum":1,"maximum":30000,"default":2000})
+}
+fn verification_mode_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({"type":"string","enum":["off","report","require"],"default":"report"})
 }
 
 #[derive(Default)]

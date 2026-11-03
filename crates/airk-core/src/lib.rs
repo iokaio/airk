@@ -38,6 +38,7 @@ pub mod service_watch;
 pub mod usage;
 pub mod vector_evidence;
 pub mod vector_selection;
+pub mod verification;
 pub mod workbench;
 pub use code::*;
 pub use search_filters::{EvidenceKind, SearchFilters};

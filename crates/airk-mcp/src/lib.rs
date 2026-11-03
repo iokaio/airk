@@ -29,6 +29,9 @@ pub mod unified;
 mod optimization_tests;
 
 #[cfg(test)]
+mod verification_tests;
+
+#[cfg(test)]
 mod workbench_tests {
     use super::*;
     use serde_json::json;
@@ -77,6 +80,8 @@ mod workbench_tests {
 #[derive(Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ParseArgs {
+    #[serde(flatten)]
+    pub verification: response::VerificationArgs,
     #[serde(flatten, skip_serializing)]
     pub response: ResponseArgs,
     pub schema: String,
@@ -145,6 +150,8 @@ pub enum SelectorArgs {
 #[serde(deny_unknown_fields)]
 pub struct ChangesArgs {
     #[serde(flatten, skip_serializing)]
+    pub verification: response::VerificationArgs,
+    #[serde(flatten, skip_serializing)]
     pub response: ResponseArgs,
     pub since: Option<String>,
     /// Up to 64 remembered selectors totaling at most 32 KiB.
@@ -176,6 +183,8 @@ impl ChangesArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SearchArgs {
+    #[serde(flatten)]
+    pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub response: ResponseArgs,
     /// Default hybrid retrieval; explicit lexical uses AND terms.
@@ -251,6 +260,8 @@ impl From<NameMatch> for airk_core::discovery::NameMatch {
 #[serde(deny_unknown_fields)]
 pub struct ReadArgs {
     #[serde(flatten)]
+    pub verification: response::VerificationArgs,
+    #[serde(flatten)]
     pub response: ResponseArgs,
     #[serde(flatten)]
     pub evidence: EvidenceArgs,
@@ -267,6 +278,8 @@ pub struct ReadArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ListArgs {
+    #[serde(flatten)]
+    pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub response: ResponseArgs,
     /// Continuation returned by this tool; repeat the same filters and representation.
@@ -291,6 +304,8 @@ fn default_budget() -> usize {
 #[serde(deny_unknown_fields)]
 pub struct PathArgs {
     #[serde(flatten)]
+    pub verification: response::VerificationArgs,
+    #[serde(flatten)]
     pub response: ResponseArgs,
     #[serde(flatten)]
     pub evidence: EvidenceArgs,
@@ -301,6 +316,8 @@ pub struct PathArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutlineArgs {
+    #[serde(flatten)]
+    pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub response: ResponseArgs,
     /// Continuation returned by this tool; repeat the same filters and representation.
@@ -320,6 +337,8 @@ pub struct OutlineArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FactArgs {
+    #[serde(flatten)]
+    pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub response: ResponseArgs,
     /// Minimal navigation by default. False requests rich facts and symbol IDs; independent of response_mode.
@@ -366,6 +385,8 @@ impl FactArgs {
 #[serde(deny_unknown_fields)]
 pub struct DocumentFactArgs {
     #[serde(flatten)]
+    pub verification: response::VerificationArgs,
+    #[serde(flatten)]
     pub response: ResponseArgs,
     /// Compact statement/location evidence; defaults on for Agent Lean. False requests rich details.
     pub compact: Option<bool>,
@@ -393,6 +414,8 @@ pub struct DocumentFactArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ReferenceArgs {
+    #[serde(flatten)]
+    pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub response: ResponseArgs,
     /// Exact-case whole identifier to locate textually, not a regex or semantic symbol ID.
@@ -443,6 +466,8 @@ impl From<ReferenceOrder> for airk_core::references::ReferenceOrder {
 #[serde(deny_unknown_fields)]
 pub struct ContextArgs {
     #[serde(flatten)]
+    pub verification: response::VerificationArgs,
+    #[serde(flatten)]
     pub response: ResponseArgs,
     #[serde(flatten)]
     pub evidence: EvidenceArgs,
@@ -464,6 +489,8 @@ fn default_radius() -> usize {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CodeFactArgs {
+    #[serde(flatten)]
+    pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub response: ResponseArgs,
     /// Compact signatures, locations and provenance; defaults on for Agent Lean. False requests rich details.
@@ -495,6 +522,8 @@ pub struct CodeFactArgs {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RelationshipArgs {
+    #[serde(flatten)]
+    pub verification: response::VerificationArgs,
     #[serde(flatten)]
     pub response: ResponseArgs,
     /// Use code.symbol_id from code facts/symbols, a file:path owner, or an exact written syntax target (e.g. db.query). Syntax targets are not resolved symbol IDs.
@@ -556,13 +585,20 @@ pub struct AirkServer {
 
 #[tool_router]
 impl AirkServer {
+    /// Only fixed native definitions and context-taking handler functions are
+    /// shared. Every server still owns its kernel, authority and observations.
+    pub(crate) fn shared_tool_router() -> ToolRouter<Self> {
+        static ROUTER: std::sync::OnceLock<ToolRouter<AirkServer>> = std::sync::OnceLock::new();
+        ROUTER.get_or_init(Self::tool_router).clone()
+    }
+
     pub fn new(kernel: Kernel) -> Self {
         let admission = execution::Admission::for_kernel(&kernel);
         Self {
             work: Default::default(),
             runtime: Default::default(),
             kernel,
-            tool_router: Self::tool_router(),
+            tool_router: Self::shared_tool_router(),
             client: ClientFamily::Unknown,
             admission,
             responses: Default::default(),
@@ -594,28 +630,54 @@ impl AirkServer {
         )
     )]
     async fn parse(&self, Parameters(args): Parameters<ParseArgs>) -> CallToolResult {
+        let enabled = |value: Option<&serde_json::Value>| {
+            value.is_some_and(|value| matches!(value.as_str(), Some("report" | "require")))
+        };
+        let track_verification = args
+            .verification
+            .verification
+            .is_none_or(|mode| mode != airk_core::verification::VerificationMode::Off)
+            || args.plan.as_ref().is_some_and(|plan| {
+                enabled(plan.get("verification"))
+                    || plan
+                        .get("steps")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|steps| {
+                            steps.iter().any(|step| {
+                                enabled(step.get("args").and_then(|args| args.get("verification")))
+                            })
+                        })
+            })
+            || args.text.as_ref().is_some_and(|text| {
+                text.contains("--verification report") || text.contains("--verification require")
+            });
         let reply_detail = args.response.reply_detail;
         let observations = serde_json::json!({"runtime":self.runtime.read().ok().and_then(|v|v.clone()),"work":self.work.read().ok().and_then(|v|v.clone())});
         let mut reader = self.clone();
         reader.plan_read = true;
         let handle = tokio::runtime::Handle::current();
-        self.execute_response(UsageOperation::Parse, args.response, move |kernel| {
-            reader.kernel = kernel.clone();
-            let mut value = serde_json::to_value(args)?;
-            if let Some(detail) = reply_detail {
-                value["reply_detail"] = serde_json::to_value(detail)?;
-            }
-            if value["mode"].is_null() {
-                value["mode"] = serde_json::json!("prepare");
-            }
-            kernel.evidence_plan_with_reader(
-                serde_json::from_value(value)?,
-                &observations,
-                Some(&|tool, args, revision| {
-                    handle.block_on(reader.workbench_read(tool, args, revision))
-                }),
-            )
-        })
+        self.execute_verification_aware(
+            UsageOperation::Parse,
+            args.response,
+            track_verification,
+            move |kernel| {
+                reader.kernel = kernel.clone();
+                let mut value = serde_json::to_value(args)?;
+                if let Some(detail) = reply_detail {
+                    value["reply_detail"] = serde_json::to_value(detail)?;
+                }
+                if value["mode"].is_null() {
+                    value["mode"] = serde_json::json!("prepare");
+                }
+                kernel.evidence_plan_with_reader(
+                    serde_json::from_value(value)?,
+                    &observations,
+                    Some(&|tool, args, revision| {
+                        handle.block_on(reader.workbench_read(tool, args, revision))
+                    }),
+                )
+            },
+        )
         .await
     }
 
@@ -629,54 +691,59 @@ impl AirkServer {
         )
     )]
     async fn code_facts(&self, Parameters(args): Parameters<CodeFactArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::CodeFacts, args.response, move |kernel| {
-            let compact = match airk_core::reply::ReplyDetail::compact(
-                args.response.reply_detail,
-                args.compact,
-            )? {
-                Some(value) => value,
-                None => {
-                    kernel.applied_index_detail()?
-                        == Some(airk_core::extraction::IndexDetail::AgentLean)
+        self.execute_verified_response(
+            UsageOperation::CodeFacts,
+            args.response,
+            args.verification.controls(),
+            move |kernel| {
+                let compact = match airk_core::reply::ReplyDetail::compact(
+                    args.response.reply_detail,
+                    args.compact,
+                )? {
+                    Some(value) => value,
+                    None => {
+                        kernel.applied_index_detail()?
+                            == Some(airk_core::extraction::IndexDetail::AgentLean)
+                    }
+                };
+                if let Some(key) = continuity_selector(
+                    args.symbol_key.as_deref(),
+                    true,
+                    args.name.is_some()
+                        || args.name_match.is_some()
+                        || args.include_count
+                        || args.kind.is_some()
+                        || args.language.is_some()
+                        || args.path.is_some()
+                        || !args.path_prefix.is_empty()
+                        || args.cursor.is_some(),
+                )? {
+                    return kernel.continuity_facts(key, args.limit, args.max_bytes);
                 }
-            };
-            if let Some(key) = continuity_selector(
-                args.symbol_key.as_deref(),
-                true,
-                args.name.is_some()
-                    || args.name_match.is_some()
-                    || args.include_count
-                    || args.kind.is_some()
-                    || args.language.is_some()
-                    || args.path.is_some()
-                    || !args.path_prefix.is_empty()
-                    || args.cursor.is_some(),
-            )? {
-                return kernel.continuity_facts(key, args.limit, args.max_bytes);
-            }
-            kernel.code_facts_page_with_options(
-                &FactQuery {
-                    path_exact: args.path.is_some(),
-                    path_prefix: args.path.unwrap_or(args.path_prefix),
-                    name: args.name,
-                    kind: args.kind,
-                    language: args.language,
-                    exact_name: true,
-                    limit: args.limit,
-                    max_bytes: args.max_bytes,
-                    document_only: false,
-                },
-                &airk_core::discovery::DiscoveryOptions {
-                    minimal: false,
-                    cursor: args.cursor,
-                    compact,
-                },
-                &airk_core::discovery::FactDiscoveryOptions {
-                    name_match: args.name_match.map(Into::into),
-                    include_count: args.include_count,
-                },
-            )
-        })
+                kernel.code_facts_page_with_options(
+                    &FactQuery {
+                        path_exact: args.path.is_some(),
+                        path_prefix: args.path.unwrap_or(args.path_prefix),
+                        name: args.name,
+                        kind: args.kind,
+                        language: args.language,
+                        exact_name: true,
+                        limit: args.limit,
+                        max_bytes: args.max_bytes,
+                        document_only: false,
+                    },
+                    &airk_core::discovery::DiscoveryOptions {
+                        minimal: false,
+                        cursor: args.cursor,
+                        compact,
+                    },
+                    &airk_core::discovery::FactDiscoveryOptions {
+                        name_match: args.name_match.map(Into::into),
+                        include_count: args.include_count,
+                    },
+                )
+            },
+        )
         .await
     }
 
@@ -693,9 +760,10 @@ impl AirkServer {
         &self,
         Parameters(args): Parameters<RelationshipArgs>,
     ) -> CallToolResult {
-        self.execute_response(
+        self.execute_verified_response(
             UsageOperation::Relationships,
             args.response,
+            args.verification.controls(),
             move |kernel| {
                 kernel.relationships(&RelationshipQuery {
                     symbol: args.symbol,
@@ -721,36 +789,41 @@ impl AirkServer {
         )
     )]
     async fn search(&self, Parameters(args): Parameters<SearchArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::Search, args.response, move |kernel| {
-            anyhow::ensure!(
-                !args.semantic || args.mode.is_none(),
-                "choose mode or semantic, not both"
-            );
-            let query = SearchQuery {
-                text: args.query,
-                path_prefix: args.path_prefix,
-                limit: args.limit,
-                max_bytes: args.max_bytes,
-            };
-            use airk_kernel::current::CurrentSearchMode;
-            let mode = match args.mode {
-                Some(SearchMode::Lexical) => CurrentSearchMode::Lexical,
-                Some(SearchMode::Vector) => CurrentSearchMode::Vector,
-                Some(SearchMode::Hybrid) => CurrentSearchMode::Hybrid,
-                None if args.semantic => CurrentSearchMode::Vector,
-                None => CurrentSearchMode::Default,
-            };
-            kernel.search_response_with_navigation(
-                &query,
-                mode,
-                (!args.full_chunks.unwrap_or(false)).then_some(768),
-                &airk_core::SearchFilters {
-                    language: args.language,
-                    evidence_kind: args.evidence_kind.map(Into::into),
-                    exclude_path_prefix: args.exclude_path_prefix,
-                },
-            )
-        })
+        self.execute_verified_response(
+            UsageOperation::Search,
+            args.response,
+            args.verification.controls(),
+            move |kernel| {
+                anyhow::ensure!(
+                    !args.semantic || args.mode.is_none(),
+                    "choose mode or semantic, not both"
+                );
+                let query = SearchQuery {
+                    text: args.query,
+                    path_prefix: args.path_prefix,
+                    limit: args.limit,
+                    max_bytes: args.max_bytes,
+                };
+                use airk_kernel::current::CurrentSearchMode;
+                let mode = match args.mode {
+                    Some(SearchMode::Lexical) => CurrentSearchMode::Lexical,
+                    Some(SearchMode::Vector) => CurrentSearchMode::Vector,
+                    Some(SearchMode::Hybrid) => CurrentSearchMode::Hybrid,
+                    None if args.semantic => CurrentSearchMode::Vector,
+                    None => CurrentSearchMode::Default,
+                };
+                kernel.search_response_with_navigation(
+                    &query,
+                    mode,
+                    (!args.full_chunks.unwrap_or(false)).then_some(768),
+                    &airk_core::SearchFilters {
+                        language: args.language,
+                        evidence_kind: args.evidence_kind.map(Into::into),
+                        exclude_path_prefix: args.exclude_path_prefix,
+                    },
+                )
+            },
+        )
         .await
     }
 
@@ -764,15 +837,20 @@ impl AirkServer {
         )
     )]
     async fn read_file(&self, Parameters(args): Parameters<ReadArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::ReadFile, args.response, move |kernel| {
-            kernel.read_file_conditional(
-                &args.path,
-                args.start_line,
-                args.end_line,
-                args.max_bytes,
-                &args.evidence.options()?,
-            )
-        })
+        self.execute_verified_response(
+            UsageOperation::ReadFile,
+            args.response,
+            args.verification.controls(),
+            move |kernel| {
+                kernel.read_file_conditional(
+                    &args.path,
+                    args.start_line,
+                    args.end_line,
+                    args.max_bytes,
+                    &args.evidence.options()?,
+                )
+            },
+        )
         .await
     }
 
@@ -786,18 +864,23 @@ impl AirkServer {
         )
     )]
     async fn list_files(&self, Parameters(args): Parameters<ListArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::ListFiles, args.response, move |kernel| {
-            kernel.list_files_page(
-                &args.prefix,
-                args.limit,
-                args.max_bytes,
-                &airk_core::discovery::DiscoveryOptions {
-                    minimal: false,
-                    cursor: args.cursor,
-                    compact: false,
-                },
-            )
-        })
+        self.execute_verified_response(
+            UsageOperation::ListFiles,
+            args.response,
+            args.verification.controls(),
+            move |kernel| {
+                kernel.list_files_page(
+                    &args.prefix,
+                    args.limit,
+                    args.max_bytes,
+                    &airk_core::discovery::DiscoveryOptions {
+                        minimal: false,
+                        cursor: args.cursor,
+                        compact: false,
+                    },
+                )
+            },
+        )
         .await
     }
 
@@ -875,9 +958,12 @@ impl AirkServer {
         )
     )]
     async fn file_info(&self, Parameters(args): Parameters<PathArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::FileInfo, args.response, move |kernel| {
-            kernel.file_info_conditional(&args.path, &args.evidence.options()?)
-        })
+        self.execute_verified_response(
+            UsageOperation::FileInfo,
+            args.response,
+            args.verification.controls(),
+            move |kernel| kernel.file_info_conditional(&args.path, &args.evidence.options()?),
+        )
         .await
     }
 
@@ -891,23 +977,28 @@ impl AirkServer {
         )
     )]
     async fn outline(&self, Parameters(args): Parameters<OutlineArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::Outline, args.response, move |kernel| {
-            kernel.outline_conditional_page(
-                &args.path,
-                args.limit,
-                args.max_bytes,
-                &args.evidence.options()?,
-                &airk_core::discovery::DiscoveryOptions {
-                    minimal: airk_core::reply::ReplyDetail::compact(
-                        args.response.reply_detail,
-                        args.compact,
-                    )?
-                    .unwrap_or(true),
-                    cursor: args.cursor,
-                    compact: false,
-                },
-            )
-        })
+        self.execute_verified_response(
+            UsageOperation::Outline,
+            args.response,
+            args.verification.controls(),
+            move |kernel| {
+                kernel.outline_conditional_page(
+                    &args.path,
+                    args.limit,
+                    args.max_bytes,
+                    &args.evidence.options()?,
+                    &airk_core::discovery::DiscoveryOptions {
+                        minimal: airk_core::reply::ReplyDetail::compact(
+                            args.response.reply_detail,
+                            args.compact,
+                        )?
+                        .unwrap_or(true),
+                        cursor: args.cursor,
+                        compact: false,
+                    },
+                )
+            },
+        )
         .await
     }
 
@@ -921,26 +1012,31 @@ impl AirkServer {
         )
     )]
     async fn symbols(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::Symbols, args.response, move |kernel| {
-            let options = airk_core::discovery::DiscoveryOptions {
-                minimal: airk_core::reply::ReplyDetail::compact(
-                    args.response.reply_detail,
-                    args.compact,
-                )?
-                .unwrap_or(true),
-                cursor: args.cursor.clone(),
-                compact: false,
-            };
-            let matching = airk_core::discovery::FactDiscoveryOptions {
-                name_match: args.name_match.map(Into::into),
-                include_count: args.include_count,
-            };
-            kernel.facts_page_with_options(
-                &args.query(Some("definition"), true, false),
-                &options,
-                &matching,
-            )
-        })
+        self.execute_verified_response(
+            UsageOperation::Symbols,
+            args.response,
+            args.verification.controls(),
+            move |kernel| {
+                let options = airk_core::discovery::DiscoveryOptions {
+                    minimal: airk_core::reply::ReplyDetail::compact(
+                        args.response.reply_detail,
+                        args.compact,
+                    )?
+                    .unwrap_or(true),
+                    cursor: args.cursor.clone(),
+                    compact: false,
+                };
+                let matching = airk_core::discovery::FactDiscoveryOptions {
+                    name_match: args.name_match.map(Into::into),
+                    include_count: args.include_count,
+                };
+                kernel.facts_page_with_options(
+                    &args.query(Some("definition"), true, false),
+                    &options,
+                    &matching,
+                )
+            },
+        )
         .await
     }
 
@@ -954,26 +1050,31 @@ impl AirkServer {
         )
     )]
     async fn imports(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::Imports, args.response, move |kernel| {
-            let options = airk_core::discovery::DiscoveryOptions {
-                minimal: airk_core::reply::ReplyDetail::compact(
-                    args.response.reply_detail,
-                    args.compact,
-                )?
-                .unwrap_or(true),
-                cursor: args.cursor.clone(),
-                compact: false,
-            };
-            let matching = airk_core::discovery::FactDiscoveryOptions {
-                name_match: args.name_match.map(Into::into),
-                include_count: args.include_count,
-            };
-            kernel.facts_page_with_options(
-                &args.query(Some("import"), false, false),
-                &options,
-                &matching,
-            )
-        })
+        self.execute_verified_response(
+            UsageOperation::Imports,
+            args.response,
+            args.verification.controls(),
+            move |kernel| {
+                let options = airk_core::discovery::DiscoveryOptions {
+                    minimal: airk_core::reply::ReplyDetail::compact(
+                        args.response.reply_detail,
+                        args.compact,
+                    )?
+                    .unwrap_or(true),
+                    cursor: args.cursor.clone(),
+                    compact: false,
+                };
+                let matching = airk_core::discovery::FactDiscoveryOptions {
+                    name_match: args.name_match.map(Into::into),
+                    include_count: args.include_count,
+                };
+                kernel.facts_page_with_options(
+                    &args.query(Some("import"), false, false),
+                    &options,
+                    &matching,
+                )
+            },
+        )
         .await
     }
 
@@ -990,9 +1091,10 @@ impl AirkServer {
         &self,
         Parameters(args): Parameters<DocumentFactArgs>,
     ) -> CallToolResult {
-        self.execute_response(
+        self.execute_verified_response(
             UsageOperation::DocumentFacts,
             args.response,
+            args.verification.controls(),
             move |kernel| {
                 let compact = match airk_core::reply::ReplyDetail::compact(
                     args.response.reply_detail,
@@ -1049,39 +1151,44 @@ impl AirkServer {
         )
     )]
     async fn references(&self, Parameters(args): Parameters<ReferenceArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::References, args.response, move |kernel| {
-            let filters = airk_core::SearchFilters {
-                language: args.language,
-                evidence_kind: args.evidence_kind.map(Into::into),
-                exclude_path_prefix: args.exclude_path_prefix,
-            };
-            if args.cursor.is_none()
-                && args.order.is_none()
-                && !args.include_files
-                && !args.include_count
-                && filters.is_empty()
-            {
-                return kernel.references(
+        self.execute_verified_response(
+            UsageOperation::References,
+            args.response,
+            args.verification.controls(),
+            move |kernel| {
+                let filters = airk_core::SearchFilters {
+                    language: args.language,
+                    evidence_kind: args.evidence_kind.map(Into::into),
+                    exclude_path_prefix: args.exclude_path_prefix,
+                };
+                if args.cursor.is_none()
+                    && args.order.is_none()
+                    && !args.include_files
+                    && !args.include_count
+                    && filters.is_empty()
+                {
+                    return kernel.references(
+                        &args.name,
+                        &args.path_prefix,
+                        args.limit,
+                        args.max_bytes,
+                    );
+                }
+                kernel.references_page(
                     &args.name,
                     &args.path_prefix,
                     args.limit,
                     args.max_bytes,
-                );
-            }
-            kernel.references_page(
-                &args.name,
-                &args.path_prefix,
-                args.limit,
-                args.max_bytes,
-                &airk_core::references::ReferenceOptions {
-                    filters,
-                    cursor: args.cursor,
-                    order: args.order.map(Into::into).unwrap_or_default(),
-                    include_files: args.include_files,
-                    include_count: args.include_count,
-                },
-            )
-        })
+                    &airk_core::references::ReferenceOptions {
+                        filters,
+                        cursor: args.cursor,
+                        order: args.order.map(Into::into).unwrap_or_default(),
+                        include_files: args.include_files,
+                        include_count: args.include_count,
+                    },
+                )
+            },
+        )
         .await
     }
 
@@ -1095,16 +1202,21 @@ impl AirkServer {
         )
     )]
     async fn context(&self, Parameters(args): Parameters<ContextArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::Context, args.response, move |kernel| {
-            kernel.context_conditional(
-                &args.path,
-                args.line,
-                args.before,
-                args.after,
-                args.max_bytes,
-                &args.evidence.options()?,
-            )
-        })
+        self.execute_verified_response(
+            UsageOperation::Context,
+            args.response,
+            args.verification.controls(),
+            move |kernel| {
+                kernel.context_conditional(
+                    &args.path,
+                    args.line,
+                    args.before,
+                    args.after,
+                    args.max_bytes,
+                    &args.evidence.options()?,
+                )
+            },
+        )
         .await
     }
 
@@ -1118,9 +1230,12 @@ impl AirkServer {
         )
     )]
     async fn changes(&self, Parameters(args): Parameters<ChangesArgs>) -> CallToolResult {
-        self.execute_response(UsageOperation::Changes, args.response, move |kernel| {
-            kernel.changes(&args.request()?)
-        })
+        self.execute_verified_response(
+            UsageOperation::Changes,
+            args.response,
+            args.verification.controls(),
+            move |kernel| kernel.changes(&args.request()?),
+        )
         .await
     }
 
@@ -1151,6 +1266,7 @@ impl AirkServer {
             "discovery": {"cursor_tools":["airk_list_files","airk_outline","airk_symbols","airk_imports","airk_code_facts","airk_document_facts"], "binding":"exact publication, filters and representation", "compact_outline":true, "compact_symbols":true, "fact_result_key":"items", "compact_false":"rich facts with symbol IDs; independent of response mode", "budget":"complete serialized records plus new file/provenance bindings; framing is additional", "expired_cursor":"restart discovery"},
             "adapters": adapters,
             "read_guidance": airk_core::guidance::catalog(),
+            "source_verification_capability": airk_core::verification::catalog(),
             "index_detail": {"new_collection_default":"agent_lean", "levels":["agent_lean","essential","balanced","detailed"], "labels":{"agent_lean":"Agent Lean","balanced":"Rich Structure","essential":"Search Only","detailed":"Detailed"}, "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},
             "history": {"supported":false,"exact_reads":[],"optional_retention":false,"search":false,"live_fallback":false,"checkpoints":false,"reason":"Source reads select one current index; retained change metadata does not enable old source reads"},
             "changes": {"observed_indexed_changes":false,"remembered_evidence_validation":true,"expired_baseline":"baseline_unavailable","selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
@@ -1194,12 +1310,13 @@ fn render<T: Serialize>(
     projection: (
         response::ResponseMode,
         Option<airk_core::reply::ReplyDetail>,
+        Option<airk_core::verification::VerificationBudget>,
     ),
     include_status: bool,
     operation: UsageOperation,
 ) -> CallToolResult {
     let (span, record_usage) = usage;
-    let (mode, reply_detail) = projection;
+    let (mode, reply_detail, verification) = projection;
     let mut logical = result
         .as_ref()
         .ok()
@@ -1249,18 +1366,40 @@ fn render<T: Serialize>(
         object.insert("request_id".into(), id.into());
     }
     let mut display = logical.clone();
+    let mut verification_failed = false;
+    let mut verification_error = None;
     if let Some(display) = display.as_mut() {
         airk_core::reply::ReplyDetail::annotate(display, reply_detail);
         response::fact_items(display, operation);
         airk_core::guidance::annotate(display);
-        responses.display(display, mode, include_status);
+        if let Some(budget) = verification {
+            match kernel.verify_returned_sources(display, budget) {
+                Ok(receipt) => match airk_core::verification::attach_response(display, receipt) {
+                    Ok(failed) => verification_failed = failed,
+                    Err(error) => verification_error = Some(error),
+                },
+                Err(error) => verification_error = Some(error),
+            }
+        }
+        verification_failed |= airk_core::verification::mark_required_failure(display);
+        // A verification fence may refuse this otherwise materialized read.
+        // Do not acknowledge observations that the client never receives.
+        if verification_error.is_none() {
+            responses.display(display, mode, include_status);
+        }
     }
-    let rendered = match result {
+    let rendered = match verification_error.map_or(result, Err) {
         Ok(value) => match display
             .as_ref()
             .map_or_else(|| serde_json::to_string(&value), serde_json::to_string)
         {
-            Ok(text) => CallToolResult::success(vec![ContentBlock::text(text)]),
+            Ok(text) => {
+                if verification_failed {
+                    CallToolResult::error(vec![ContentBlock::text(text)])
+                } else {
+                    CallToolResult::success(vec![ContentBlock::text(text)])
+                }
+            }
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         },
         Err(error) => response::error_result(&error),

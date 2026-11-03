@@ -1,5 +1,7 @@
 # AIRK documentation
 
+**1.9.0 P4 locally qualified:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Local acceptance, measured cost and remaining platform limits are in the [ledger](research/implementation-v190.md).
+
 **1.9.0 development candidate:** [phase status and validation](releases/release-1.9.0.md), [implementation ledger](research/implementation-v190.md) and [approved plan](research/plan-v190.md). The candidate increment adds the supported 1.9 runtime line; later features remain gated by their phases.
 
 P1 repairs compact plan bindings/aggregation and nested object schemas; the
