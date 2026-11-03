@@ -138,6 +138,12 @@ This CLI command exercises native retrieval directly; `airk mcp` starts the stdi
 
 ## Call tools without a coding agent
 
+Optional `reply_detail: "lean" | "rich"` selects available fact projection
+independently of retained indexing detail and Terse/Full metadata. Existing
+defaults are preserved when omitted. CLI aliases use `--reply-detail`; Workbench
+forms and slash flags use the same native choice. See the [reply guide](reply-detail.md)
+for exact family mappings, conflicts, continuation rules and unsupported expansion.
+
 In 1.9.0, `parse` advertises nested `plan`, `recipe`, `budgets` and `output` as
 optional JSON objects. Compact discovery's shared file/provenance tables now
 resolve in the canonical plan consumer for dependent reads and cited aggregation.

@@ -6,6 +6,12 @@ For each command's purpose, implementation, tests and guarded behavior, see the 
 
 ## Complete read results in 1.8.7
 
+The 1.9.0 candidate adds [Lean/Rich reply selection](reply-detail.md): use
+`--reply-detail lean|rich` on read aliases or `reply_detail` in tools-call/shell
+JSON. This is independent of retained indexing detail. Omitting it preserves
+the inherited defaults described below; conflicts with legacy projection flags
+reject instead of choosing precedence.
+
 CLI tool calls, dedicated read commands and Workbench plans share the MCP read handlers. Full results retain provenance, publication, readiness, coverage, continuations and error/retry details. `airk tools call airk_status` returns its MCP envelope, while `airk parse --execute '/status'` places the complete status result under `steps[].result`, including `query_concurrency`. The shell pretty-prints the same tool content. Defaults can differ between convenience commands; use matching arguments and [the parity audit](read-interface-parity.md) when comparing results.
 
 For explicit plans, put a JSON object in the `plan` field and pass the request through `airk tools call airk_parse --args-file request.json`. Do not encode the plan object as a string. Workbench's complete JSON/Markdown exports retain the full response; selected-evidence exports identify their selected subset.

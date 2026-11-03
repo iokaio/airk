@@ -198,8 +198,7 @@ pub struct SearchArgs {
     #[serde(default = "default_budget")]
     pub max_bytes: usize,
     /// Return complete indexed chunks instead of focused snippets.
-    #[serde(default)]
-    pub full_chunks: bool,
+    pub full_chunks: Option<bool>,
 }
 
 #[derive(Clone, Copy, Deserialize, schemars::JsonSchema)]
@@ -595,6 +594,7 @@ impl AirkServer {
         )
     )]
     async fn parse(&self, Parameters(args): Parameters<ParseArgs>) -> CallToolResult {
+        let reply_detail = args.response.reply_detail;
         let observations = serde_json::json!({"runtime":self.runtime.read().ok().and_then(|v|v.clone()),"work":self.work.read().ok().and_then(|v|v.clone())});
         let mut reader = self.clone();
         reader.plan_read = true;
@@ -602,6 +602,9 @@ impl AirkServer {
         self.execute_response(UsageOperation::Parse, args.response, move |kernel| {
             reader.kernel = kernel.clone();
             let mut value = serde_json::to_value(args)?;
+            if let Some(detail) = reply_detail {
+                value["reply_detail"] = serde_json::to_value(detail)?;
+            }
             if value["mode"].is_null() {
                 value["mode"] = serde_json::json!("prepare");
             }
@@ -627,10 +630,16 @@ impl AirkServer {
     )]
     async fn code_facts(&self, Parameters(args): Parameters<CodeFactArgs>) -> CallToolResult {
         self.execute_response(UsageOperation::CodeFacts, args.response, move |kernel| {
-            let compact = args.compact.unwrap_or(
-                kernel.applied_index_detail()?
-                    == Some(airk_core::extraction::IndexDetail::AgentLean),
-            );
+            let compact = match airk_core::reply::ReplyDetail::compact(
+                args.response.reply_detail,
+                args.compact,
+            )? {
+                Some(value) => value,
+                None => {
+                    kernel.applied_index_detail()?
+                        == Some(airk_core::extraction::IndexDetail::AgentLean)
+                }
+            };
             if let Some(key) = continuity_selector(
                 args.symbol_key.as_deref(),
                 true,
@@ -734,7 +743,7 @@ impl AirkServer {
             kernel.search_response_with_navigation(
                 &query,
                 mode,
-                (!args.full_chunks).then_some(768),
+                (!args.full_chunks.unwrap_or(false)).then_some(768),
                 &airk_core::SearchFilters {
                     language: args.language,
                     evidence_kind: args.evidence_kind.map(Into::into),
@@ -889,7 +898,11 @@ impl AirkServer {
                 args.max_bytes,
                 &args.evidence.options()?,
                 &airk_core::discovery::DiscoveryOptions {
-                    minimal: args.compact.unwrap_or(true),
+                    minimal: airk_core::reply::ReplyDetail::compact(
+                        args.response.reply_detail,
+                        args.compact,
+                    )?
+                    .unwrap_or(true),
                     cursor: args.cursor,
                     compact: false,
                 },
@@ -910,7 +923,11 @@ impl AirkServer {
     async fn symbols(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
         self.execute_response(UsageOperation::Symbols, args.response, move |kernel| {
             let options = airk_core::discovery::DiscoveryOptions {
-                minimal: args.compact.unwrap_or(true),
+                minimal: airk_core::reply::ReplyDetail::compact(
+                    args.response.reply_detail,
+                    args.compact,
+                )?
+                .unwrap_or(true),
                 cursor: args.cursor.clone(),
                 compact: false,
             };
@@ -939,7 +956,11 @@ impl AirkServer {
     async fn imports(&self, Parameters(args): Parameters<FactArgs>) -> CallToolResult {
         self.execute_response(UsageOperation::Imports, args.response, move |kernel| {
             let options = airk_core::discovery::DiscoveryOptions {
-                minimal: args.compact.unwrap_or(true),
+                minimal: airk_core::reply::ReplyDetail::compact(
+                    args.response.reply_detail,
+                    args.compact,
+                )?
+                .unwrap_or(true),
                 cursor: args.cursor.clone(),
                 compact: false,
             };
@@ -973,10 +994,16 @@ impl AirkServer {
             UsageOperation::DocumentFacts,
             args.response,
             move |kernel| {
-                let compact = args.compact.unwrap_or(
-                    kernel.applied_index_detail()?
-                        == Some(airk_core::extraction::IndexDetail::AgentLean),
-                );
+                let compact = match airk_core::reply::ReplyDetail::compact(
+                    args.response.reply_detail,
+                    args.compact,
+                )? {
+                    Some(value) => value,
+                    None => {
+                        kernel.applied_index_detail()?
+                            == Some(airk_core::extraction::IndexDetail::AgentLean)
+                    }
+                };
                 if let Some(key) = continuity_selector(
                     args.document_key.as_deref(),
                     false,
@@ -1163,11 +1190,15 @@ fn render<T: Serialize>(
     usage: (airk_kernel::usage::RequestSpan, bool),
     result: anyhow::Result<T>,
     responses: &response::Session,
-    mode: response::ResponseMode,
+    projection: (
+        response::ResponseMode,
+        Option<airk_core::reply::ReplyDetail>,
+    ),
     include_status: bool,
     operation: UsageOperation,
 ) -> CallToolResult {
     let (span, record_usage) = usage;
+    let (mode, reply_detail) = projection;
     let mut logical = result
         .as_ref()
         .ok()
@@ -1218,6 +1249,7 @@ fn render<T: Serialize>(
     }
     let mut display = logical.clone();
     if let Some(display) = display.as_mut() {
+        airk_core::reply::ReplyDetail::annotate(display, reply_detail);
         response::fact_items(display, operation);
         responses.display(display, mode, include_status);
     }
@@ -1273,6 +1305,7 @@ pub async fn serve(kernel: Kernel) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn terse_envelope_keeps_identity_citations_and_omission_state() {
@@ -1310,26 +1343,35 @@ mod tests {
         kernel.configure_vectors(false)?;
         kernel.index()?;
         let server = AirkServer::new(kernel);
-        for full in [false, true] {
-            let args = serde_json::from_value(
-                serde_json::json!({ "query": "ConfigureAuthentication", "mode": "lexical",
-                "limit": if full { 2 } else { 10 }, "max_bytes": if full { 16384 } else { 4096 }, "full_chunks": full }),
-            )?;
-            let result = server.search(Parameters(args)).await;
-            assert!(!result.is_error.unwrap_or(false), "{result:?}");
-            let body: serde_json::Value =
-                serde_json::from_str(&result.content[0].as_text().unwrap().text)?;
-            let hits = body["hits"].as_array().unwrap();
-            assert_eq!(hits.len(), if full { 2 } else { 10 });
-            for hit in hits {
-                let excerpt = hit["text"].as_str().unwrap();
-                assert!(excerpt.contains("ConfigureAuthentication"));
-                if full {
-                    assert_eq!(excerpt, text);
-                } else {
-                    assert!(excerpt.len() <= 768);
+        for detail in [None, Some("lean"), Some("rich")] {
+            for full_chunks in [None, Some(false), Some(true)] {
+                let full = full_chunks.unwrap_or(false);
+                let mut value = serde_json::json!({ "query": "ConfigureAuthentication", "mode": "lexical",
+                    "limit": if full { 2 } else { 10 }, "max_bytes": if full { 16384 } else { 4096 }, "full_chunks":full_chunks });
+                if let Some(detail) = detail {
+                    value["reply_detail"] = json!(detail);
                 }
-                assert_eq!(hit["citation"]["start_line"], 1);
+                let args = serde_json::from_value(value)?;
+                let result = server.search(Parameters(args)).await;
+                assert!(!result.is_error.unwrap_or(false), "{result:?}");
+                let body: serde_json::Value =
+                    serde_json::from_str(&result.content[0].as_text().unwrap().text)?;
+                let hits = body["hits"].as_array().unwrap();
+                assert_eq!(
+                    hits.len(),
+                    if full { 2 } else { 10 },
+                    "{detail:?} {full_chunks:?}"
+                );
+                for hit in hits {
+                    let excerpt = hit["text"].as_str().unwrap();
+                    assert!(excerpt.contains("ConfigureAuthentication"));
+                    if full {
+                        assert_eq!(excerpt, text);
+                    } else {
+                        assert!(excerpt.len() <= 768);
+                    }
+                    assert_eq!(hit["citation"]["start_line"], 1);
+                }
             }
         }
         Ok(())

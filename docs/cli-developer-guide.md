@@ -21,6 +21,12 @@ The public parser reference has 120 command sections including root and command 
 
 ## Developer contracts and examples
 
+In 1.9.0, the 15 native read aliases expose `--reply-detail lean|rich`.
+Tools-call/shell use the native `reply_detail` JSON field. The selection is
+independent of retained indexing detail; omitted arguments preserve legacy
+defaults. See [reply detail](reply-detail.md) and the regenerated parser reference
+for supported flags, conflicts, parse defaults and Workbench equivalents.
+
 Equivalent CLI, MCP and Workbench reads share the canonical handlers and retain complete result data. `tools call` emits the MCP envelope; `tools shell` pretty-prints its text payload; dedicated aliases build arguments with their documented defaults. Direct status/diagnostics report `query_concurrency` at the result's top level; executed parse plans retain it inside each completed status/diagnostics step. [The parity audit](read-interface-parity.md) records all 17 read mappings, supported inputs and the actual-process regressions. Separate requests retain their own request IDs, observation times and cache ages.
 
 - Select the canonical source root, separate index data directory and collection/binding. A UI dropdown does not redirect a native query. Keep index/control/log storage outside source roots.

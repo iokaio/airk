@@ -291,37 +291,42 @@ Report indexed changes since a revision token: added, modified and removed files
 Usage: airk changes [OPTIONS]
 
 Options:
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
+
+          [possible values: lean, rich]
+
       --root <ROOT>
           [default: .]
-
-      --since <SINCE>
-
 
       --data-dir <DATA_DIR>
 
 
-      --selector <SELECTORS>
-          Repeatable tagged JSON selector, e.g. {"kind":"path","path":"one.rs"}
+      --since <SINCE>
+
 
       --collection <COLLECTION>
           [default: default]
 
+      --selector <SELECTORS>
+          Repeatable tagged JSON selector, e.g. {"kind":"path","path":"one.rs"}
+
       --path <PATHS>
           Remember an exact collection-relative indexed path
-
-      --path-prefix <PATH_PREFIX>
-          [default: ""]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --path-prefix <PATH_PREFIX>
+          [default: ""]
+
       --include-symbols
 
 
-      --include-documents
-
-
       --service-project <SERVICE_PROJECT>
+
+
+      --include-documents
 
 
       --include-suggestions
@@ -348,10 +353,10 @@ Inspect code facts and signatures with exact default name matching and bounded c
 Usage: airk code-facts [OPTIONS]
 
 Options:
-      --name-match <NAME_MATCH>
-          Default exact lookup; suffix/contains match simple or qualified names case-sensitively
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
 
-          [possible values: exact, suffix, contains]
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
@@ -359,30 +364,35 @@ Options:
       --data-dir <DATA_DIR>
 
 
-      --include-count
-          Request qualified match counts; a bounded partial scan can report an unknown total
+      --name-match <NAME_MATCH>
+          Default exact lookup; suffix/contains match simple or qualified names case-sensitively
+
+          [possible values: exact, suffix, contains]
 
       --collection <COLLECTION>
           [default: default]
+
+      --include-count
+          Request qualified match counts; a bounded partial scan can report an unknown total
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
+      --service-install-dir <SERVICE_INSTALL_DIR>
+
+
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --service-install-dir <SERVICE_INSTALL_DIR>
+      --service-project <SERVICE_PROJECT>
 
 
       --symbol-key <SYMBOL_KEY>
           Durable symbol key from indexed continuity evidence; excludes textual filters
 
       --name <NAME>
-
-
-      --service-project <SERVICE_PROJECT>
 
 
       --kind <KIND>
@@ -454,8 +464,10 @@ Arguments:
 
 
 Options:
-      --revision <REVISION>
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
 
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
@@ -463,29 +475,32 @@ Options:
       --data-dir <DATA_DIR>
 
 
-      --if-evidence <IF_EVIDENCE>
+      --revision <REVISION>
 
 
       --collection <COLLECTION>
           [default: default]
 
+      --if-evidence <IF_EVIDENCE>
+
+
       --follow-moves
-
-
-      --known-hash <KNOWN_HASH>
 
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --known-hash <KNOWN_HASH>
+
+
       --artifact-id <ARTIFACT_ID>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --before <BEFORE>
           [default: 5]
-
-      --service-project <SERVICE_PROJECT>
-
 
       --after <AFTER>
           [default: 5]
@@ -866,16 +881,18 @@ Arguments:
           [default: ""]
 
 Options:
-      --compact [<COMPACT>]
-          False includes rich facts and durable IDs; independent of response mode
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
 
-          [possible values: true, false]
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
 
-      --cursor <CURSOR>
-          Continue the same revision-bound discovery with unchanged filters
+      --compact [<COMPACT>]
+          False includes rich facts and durable IDs; independent of response mode
+
+          [possible values: true, false]
 
       --data-dir <DATA_DIR>
 
@@ -883,23 +900,26 @@ Options:
       --collection <COLLECTION>
           [default: default]
 
+      --cursor <CURSOR>
+          Continue the same revision-bound discovery with unchanged filters
+
       --document-key <DOCUMENT_KEY>
           Durable document key; excludes textual filters
 
-      --name <NAME>
-
-
       --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --name <NAME>
 
 
       --kind <KIND>
           Exact document fact category, such as requirement, date, architecture or feature
 
-      --limit <LIMIT>
-          [default: 50]
-
       --service-project <SERVICE_PROJECT>
 
+
+      --limit <LIMIT>
+          [default: 50]
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
@@ -920,20 +940,25 @@ Arguments:
           [default: ""]
 
 Options:
-      --cursor <CURSOR>
-          Continue the same revision-bound discovery with unchanged filters
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
+
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
 
+      --cursor <CURSOR>
+          Continue the same revision-bound discovery with unchanged filters
+
       --data-dir <DATA_DIR>
 
 
-      --limit <LIMIT>
-          [default: 10]
-
       --collection <COLLECTION>
           [default: default]
+
+      --limit <LIMIT>
+          [default: 10]
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
@@ -987,22 +1012,27 @@ Arguments:
           [default: ""]
 
 Options:
-      --compact [<COMPACT>]
-          False includes rich facts and durable IDs; independent of response mode
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
 
-          [possible values: true, false]
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
 
-      --cursor <CURSOR>
-          Continue the same revision-bound discovery with unchanged filters
+      --compact [<COMPACT>]
+          False includes rich facts and durable IDs; independent of response mode
+
+          [possible values: true, false]
 
       --data-dir <DATA_DIR>
 
 
       --collection <COLLECTION>
           [default: default]
+
+      --cursor <CURSOR>
+          Continue the same revision-bound discovery with unchanged filters
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
@@ -1058,8 +1088,10 @@ Arguments:
 
 
 Options:
-      --revision <REVISION>
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
 
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
@@ -1067,19 +1099,22 @@ Options:
       --data-dir <DATA_DIR>
 
 
-      --if-evidence <IF_EVIDENCE>
+      --revision <REVISION>
 
 
       --collection <COLLECTION>
           [default: default]
 
+      --if-evidence <IF_EVIDENCE>
+
+
       --follow-moves
 
 
-      --known-hash <KNOWN_HASH>
-
-
       --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --known-hash <KNOWN_HASH>
 
 
       --artifact-id <ARTIFACT_ID>
@@ -1229,16 +1264,16 @@ Arguments:
 
 
 Options:
-      --cursor <CURSOR>
-          Continue the same revision-bound discovery with unchanged filters
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
+
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
 
-      --compact [<COMPACT>]
-          Return minimal names/kinds/lines/signatures with shared original file/provenance bindings
-
-          [possible values: true, false]
+      --cursor <CURSOR>
+          Continue the same revision-bound discovery with unchanged filters
 
       --data-dir <DATA_DIR>
 
@@ -1246,22 +1281,27 @@ Options:
       --collection <COLLECTION>
           [default: default]
 
+      --compact [<COMPACT>]
+          Return minimal names/kinds/lines/signatures with shared original file/provenance bindings
+
+          [possible values: true, false]
+
       --revision <REVISION>
-
-
-      --if-evidence <IF_EVIDENCE>
 
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --if-evidence <IF_EVIDENCE>
+
+
       --follow-moves
 
 
-      --known-hash <KNOWN_HASH>
-
-
       --service-project <SERVICE_PROJECT>
+
+
+      --known-hash <KNOWN_HASH>
 
 
       --artifact-id <ARTIFACT_ID>
@@ -1291,8 +1331,10 @@ Arguments:
 
 
 Options:
-      --project <PROJECT>
-          Configured native project binding (alias for global --service-project)
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
+
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
@@ -1300,20 +1342,23 @@ Options:
       --data-dir <DATA_DIR>
 
 
-      --execute
-
+      --project <PROJECT>
+          Configured native project binding (alias for global --service-project)
 
       --collection <COLLECTION>
           [default: default]
 
+      --execute
+
+
       --request <REQUEST>
           Structured request file; '-' reads bounded JSON from stdin
 
-      --path-prefix <PATH_PREFIX>
-          [default: ""]
-
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --path-prefix <PATH_PREFIX>
+          [default: ""]
 
       --service-project <SERVICE_PROJECT>
 
@@ -1393,8 +1438,10 @@ Arguments:
 
 
 Options:
-      --revision <REVISION>
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
 
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
@@ -1402,19 +1449,22 @@ Options:
       --data-dir <DATA_DIR>
 
 
-      --if-evidence <IF_EVIDENCE>
+      --revision <REVISION>
 
 
       --collection <COLLECTION>
           [default: default]
 
+      --if-evidence <IF_EVIDENCE>
+
+
       --follow-moves
 
 
-      --known-hash <KNOWN_HASH>
-
-
       --service-install-dir <SERVICE_INSTALL_DIR>
+
+
+      --known-hash <KNOWN_HASH>
 
 
       --artifact-id <ARTIFACT_ID>
@@ -1448,8 +1498,10 @@ Arguments:
 
 
 Options:
-      --language <LANGUAGE>
-          Exact indexed extraction-language label; not a filename-extension filter
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
+
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
@@ -1457,33 +1509,36 @@ Options:
       --data-dir <DATA_DIR>
 
 
+      --language <LANGUAGE>
+          Exact indexed extraction-language label; not a filename-extension filter
+
+      --collection <COLLECTION>
+          [default: default]
+
       --evidence-kind <EVIDENCE_KIND>
           Indexed evidence classification; unknown includes unclassified extraction
 
           [possible values: code, document, configuration, unknown]
 
-      --collection <COLLECTION>
-          [default: default]
-
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
 
-      --cursor <CURSOR>
-          Continue one exact publication with identical identifier, filters and ordering
-
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --cursor <CURSOR>
+          Continue one exact publication with identical identifier, filters and ordering
 
       --order <ORDER>
           Omit for the legacy response; paged index order uses stable IDs, with path/code_first alternatives
 
           [possible values: index, path, code_first]
 
-      --include-files
-          Summarize returned page records by file; bounded metadata is additional to the text-byte budget
-
       --service-project <SERVICE_PROJECT>
 
+
+      --include-files
+          Summarize returned page records by file; bounded metadata is additional to the text-byte budget
 
       --include-count
           Request candidate-scoped counts; the whole-query total remains unknown
@@ -1513,8 +1568,10 @@ Arguments:
 
 
 Options:
-      --direction <DIRECTION>
-          [default: incoming]
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
+
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
@@ -1522,29 +1579,32 @@ Options:
       --data-dir <DATA_DIR>
 
 
-      --kind <KIND>
-
+      --direction <DIRECTION>
+          [default: incoming]
 
       --collection <COLLECTION>
           [default: default]
 
+      --kind <KIND>
+
+
       --path-prefix <PATH_PREFIX>
           [default: ""]
-
-      --hops <HOPS>
-          [default: 1]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --hops <HOPS>
+          [default: 1]
+
       --limit <LIMIT>
           [default: 10]
 
-      --max-bytes <MAX_BYTES>
-          [default: 8192]
-
       --service-project <SERVICE_PROJECT>
 
+
+      --max-bytes <MAX_BYTES>
+          [default: 8192]
 
   -h, --help
           Print help
@@ -2894,8 +2954,10 @@ Arguments:
 
 
 Options:
-      --language <LANGUAGE>
-          Exact indexed extraction-language label; not a filename-extension filter
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
+
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
@@ -2903,30 +2965,33 @@ Options:
       --data-dir <DATA_DIR>
 
 
+      --language <LANGUAGE>
+          Exact indexed extraction-language label; not a filename-extension filter
+
+      --collection <COLLECTION>
+          [default: default]
+
       --evidence-kind <EVIDENCE_KIND>
           Indexed evidence classification; unknown includes unclassified extraction
 
           [possible values: code, document, configuration, unknown]
 
-      --collection <COLLECTION>
-          [default: default]
-
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
-
-      --mode <MODE>
-          [possible values: lexical, vector, hybrid]
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --mode <MODE>
+          [possible values: lexical, vector, hybrid]
+
       --semantic
           Use the configured local embedding model and disk-backed vector graph
 
-      --path-prefix <PATH_PREFIX>
-
-
       --service-project <SERVICE_PROJECT>
+
+
+      --path-prefix <PATH_PREFIX>
 
 
       --limit <LIMIT>
@@ -3973,6 +4038,11 @@ Print the project's publication, freshness, coverage and job status
 Usage: airk status [OPTIONS]
 
 Options:
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
+
+          [possible values: lean, rich]
+
       --root <ROOT>
           [default: .]
 
@@ -4004,10 +4074,10 @@ Arguments:
 
 
 Options:
-      --name-match <NAME_MATCH>
-          Default exact lookup; suffix/contains match simple or qualified names case-sensitively
+      --reply-detail <REPLY_DETAIL>
+          Lean/Rich reply projection; independent of retained indexing detail
 
-          [possible values: exact, suffix, contains]
+          [possible values: lean, rich]
 
       --root <ROOT>
           [default: .]
@@ -4015,31 +4085,36 @@ Options:
       --data-dir <DATA_DIR>
 
 
-      --include-count
-          Request qualified match counts; a bounded partial scan can report an unknown total
+      --name-match <NAME_MATCH>
+          Default exact lookup; suffix/contains match simple or qualified names case-sensitively
+
+          [possible values: exact, suffix, contains]
 
       --collection <COLLECTION>
           [default: default]
+
+      --include-count
+          Request qualified match counts; a bounded partial scan can report an unknown total
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
 
           [possible values: true, false]
 
-      --cursor <CURSOR>
-          Continue the same revision-bound discovery with unchanged filters
-
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --cursor <CURSOR>
+          Continue the same revision-bound discovery with unchanged filters
 
       --language <LANGUAGE>
 
 
-      --path-prefix <PATH_PREFIX>
-          [default: ""]
-
       --service-project <SERVICE_PROJECT>
 
+
+      --path-prefix <PATH_PREFIX>
+          [default: ""]
 
       --limit <LIMIT>
           [default: 10]

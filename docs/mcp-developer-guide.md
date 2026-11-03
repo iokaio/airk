@@ -4,6 +4,12 @@ This guide explains **all 28 public tools in the AIRK 1.9.0 development candidat
 
 ## Start with the right layer
 
+Native reads accept optional `reply_detail: lean|rich`. It selects available
+fact projection independently of retained indexing detail or metadata
+response mode. Omission preserves legacy defaults; conflicts with `compact` reject. Search
+`full_chunks` remains independent. See the [reply guide](reply-detail.md) for per-family behavior,
+keyed-read limits and continuation rules. Native input catalogs expose the enum.
+
 The CLI composes the unified MCP frontend. Native schemas and rendering belong to `airk-mcp`; read behavior belongs to `airk-kernel` and retained storage to `airk-store`. Optional Explorer Assistance supplies bundled guidance, templates and guarded UI proposals. Kernel/store do not depend on the editor. Preserve the [architecture dependency direction](architecture.md) when changing a tool.
 
 | Need | Tools |
@@ -425,6 +431,10 @@ Optional file summaries count only returned-page records in the reported unit an
 **How it works:** The native Workbench runner resolves text, a named recipe or explicit steps into a finite plan, then optionally executes eligible read-only steps with publication, scope, call/fanout/byte/time budgets.
 
 **Inputs:** `schema: airk.parse.request/1`; exactly one text/recipe/plan; mode prepare/execute. Preparation is the default. Explicit plan execution must retain required choices and exact revision identity.
+
+Optional `reply_detail` supplies a default to steps that omit their own choice;
+an explicit step choice overrides it. Effective arguments remain in the plan's
+digest and per-step reports. Rich cannot recreate evidence omitted at indexing.
 
 `plan`, `recipe`, `budgets` and `output` are advertised as optional JSON objects in
 1.9.0. For an explicit plan, pass an object such as

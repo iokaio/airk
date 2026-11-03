@@ -29,8 +29,10 @@ impl AirkServer {
         if matches!(
             tool,
             "symbols" | "imports" | "code_facts" | "document_facts" | "outline"
-        ) {
-            arguments.entry("compact").or_insert(json!(false));
+        ) && arguments.get("reply_detail").is_none_or(Value::is_null)
+            && arguments.get("compact").is_none_or(Value::is_null)
+        {
+            arguments.insert("compact".into(), json!(false));
         }
         let args = Value::Object(arguments);
         macro_rules! read {
@@ -131,6 +133,198 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn explicit_reply_detail_is_independent_and_preserves_legacy_defaults() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("queue.rs"), "pub struct Queue;\n")?;
+        std::fs::write(
+            root.join("extra.rs"),
+            "pub struct Second;\npub struct Third;\n",
+        )?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        for retained in [
+            airk_core::extraction::IndexDetail::AgentLean,
+            airk_core::extraction::IndexDetail::Detailed,
+        ] {
+            kernel.configure_index_detail(retained)?;
+            kernel.index()?;
+            let publication = kernel.status_summary()?["publication"].clone();
+            let mut tools = local::LocalTools::new(kernel.clone()).await?;
+            for (tool, mut args) in [
+                ("symbols", json!({"name":"Queue"})),
+                ("code_facts", json!({"name":"Queue"})),
+                ("outline", json!({"path":"queue.rs"})),
+            ] {
+                args["response_mode"] = json!("full");
+                let legacy = payload(
+                    tools
+                        .call(format!("airk_{tool}"), args.as_object().unwrap().clone())
+                        .await?,
+                )?;
+                assert!(legacy.get("reply_detail").is_none());
+                let default_compact = tool != "code_facts"
+                    || retained == airk_core::extraction::IndexDetail::AgentLean;
+                let mut defaults = args.clone();
+                defaults["compact"] = json!(default_compact);
+                let mut expected_default = payload(
+                    tools
+                        .call(
+                            format!("airk_{tool}"),
+                            defaults.as_object().unwrap().clone(),
+                        )
+                        .await?,
+                )?;
+                let mut actual_default = legacy.clone();
+                stable(&mut actual_default);
+                stable(&mut expected_default);
+                assert_eq!(
+                    actual_default, expected_default,
+                    "absent-argument compatibility: {tool} {retained:?}"
+                );
+                if tool == "code_facts" && !default_compact {
+                    assert!(legacy["items"][0]["code"]["symbol_id"].is_string());
+                }
+                if tool != "code_facts" {
+                    assert_eq!(legacy["representation"], "minimal");
+                }
+                for (choice, compact) in [("lean", true), ("rich", false)] {
+                    let mut explicit = args.clone();
+                    explicit["reply_detail"] = json!(choice);
+                    let actual = payload(
+                        tools
+                            .call(
+                                format!("airk_{tool}"),
+                                explicit.as_object().unwrap().clone(),
+                            )
+                            .await?,
+                    )?;
+                    assert_eq!(actual["reply_detail"], choice);
+                    let mut compatibility = args.clone();
+                    compatibility["compact"] = json!(compact);
+                    let mut expected = payload(
+                        tools
+                            .call(
+                                format!("airk_{tool}"),
+                                compatibility.as_object().unwrap().clone(),
+                            )
+                            .await?,
+                    )?;
+                    let mut normalized = actual.clone();
+                    normalized.as_object_mut().unwrap().remove("reply_detail");
+                    stable(&mut expected);
+                    stable(&mut normalized);
+                    assert_eq!(normalized, expected, "{tool} {choice} {retained:?}");
+                    explicit["compact"] = json!(!compact);
+                    assert!(
+                        tools
+                            .call(
+                                format!("airk_{tool}"),
+                                explicit.as_object().unwrap().clone()
+                            )
+                            .await?
+                            .is_error
+                            == Some(true)
+                    );
+                }
+            }
+            for (detail, compact, other) in [("lean", true, "rich"), ("rich", false, "lean")] {
+                let first = payload(
+                    tools
+                        .call(
+                            "airk_symbols".into(),
+                            json!({"limit":1,"reply_detail":detail})
+                                .as_object()
+                                .unwrap()
+                                .clone(),
+                        )
+                        .await?,
+                )?;
+                assert!(first["cursor"].is_string(), "{first}");
+                let rejected = tools
+                    .call(
+                        "airk_symbols".into(),
+                        json!({"limit":1,"reply_detail":other,"cursor":first["cursor"]})
+                            .as_object()
+                            .unwrap()
+                            .clone(),
+                    )
+                    .await?;
+                assert_eq!(
+                    rejected.is_error,
+                    Some(true),
+                    "changing projection must invalidate the cursor"
+                );
+                let continued = payload(
+                    tools
+                        .call(
+                            "airk_symbols".into(),
+                            json!({"limit":1,"compact":compact,"cursor":first["cursor"]})
+                                .as_object()
+                                .unwrap()
+                                .clone(),
+                        )
+                        .await?,
+                )?;
+                assert!(!continued["items"].as_array().unwrap().is_empty());
+            }
+            let request = json!({"schema":"airk.parse.request/1","mode":"execute","reply_detail":"lean","text":"/symbols Queue"});
+            let result = payload(
+                tools
+                    .call("airk_parse".into(), request.as_object().unwrap().clone())
+                    .await?,
+            )?;
+            assert_eq!(result["steps"][0]["arguments"]["reply_detail"], "lean");
+            assert_eq!(result["steps"][0]["result"]["representation"], "minimal");
+            for detail in ["lean", "rich"] {
+                let request = json!({"schema":"airk.parse.request/1","mode":"execute","reply_detail":detail,"recipe":{"id":"definition","parameters":{"name":"Queue"}}});
+                let result = payload(
+                    tools
+                        .call("airk_parse".into(), request.as_object().unwrap().clone())
+                        .await?,
+                )?;
+                assert_eq!(result["status"], "complete", "{result}");
+                assert_eq!(result["calls"], 4);
+            }
+            let request = json!({"schema":"airk.parse.request/1","mode":"execute","reply_detail":"lean","plan":{"steps":[{"id":"rich","tool":"symbols","args":{"name":"Queue","reply_detail":"rich"}}]}});
+            let result = payload(
+                tools
+                    .call("airk_parse".into(), request.as_object().unwrap().clone())
+                    .await?,
+            )?;
+            assert_eq!(result["steps"][0]["result"]["reply_detail"], "rich");
+            assert!(result["steps"][0]["result"]["items"][0]["code"]["symbol_id"].is_string());
+            for default in [None, Some("lean")] {
+                let mut request = json!({"schema":"airk.parse.request/1","mode":"execute","plan":{"steps":[{"id":"default","tool":"symbols","args":{"name":"Queue","reply_detail":null,"compact":null}}]}});
+                if let Some(detail) = default {
+                    request["reply_detail"] = json!(detail);
+                }
+                let result = payload(
+                    tools
+                        .call("airk_parse".into(), request.as_object().unwrap().clone())
+                        .await?,
+                )?;
+                assert_eq!(result["status"], "complete", "{result}");
+                if default.is_some() {
+                    assert_eq!(result["steps"][0]["result"]["representation"], "minimal");
+                } else {
+                    assert!(
+                        result["steps"][0]["result"]["items"][0]["code"]["symbol_id"].is_string()
+                    );
+                }
+            }
+            assert_eq!(
+                kernel.status_summary()?["publication"],
+                publication,
+                "reply choices cannot publish or change retention"
+            );
+            tools.close().await?;
+        }
+        Ok(())
     }
 
     #[tokio::test]

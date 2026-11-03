@@ -1085,6 +1085,7 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
                 "--order" => "order",
                 "--include-files" => "include_files",
                 "--compact" => "compact",
+                "--reply-detail" => "reply_detail",
                 "--kind" => "kind",
                 flag => {
                     let name = flag.trim_start_matches("--").replace('-', "_");
@@ -1095,7 +1096,12 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
                         .context("unknown command option")?
                 }
             };
-            if argument_schema(key)["type"] == "boolean" {
+            let schema = argument_schema(key);
+            if schema["type"] == "boolean"
+                || schema["type"]
+                    .as_array()
+                    .is_some_and(|types| types.contains(&json!("boolean")))
+            {
                 let explicit = words.get(i + 1).and_then(|value| match value.as_str() {
                     "true" => Some(true),
                     "false" => Some(false),
@@ -1326,7 +1332,7 @@ fn fields(tool: &str) -> &'static [&'static str] {
 /// Forms and agents inspect the same closed argument inventory used by validation.
 pub fn operation_catalog() -> Value {
     let operations:Map<String,Value>=TOOLS.iter().map(|tool|{
-        let properties:Map<String,Value>=fields(tool).iter().map(|key|{
+        let properties:Map<String,Value>=fields(tool).iter().copied().chain(std::iter::once("reply_detail")).map(|key|{
             let schema = argument_schema(key);
             (key.to_string(),schema)
         }).collect();
@@ -1338,15 +1344,22 @@ pub fn operation_catalog() -> Value {
 
 fn argument_schema(key: &str) -> Value {
     match key {
+        "reply_detail" => {
+            let mut values: Vec<Value> = airk_core::reply::ReplyDetail::ALL
+                .into_iter()
+                .map(|v| json!(v))
+                .collect();
+            values.push(Value::Null);
+            json!({"type":["string","null"],"enum":values,"description":"Lean/Rich projection of available evidence; independent of retention. Omit to preserve Workbench defaults. Conflicting compact flags reject. Search full_chunks is independent."})
+        }
         "limit" | "max_bytes" | "start_line" | "end_line" | "line" | "before" | "after"
         | "hops" => {
             json!({"type":"integer","minimum":if matches!(key,"before"|"after"){0}else{1},"maximum":numeric_max(key)})
         }
+        "compact" | "full_chunks" => json!({"type":["boolean","null"]}),
         "include_count"
         | "include_files"
-        | "compact"
         | "semantic"
-        | "full_chunks"
         | "follow_moves"
         | "rich"
         | "include_symbols"
@@ -1386,6 +1399,14 @@ fn search_filters(args: &Map<String, Value>) -> Result<SearchFilters> {
     filters.validate()?;
     Ok(filters)
 }
+fn reply_detail(args: &Map<String, Value>) -> Result<Option<airk_core::reply::ReplyDetail>> {
+    args.get("reply_detail")
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map(Option::flatten)
+        .map_err(Into::into)
+}
 fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
     ensure!(
         TOOLS.contains(&step.tool.as_str()),
@@ -1393,10 +1414,17 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
     );
     for (key, value) in &step.args {
         ensure!(
-            fields(&step.tool).contains(&key.as_str()),
+            key == "reply_detail" || fields(&step.tool).contains(&key.as_str()),
             "unknown {} argument {key}",
             step.tool
         );
+        if key == "reply_detail" {
+            serde_json::from_value::<Option<airk_core::reply::ReplyDetail>>(value.clone())?;
+            continue;
+        }
+        if matches!(key.as_str(), "compact" | "full_chunks") && value.is_null() {
+            continue;
+        }
         if matches!(
             key.as_str(),
             "limit"
@@ -1476,6 +1504,16 @@ fn validate_step(step: &Step, prefix: &str, bound: bool) -> Result<()> {
     }
     if matches!(step.tool.as_str(), "search" | "references") {
         search_filters(&step.args)?;
+    }
+    let reply = reply_detail(&step.args)?;
+    if matches!(
+        step.tool.as_str(),
+        "symbols" | "imports" | "outline" | "code_facts" | "document_facts"
+    ) {
+        airk_core::reply::ReplyDetail::compact(
+            reply,
+            step.args.get("compact").and_then(Value::as_bool),
+        )?;
     }
     if let Some(mode) = step.args.get("name_match") {
         serde_json::from_value::<airk_core::discovery::NameMatch>(mode.clone())?;
@@ -1740,6 +1778,11 @@ impl Kernel {
         );
         let mut ids: BTreeMap<String, String> = BTreeMap::new();
         for step in &mut plan.steps {
+            if let Some(detail) = request.reply_detail
+                && step.args.get("reply_detail").is_none_or(Value::is_null)
+            {
+                step.args.insert("reply_detail".into(), json!(detail));
+            }
             ensure!(
                 !step.id.is_empty()
                     && step.id.len() <= 32
@@ -2017,7 +2060,7 @@ impl Kernel {
             }
         }
         plan.digest = digest(&plan)?;
-        let mut result = ResultEnvelope {schema: RESULT_SCHEMA.into(), collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
+        let mut result = ResultEnvelope {schema: RESULT_SCHEMA.into(), reply_detail:request.reply_detail, collection:self.collection().into(),publication:plan.publication.clone(), status:if needs.is_empty(){"prepared"}else{"needs_input"}.into(),executed:false, plan:plan.clone(),requires_input:needs.into_iter().map(|reason|RequiredInput{field:"text".into(),step:None,reason,choices:vec![]}).collect(),steps:vec![],evidence:vec![],warnings:vec!["Untrusted indexed evidence; verify live files before edits. Syntax relationships are candidates, not resolved calls.".into()],truncated:false,completeness:vec![],calls,payload_bytes:resolution_bytes};
         result.requires_input.extend(choices);
         if unfenced_literal_symbols {
             result.status = "needs_input".into();
@@ -2317,6 +2360,9 @@ impl Kernel {
             .get("path_prefix")
             .and_then(Value::as_str)
             .unwrap_or("");
+        let reply = reply_detail(args)?;
+        let minimal = matches!(tool, "symbols" | "imports" | "outline")
+            && reply == Some(airk_core::reply::ReplyDetail::Lean);
         let options = DiscoveryOptions {
             cursor: args
                 .get("cursor")
@@ -2324,16 +2370,26 @@ impl Kernel {
                 .map(str::to_owned),
             // Omission retains the original Workbench rich representation;
             // compact is an explicit choice, independent of MCP defaults.
-            compact: args
-                .get("compact")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            minimal: false,
+            compact: if minimal {
+                false
+            } else if matches!(
+                tool,
+                "symbols" | "imports" | "outline" | "code_facts" | "document_facts"
+            ) {
+                airk_core::reply::ReplyDetail::compact(
+                    reply,
+                    args.get("compact").and_then(Value::as_bool),
+                )?
+                .unwrap_or(false)
+            } else {
+                false
+            },
+            minimal,
         };
         let evidence: EvidenceReadOptions = serde_json::from_value(
             json!({"revision":revision,"known_hash":args.get("known_hash")}),
         )?;
-        Ok(match tool {
+        let mut value = match tool {
             "status" => self.status_summary()?,
             "diagnostics" => {
                 let mut value = serde_json::to_value(self.status()?)?;
@@ -2355,22 +2411,28 @@ impl Kernel {
             "capabilities" => {
                 json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog()})
             }
-            "search" => serde_json::to_value(self.search_response_with_navigation(
-                &SearchQuery {
-                    text: string(args, "query")?.into(),
-                    path_prefix: Some(prefix.into()),
-                    limit,
-                    max_bytes: max,
-                },
-                match args.get("mode").and_then(Value::as_str) {
-                    Some("lexical") => crate::current::CurrentSearchMode::Lexical,
-                    Some("vector") => crate::current::CurrentSearchMode::Vector,
-                    Some("hybrid") => crate::current::CurrentSearchMode::Hybrid,
-                    _ => crate::current::CurrentSearchMode::Default,
-                },
-                Some(768),
-                &search_filters(args)?,
-            )?)?,
+            "search" => serde_json::to_value(
+                self.search_response_with_navigation(
+                    &SearchQuery {
+                        text: string(args, "query")?.into(),
+                        path_prefix: Some(prefix.into()),
+                        limit,
+                        max_bytes: max,
+                    },
+                    match args.get("mode").and_then(Value::as_str) {
+                        Some("lexical") => crate::current::CurrentSearchMode::Lexical,
+                        Some("vector") => crate::current::CurrentSearchMode::Vector,
+                        Some("hybrid") => crate::current::CurrentSearchMode::Hybrid,
+                        _ => crate::current::CurrentSearchMode::Default,
+                    },
+                    (!args
+                        .get("full_chunks")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false))
+                    .then_some(768),
+                    &search_filters(args)?,
+                )?,
+            )?,
             "list_files" => serde_json::to_value(self.list_files_page(
                 args.get("prefix").and_then(Value::as_str).unwrap_or(""),
                 limit,
@@ -2506,7 +2568,9 @@ impl Kernel {
                 })?,
             )?,
             _ => bail!("unknown evidence operation"),
-        })
+        };
+        airk_core::reply::ReplyDetail::annotate(&mut value, reply);
+        Ok(value)
     }
 }
 
@@ -2605,7 +2669,7 @@ mod tests {
         ] {
             assert_eq!(
                 catalog["operations"][tool]["properties"]["compact"]["type"],
-                "boolean"
+                json!(["boolean", "null"])
             );
         }
         assert_eq!(
@@ -2739,6 +2803,81 @@ mod tests {
         assert_eq!(run.steps[1].arguments["symbol"], symbol);
         assert_eq!(rich.publication, run.publication);
         assert!(run.payload_bytes <= run.plan.budgets.max_bytes);
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_reply_detail_keeps_native_locations_and_legacy_workbench_default() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("session.rs"), "pub struct Session;\n")?;
+        let passage = format!("{} ScopeMarker\n", "background ".repeat(700));
+        std::fs::write(root.join("passage.txt"), &passage)?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let generation = kernel.status()?.generation;
+        let mut citations = Vec::new();
+        for choice in [None, Some("lean"), Some("rich")] {
+            let text = format!(
+                "/symbols Session{}",
+                choice.map_or(String::new(), |v| format!(" --reply-detail {v}"))
+            );
+            let run = kernel.evidence_plan(serde_json::from_value(
+                json!({"schema":REQUEST_SCHEMA,"mode":"execute","text":text}),
+            )?)?;
+            assert_eq!(run.status, "complete");
+            assert_eq!(run.evidence.len(), 1);
+            assert_eq!(run.calls, 2);
+            assert_eq!(
+                run.steps[0]
+                    .result
+                    .as_ref()
+                    .unwrap()
+                    .get("reply_detail")
+                    .and_then(Value::as_str),
+                choice
+            );
+            citations.push(run.evidence[0]["citation"].clone());
+            if choice == Some("lean") {
+                assert!(
+                    !run.steps[0].result.as_ref().unwrap()["minimal"]["items"]
+                        .as_array()
+                        .unwrap()
+                        .is_empty()
+                );
+            } else {
+                assert!(
+                    !run.steps[0].result.as_ref().unwrap()["facts"]
+                        .as_array()
+                        .unwrap()
+                        .is_empty()
+                );
+            }
+        }
+        assert!(citations.windows(2).all(|v| v[0] == v[1]));
+        assert!(kernel.evidence_plan(serde_json::from_value(json!({"schema":REQUEST_SCHEMA,"mode":"execute","text":"/symbols Session --reply-detail lean --compact false"}))?).is_err());
+        for detail in ["lean", "rich"] {
+            for full in [false, true] {
+                let run=kernel.evidence_plan(serde_json::from_value(json!({"schema":REQUEST_SCHEMA,"mode":"execute","reply_detail":detail,"plan":{"steps":[{"id":"search","tool":"search","args":{"query":"ScopeMarker","mode":"lexical","full_chunks":full,"max_bytes":8192}}]}}))?)?;
+                assert_eq!(
+                    run.status,
+                    if full { "complete" } else { "partial" },
+                    "{run:?}"
+                );
+                assert_eq!(run.steps[0].status, "complete");
+                let text = run.steps[0].result.as_ref().unwrap()["hits"][0]["text"]
+                    .as_str()
+                    .unwrap();
+                if full {
+                    assert_eq!(text, passage);
+                } else {
+                    assert!(text.len() <= 768);
+                }
+            }
+        }
+        assert_eq!(kernel.status()?.generation, generation);
         Ok(())
     }
 

@@ -20,7 +20,7 @@ test('per-session form choices survive real storage before any query and old ses
         session.formDraft={activeTool:'references',revision:4,scope:'src/',recipe:'component',values:{
             search:{query:'unfinished phrase',limit:'-'},
             references:{name:'',language:'ru',include_count:'false'},
-            symbols:{name_match:'suffix',compact:'true'},
+            symbols:{name_match:'suffix',reply_detail:'lean'},
         }};
         await store.save(session,false);
         const restarted=new SessionStore(root),loaded=await restarted.load(project,session.id);
@@ -67,6 +67,7 @@ test('Strategy saving preserves compatible inputs and refuses to weaken native a
     assert.equal(document.strategy.steps[1].op,'airk.references');assert.equal(document.strategy.steps[1].args.name,'QueueClient');assert.equal(document.pathPrefix,'src/');
     assert.throws(()=>strategyFromPlan({steps:[{id:'s',tool:'symbols',args:{name:'QueueClient'}},{id:'o',tool:'outline',args:{},bind:[{from:'s',arg:'path',select:'unique_definition_path'}]}]},'Definition','Inspect'),/ambiguity checks/);
     assert.throws(()=>strategyFromPlan({steps:[{id:'search',tool:'search',args:{query:'retry',mode:'vector'}}]},'Vector','Find'),/does not support/);
+    assert.throws(()=>strategyFromPlan({steps:[{id:'definitions',tool:'symbols',args:{name:'QueueClient',reply_detail:'lean'}}]},'Lean','Collect'),/symbols.reply_detail.*Save export/,'a limited conversion cannot silently drop a reply choice');
 });
 
 test('revision-bound literal symbol IDs cannot lose their publication through reuse or Strategy conversion',()=>{

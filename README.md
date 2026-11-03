@@ -6,6 +6,10 @@ Compact discovery now feeds dependent plans and cited results;
 nested plan inputs are advertised as JSON objects. [Validation and limits](docs/read-interface-parity.md#regression-evidence)
 remain recorded per phase.
 
+Choose [Lean or Rich replies](docs/reply-detail.md) per read in MCP, CLI or
+Workbench, independently of retained indexing detail. Omission preserves existing
+defaults; Rich cannot restore evidence omitted during indexing.
+
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](docs/releases/release-1.8.7.md) for current behavior and dated validation.
 
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**

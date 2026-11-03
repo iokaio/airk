@@ -22,6 +22,7 @@ pub mod model_objects;
 pub mod publication;
 pub mod readiness;
 pub mod references;
+pub mod reply;
 pub mod search_filters;
 pub mod service;
 pub mod service_cleanup;

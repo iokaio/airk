@@ -1,5 +1,14 @@
 # Workbench development branch
 
+## 1.9.0 independent replies
+
+Tool forms expose **Reply detail** (Default/Lean/Rich) from the native operation
+catalog. Slash commands accept `--reply-detail lean|rich`. Default retains rich
+facts and focused search; explicit selection is independent of retained indexing
+detail. Session drafts, structured details and complete/selected exports retain
+choices without triggering a query on selection. See [reply semantics](../reply-detail.md)
+and the [candidate record](../releases/release-1.9.0.md) for actual validation.
+
 ## 1.8.7 full MCP response parity
 
 All 17 native read commands use the MCP handlers inside the outer bounded plan lifetime. Workbench requests full response data and explicitly retains rich facts unless compact is selected. Completed status/diagnostics steps include configured `query_concurrency` from the outer admission observation. Fact records use `items`; capabilities, help, provenance, readiness, conditional reads and continuity options use their canonical MCP contracts. Forms and slash flags expose the native read inputs, with JSON arrays for change selectors. Structured results offer **Complete response**, and full JSON/Markdown copies and exports retain the entire response even when cited cards are present. User-selected evidence exports remain explicitly selected subsets. Saved old turns retain the bytes originally returned; rerun to obtain newly implemented fields.

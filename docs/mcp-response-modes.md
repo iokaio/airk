@@ -1,5 +1,12 @@
 # MCP response modes
 
+**1.9.0 update:** [Lean/Rich reply detail](reply-detail.md) is an independent
+per-read projection of available evidence. `response_mode` and `include_status`
+retain the encoding/repetition behavior below; they do not select reply detail
+or retained indexing detail. Explicit `reply_detail` overrides the legacy default
+projection, and contradictory `compact` flags reject. Search `full_chunks` remains independent. Omission
+preserves prior defaults and encoding.
+
 The 1.4.0 development implementation defaults to **Terse response mode**. Choose **Full response mode** in the trusted extension panel's Agent connections section; `airk.mcp.responseMode` persists the machine setting and refreshes the MCP launch definition. Reconnect the agent after changing its launch configuration. Native clients can set `AIRK_MCP_RESPONSE_MODE=full`. An individual tool request can override either default with `response_mode: "full"` or `"terse"`.
 
 Use terse for routine navigation. Use Full for provenance audits, parser/coverage limitations, readiness diagnosis and missing or surprising results. Every tool schema and description supplies this guidance, and initialize instructions retain the existing 512-byte ceiling. Full adds detail; written targets remain candidates, imported assertions depend on their producer and indexed evidence does not verify live files.

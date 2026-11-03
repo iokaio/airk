@@ -642,6 +642,17 @@ mod tests {
                 "{}",
                 tool.name
             );
+            let mut choices: Vec<serde_json::Value> = airk_core::reply::ReplyDetail::ALL
+                .into_iter()
+                .map(|v| serde_json::json!(v))
+                .collect();
+            choices.push(serde_json::Value::Null);
+            assert_eq!(
+                schema["properties"]["reply_detail"]["enum"],
+                serde_json::json!(choices),
+                "{}",
+                tool.name
+            );
             assert!(
                 tool.description
                     .as_deref()

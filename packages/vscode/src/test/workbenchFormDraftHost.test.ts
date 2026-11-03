@@ -61,11 +61,12 @@ test('host saves local form choices per operator and resets only the active tool
     const f=hostFixture();
     try{
         await f.send(f.choice('search',{query:'Session',language:'rust'},{scope:'src/session/',recipe:'component'}));
-        await f.send(f.choice('symbols',{name:'Session',name_match:'suffix',compact:'false'}));
+        await f.send(f.choice('symbols',{name:'Session',name_match:'suffix',reply_detail:'rich'}));
         const draft=object(object(f.state.session).formDraft),values=object(draft.values);
         assert.equal(draft.activeTool,'symbols');
         assert.equal(object(values.search).query,'Session');
         assert.equal(object(values.symbols).name_match,'suffix');
+        assert.equal(object(values.symbols).reply_detail,'rich');
         assert.equal(draft.scope,'src/session/');assert.equal(draft.recipe,'component');
         await f.send(f.reset());
         const reset=object(object(f.state.session).formDraft);

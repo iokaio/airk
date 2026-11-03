@@ -266,7 +266,7 @@ fn interactive_tools_show_help_and_recover_from_invalid_requests() {
     let state = tempfile::tempdir().unwrap();
     let _service = common::Service::start(root.path(), state.path(), "tools-test");
     let query = root.path().join("arguments with spaces.json");
-    fs::write(&query, "{}").unwrap();
+    fs::write(&query, r#"{"reply_detail":"rich"}"#).unwrap();
     let mut child = command(root.path(), state.path())
         .args(["tools", "shell"])
         .stdin(Stdio::piped())
@@ -289,5 +289,6 @@ fn interactive_tools_show_help_and_recover_from_invalid_requests() {
             && text.contains("Explicit vector search")
     );
     assert!(text.contains("Result:") && text.contains("\"search_modes\": ["));
+    assert!(text.contains("\"reply_detail\": \"rich\""), "{text}");
     assert!(String::from_utf8_lossy(&output.stderr).contains("JSON object"));
 }

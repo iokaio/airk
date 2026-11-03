@@ -35,6 +35,7 @@ function countLabel(count:Value,unit:string):string {
 function DiscoveryDetails({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}){
     const details=useMemo(()=>discoveryDetails(turn.envelope??{}),[turn.envelope]);
     return <>{details.map(step=><section class="discovery-details" aria-label={`${step.tool} discovery details`} key={step.id}>
+        {step.replyDetail&&<p class="note">Reply detail: {step.replyDetail==='lean'?'Lean':'Rich'}</p>}
         {!step.canFollow&&(step.definitions.length>0||step.suggestions.length>0)&&<p class="note">Re-run this investigation to enable follow-up actions from completed, publication-matched evidence.</p>}
         {step.count&&<p class="counts">{countLabel(step.count,step.tool==='references'?(step.countUnit??'matching_lines').replaceAll('_',' '):'records')}</p>}
         {step.coverage?.query_complete===false&&<p class="warning">Reference coverage is limited to verified lexical candidates. The whole-query total is unknown; identifier tokens split across indexed chunk boundaries can be missed.</p>}

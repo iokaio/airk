@@ -78,7 +78,7 @@ export interface WorkbenchToolField {
     name:string;label:string;type:'string'|'integer'|'boolean'|'json';required:boolean;
     values?:string[];description?:string;minimum?:number;maximum?:number;minLength?:number;maxLength?:number;
 }
-const fieldLabels:Record<string,string>={path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
+const fieldLabels:Record<string,string>={path_prefix:'Path prefix',exclude_path_prefix:'Exclude path prefix',evidence_kind:'Evidence type',name_match:'Name matching',reply_detail:'Reply detail',compact:'Compact results',include_count:'Show count precision',include_files:'Summarize files',max_bytes:'Response byte budget'};
 /** Resolve only bundled local schema alternatives; no remote schema loading. */
 function fieldSchema(raw:unknown,root:Value,depth=0):Value {
     const schema=object(raw);if(depth>4)return {};

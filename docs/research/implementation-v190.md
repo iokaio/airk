@@ -35,8 +35,9 @@ cross-platform qualification.
 | --- | --- | --- |
 | P0a | Complete — `60f5c9d` | Frozen controls, relevance judgments and matched MCP measurements; no runtime behavior change |
 | P0b | Complete — `3021995` | Synchronized 1.9.0 increment and forward-line policy; no schema migration |
-| P1 | Complete — commit recorded at next checkpoint | Compact-plan correctness and nested object inputs; no persistent format change |
-| P2a–P2b | Not started | Independent replies and existing-observation guidance |
+| P1 | Complete — `d9eff91` | Compact-plan correctness and nested object inputs; no persistent format change |
+| P2a | In progress | Independent Lean/Rich reply selection; final validation and performance pending |
+| P2b | Not started | Existing-observation guidance |
 | P3–P4 | Not started | Decision records/contracts, then opt-in single-index verification |
 | P5–P7 | Not started | Safe metadata upgrade, Indexing/grants, then complete combined-read parity |
 | P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
@@ -404,3 +405,157 @@ P1 is accepted. Resume with P2a after its signed commit. Physical I/O, whole-ser
 peak resources, other platforms, external-client schema-cache refresh and
 installed-editor acceptance remain outside these observations. Later indexing,
 verification, combined-query and release phases retain their separate gates.
+
+## P2a — independent reply projection
+
+Entry: clean, human DCO-signed `d9eff91f0bdf0d0c3284d59581df4e194783a0d9`.
+The new actual-handler regression first failed because `reply_detail` was not an
+accepted native argument. Core now owns the optional Lean/Rich enum and legacy
+conflict resolution, with no new dependency or storage/profile change. Explicit
+choices select existing per-tool projections; absent arguments preserve prior
+defaults and encoding. The native catalog and tool-help schemas intentionally
+gain the new input; default evidence replies gain no null placeholder field.
+
+CLI aliases, tools-call/shell, parse defaults/per-step overrides and Workbench's
+dynamic forms use the same native choice. Effective plan choices participate in
+existing digest and representation fences. Structured details, session drafts and
+full/selected exports retain explicit choices. Static documentation/help has no
+alternative evidence projection and retains its payload. The existing limited
+Strategy converter refuses unsupported fields instead of silently dropping a
+choice; native exports preserve those plans.
+
+Focused results so far: 84 MCP cases passed; the expanded retention/projection
+matrix verifies exact legacy equivalents and cursor fences. All 11 CLI/MCP
+process cases and three tools cases pass, including a real tools-shell request.
+CLI parser/contract tests pass and regenerate the affected reference. Extension
+checks pass 543 cases with 19 skips. Native fallback minimal tables are also
+recognized before MCP normalization. Complete workspace validation, source-bound
+runtime and uncontended comparisons remain pending.
+
+The final focused Core/Kernel checks pass: the Core policy matrix and 22 Kernel
+Workbench cases (one existing ignored measurement). Nullable projection flags
+retain Default semantics; null per-step choices inherit a supplied plan default.
+The slash parser and advertised boolean unions agree. Recipe execution and an
+explicit rich step inside a Lean plan also pass. CLI request-file/flag conflicts
+reject rather than overwriting a stored choice. The public help route validates
+the common input without broadening the UI adapter's strict schema or querying
+an index. All these new cases have also passed inside the still-running workspace
+suite. Formatting, final all-target Clippy, 307 Python tests (six skipped), 543
+extension cases (19 skipped), version/repository checks (1,500 public files) and
+affected Markdown links/anchors/fences pass. Final workspace/doctest, runtime
+and uncontended performance/quality results remain required before acceptance.
+
+No normal installation, grant, persistent schema or retained profile changes
+occur. Recovery is a source revert before later state-changing phases.
+
+Final self-review caught and corrected a plan mismatch before acceptance: Rich
+search must not imply full chunks. The new regression first failed against the
+initial implementation (`p2a-search-review-red.log`), then passed across all
+Lean/Rich × absent/false/true `full_chunks` combinations. Search expansion is now
+independent, with no change to hit or byte budgets. Native Workbench and actual
+CLI/MCP tests also cover that boundary. All 84 MCP cases pass after correction.
+The initial staged pair passed one four-CPU smoke/client repetition; it is retained
+as superseded evidence, not the final runtime. A fresh source-bound pair and
+post-review Clippy/transport checks are required before measurement and acceptance.
+
+The workspace CI run completed with **1,847 passed, 35 skipped**, zero failures;
+its unchanged exclusions remain four existing long workloads and 31 declared
+ignores. Serial workspace doctests pass (zero cases defined). The post-review
+84-case MCP library, corrected native Workbench regression and complete 11-case
+CLI/MCP process target pass. Formatting and all-target/all-feature workspace
+Clippy pass again after review. A new Kernel assertion initially expected a
+focused excerpt to be complete; its preserved failure showed honest upstream
+text truncation. The corrected assertion preserves that partial status and passes;
+no production completeness guard was relaxed. Complete Core/Kernel library
+rechecks and final source-bound runtime acceptance remain pending.
+
+The `p2a-final-runtime` builder correctly refused publication when the test-only
+assertion changed during its paired build. The subsequent stable build staged
+`artifacts/v190/p2a-reviewed-runtime`; its source inventory matches live native
+inputs. The initial runtime and refused attempt are superseded and not used for
+acceptance measurements. The extra unfiltered Core/Kernel run passed all 58 Core
+cases and reached only the existing long catalog-measurement workload; that
+redundant workload was stopped without claiming a completed Kernel suite. The
+unchanged nextest CI profile now supplies the complete post-review library check.
+Final staged smoke/client checks are also running. No source/doc edits or other
+build/test campaigns will run during the following frozen measurements.
+
+### P2a final acceptance — 2 November 2026
+
+All preceding pending results are resolved by these final observations:
+
+- `cargo fmt --all --check` and `cargo clippy --workspace --all-targets
+  --all-features --locked --offline -- -D warnings`: passed after final review.
+- Workspace nextest, unchanged `ci` profile: **1,847 passed, 35 skipped**.
+  Serial `cargo test --doc --workspace --locked --offline`: passed, zero cases.
+- Post-review `cargo nextest run -p airk-core -p airk-kernel --lib --all-features
+  --locked --offline --profile ci`: **204 passed, two skipped**, no failures.
+  Those are the existing ignored role measurement and excluded large-catalog
+  workload; no filter or test assertion was weakened. The interrupted extra
+  unfiltered attempt is not counted as a completed suite.
+- `cargo test -p airk-mcp --all-features --locked --offline --lib`: **84 passed**.
+  Final `airk-cli --test mcp`, all features, two test threads: **11 passed**,
+  including full result comparisons and independent search expansion through
+  actual CLI aliases, tools-call, MCP and canonical Workbench handlers.
+  The three tools-shell cases also passed in the initial focused validation.
+- Python unittest discovery: **307 run, six skipped**, no failures. Extension
+  compile/tests: **543 passed, 19 skipped**, no failures. The tests cover forms,
+  sessions, explicit choices in full/selected JSON/Markdown and Strategy refusal.
+- Final staged `ci-local.ps1 -SkipBuild -RuntimeDir
+  artifacts/v190/p2a-reviewed-runtime -Repeat 1 -Suites @('smoke','clients')`:
+  **two suites passed**, seven smoke cases, four logical CPUs, zero load workers.
+  Logs: ignored `artifacts/ci-local/20261102-180232-9860d886/`. This is not the
+  five-repeat pre-PR or installed-editor/installer qualification.
+
+The final builder binds **752 native inputs** to
+`1c135997269705091eb5565a9eb86dc1de3b858f4407dd20dcf008424bd4b28b`.
+Main executable SHA-256:
+`07e0fd843826eb52d8e4482bb16bde00d3564793430a48178ad18f06e34edc5e`;
+helper: `86e5e5aea7b706d5e892885bf1cb92ddd2be8c1222cd457617e98eaf3fc20c7a`.
+The builder inventory was independently recomputed from live files after staging.
+No tested binary was relabeled or installed into the ordinary user profile.
+
+**Uncontended quality:** 75 attempts pass. All mode/split nDCG@10, Recall@10,
+negative outcomes and scored/failure counts exactly match the frozen baseline
+and P1. Latency is compared separately, not mistaken for score equality. Both
+compact/rich dependent probes complete with one cited record and three calls.
+No-op indexing extracts/publishes zero changes and preserves its token; one-file
+edit extracts/commits/publishes exactly one change. Corpus/model/binary and source
+identity guards pass.
+
+**Uncontended MCP sentinel:** 90 trials, 810 calls, zero errors/retries; required
+coverage, publication consistency, cleanup and unchanged source pass. Thirty
+samples per concurrency-one cohort. Task-with-connection median/p95 (ms):
+
+| Cohort | Median | p95 |
+| --- | ---: | ---: |
+| Fresh, status first | 1,048.240 | 1,122.529 |
+| Fresh, unprimed | 1,031.802 | 1,100.633 |
+| Reused, status first | 965.273 | 1,025.928 |
+
+Task-only and task-with-connection median/p95 limits pass against **both** frozen
+1.8.7 and P1 under the original tolerance. All 810 matched default response byte
+counts equal P1. The discovered input catalog intentionally grows from 61,303 to
+67,002 bytes (**5,699 bytes**) to advertise the optional controls. No source/doc
+edit, build, test or other measurement campaign overlapped these measurements.
+These observations establish preservation within the frozen bounds, not a speedup.
+
+Receipt SHA-256 values:
+
+- Relevance: `41ca3a938233586a340cea43885c6c3601c7294f6c8a72a047010118c1986373`.
+- MCP: `d24868c15eb92a0ff15a8f103dac8a4e779d902489098c805cf03c8768cb2d2d`.
+- Builder: `43844671fb3d62e3cca0fb359788e390ccff2faa41e6a7799b2cdd331afaee43`.
+
+**Review:** explicit implementer self-review covered the complete phase diff and
+prior P1 consumers, canonical native handlers, default/nullable controls, schema
+and CLI alias catalogs, prepared digests/cursors, minimal locations, session and
+export preservation, limits and test/receipt identities. It caught and corrected
+the Rich/full-chunk mismatch before acceptance. This is not an independent review.
+README, documentation index, current guides, candidate notes and Marketplace
+README agree on 1.9.0 and implemented behavior. Final repository, version, affected
+Markdown links/fences and whitespace checks precede the human DCO checkpoint.
+
+P2a is accepted; next is **P2b, existing-observation reasons and guidance**.
+Source revert remains recovery before later state-changing phases. Physical I/O,
+whole-service peak CPU/RSS, other platforms, external-client schema caches and
+installed-editor acceptance remain unqualified. The later phase gates still apply.

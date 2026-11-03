@@ -25,6 +25,13 @@ struct EvidenceOptions {
     artifact_id: Option<airk_core::identity::ArtifactId>,
 }
 
+#[derive(clap::Args, Default)]
+struct ReplyOptions {
+    /// Lean/Rich reply projection; independent of retained indexing detail.
+    #[arg(long,value_parser=airk_core::reply::ReplyDetail::ALL.map(|value|value.as_str()))]
+    reply_detail: Option<String>,
+}
+
 #[derive(clap::Args, Default, serde::Serialize)]
 struct SearchFilters {
     /// Exact indexed extraction-language label; not a filename-extension filter.
@@ -111,6 +118,8 @@ enum Command {
     /// Give a natural-language request as the TEXT argument, or a structured plan with --request FILE ('-' for stdin).
     /// Without --execute it only prints the plan; same contract as the MCP `parse` tool. Never writes sources.
     Parse {
+        #[command(flatten)]
+        reply: ReplyOptions,
         text: Option<String>,
         /// Configured native project binding (alias for global --service-project).
         #[arg(long)]
@@ -199,6 +208,8 @@ enum Command {
     },
     /// Report indexed changes since a revision token: added, modified and removed files, symbols and documents.
     Changes {
+        #[command(flatten)]
+        reply: ReplyOptions,
         #[arg(long)]
         since: Option<airk_core::identity::RevisionToken>,
         /// Repeatable tagged JSON selector, e.g. {"kind":"path","path":"one.rs"}.
@@ -226,6 +237,8 @@ enum Command {
     /// Inspect code facts and signatures with exact default name matching and bounded continuation.
     CodeFacts {
         #[command(flatten)]
+        reply: ReplyOptions,
+        #[command(flatten)]
         matching: NameMatchOptions,
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
@@ -251,6 +264,8 @@ enum Command {
     },
     /// Follow indexed relationships of a symbol in --direction, optionally of one --kind, up to --hops levels.
     Relationships {
+        #[command(flatten)]
+        reply: ReplyOptions,
         symbol: String,
         #[arg(long, default_value = "incoming")]
         direction: String,
@@ -275,13 +290,18 @@ enum Command {
     /// For a service you started with `airk serve`, use `airk service register --runtime-dir <control>` instead.
     Init,
     /// Print the project's publication, freshness, coverage and job status.
-    Status,
+    Status {
+        #[command(flatten)]
+        reply: ReplyOptions,
+    },
     /// Search indexed evidence; results carry file, line and revision citations.
     ///
     /// Without --mode the project's search policy applies, which uses vectors when they are enabled; that
     /// fails until the embedding model is set up (`setup-model`). --mode lexical (all words must appear)
     /// always works on a published index; vector and hybrid need ready vectors.
     Search {
+        #[command(flatten)]
+        reply: ReplyOptions,
         #[command(flatten)]
         filters: SearchFilters,
         query: String,
@@ -299,6 +319,8 @@ enum Command {
     },
     /// List indexed files under --prefix, with continuation cursors.
     Files {
+        #[command(flatten)]
+        reply: ReplyOptions,
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
         cursor: Option<String>,
@@ -311,6 +333,8 @@ enum Command {
     },
     /// Read an indexed file's lines (--start-line/--end-line) from the published revision, with a citation.
     Read {
+        #[command(flatten)]
+        reply: ReplyOptions,
         #[command(flatten)]
         evidence: EvidenceOptions,
         path: String,
@@ -341,12 +365,16 @@ enum Command {
     },
     /// Show what the index knows about one file: language, size, extraction method and parse status.
     Info {
+        #[command(flatten)]
+        reply: ReplyOptions,
         path: String,
         #[command(flatten)]
         evidence: EvidenceOptions,
     },
     /// Read one indexed file's structure in file order; this returns evidence, not an Explorer page proposal.
     Outline {
+        #[command(flatten)]
+        reply: ReplyOptions,
         /// Continue the same revision-bound discovery with unchanged filters.
         #[arg(long)]
         cursor: Option<String>,
@@ -363,6 +391,8 @@ enum Command {
     },
     /// Find definitions by exact name by default; use --name-match for suffix/contains variants.
     Symbol {
+        #[command(flatten)]
+        reply: ReplyOptions,
         #[command(flatten)]
         matching: NameMatchOptions,
         /// False includes rich facts and durable IDs; independent of response mode.
@@ -383,6 +413,8 @@ enum Command {
     },
     /// List import and dependency statements found under a path prefix.
     Imports {
+        #[command(flatten)]
+        reply: ReplyOptions,
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
         compact: Option<bool>,
@@ -394,6 +426,8 @@ enum Command {
     },
     /// List document facts (requirements, dates, decisions, features) extracted from indexed documents.
     Facts {
+        #[command(flatten)]
+        reply: ReplyOptions,
         /// False includes rich facts and durable IDs; independent of response mode.
         #[arg(long, num_args = 0..=1, default_missing_value = "true")]
         compact: Option<bool>,
@@ -418,6 +452,8 @@ enum Command {
     /// Find exact-case textual identifier uses; these are candidates, not resolved language references.
     Refs {
         #[command(flatten)]
+        reply: ReplyOptions,
+        #[command(flatten)]
         options: ReferenceOptions,
         name: String,
         #[arg(long, default_value = "")]
@@ -429,6 +465,8 @@ enum Command {
     },
     /// Read lines around --line in a file (--before/--after), with a citation.
     Context {
+        #[command(flatten)]
+        reply: ReplyOptions,
         #[command(flatten)]
         evidence: EvidenceOptions,
         path: String,
@@ -1662,8 +1700,26 @@ fn query_options(mut value: Value, options: impl serde::Serialize) -> Result<Val
     Ok(value)
 }
 fn query(command: Command) -> Result<(&'static str, Value)> {
-    Ok(match command {
-        Command::Status => ("airk_status", json!({})),
+    let reply_detail = match &command {
+        Command::Status { reply, .. }
+        | Command::Parse { reply, .. }
+        | Command::CodeFacts { reply, .. }
+        | Command::Changes { reply, .. }
+        | Command::Search { reply, .. }
+        | Command::Files { reply, .. }
+        | Command::Read { reply, .. }
+        | Command::Outline { reply, .. }
+        | Command::Symbol { reply, .. }
+        | Command::Imports { reply, .. }
+        | Command::Facts { reply, .. }
+        | Command::Info { reply, .. }
+        | Command::Refs { reply, .. }
+        | Command::Context { reply, .. }
+        | Command::Relationships { reply, .. } => reply.reply_detail.clone(),
+        _ => None,
+    };
+    let (tool, mut value) = match command {
+        Command::Status { .. } => ("airk_status", json!({})),
         Command::Parse {
             text,
             execute,
@@ -1707,6 +1763,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             path_prefix,
             limit,
             max_bytes,
+            ..
         } => {
             let mode = if semantic {
                 Some("vector")
@@ -1730,6 +1787,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             prefix,
             limit,
             max_bytes,
+            ..
         } => (
             "airk_list_files",
             json!({"cursor":cursor,"prefix":prefix,"limit":limit,"max_bytes":max_bytes}),
@@ -1740,6 +1798,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             start_line,
             end_line,
             max_bytes,
+            ..
         } => (
             "airk_read_file",
             evidence(
@@ -1750,6 +1809,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
         Command::Info {
             path,
             evidence: options,
+            ..
         } => ("airk_file_info", evidence(json!({"path":path}), options)?),
         Command::Outline {
             cursor,
@@ -1758,6 +1818,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             path,
             limit,
             max_bytes,
+            ..
         } => (
             "airk_outline",
             evidence(
@@ -1774,6 +1835,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             path_prefix,
             limit,
             max_bytes,
+            ..
         } => (
             "airk_symbols",
             query_options(
@@ -1785,6 +1847,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             compact,
             cursor,
             path_prefix,
+            ..
         } => (
             "airk_imports",
             json!({"compact":compact,"cursor":cursor,"path_prefix":path_prefix}),
@@ -1798,6 +1861,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             kind,
             limit,
             max_bytes,
+            ..
         } => (
             "airk_document_facts",
             json!({"compact":compact,"cursor":cursor,"document_key":document_key,"path_prefix":path_prefix,"name":name,"kind":kind,"limit":limit,"max_bytes":max_bytes}),
@@ -1813,6 +1877,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             language,
             limit,
             max_bytes,
+            ..
         } => (
             "airk_code_facts",
             query_options(
@@ -1828,6 +1893,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             hops,
             limit,
             max_bytes,
+            ..
         } => (
             "airk_relationships",
             json!({"symbol":symbol,"direction":direction,"kind":kind,"path_prefix":path_prefix,"hops":hops,"limit":limit,"max_bytes":max_bytes}),
@@ -1838,6 +1904,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             path_prefix,
             limit,
             max_bytes,
+            ..
         } => (
             "airk_references",
             query_options(
@@ -1852,6 +1919,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             before,
             after,
             max_bytes,
+            ..
         } => (
             "airk_context",
             evidence(
@@ -1870,6 +1938,7 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             limit,
             max_bytes,
             cursor,
+            ..
         } => {
             let mut selectors = selectors
                 .into_iter()
@@ -1886,7 +1955,20 @@ fn query(command: Command) -> Result<(&'static str, Value)> {
             )
         }
         _ => anyhow::bail!("not a read-only tool alias"),
-    })
+    };
+    if let Some(detail) = reply_detail {
+        if let Some(existing) = value.get("reply_detail").filter(|value| !value.is_null()) {
+            ensure!(
+                existing == &json!(detail),
+                "--reply-detail conflicts with the request's reply_detail"
+            );
+        }
+        value
+            .as_object_mut()
+            .context("read arguments must be an object")?
+            .insert("reply_detail".into(), json!(detail));
+    }
+    Ok((tool, value))
 }
 fn configuration(
     command: &Path,
@@ -1999,12 +2081,24 @@ mod tests {
     fn read_aliases_use_the_actual_mcp_argument_contracts() -> Result<()> {
         macro_rules! check {
             ($kind:ty,$args:expr) => {{
-                let cli = Cli::try_parse_from($args)?;
-                let (_, arguments) = query(cli.command)?;
-                serde_json::from_value::<$kind>(arguments)?;
+                for detail in [None, Some("lean"), Some("rich")] {
+                    let mut argv: Vec<&str> = $args.into_iter().collect();
+                    if let Some(detail) = detail {
+                        argv.extend(["--reply-detail", detail]);
+                    }
+                    let cli = Cli::try_parse_from(argv)?;
+                    let (_, arguments) = query(cli.command)?;
+                    assert_eq!(
+                        arguments.get("reply_detail").and_then(Value::as_str),
+                        detail
+                    );
+                    serde_json::from_value::<$kind>(arguments)?;
+                }
             }};
         }
         check!(airk_mcp::SearchArgs, ["airk", "search", "fixture"]);
+        check!(airk_mcp::StatusArgs, ["airk", "status"]);
+        check!(airk_mcp::ParseArgs, ["airk", "parse", "/status"]);
         check!(
             airk_mcp::ReadArgs,
             [
@@ -2034,6 +2128,9 @@ mod tests {
             airk_mcp::ChangesArgs,
             ["airk", "changes", "--path", "memo.txt"]
         );
+        for command in ["index", "init", "inspect"] {
+            assert!(Cli::try_parse_from(["airk", command, "--reply-detail", "rich"]).is_err());
+        }
         Ok(())
     }
     #[test]
@@ -2135,6 +2232,38 @@ mod tests {
         assert_eq!(references["cursor"], "opaque-returned-cursor");
         assert_eq!(references["max_bytes"], 4096);
         serde_json::from_value::<airk_mcp::ReferenceArgs>(references)?;
+        Ok(())
+    }
+
+    #[test]
+    fn request_file_reply_choice_cannot_be_silently_replaced_by_a_flag() -> Result<()> {
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("read.json");
+        for (stored, flag, valid) in [
+            (Some("lean"), "lean", true),
+            (Some("lean"), "rich", false),
+            (None, "rich", true),
+        ] {
+            std::fs::write(
+                &file,
+                serde_json::to_vec(
+                    &json!({"schema":"airk.parse.request/1","text":"/status","reply_detail":stored}),
+                )?,
+            )?;
+            let cli = Cli::try_parse_from([
+                "airk",
+                "parse",
+                "--request",
+                file.to_str().unwrap(),
+                "--reply-detail",
+                flag,
+            ])?;
+            let value = query(cli.command);
+            assert_eq!(value.is_ok(), valid);
+            if let Ok((_, value)) = value {
+                assert_eq!(value["reply_detail"], flag);
+            }
+        }
         Ok(())
     }
     #[test]

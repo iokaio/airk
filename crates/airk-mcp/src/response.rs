@@ -83,11 +83,24 @@ pub(crate) fn fact_items(value: &mut Value, operation: airk_core::usage::UsageOp
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct ResponseArgs {
+    /// Lean/Rich changes available fact projection, never retention. Reads without an alternate projection keep their existing payload. Omission preserves legacy defaults; conflicts with compact reject. Search full_chunks is independent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "reply_detail_schema")]
+    pub reply_detail: Option<airk_core::reply::ReplyDetail>,
     /// Terse is default. Use full for provenance/coverage audits, readiness diagnosis or unexpected results; it does not resolve calls or verify live source.
     pub response_mode: Option<ResponseMode>,
     /// Include current freshness/readiness even when unchanged on this connection.
     #[serde(default)]
     pub include_status: bool,
+}
+
+fn reply_detail_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    let mut values: Vec<Value> = airk_core::reply::ReplyDetail::ALL
+        .into_iter()
+        .map(|choice| Value::String(choice.as_str().into()))
+        .collect();
+    values.push(Value::Null);
+    schemars::json_schema!({"type":["string","null"],"enum":values})
 }
 
 #[derive(Default)]

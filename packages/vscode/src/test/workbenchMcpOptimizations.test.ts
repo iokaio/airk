@@ -65,6 +65,25 @@ test('native nullable enum definitions and booleans are exposed by the actual fo
     assert.deepEqual(toolFormArguments(native,{name_match:'',include_count:''}),{});
 });
 
+test('reply detail uses an optional enum and survives plans and full exports',()=>{
+    const native={type:'object',properties:{reply_detail:{type:['string','null'],enum:['lean','rich',null]}}};
+    const fields=toolFormFields(native);assert.equal(fields[0].label,'Reply detail');assert.deepEqual(fields[0].values,['lean','rich']);
+    assert.deepEqual(toolFormArguments(native,{reply_detail:''}),{});
+    for(const choice of ['lean','rich']){
+        const args=toolFormArguments(native,{reply_detail:choice});assert.deepEqual(args,{reply_detail:choice});
+        const message={type:'run',input:'Selected reply',prepare:false,plan:{steps:[{id:'query',tool:'symbols',args}]}};
+        assert.deepEqual(parseWorkbenchMessage(message),message);
+        const session:WorkbenchSession={schema:1,id:'reply',project:'ab'.repeat(32),title:'Reply',createdAt:0,updatedAt:0,revision:0,omitted:0,turns:[{id:'t',at:0,input:'Reply',format:'structured',request:message,envelope:{reply_detail:choice,plan:message.plan,
+            steps:[{id:'query',tool:'symbols',status:'complete',arguments:args,result:{reply_detail:choice}}],
+            evidence:[{step:'query',text:'Queue',citation:{path:'queue.rs',start_line:1,end_line:1,content_hash:'ab'.repeat(32),location:{Lines:{start:1,end:1}}}}]}}]};
+        assert.equal(JSON.parse(renderExport(session,'json')).turns[0].envelope.reply_detail,choice);
+        assert.equal(discoveryDetails(session.turns[0].envelope!)[0].replyDetail,choice);
+        assert.match(renderExport(session,'markdown'),new RegExp(`"reply_detail": "${choice}"`));
+        assert.match(renderExport(session,'markdown','t',['record-0']),new RegExp(`"reply_detail": "${choice}"`));
+    }
+    assert.throws(()=>toolFormArguments(native,{reply_detail:'detailed'}));
+});
+
 test('typed discovery options survive Workbench run-message validation',()=>{
     const args=toolFormArguments(schema,{name:'Session',name_match:'contains',include_count:'false',limit:'20'});
     const message={type:'run',input:'symbols form',prepare:true,pathPrefix:'src/',

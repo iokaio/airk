@@ -216,6 +216,12 @@ impl Unified {
         explorer.call(project, name.into(), args, client).await.unwrap_or_else(|_| failure("UI_UNAVAILABLE", "The verified Explorer adapter is unavailable. Check status and the installed extension; native retrieval remains available."))
     }
     async fn help(&self, mut args: Map<String, Value>) -> Value {
+        if let Some(detail) = args.get("reply_detail")
+            && serde_json::from_value::<Option<airk_core::reply::ReplyDetail>>(detail.clone())
+                .is_err()
+        {
+            return failure("INVALID_SCHEMA", "Invalid reply_detail.");
+        }
         if args.keys().any(|k| {
             ![
                 "query",
@@ -230,6 +236,7 @@ impl Unified {
                 "max_bytes",
                 "response_mode",
                 "include_status",
+                "reply_detail",
             ]
             .contains(&k.as_str())
         }) {
@@ -246,6 +253,9 @@ impl Unified {
         if args.contains_key("query") || args.contains_key("topic_id") {
             args.remove("response_mode");
             args.remove("include_status");
+            // Guidance has no Lean/Rich evidence projection; the UI adapter keeps
+            // its existing strict contract, just as for metadata display controls.
+            args.remove("reply_detail");
             let name = if args.contains_key("query") {
                 "airk_explorer_help_search"
             } else {
@@ -1101,6 +1111,35 @@ mod tests {
         assert_eq!(a.calls.lock().unwrap()[0].0, "airk_search");
         call(&u, "airk_explorer_ui_status", json!({})).await;
         assert_eq!(ui.calls.lock().unwrap()[1].1, "airk_explorer_ui_status");
+        for detail in ["lean", "rich"] {
+            let native = call(&u, "help", json!({"tool":"search","reply_detail":detail})).await;
+            assert_ne!(native["isError"], true, "{native}");
+            let guidance = call(&u, "help", json!({"query":"repair","reply_detail":detail})).await;
+            assert_ne!(guidance["isError"], true, "{guidance}");
+            assert!(
+                !ui.calls
+                    .lock()
+                    .unwrap()
+                    .last()
+                    .unwrap()
+                    .2
+                    .contains_key("reply_detail")
+            );
+        }
+        assert_eq!(
+            call(
+                &u,
+                "help",
+                json!({"query":"repair","reply_detail":"detailed"})
+            )
+            .await["isError"],
+            true
+        );
+        assert_eq!(
+            a.calls.lock().unwrap().len(),
+            1,
+            "help choices cannot query an index"
+        );
     }
     #[tokio::test]
     async fn tool_help_keeps_byte_budgets_and_resumable_lines_without_native_work() {

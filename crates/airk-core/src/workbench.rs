@@ -96,6 +96,8 @@ pub struct Recipe {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub schema: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_detail: Option<crate::reply::ReplyDetail>,
     #[serde(default)]
     pub mode: Mode,
     pub text: Option<String>,
@@ -130,6 +132,8 @@ pub struct RequiredInput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ResultEnvelope {
     pub schema: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_detail: Option<crate::reply::ReplyDetail>,
     pub collection: String,
     pub publication: Option<String>,
     pub status: String,

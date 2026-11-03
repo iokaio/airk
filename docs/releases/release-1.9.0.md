@@ -21,6 +21,13 @@ acceptance require their separate authorized gates.
   truncation and output limits retain their guards. Nested parse inputs are
   advertised as optional objects. Symbol-ID follow-ups use an explicit rich
   lookup when compact rows omit IDs. Ordinary direct read defaults are unchanged.
+- **P2a — independent replies:** native reads accept
+  `reply_detail: lean|rich`; CLI aliases expose `--reply-detail`, and Workbench
+  forms/slash commands retain choices in sessions and exports. Explicit choices
+  are independent of retained indexing detail; omission preserves legacy defaults.
+  Conflicting old/new flags reject. No storage/profile migration or implicit
+  enrichment occurs. Rich search keeps focused snippets; `full_chunks` remains
+  an independent explicit choice. See [the reply guide](../reply-detail.md).
 
 Existing read behavior inherits [1.8.7](release-1.8.7.md). P0a changes contributor
 measurement tooling; P0b changes candidate identity and forward activation policy.
@@ -54,6 +61,16 @@ preceding checkpoints. All median/p95 latency limits pass against both 1.8.7 and
 P0b across 90 trials/810 calls, with zero errors/retries. The captured compact and
 rich dependent workflows now both complete with equivalent citations. See the
 ledger for exact identities, original failures, commands and qualification limits.
+
+P2a passed 1,847 workspace CI tests (35 skipped), workspace doctests,
+formatting/Clippy, 307 Python tests (six skipped) and 543 extension tests
+(19 skipped). Post-review checks passed all 84 MCP cases, 204 Core/Kernel CI
+library cases (two skipped), all 11 CLI/MCP process cases and a final four-CPU
+staged smoke/client repetition. Frozen relevance scores remain identical to 1.8.7
+and P1; 90 trials/810 calls pass both latency reference gates with zero errors or
+retries. Default response byte counts match P1; the input catalog intentionally
+grows by 5,699 bytes. Superseded attempts and qualification limits remain recorded
+in the ledger.
 
 ## Delivery and compatibility gates
 

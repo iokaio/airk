@@ -5,6 +5,15 @@ plans and cited evidence through the shared consumer. The earlier audit below
 remains the inherited contract; current outcomes are in the
 [candidate record](releases/release-1.9.0.md).
 
+**1.9.0 P2a update:** optional `reply_detail: lean|rich` uses one Core policy for
+native handlers, all CLI read aliases, tools-call/shell and Workbench plans/forms.
+Absent arguments keep legacy defaults; explicit choices do not depend on retained
+detail. Matching compatibility flags work; contradictions reject. See
+[reply detail](reply-detail.md) for exact mappings. Plan defaults and per-step
+overrides survive typed frontend observation, structured views and full/selected
+exports. New input catalogs/tool-help schemas grow intentionally; ordinary default
+evidence payloads gain no placeholder field or source/model/index work.
+
 Audit dated November 1, 2026, for the 1.8.7 candidate. Equivalent read requests must retain complete native data through each interface. Workbench wraps reads in bounded plans; `airk tools call airk_<operation>` returns the native MCP result envelope. The tools shell uses that same call path and pretty-prints its text content. Dedicated CLI aliases below are convenience argument builders; their documented defaults can differ. Use `tools help` and `tools call --args-file` for the complete native input schema.
 
 | Native operation | Workbench command | Dedicated CLI alias, where present |

@@ -133,11 +133,31 @@ impl Drop for Session {
 #[test]
 fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_writes()
 -> anyhow::Result<()> {
+    fn stable(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                for key in [
+                    "request_id",
+                    "observed_unix_ms",
+                    "cache_age_ms",
+                    "cached",
+                    "elapsed_ms",
+                ] {
+                    fields.remove(key);
+                }
+                fields.values_mut().for_each(stable);
+            }
+            Value::Array(rows) => rows.iter_mut().for_each(stable),
+            _ => {}
+        }
+    }
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::start(root.path(), state.path(), "project-a");
     let source = "pub struct QueueClient;\n";
     fs::write(root.path().join("client.rs"), source)?;
+    let passage = format!("{} ScopeMarker\n", "background ".repeat(700));
+    fs::write(root.path().join("passage.txt"), &passage)?;
     common::call(root.path(), state.path(), "project-a", &["index"])?;
     let prepared = common::call(
         root.path(),
@@ -230,13 +250,28 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             "{rejected}"
         );
     }
-    for (offset, compact) in [true, false].into_iter().enumerate() {
-        let request = json!({"schema":"airk.parse.request/1","mode":"execute","response_mode":"full",
+    for (offset, (compact, detail)) in [
+        (Some(true), None),
+        (Some(false), None),
+        (None, Some("lean")),
+        (None, Some("rich")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut discovery = json!({"name":"QueueClient"});
+        if let Some(compact) = compact {
+            discovery["compact"] = json!(compact);
+        }
+        let mut request = json!({"schema":"airk.parse.request/1","mode":"execute","response_mode":"full",
         "plan":{"steps":[
-            {"id":"find","tool":"symbols","args":{"name":"QueueClient","compact":compact}},
+            {"id":"find","tool":"symbols","args":discovery},
             {"id":"structure","tool":"file_info","args":{},"bind":[{"arg":"path","from":"find","select":"unique_definition_path"}]},
             {"id":"excerpt","tool":"read_file","args":{},"bind":[{"arg":"location","from":"find","select":"hit_locations"}]}
         ]}});
+        if let Some(detail) = detail {
+            request["reply_detail"] = json!(detail);
+        }
         // native read: a dependent evidence plan executes once; never retry the whole plan.
         let mcp = decode(session.call(20 + offset as u64, "parse", request.clone())?)?;
         assert_eq!(mcp["status"], "complete", "{mcp}");
@@ -281,6 +316,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                 "truncated",
                 "calls",
                 "executed",
+                "reply_detail",
             ] {
                 assert_eq!(
                     actual[field], mcp[field],
@@ -300,24 +336,6 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                 assert_eq!(a["status"], b["status"]);
                 assert_eq!(a["arguments"], b["arguments"]);
                 // Compare complete native read data; only transport/cache observations vary.
-                fn stable(value: &mut Value) {
-                    match value {
-                        Value::Object(fields) => {
-                            for key in [
-                                "request_id",
-                                "observed_unix_ms",
-                                "cache_age_ms",
-                                "cached",
-                                "elapsed_ms",
-                            ] {
-                                fields.remove(key);
-                            }
-                            fields.values_mut().for_each(stable);
-                        }
-                        Value::Array(rows) => rows.iter_mut().for_each(stable),
-                        _ => {}
-                    }
-                }
                 let mut a = a.clone();
                 let mut b = b.clone();
                 stable(&mut a);
@@ -325,7 +343,75 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
                 assert_eq!(a, b);
             }
         }
+        if let Some(detail) = detail {
+            let mut alias = common::call(
+                root.path(),
+                state.path(),
+                "project-a",
+                &["symbol", "QueueClient", "--reply-detail", detail],
+            )?;
+            let mut expected = mcp["steps"][0]["result"].clone();
+            stable(&mut alias);
+            stable(&mut expected);
+            assert_eq!(alias, expected);
+        }
     }
+    for (offset, (detail, full)) in [
+        ("lean", false),
+        ("rich", false),
+        ("lean", true),
+        ("rich", true),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let args = json!({"query":"ScopeMarker","mode":"lexical","reply_detail":detail,"full_chunks":full,"limit":10,"max_bytes":8192,"response_mode":"full"});
+        let mut mcp =
+            decode(session.read_retry(60 + offset as u64, "airk_search", args.clone())?)?;
+        let returned = mcp["hits"][0]["text"].as_str().unwrap();
+        if full {
+            assert_eq!(returned, passage);
+        } else {
+            assert!(returned.len() <= 768);
+        }
+        let tool = common::call(
+            root.path(),
+            state.path(),
+            "project-a",
+            &[
+                "tools",
+                "call",
+                "airk_search",
+                "--args",
+                &serde_json::to_string(&args)?,
+            ],
+        )?;
+        let mut tool: Value = serde_json::from_str(tool["content"][0]["text"].as_str().unwrap())?;
+        stable(&mut mcp);
+        stable(&mut tool);
+        assert_eq!(mcp, tool);
+        if !full {
+            let mut alias = common::call(
+                root.path(),
+                state.path(),
+                "project-a",
+                &[
+                    "search",
+                    "ScopeMarker",
+                    "--mode",
+                    "lexical",
+                    "--reply-detail",
+                    detail,
+                ],
+            )?;
+            stable(&mut alias);
+            assert_eq!(mcp, alias);
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(root.path().join("passage.txt"))?,
+        passage
+    );
     let direct = decode(session.read_retry(4, "status", json!({"response_mode":"full"}))?)?;
     assert_eq!(direct["query_concurrency"], 16);
     // native read: only this single refused status read can repeat with its explicit receipt.

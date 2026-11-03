@@ -13,7 +13,9 @@ pub fn locations(value: &Value) -> Result<Vec<Value>> {
     fn visit(value: &Value, out: &mut Vec<Value>) -> Result<()> {
         match value {
             Value::Object(map)
-                if map.get("representation").and_then(Value::as_str) == Some("minimal") =>
+                if map.get("representation").and_then(Value::as_str) == Some("minimal")
+                    // The typed native MinimalFacts wrapper precedes MCP's discriminator.
+                    || (map.len()==3 && ["items","files","provenance"].iter().all(|key|map.get(*key).is_some_and(Value::is_array))) =>
             {
                 let page = MinimalFacts::deserialize(value).context("invalid minimal page")?;
                 ensure!(
