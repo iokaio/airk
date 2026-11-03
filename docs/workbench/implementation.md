@@ -1,5 +1,9 @@
 # Workbench development branch
 
+The 1.9.0 candidate supplies optional [evidence guidance](../evidence-guidance.md)
+from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
+complete/selected exports retain applicable reasons without additional reads.
+
 ## 1.9.0 independent replies
 
 Tool forms expose **Reply detail** (Default/Lean/Rich) from the native operation

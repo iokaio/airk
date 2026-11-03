@@ -2409,7 +2409,7 @@ impl Kernel {
                 json!({"commands":"/search /symbols /code-facts /refs /read /outline /files /info /imports /facts /changes --since /status /diagnostics /capabilities /context /relationships /help","recipes":["definition","documents","impact","tests","component","readiness"],"parser":"deterministic rules; unsupported phrasing returns needs_input","navigation_options":"search/refs: --language, --evidence-kind, --exclude-path-prefix; symbols/imports/code-facts: --name-match, --include-count; refs: --cursor, --order, --include-files, --include-count; fact reads/outline: --compact. Boolean flags accept optional true/false. Workbench compact omission keeps rich facts; MCP compact discovery has its own default."})
             }
             "capabilities" => {
-                json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog()})
+                json!({"adapters":Kernel::extraction_adapters().iter().map(|a|json!({"id":a.profile.adapter_id})).collect::<Vec<_>>(),"workbench":operation_catalog(),"read_guidance":airk_core::guidance::catalog()})
             }
             "search" => serde_json::to_value(
                 self.search_response_with_navigation(
@@ -2570,6 +2570,7 @@ impl Kernel {
             _ => bail!("unknown evidence operation"),
         };
         airk_core::reply::ReplyDetail::annotate(&mut value, reply);
+        airk_core::guidance::annotate(&mut value);
         Ok(value)
     }
 }

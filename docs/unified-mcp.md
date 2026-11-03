@@ -1,5 +1,9 @@
 # One AIRK MCP connection
 
+The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
+from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
+complete/selected exports retain applicable reasons without additional reads.
+
 
 
 For detailed per-tool developer guidance, see the [MCP developer guide](mcp-developer-guide.md) and its companion [CLI developer guide](cli-developer-guide.md). Native terminal tools cover 18 operations; projects and nine Assistance operations have separate CLI commands and different registry/proposal scope where documented.

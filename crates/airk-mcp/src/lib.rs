@@ -713,7 +713,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_search",
-        description = "Find concepts, code or documents; prose/comments and source can rank together. For a named type/function, prefer airk_symbols first, scoped airk_references for textual uses, then bounded airk_read_file; search supplements that investigation. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode retains saved hybrid/vector policy; explicit lexical uses AND terms. Vector/hybrid need the indexed local model. semantic=true aliases vector. Bounded native-definition pointers may accompany identifiers without changing ranking. Focused cited snippets are default; full_chunks requests whole indexed chunks. Check readiness/truncation and use response_mode=full for provenance audits.",
+        description = "Find concepts, code or documents; prose/comments and source can rank together. For a named type/function, prefer airk_symbols first, scoped airk_references for textual uses, then bounded airk_read_file; search supplements that investigation. Scope by literal path_prefix, exact indexed language, metadata-based evidence_kind or exclude_path_prefix; documents alone do not prove application behavior. Omitted mode retains saved hybrid/vector policy; explicit lexical uses AND terms. Vector/hybrid need the indexed local model. semantic=true aliases vector. Bounded native-definition pointers may accompany identifiers without changing ranking. Focused cited snippets are default; full_chunks requests whole indexed chunks. Read guidance for returned limitations; empty matches alone establish no cause. Check readiness/truncation and use response_mode=full for provenance audits.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1126,7 +1126,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_capabilities",
-        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
+        description = "Check native formats, explicitly provisioned local model/OCR/code-provider adapters and their limits before planning exploration. Works before indexing. Reports available capabilities, not whether optional providers or this collection are ready. read_guidance lists bounded reason/action vocabulary; its suggestions execute no tools. Use response_mode=full for provenance/coverage audits, readiness diagnosis or unexpected results.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,
@@ -1150,6 +1150,7 @@ impl AirkServer {
             "workbench": airk_kernel::workbench::operation_catalog(),
             "discovery": {"cursor_tools":["airk_list_files","airk_outline","airk_symbols","airk_imports","airk_code_facts","airk_document_facts"], "binding":"exact publication, filters and representation", "compact_outline":true, "compact_symbols":true, "fact_result_key":"items", "compact_false":"rich facts with symbol IDs; independent of response mode", "budget":"complete serialized records plus new file/provenance bindings; framing is additional", "expired_cursor":"restart discovery"},
             "adapters": adapters,
+            "read_guidance": airk_core::guidance::catalog(),
             "index_detail": {"new_collection_default":"agent_lean", "levels":["agent_lean","essential","balanced","detailed"], "labels":{"agent_lean":"Agent Lean","balanced":"Rich Structure","essential":"Search Only","detailed":"Detailed"}, "coverage":"Fact and relationship responses report their published indexing level and deliberate omissions. Configured changes apply only after a successful index. Optional provider imports preserve their source and producer binding."},
             "history": {"supported":false,"exact_reads":[],"optional_retention":false,"search":false,"live_fallback":false,"checkpoints":false,"reason":"Source reads select one current index; retained change metadata does not enable old source reads"},
             "changes": {"observed_indexed_changes":false,"remembered_evidence_validation":true,"expired_baseline":"baseline_unavailable","selectors":64,"selector_bytes":32768,"max_payload_bytes":65536,"exact_revision_tokens":true,"live_source_verified":false,"symbol_continuity":"adapter-specific conservative coverage","document_continuity":"adapter-specific conservative coverage"},
@@ -1251,6 +1252,7 @@ fn render<T: Serialize>(
     if let Some(display) = display.as_mut() {
         airk_core::reply::ReplyDetail::annotate(display, reply_detail);
         response::fact_items(display, operation);
+        airk_core::guidance::annotate(display);
         responses.display(display, mode, include_status);
     }
     let rendered = match result {

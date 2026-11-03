@@ -1,5 +1,9 @@
 # AIRK MCP developer guide
 
+The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
+from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
+complete/selected exports retain applicable reasons without additional reads.
+
 This guide explains **all 28 public tools in the AIRK 1.9.0 development candidate**: why each exists, when to choose it, how it works, its inputs/results, a request example, and the owning implementation/tests. It complements the [catalog and connection contract](unified-mcp.md), [native protocol/evidence contract](mcp.md), [response modes](mcp-response-modes.md) and [CLI developer guide](cli-developer-guide.md). Current qualification is in the [1.9.0 candidate record](releases/release-1.9.0.md); the inherited 1.8.7 contracts and evidence remain in their [dated record](releases/release-1.8.7.md).
 
 ## Start with the right layer

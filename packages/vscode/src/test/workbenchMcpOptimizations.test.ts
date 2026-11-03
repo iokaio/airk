@@ -298,3 +298,28 @@ test('selected exports retain only their source uncertainty and omit unrelated m
         assert.equal(renderExport(session,'json'),fullBefore,'selected export cannot mutate the full authoritative result');
     }
 });
+
+
+test('bounded inert guidance survives structured details and complete and selected exports',()=>{
+    const catalog={version:1,max_observations:8,basis:'returned_metadata_only',starts_work:false,reasons:['unknown'],next_reads:['inspect_file_info']};
+    const capabilityEnvelope={steps:[{id:'caps',tool:'capabilities',status:'complete',result:{read_guidance:catalog}}]};
+    assert.deepEqual(discoveryDetails(capabilityEnvelope)[0].readGuidance,catalog);
+    assert.match(markdown({id:'caps',at:1,input:'Capabilities',format:'structured',envelope:capabilityEnvelope}),/"read_guidance"/);
+    const observations=['unsupported','not_retained','reply_omitted','pending','failed','stale','excluded','truncated'].map(reason=>({reason,subject:'selected_family',basis:'returned_metadata',message:`Observed ${reason}; keep scope`,next_read:'inspect_file_info'}));
+    const guidance={version:1,observations,truncated:true};
+    const turn:WorkbenchTurn={id:'advice',at:1,input:'Inspect selected evidence',format:'structured',envelope:{status:'partial',publication:'revision',steps:[{id:'read',tool:'search',status:'complete',result:{guidance,hits:[]}}],evidence:[{step:'read',text:'selected source',publication:'revision',citation:{path:'src/chosen.rs',start_line:1,end_line:1,content_hash:'ab'.repeat(32),location:{Lines:{start:1,end:1}}}}]}};
+    const session:WorkbenchSession={schema:1,id:'advice',project:'ab'.repeat(32),title:'Advice',createdAt:1,updatedAt:1,revision:1,omitted:0,turns:[turn]};
+    const before=structuredClone(turn.envelope);
+    assert.deepEqual(discoveryDetails(turn.envelope!)[0].guidance,guidance);
+    for(const format of ['json','markdown'] as const){
+        for(const selection of [undefined,['record-0']]){
+            const output=renderExport(session,format,undefined,selection);
+            for(const row of observations)assert.ok(output.includes(row.reason));
+            assert.ok(output.includes('returned_metadata'));assert.ok(output.includes('inspect_file_info'));
+        }
+    }
+    assert.deepEqual(turn.envelope,before);
+    const invalid={...turn.envelope,steps:[{id:'bad',tool:'search',result:{guidance:{version:1,observations:[...observations,{reason:'oversized',message:'x'.repeat(600)}],truncated:false}}}]};
+    const bounded=discoveryDetails(invalid)[0].guidance!;
+    assert.equal((bounded.observations as unknown[]).length,8);assert.equal(bounded.truncated,true);
+});

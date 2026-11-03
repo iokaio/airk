@@ -559,3 +559,183 @@ P2a is accepted; next is **P2b, existing-observation reasons and guidance**.
 Source revert remains recovery before later state-changing phases. Physical I/O,
 whole-service peak CPU/RSS, other platforms, external-client schema caches and
 installed-editor acceptance remain unqualified. The later phase gates still apply.
+
+
+## P2b — existing-observation reasons and guidance
+
+Entry: clean, human DCO-signed `94f544a52ac8fc2df5cd39457882edca5553b5e9`.
+The native missing-evidence regression first reproduced absent guidance after its
+fixture import was corrected. Core now derives a bounded shared reason/action
+vocabulary from returned metadata only. Native handlers and Kernel Workbench
+fallback share the projection. There are no new query inputs, storage profiles,
+source reads, registry queries, coverage scans, extraction/model calls or mutations.
+
+Advice retains subjects and basis fields; empty records never establish support,
+retention, exclusion or source absence. Essential native retention and explicit
+provider imports remain distinct. Source-watermark lag is not per-file source
+verification. Capability advice applies only to one explicitly selected adapter.
+The family inventory/effective-profile work remains P3/P11a. Suggestions are inert
+and preserve the original scope, publication, representation and limits.
+
+Initial tests pass the Core reason/boundary matrices, four focused native cases
+(including the two new actual-handler fixtures), all 86 MCP library cases before
+final review, and 544 extension cases (19 skipped). Native fixtures cover selected
+adapter flags, Essential retention, vector exclusion, truncated/empty results and
+pending/failed/lagging fenced source-cache observations. Structured/full/selected
+export coverage passes. Complete real-transport, final workspace, runtime and
+uncontended comparisons remain pending. No phase acceptance is claimed yet.
+
+Review found a transport-fixture race: the specialized-tool comparison read once
+while source work was pending and once after idle. The original 10-pass/one-fail
+result is preserved in `p2b-transport-focused.log`. The fixture now waits for idle
+before comparing; it preserves complete freshness/readiness states and new
+qualifiers rather than deleting advice. That correction passed all 11 stdio/CLI
+cases and three tools cases, including shell guidance. The sibling durable-key and
+change-validation comparisons were also audited: their shared helper now retains
+freshness/readiness state, watermarks, failures and work identity, normalizing only
+the request/observation identity. Those fixtures now wait for idle explicitly;
+a final complete transport run is pending. No production scheduling/deadline or
+completeness assertion was relaxed.
+
+The final vocabulary also distinguishes explicit source unavailability. Advice
+remains per native read step; aggregate plans keep their own completeness fields
+and do not acquire a second inferred verdict. The current coverage guide now uses
+the actual service-backed CLI status/inspection commands rather than obsolete
+coverage aliases. Runtime staging will start only after final native review, so
+its receipt binds the accepted implementation and transport tests together.
+
+Final focused validation after the sibling audit passed all 11 CLI/MCP and three
+tools cases. Final formatting/all-target Clippy and Python checks pass; the full
+workspace CI run is still passing in progress. The initial staged P2b pair passed
+one four-CPU smoke/client repetition (logs in ignored
+`artifacts/ci-local/20261102-183900-1500687e/`). Final review then added native search
+and capability catalog wording for the new guidance. That description-only change
+requires a fresh builder receipt and focused catalog/transport checks; the initial
+pair is retained as superseded, not used for acceptance measurements. No retrieval,
+retention, budget or advice algorithm changed after the initial full-suite build.
+
+A final trust/wording review also distinguished empty primary rows from
+supplemental definition pointers and scan continuations from guaranteed further
+matches. The new supplemental-pointer fixture preserves the pointer unchanged;
+unknown advice does not claim a complete absence. Passage advice is conditional
+on a citation being available. These are message/qualification corrections, with
+no new reads, changed query selection or budget/ranking behavior. The preceding
+`p2b-final-runtime` is superseded; the qualified receipt will bind this final wording
+and fixture. Frozen measurements have not started and no earlier attempt is
+being presented as final acceptance.
+
+Final functional results: workspace CI **1,851 passed, 35 skipped**, with unchanged
+four workload exclusions and 31 declared ignores; serial workspace doctests pass
+(zero cases). Final formatting/all-target/all-feature Clippy, both Core guidance
+tests, **86 MCP** and **14 CLI/MCP/tools** cases pass after the last wording review.
+The final extension run passes **544 cases, 19 skipped**; it also displays the
+native read-guidance vocabulary/limits in structured details. Python remains
+**307 run, six skipped**, no failures. Full workspace preceded the final
+message/catalog-wording-only changes; the affected complete native targets and
+Clippy passed again afterward. No query execution, scope, source work or selection changed.
+
+The qualified pair in `artifacts/v190/p2b-qualified-runtime` is staged and its
+native source inventory matches live bytes. Final staged smoke/client checks
+and uncontended quality/latency/byte comparisons are next. All earlier runtime
+pairs are superseded for acceptance. Source/doc edits, builds, tests and other
+measurement campaigns will stop before the frozen measurements begin.
+
+### P2b final acceptance — 2 November 2026
+
+The final acceptance runtime is **`artifacts/v190/p2b-qualified-runtime`**. Its
+753 native inputs hash to
+`c592ba4f98a4b7f0e4eb01e3547d88da531a871594d14a315d3c8b39b2f0725d`.
+Main executable: `46a08c5c2bcf76399e7bd0c9964fdc04c87b587ef0d9463b24aa41568471613e`;
+helper: `7fa95d2d50d4df43cae5d4b1c6ab7f17b98c2aec334512ac8361b2d3a26c4eb2`.
+The source inventory was recomputed against live native bytes after staging.
+
+Final functional evidence:
+
+- Unchanged workspace nextest `ci` profile, all features/locked/offline:
+  **1,851 passed, 35 skipped**, zero failures. Serial workspace doctests pass
+  (zero cases). The four existing workload exclusions and 31 declared ignores
+  remain unchanged. This full build preceded the final message/catalog-only
+  refinements; final affected-target runs below cover those changes.
+- Final `cargo fmt --all --check` and workspace all-target/all-feature Clippy,
+  warnings denied/locked/offline: pass. Both Core guidance tests, all **86 MCP**
+  library cases, **11 CLI/MCP** process cases and **three tools** cases pass after
+  final review. Complete responses retain readiness/freshness state and guidance,
+  including real public MCP, aliases, tools-call, tools-shell and parse steps.
+- Python discovery: **307 run, six skipped**, no failures. Final extension
+  compile/tests: **544 passed, 19 skipped**. Structured vocabulary/observations,
+  sessions and full/selected export tests pass without adding query actions.
+- Final qualified `ci-local.ps1`, `-SkipBuild`, `-Repeat 1`, suites smoke/clients:
+  **two suites passed**, seven smoke cases, four logical CPUs, zero load workers.
+  Logs: ignored `artifacts/ci-local/20261102-190855-a631255c/`. This is one focused
+  repetition, not five-repeat pre-PR or installed-editor/installer qualification.
+
+**Measurement correction retained:** the first successful quality/sentinel runs
+were chained after `ci-local.ps1` in the same PowerShell process. That script
+changes its process affinity, inherited by later children. The parent affinity
+was restored, but the exact handoff to those campaigns could not be established;
+therefore `p2b-relevance.json` and `p2b-mcp/` are **unmatched, not acceptance
+receipts**, regardless of their metrics. The scoped process inspection initially
+hit a sandbox WMI access restriction; a permitted read-only inspection identified
+only the owned campaign. No normal user process or installation was changed.
+No metric-driven rerun or tolerance change occurred.
+
+Both campaigns were repeated serially from a fresh shell, with **64 logical CPUs
+and unrestricted affinity `-1`** observed before starting. The affinity receipt
+and final reports are separate; no build/test campaign or source/doc edit
+interleaved with them. Other applications/OS caches remain uncontrolled as in the
+baseline. The accepted files are `p2b-qualified-relevance.json` and
+`p2b-qualified-mcp/replay/report.json`.
+
+**Quality:** all 75 attempts pass. Every mode/split nDCG@10, Recall@10,
+negative-query outcome, scored count and failure count equals **both** frozen
+1.8.7 and P2a. Timing is compared separately. Compact and rich dependent probes
+both complete with one cited record and three calls. No-op/edit work guards pass:
+zero extraction/publication with unchanged bytes; exactly one extraction,
+committed change and publication for the controlled edit. Source, corpus, model,
+binary and publication bindings pass.
+
+**MCP:** 90 trials/810 calls, zero errors/retries, full required coverage,
+publication consistency, cleanup and unchanged source. Thirty samples for each
+concurrency-one cohort. Task-with-connection median/p95 (ms):
+
+| Cohort | Median | p95 |
+| --- | ---: | ---: |
+| Fresh, status first | 1,040.013 | 1,110.695 |
+| Fresh, unprimed | 1,024.519 | 1,091.216 |
+| Reused, status first | 963.903 | 1,015.524 |
+
+Both task-only and task-with-connection median/p95 gates pass against **both**
+frozen 1.8.7 and preceding P2a with the original tolerances. This is preservation
+within the decision bounds, not a speedup claim. The intentional native catalog
+wording grows discovery from **67,002 to 67,170 bytes** (+168). Matched per-call
+response growth versus P2a: symbols/outline **+360 bytes**; search **0 or +427**;
+references, code facts, read-file, context and status **0** in this sentinel.
+These are measured fixture outcomes, not a bound for every response; at most eight
+fixed-text observations are emitted and advice omission remains disclosed.
+No extra calls or retries were needed to provide the explanations.
+
+Receipt SHA-256 values:
+
+- Qualified relevance: `9a202a69966edf7a66cbe8ea79692b08fc472b54d78c6a417039c42ed8aac8c2`.
+- Qualified MCP: `c3f5f4bd54477ec269ce2fb6f6ee9c5289041fa2d9c97740243501247834cefa`.
+- Qualified builder: `8e18920fed3a7e452826bfeb73d61933b1715060757039074153a0d105f16f74`.
+- Fresh-shell affinity: `163f8351751d5df8a230d923735a29ee9b776f208ff2f1454c9c4104bc328bfd`.
+
+**Review:** explicit implementer self-review covered the entire phase diff,
+canonical native rendering, Kernel fallback, static capability catalog,
+CLI/public aliases, status cache/unified wrappers, prepared plans, preservation
+of qualifiers and source bytes, bounded projection work and complete/selected
+exports. Cached/unified status retains the entire body and original observations.
+The review corrected source-work comparison races and advice overstatements about
+empty primary rows and continuations. It was **not an independent review**.
+README, documentation index, architecture/usage guides, candidate notes and
+Marketplace README agree on current 1.9.0 behavior. Final repository/version,
+affected Markdown link/anchor/fence and whitespace checks precede the human
+DCO-signed checkpoint. An ordinary source revert remains recovery.
+
+**P2b is accepted. Next: P3 design gates (ADR 002/003, scopes, profile-family
+inventory, permanent-policy ownership, receipt/schema and migration/fault fixtures).**
+No live registry/collection upgrade, profile migration, normal installation or
+publication occurred. Physical I/O, whole-service peak resources, other platforms,
+installed-editor acceptance and external-client catalog caches remain unqualified;
+all later phase gates remain in force.

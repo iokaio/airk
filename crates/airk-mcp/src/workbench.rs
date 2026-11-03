@@ -85,6 +85,7 @@ impl AirkServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Context;
 
     fn payload(reply: CallToolResult) -> Result<Value> {
         ensure!(reply.is_error != Some(true), "{reply:?}");
@@ -133,6 +134,143 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn missing_evidence_guidance_uses_returned_observations_without_reindexing() -> Result<()>
+    {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(root.join("queue.rs"), "pub struct Queue;\n")?;
+        std::fs::write(
+            root.join("long.txt"),
+            format!("{} Needle\n", "background ".repeat(200)),
+        )?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        kernel.configure_index_detail(airk_core::extraction::IndexDetail::Essential)?;
+        kernel.configure_vector_selection(serde_json::from_value(
+            json!({"version":1,"exclusions":[{"id":"exclude-queue","path_prefix":"queue.rs"}]}),
+        )?)?;
+        kernel.index()?;
+        let publication = kernel.status_summary()?["publication"].clone();
+        let mut tools = local::LocalTools::new(kernel.clone()).await?;
+        for (tool, args, reason) in [
+            (
+                "airk_code_facts",
+                json!({"name":"Queue","response_mode":"full"}),
+                "not_retained",
+            ),
+            (
+                "airk_capabilities",
+                json!({"adapter":"text","response_mode":"full"}),
+                "unsupported",
+            ),
+            (
+                "airk_search",
+                json!({"query":"AbsentIdentifier","mode":"lexical","response_mode":"full"}),
+                "unknown",
+            ),
+            (
+                "airk_file_info",
+                json!({"path":"queue.rs","response_mode":"full"}),
+                "excluded",
+            ),
+            (
+                "airk_search",
+                json!({"query":"Needle","mode":"lexical","max_bytes":32,"response_mode":"full"}),
+                "truncated",
+            ),
+            (
+                "airk_symbols",
+                json!({"name":"Queue","reply_detail":"lean","response_mode":"full"}),
+                "reply_omitted",
+            ),
+        ] {
+            let result = payload(
+                tools
+                    .call(tool.into(), args.as_object().unwrap().clone())
+                    .await?,
+            )?;
+            assert!(
+                result["guidance"]["observations"]
+                    .as_array()
+                    .context("guidance missing")?
+                    .iter()
+                    .any(|v| v["reason"] == reason),
+                "{result}"
+            );
+        }
+        assert_eq!(kernel.status_summary()?["publication"], publication);
+        assert_eq!(
+            std::fs::read_to_string(root.join("queue.rs"))?,
+            "pub struct Queue;\n"
+        );
+        tools.close().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn source_work_guidance_uses_the_fenced_cache_and_never_certifies_live_files()
+    -> Result<()> {
+        use airk_core::{
+            changes::{FreshnessObservation, FreshnessState},
+            identity::Incarnation,
+            service::{ProjectRegistration, WorkerIdentity},
+        };
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        let data = temp.path().join("data");
+        std::fs::create_dir(&root)?;
+        std::fs::create_dir(&data)?;
+        let root = root.canonicalize()?;
+        let data = data.canonicalize()?;
+        let identity = WorkerIdentity {
+            service: Incarnation::from_bytes([1; 16]),
+            worker: Incarnation::from_bytes([2; 16]),
+            project: ProjectRegistration::new(
+                root.to_str().unwrap().into(),
+                data.to_str().unwrap().into(),
+                "one".into(),
+            )?
+            .binding,
+            fencing_generation: 1,
+        };
+        let kernel = Kernel::open_service_collection(&root, Some(data), "one")?
+            .with_service_freshness(identity)?;
+        let mut tools = local::LocalTools::new(kernel.clone()).await?;
+        for (state, expected) in [
+            (FreshnessState::Pending, "pending"),
+            (FreshnessState::Failed, "failed"),
+            (FreshnessState::Idle, "stale"),
+        ] {
+            let sample: FreshnessObservation = serde_json::from_value(
+                json!({"observed_unix_ms":1,"state":state,"requested_watermark":2,"completed_watermark":1,"running_watermark":null,"last_success_unix_ms":null,"error":if state==FreshnessState::Failed {Some("fixture_failure")}else{None},"live_source_verified":false}),
+            )?;
+            kernel.observe_service_freshness(identity, Some(sample))?;
+            let result = payload(
+                tools
+                    .call(
+                        "airk_status".into(),
+                        json!({"response_mode":"full"}).as_object().unwrap().clone(),
+                    )
+                    .await?,
+            )?;
+            assert!(
+                result["guidance"]["observations"]
+                    .as_array()
+                    .context("guidance missing")?
+                    .iter()
+                    .any(|v| v["reason"] == expected),
+                "{result}"
+            );
+            assert_eq!(result["freshness"]["live_source_verified"], false);
+            assert_eq!(result["freshness"]["requested_watermark"], 2);
+            assert_eq!(result["freshness"]["completed_watermark"], 1);
+        }
+        tools.close().await?;
+        Ok(())
     }
 
     #[tokio::test]

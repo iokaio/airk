@@ -26,3 +26,8 @@ Native status reports a content-free `source_availability.reason`: `missing`, `p
 Development checks cover actual non-root Unix permission denial at the source and an ancestor, a redirected root with a separate untouched source tree, a directory replaced by a file, and refusal to create an unbound collection. The Windows native fixture denies directory listing on its own temporary source, starts a worker afterward, queries prior evidence and checks the durable failed-job code and original bytes. Platform results and remaining console/installed-platform gates are recorded in the completion checklist.
 
 Availability evidence, October 23, 2026: Windows passed two kernel availability regressions, four service-publication tests and the inspection regression. All fourteen prior native service scenarios passed, followed by the new real-ACL denied-root process regression with its query connection released before shutdown. Non-root Linux passed all four availability regressions, four publication tests, inspection and fourteen native service scenarios. Windows all-feature workspace Clippy and Linux CLI Clippy pass; MCP and repository/Python checks remain part of the recorded development matrix. The Unix denial fixtures restore permissions on both success and failure; the Windows fixture removes only its own explicit denial on its temporary source. No actual macOS runtime result is claimed.
+
+The 1.9.0 [evidence guidance](evidence-guidance.md) labels outstanding observed
+source watermarks as `stale` with subject `source_work_watermark`. That label
+does not establish that a cited file differs on disk; original observation age,
+failure and live-verification limits remain authoritative. Advice starts no work.

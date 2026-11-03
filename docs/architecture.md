@@ -1,5 +1,11 @@
 # Architecture
 
+The 1.9.0 candidate adds [evidence guidance](evidence-guidance.md) as a pure Core
+projection of returned metadata. Native rendering and Kernel Workbench fallback
+share it; the extension only presents/preserves the result. It introduces no
+registry, source, model or indexing work. The [candidate record](releases/release-1.9.0.md)
+separates accepted phases from planned hierarchy/verification changes.
+
 **1.8.7 release candidate:** MCP `status` and `diagnostics` return `query_concurrency`, the configured evidence request limit observed at admission. It reuses the existing policy read, including for cached status; it is a capacity limit, not a count of free slots. This release includes the preceding unpublished MCP, Workbench and concurrent-request improvements. See the [1.8.7 release record](releases/release-1.8.7.md) for behavior and validation.
 
 The unreleased CI diagnostic adapter stays in `airk-cli`: an explicitly enabled worker-stderr collector drains bounded tails under the existing child owner and records observed exit after native containment drains. The MCP transport can emit a bounded underlying connection failure on stderr; public read results and retry authority remain unchanged. CI tooling owns source-bound build handoffs and numeric runner reports; no scheduler or dependency enters Core, Store or Kernel. See [the CI follow-up](ci-and-builds.md#native-build-reuse-and-darwin-failure-diagnostics).

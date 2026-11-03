@@ -21,10 +21,22 @@ export function continuations(envelope:Value):Continuation[]{
 export interface DiscoveryStepDetails {
     id:string;tool:string;canFollow:boolean;count?:Value;files:{path:string;count:number}[];filesTruncated:boolean;
     replyDetail?:'lean'|'rich';
+    guidance?:Value;
+    readGuidance?:Value;
     coverage?:Value;countUnit?:string;
     more:boolean;incompleteReason?:string;suggestions:{target:string;symbolId?:string;path?:string;coverage?:string}[];
     definitions:Value[];omittedFiles:number;omittedSuggestions:number;omittedDefinitions:number;
     requiredRecordBytes?:number;
+}
+function guidanceMetadata(raw:unknown):Value|undefined {
+    const value=object(raw);if(value.version!==1||!Array.isArray(value.observations))return undefined;
+    let truncated=value.truncated===true||value.observations.length>8;
+    const observations=value.observations.slice(0,8).flatMap(raw=>{
+        const row=object(raw),keys=['reason','subject','basis','message','next_read'];
+        if(keys.some(key=>typeof row[key]!=='string'||String(row[key]).length>512)){truncated=true;return [];}
+        return [Object.fromEntries(keys.map(key=>[key,row[key]]))];
+    });
+    return {version:1,observations,truncated};
 }
 function canFollowResult(envelope:Value,report:Value):boolean {
     const result=object(report.result),content=object(result.content),evidence=object(result.evidence);
@@ -43,6 +55,8 @@ function resultMetadata(raw:unknown):Value {
         incomplete_reason:page.incomplete_reason,required_record_bytes:page.required_record_bytes??source.required_record_bytes,
         count_unit:page.count_unit,definitions:source.definitions,suggested_targets:source.suggested_targets,
         reply_detail:['lean','rich'].includes(String(source.reply_detail))?source.reply_detail:undefined,
+        guidance:guidanceMetadata(source.guidance??evidence.guidance),
+        read_guidance:Object.keys(object(source.read_guidance)).length?source.read_guidance:undefined,
     }).filter(([,value])=>value!==undefined));
 }
 /** Bounded display projection only; exports below retain the native metadata itself. */
@@ -54,6 +68,8 @@ export function discoveryDetails(envelope:Value):DiscoveryStepDetails[]{
         const count=object(metadata.match_count),coverage=object(metadata.coverage);
         return [{id:String(report.id??`step-${i}`),tool:String(report.tool??''),canFollow:canFollowResult(envelope,report),...(Object.keys(count).length?{count}:{}),
             ...(metadata.reply_detail==='lean'||metadata.reply_detail==='rich'?{replyDetail:metadata.reply_detail}:{}),
+            ...(metadata.guidance?{guidance:object(metadata.guidance)}:{}),
+            ...(metadata.read_guidance?{readGuidance:object(metadata.read_guidance)}:{}),
             ...(Object.keys(coverage).length?{coverage}:{}),...(typeof metadata.count_unit==='string'?{countUnit:metadata.count_unit}:{}),
             files:files.slice(0,100).flatMap(value=>{const file=object(value);return typeof file.path==='string'&&Number.isSafeInteger(file.count)&&Number(file.count)>=0?[{path:file.path,count:Number(file.count)}]:[];}),
             filesTruncated:metadata.files_truncated===true,more:metadata.more===true||continuationCursor(report.result)!==undefined,...(typeof metadata.incomplete_reason==='string'?{incompleteReason:metadata.incomplete_reason}:{}),
@@ -141,6 +157,7 @@ function selectedSourceCoverage(turn:WorkbenchTurn,selected:Set<string>):Value[]
         if(typeof metadata.count_unit==='string')qualification.count_unit=metadata.count_unit;
         if(typeof metadata.resolution==='string')qualification.resolution=metadata.resolution;
         if(metadata.reply_detail==='lean'||metadata.reply_detail==='rich')qualification.reply_detail=metadata.reply_detail;
+        if(metadata.guidance)qualification.guidance=metadata.guidance;
         return Object.keys(qualification).length?[{step:report.id,tool:typeof report.tool==='string'?report.tool:'',scope:'original_source_request',...qualification}]:[];
     });
 }

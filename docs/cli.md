@@ -1,5 +1,9 @@
 # AIRK command-line guide
 
+The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
+from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
+complete/selected exports retain applicable reasons without additional reads.
+
 The `airk` executable is the whole engine, not only a VS Code helper. This guide explains how the commands fit together. The [CLI reference](cli-reference.md) documents every public command and option exactly as `airk <command> --help` prints them; it is generated from the parser, and a test keeps it current. [Running AIRK headless](headless-cli.md) maps each VS Code feature to its command.
 
 For each command's purpose, implementation, tests and guarded behavior, see the [CLI developer guide](cli-developer-guide.md). The [MCP developer guide](mcp-developer-guide.md) covers the corresponding agent interface. `airk tools list` exposes 18 native prefixed operations; unified MCP adds projects and nine Assistance operations. The terminal exposes those separately through `airk projects` and `airk explorer`, so 18 is not a count of all CLI capabilities.

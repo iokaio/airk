@@ -1,5 +1,9 @@
 # MCP tools
 
+The 1.9.0 candidate supplies optional [evidence guidance](evidence-guidance.md)
+from returned metadata. Advice is bounded and inert; CLI/MCP/Workbench and
+complete/selected exports retain applicable reasons without additional reads.
+
 **AIRK 1.8.7** carries forward optional extraction filters, explicit name matching, qualified counts, bounded reference paging and source-bound navigation hints across MCP, CLI and Workbench. Omitted new options retain earlier native contracts. The [unified admission/routing contract](unified-mcp.md#identifier-routing-and-bounded-admission) distinguishes finite frontend waiting, native channel pools and worker admission and lightweight status ownership; neither configured concurrency nor a successful status means every evidence call is immediately admitted. Read the [1.8.7 record](releases/release-1.8.7.md) for implementation and qualification scope.
 
 For the purpose, inputs, examples and implementation/tests of every tool, read the [MCP developer guide](mcp-developer-guide.md). Its companion [CLI developer guide](cli-developer-guide.md) maps terminal commands, including the distinction between 18 native prefixed tools and 28 unified MCP tools. This page retains the native transport and evidence contracts.

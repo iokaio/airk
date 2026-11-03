@@ -122,6 +122,29 @@ impl Session {
             std::thread::sleep(retry.delay);
         }
     }
+    fn wait_source_idle(&mut self, id: u64) -> anyhow::Result<()> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let reply = self.read_retry(id, "status", json!({"response_mode":"full"}))?;
+            anyhow::ensure!(
+                reply.get("error").is_none() && reply["result"]["isError"] != true,
+                "{reply}"
+            );
+            let observed: Value = serde_json::from_str(
+                reply["result"]["content"][0]["text"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("missing status: {reply}"))?,
+            )?;
+            if observed["freshness"]["state"] == "idle" {
+                return Ok(());
+            }
+            anyhow::ensure!(
+                std::time::Instant::now() < deadline,
+                "fixture source work did not settle: {observed}"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    }
 }
 impl Drop for Session {
     fn drop(&mut self) {
@@ -210,19 +233,7 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
     assert!(!cli["evidence"].as_array().unwrap().is_empty());
     // Compare observations only after the fixture's initial source job settles;
     // retain freshness fields rather than deleting a real running/idle difference.
-    let settled_by = std::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        let observed =
-            decode(session.read_retry(19, "status", json!({"response_mode":"full"}))?)?;
-        if observed["freshness"]["state"] == "idle" {
-            break;
-        }
-        anyhow::ensure!(
-            std::time::Instant::now() < settled_by,
-            "fixture source work did not settle: {observed}"
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    session.wait_source_idle(19)?;
     session.send(json!({"jsonrpc":"2.0","id":18,"method":"tools/list","params":{}}))?;
     let catalog = session.receive(18)?;
     let parse = catalog["result"]["tools"]
@@ -276,6 +287,15 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
         let mcp = decode(session.call(20 + offset as u64, "parse", request.clone())?)?;
         assert_eq!(mcp["status"], "complete", "{mcp}");
         assert_eq!(mcp["calls"], 4);
+        if compact == Some(true) || detail == Some("lean") {
+            assert!(
+                mcp["steps"][0]["result"]["guidance"]["observations"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v["reason"] == "reply_omitted")
+            );
+        }
         fs::write(&file, serde_json::to_vec(&request)?)?;
         let cli = common::call(
             root.path(),
@@ -373,6 +393,13 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
             assert_eq!(returned, passage);
         } else {
             assert!(returned.len() <= 768);
+            assert!(
+                mcp["guidance"]["observations"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v["reason"] == "truncated")
+            );
         }
         let tool = common::call(
             root.path(),
@@ -412,6 +439,46 @@ fn workbench_prepared_plans_execute_through_cli_and_public_mcp_without_source_wr
         fs::read_to_string(root.path().join("passage.txt"))?,
         passage
     );
+    for (offset, (tool, args, reason)) in [
+        (
+            "airk_search",
+            json!({"query":"AbsentIdentifier","mode":"lexical","response_mode":"full"}),
+            "unknown",
+        ),
+        (
+            "airk_capabilities",
+            json!({"adapter":"text","response_mode":"full"}),
+            "unsupported",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut mcp = decode(session.read_retry(70 + offset as u64, tool, args.clone())?)?;
+        assert!(
+            mcp["guidance"]["observations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|v| v["reason"] == reason)
+        );
+        let cli = common::call(
+            root.path(),
+            state.path(),
+            "project-a",
+            &[
+                "tools",
+                "call",
+                tool,
+                "--args",
+                &serde_json::to_string(&args)?,
+            ],
+        )?;
+        let mut cli: Value = serde_json::from_str(cli["content"][0]["text"].as_str().unwrap())?;
+        stable(&mut mcp);
+        stable(&mut cli);
+        assert_eq!(mcp, cli);
+    }
     let direct = decode(session.read_retry(4, "status", json!({"response_mode":"full"}))?)?;
     assert_eq!(direct["query_concurrency"], 16);
     // native read: only this single refused status read can repeat with its explicit receipt.
@@ -754,6 +821,7 @@ fn durable_key_reads_match_cli_and_mcp_and_reject_filter_combinations() -> anyho
             .len(),
         28
     );
+    session.wait_source_idle(30)?;
     for (id, command, option, tool, field, key) in [
         (
             3,
@@ -832,6 +900,7 @@ fn changes_cli_and_mcp_share_results_and_conditional_validators() -> anyhow::Res
                 .expect("tool JSON"),
         )?)
     };
+    session.wait_source_idle(30)?;
     let mut expected = cli(&["changes", "--path", "aurora.py"])?;
     let mut actual = payload(session.read_retry(
         2,
@@ -1085,6 +1154,18 @@ fn client_setup_formats_preserve_collection_scope_and_command_arguments() -> any
 
 #[test]
 fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Result<()> {
+    fn stable(value: &mut Value) {
+        match value {
+            Value::Object(fields) => {
+                for key in ["request_id", "observed_unix_ms", "cache_age_ms", "cached"] {
+                    fields.remove(key);
+                }
+                fields.values_mut().for_each(stable);
+            }
+            Value::Array(rows) => rows.iter_mut().for_each(stable),
+            _ => {}
+        }
+    }
     let root = tempfile::tempdir()?;
     let state = tempfile::tempdir()?;
     let service = common::Service::start(root.path(), state.path(), "project-a");
@@ -1152,6 +1233,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             json!(!drafts.contains(&tool["name"].as_str().unwrap()))
         );
     }
+    session.wait_source_idle(30)?;
     for (i, name, args) in [
         (
             3,
@@ -1229,7 +1311,7 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
             // Status includes changing quota/usage observations.
             let mut expected = payload.clone();
             for value in [&mut direct, &mut expected] {
-                common::read_retry::evidence_for_comparison(value)?;
+                stable(value);
             }
             assert_eq!(direct, expected, "CLI/MCP result mismatch for {name}");
         }

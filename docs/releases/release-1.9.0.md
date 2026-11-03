@@ -29,6 +29,12 @@ acceptance require their separate authorized gates.
   enrichment occurs. Rich search keeps focused snippets; `full_chunks` remains
   an independent explicit choice. See [the reply guide](../reply-detail.md).
 
+- **P2b — evidence guidance:** optional bounded reasons
+  distinguish returned capability, retention, work, selection and truncation
+  observations. Empty results remain unknown. Workbench displays inert next-read
+  advice and retains it in exports. No profile/storage or hidden scan changes.
+  See [evidence guidance](../evidence-guidance.md).
+
 Existing read behavior inherits [1.8.7](release-1.8.7.md). P0a changes contributor
 measurement tooling; P0b changes candidate identity and forward activation policy.
 They add no registry migration, new Project/index hierarchy, split/trim operation,
@@ -71,6 +77,17 @@ and P1; 90 trials/810 calls pass both latency reference gates with zero errors o
 retries. Default response byte counts match P1; the input catalog intentionally
 grows by 5,699 bytes. Superseded attempts and qualification limits remain recorded
 in the ledger.
+
+P2b passed 1,851 workspace CI tests (35 skipped), doctests, formatting/Clippy,
+307 Python tests (six skipped) and 544 extension tests (19 skipped). Final affected
+Core/MCP and all 14 CLI/MCP/tools cases passed after catalog/message review; the
+qualified runtime passed one four-CPU smoke/client repetition. Its matched frozen
+75-query campaign preserves all quality outcomes. The 90-trial/810-call sentinel
+passes both latency references with zero errors/retries. Guidance intentionally
+adds bounded metadata: measured minimal symbol/outline replies grow 360 bytes,
+affected search replies up to 427 bytes, and discovery grows 168 bytes. The
+initial affinity-uncertain chained campaign is retained as unmatched and excluded
+from acceptance. See the ledger for final hashes, conditions and limitations.
 
 ## Delivery and compatibility gates
 

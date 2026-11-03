@@ -302,7 +302,7 @@ pub fn evidence_for_comparison(value: &mut Value) -> Result<()> {
         anyhow::bail!("expected evidence object")
     };
     fields.remove("request_id");
-    if let Some(freshness) = fields.remove("freshness") {
+    if let Some(freshness) = fields.get("freshness").cloned() {
         let observation: airk_core::changes::FreshnessObservation =
             serde_json::from_value(freshness)?;
         assert!(observation.observed_unix_ms > 0);
@@ -310,14 +310,21 @@ pub fn evidence_for_comparison(value: &mut Value) -> Result<()> {
         if observation.state == airk_core::changes::FreshnessState::Unavailable {
             assert!(observation.error.is_some());
         }
+        // Preserve states, watermarks, failure and work identity. Only the
+        // transport observation time varies between equivalent complete reads.
+        fields
+            .get_mut("freshness")
+            .and_then(Value::as_object_mut)
+            .unwrap()
+            .remove("observed_unix_ms");
     }
-    if let Some(readiness) = fields.remove("semantic_readiness") {
+    if let Some(readiness) = fields.get("semantic_readiness").cloned() {
         let _: airk_core::readiness::SemanticReadiness = serde_json::from_value(readiness)?;
     }
-    if let Some(readiness) = fields.remove("discovery_readiness") {
+    if let Some(readiness) = fields.get("discovery_readiness").cloned() {
         let _: airk_core::readiness::DiscoveryReadiness = serde_json::from_value(readiness)?;
     }
-    if let Some(observation) = fields.remove("discovery_observation") {
+    if let Some(observation) = fields.get("discovery_observation") {
         assert_eq!(observation, "unavailable_after_read");
     }
     Ok(())

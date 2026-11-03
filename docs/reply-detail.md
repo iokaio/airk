@@ -90,3 +90,7 @@ arguments explicitly; save a native plan export to preserve such choices.
 Current tests and measured comparison limits are in the
 [implementation ledger](research/implementation-v190.md). Installed-editor,
 external-client cache refresh and platform qualification are separate gates.
+
+P2b independently adds [evidence guidance](evidence-guidance.md) when existing
+metadata reports a limitation or an empty query. That optional metadata can grow
+a reply; it does not change P2a's projection defaults or legacy evidence encoding.

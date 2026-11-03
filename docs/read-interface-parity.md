@@ -1,5 +1,12 @@
 # CLI, MCP and Workbench read parity
 
+**1.9.0 P2b:** optional [evidence guidance](evidence-guidance.md) is derived by one
+Core projection used in native reads and Kernel Workbench fallback. CLI aliases,
+tools-call/shell, MCP, parse steps, structured Workbench details and full/selected
+exports preserve applicable reasons. There are no new query inputs. Suggestions
+are inert; no source, coverage, model or registry work is added to explain replies.
+
+
 **1.9.0 P1 update (2 November 2026):** compact discovery now feeds dependent
 plans and cited evidence through the shared consumer. The earlier audit below
 remains the inherited contract; current outcomes are in the
