@@ -1,0 +1,161 @@
+{
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "project_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^prj_[0-9a-f]{32}$"
+      },
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "index_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^idx_[0-9a-f]{32}$"
+      },
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true
+    },
+    "member_availability": {
+      "enum": [
+        "report",
+        "require"
+      ]
+    },
+    "reply_detail": {
+      "enum": [
+        "lean",
+        "rich",
+        null
+      ]
+    },
+    "verification": {
+      "enum": [
+        "off",
+        "report",
+        "require"
+      ]
+    },
+    "verification_max_sources": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 256
+    },
+    "verification_max_bytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1073741824
+    },
+    "verification_deadline_ms": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 30000
+    }
+  },
+  "required": [],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://airk.local/design/v190/query-controls.schema.json",
+  "title": "query-controls.schema.json",
+  "x-airk-activation-phase": "P4 verification; P7 Project selectors",
+  "description": "P3 design contract; not an advertised runtime capability before its phase gate.",
+  "allOf": [
+    {
+      "not": {
+        "required": [
+          "project",
+          "project_ids"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "index_ids"
+        ]
+      },
+      "then": {
+        "required": [
+          "project_ids"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "member_availability"
+        ]
+      },
+      "then": {
+        "required": [
+          "project_ids"
+        ]
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "verification"
+        ],
+        "properties": {
+          "verification": {
+            "enum": [
+              "report",
+              "require"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "verification_max_sources",
+          "verification_max_bytes",
+          "verification_deadline_ms"
+        ]
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "required": [
+              "verification_max_sources"
+            ]
+          },
+          {
+            "required": [
+              "verification_max_bytes"
+            ]
+          },
+          {
+            "required": [
+              "verification_deadline_ms"
+            ]
+          }
+        ]
+      },
+      "then": {
+        "required": [
+          "verification"
+        ],
+        "properties": {
+          "verification": {
+            "enum": [
+              "report",
+              "require"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

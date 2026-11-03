@@ -6,6 +6,10 @@ functionality. This document supersedes the folder-driven setup and connection
 organization proposals identified below. It preserves the original scenario
 analysis in [folders/workspaces research](vs-code-folders-workspaces.md).
 
+## P3 implementation decisions
+
+[ADR 002](../decisions/002-projects-indexes-and-query-scope.md) and the [contract pack](contracts-v190/README.md) settle this design for implementation: typed `project_ids`/`index_ids`, granted-only `query_scope`, initial fan-out one, registry schema 12, exact membership attribution, original remainder plus one split destination, and persistent native policy outside deletable collection data. Immutable backing identity survives legacy registration purge; its optional active-registration FK uses `ON DELETE SET NULL`. Existing data-root relocation must settle before upgrade. Ordinary opens continue rejecting WAL overlays; consistent backup is an explicit owned migration operation. [ADR 003](../decisions/003-dated-saved-source-verification.md) fixes dated verification and explicit budgets; the [family inventory](profile-family-inventory-v190.md) separates legacy retention from future profiles. These decisions supersede illustrative alternatives below. Actual migration/policy/transport/performance acceptance remains in P4-P14.
+
 ## Outcome and examples
 
 The hierarchy is **Project → one or more Indexes → source folders**. A Project is

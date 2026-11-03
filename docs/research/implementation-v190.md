@@ -36,9 +36,10 @@ cross-platform qualification.
 | P0a | Complete — `60f5c9d` | Frozen controls, relevance judgments and matched MCP measurements; no runtime behavior change |
 | P0b | Complete — `3021995` | Synchronized 1.9.0 increment and forward-line policy; no schema migration |
 | P1 | Complete — `d9eff91` | Compact-plan correctness and nested object inputs; no persistent format change |
-| P2a | In progress | Independent Lean/Rich reply selection; final validation and performance pending |
-| P2b | Not started | Existing-observation guidance |
-| P3–P4 | Not started | Decision records/contracts, then opt-in single-index verification |
+| P2a | Complete - `94f544a` | Independent reply detail; qualified native/transport/export and performance evidence below |
+| P2b | Complete - `1b623ce` | Bounded existing-observation guidance; matched quality/latency gates below |
+| P3 | Complete - signed checkpoint follows | ADRs, schemas, authority/partition fixtures and upgrade fault boundaries |
+| P4 | Not started | Opt-in single-index source verification |
 | P5–P7 | Not started | Safe metadata upgrade, Indexing/grants, then complete combined-read parity |
 | P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
 | P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
@@ -739,3 +740,44 @@ No live registry/collection upgrade, profile migration, normal installation or
 publication occurred. Physical I/O, whole-service peak resources, other platforms,
 installed-editor acceptance and external-client catalog caches remain unqualified;
 all later phase gates remain in force.
+
+
+## P3 - design contracts and implementation safety gates
+
+Entry: accepted P2b `1b623ceaedaaf551c076c59522e223f1a18a3e3f`.
+Added ADR 002/003, the original versioned contract pack and executable design
+checks, plus the legacy profile-family inventory. Reconciled the plan/feature
+research, README, documentation index, candidate notes and Marketplace guide.
+
+Decisions fix explicit Project/index selectors and granted-only discovery;
+component-preserving scope unions and exact shared-index attribution; initial
+fan-out one and bounded RRF; registry schema 12 with preserved immutable backing
+identity; explicit owned U0-U6 activation/backup/import/recovery; permanent native
+policy surviving collection purge; original-remainder plus one destination split;
+and dated saved-byte receipts with explicit budgets, error/export semantics and
+future member slots. Policy references must not alter the original owner digest.
+Ordinary opens retain WAL rejection. Post-upgrade user writes prohibit automatic
+backup restore. No new schema or policy was activated.
+
+Validation: `scripts/check-v190-design.ps1` passes 41 positive/negative wire
+fixtures across four draft-7 schemas, plus semantic shared-index/attribution,
+partition/future-path, policy root, receipt association/count/hash/time checks,
+24 workspace outcomes, legacy family references and U0-U6 coverage. These are
+**design checks**, not runtime migration/old-reader or interface-parity evidence.
+Repository checks pass for 1,512 public files; version check remains 1.9.0;
+AGENTS/CLAUDE equality, affected Markdown links and whitespace are checked.
+
+Native source inventory is still exactly 753 files,
+`c592ba4f98a4b7f0e4eb01e3547d88da531a871594d14a315d3c8b39b2f0725d`,
+matching `artifacts/v190/p2b-qualified-runtime/airk-build.json`. This documentation
+and validation-script phase does not repeat native/extension suites or expensive
+performance campaigns; accepted P2b evidence remains the preceding runtime gate.
+No platform or performance claim is added.
+
+Explicit self-review covered the complete design diff, live lifecycle/owner and
+registry boundaries, schema examples, authority narrowing, error/budget contracts,
+phase activation and recovery. This was not an independent review. One input
+encoding mistake while updating the ledger was corrected from the unchanged HEAD
+ledger before applying the intended text edits; no user content was discarded.
+Recovery is an ordinary source revert. P4 is next; source verification remains
+unimplemented until its end-to-end acceptance. No install, push or publication.

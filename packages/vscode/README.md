@@ -16,6 +16,8 @@ require no reindex. Rich cannot recreate unretained facts. See the
 and suggests a next read without executing tools or changing indexing. See the
 [guide](https://github.com/iokaio/airk/blob/main/docs/evidence-guidance.md).
 
+The [P3 design contracts](https://github.com/iokaio/airk/blob/main/docs/research/contracts-v190/README.md) define future Project/index scope, migration and verification safeguards. They enable no new management or verification behavior.
+
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.7.md) for current behavior and dated validation.
 
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**

@@ -10,6 +10,8 @@ commits for each accepted phase. This plan synthesizes **five primary research i
 the three original notes, the fourth research area within this document, and
 the separate cross-project feature design. Dated observations retain their limits.
 
+P3 implementation decisions are captured in [ADR 002](../decisions/002-projects-indexes-and-query-scope.md), [ADR 003](../decisions/003-dated-saved-source-verification.md) and the executable [design contract pack](contracts-v190/README.md). These settle selector names, grants, persistent policy ownership, registry-12 upgrade stages, bounded receipt semantics and profile-family inputs. They enable no new runtime behavior. Enabled verification uses explicit resolved budgets; presets require P4 measurement.
+
 Review in this order: [phase schedule](#implementation-path-on-the-current-branch),
 [performance gates](#performance-protection-throughout-implementation),
 [Indexing recommendations](#indexing-recommendations-and-agent-query-scope),

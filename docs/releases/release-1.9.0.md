@@ -35,6 +35,8 @@ acceptance require their separate authorized gates.
   advice and retains it in exports. No profile/storage or hidden scan changes.
   See [evidence guidance](../evidence-guidance.md).
 
+- **P3 - design safeguards:** [ADRs, schemas and original fixtures](../research/contracts-v190/README.md) fix explicit many-to-many scope, persistent denial ownership, migration/recovery boundaries and dated verification contracts. This phase changes documentation/design validation only; it activates no schema, source verification, trim, split or new profile.
+
 Existing read behavior inherits [1.8.7](release-1.8.7.md). P0a changes contributor
 measurement tooling; P0b changes candidate identity and forward activation policy.
 They add no registry migration, new Project/index hierarchy, split/trim operation,

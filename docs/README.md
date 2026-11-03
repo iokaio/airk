@@ -9,6 +9,8 @@ locations, explicit rich symbol-ID lookups, guards and transport/export coverage
 [Lean/Rich replies in 1.9.0](reply-detail.md) explains independent per-read
 projection, legacy defaults/flags, Workbench choices, CLI/MCP examples and limits.
 
+[P3 design contracts](research/contracts-v190/README.md), [ADR 002](decisions/002-projects-indexes-and-query-scope.md), [ADR 003](decisions/003-dated-saved-source-verification.md) and the [profile-family inventory](research/profile-family-inventory-v190.md) fix future scope, ownership, upgrade and verification boundaries; runtime activation remains gated.
+
 [Evidence guidance](evidence-guidance.md) describes bounded existing-observation
 reasons, empty-result limits and inert next reads across CLI/MCP/Workbench.
 

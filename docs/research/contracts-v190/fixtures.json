@@ -1,0 +1,2300 @@
+{
+  "schema": "airk.v190-design-fixtures/1",
+  "synthetic": true,
+  "ids": {
+    "a": "prj_11111111111111111111111111111111",
+    "b": "prj_22222222222222222222222222222222",
+    "c": "prj_33333333333333333333333333333333",
+    "code": "idx_11111111111111111111111111111111",
+    "spec": "idx_22222222222222222222222222222222",
+    "shared": "idx_33333333333333333333333333333333",
+    "other": "idx_44444444444444444444444444444444",
+    "root_code": "src_11111111111111111111111111111111",
+    "root_spec": "src_22222222222222222222222222222222",
+    "root_shared": "src_33333333333333333333333333333333"
+  },
+  "scope_cases": [
+    {
+      "name": "legacy",
+      "value": {
+        "project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "valid": true
+    },
+    {
+      "name": "explicit_projects_all_members",
+      "value": {
+        "project_ids": [
+          "prj_11111111111111111111111111111111",
+          "prj_22222222222222222222222222222222"
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "explicit_subset",
+      "value": {
+        "project_ids": [
+          "prj_11111111111111111111111111111111",
+          "prj_22222222222222222222222222222222"
+        ],
+        "index_ids": [
+          "idx_11111111111111111111111111111111",
+          "idx_33333333333333333333333333333333"
+        ],
+        "member_availability": "report"
+      },
+      "valid": true
+    },
+    {
+      "name": "verification_explicit_budget",
+      "value": {
+        "verification": "require",
+        "verification_max_sources": 25,
+        "verification_max_bytes": 16777216,
+        "verification_deadline_ms": 2000
+      },
+      "valid": true
+    },
+    {
+      "name": "verification_off",
+      "value": {
+        "verification": "off"
+      },
+      "valid": true
+    },
+    {
+      "name": "mixed",
+      "value": {
+        "project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "project_ids": [
+          "prj_11111111111111111111111111111111"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "empty_projects",
+      "value": {
+        "project_ids": []
+      },
+      "valid": false
+    },
+    {
+      "name": "duplicates",
+      "value": {
+        "project_ids": [
+          "prj_11111111111111111111111111111111",
+          "prj_11111111111111111111111111111111"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "index_without_project",
+      "value": {
+        "index_ids": [
+          "idx_11111111111111111111111111111111"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "legacy_not_new_id",
+      "value": {
+        "project_ids": [
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "obsolete_failure_policy",
+      "value": {
+        "project_ids": [
+          "prj_11111111111111111111111111111111"
+        ],
+        "failure_policy": "require_all"
+      },
+      "valid": false
+    },
+    {
+      "name": "enabled_without_budget",
+      "value": {
+        "verification": "report"
+      },
+      "valid": false
+    },
+    {
+      "name": "budget_without_mode",
+      "value": {
+        "verification_max_sources": 1
+      },
+      "valid": false
+    },
+    {
+      "name": "unbounded_bytes",
+      "value": {
+        "verification": "report",
+        "verification_max_sources": 1,
+        "verification_max_bytes": 1073741825,
+        "verification_deadline_ms": 1000
+      },
+      "valid": false
+    },
+    {
+      "name": "off_cannot_hide_active_budget",
+      "value": {
+        "verification": "off",
+        "verification_max_sources": 1
+      },
+      "valid": false
+    }
+  ],
+  "discovery_cases": [
+    {
+      "name": "projects_page",
+      "value": {
+        "view": "projects",
+        "limit": 32
+      },
+      "valid": true
+    },
+    {
+      "name": "member_page",
+      "value": {
+        "view": "indexes",
+        "project_id": "prj_11111111111111111111111111111111"
+      },
+      "valid": true
+    },
+    {
+      "name": "source_page",
+      "value": {
+        "view": "sources",
+        "project_id": "prj_11111111111111111111111111111111",
+        "index_id": "idx_33333333333333333333333333333333"
+      },
+      "valid": true
+    },
+    {
+      "name": "missing_project",
+      "value": {
+        "view": "indexes"
+      },
+      "valid": false
+    },
+    {
+      "name": "source_without_index",
+      "value": {
+        "view": "sources",
+        "project_id": "prj_11111111111111111111111111111111"
+      },
+      "valid": false
+    }
+  ],
+  "policy_cases": [
+    {
+      "name": "permanent_subtree",
+      "value": {
+        "schema": "airk.source-policy/1",
+        "index_id": "idx_11111111111111111111111111111111",
+        "owner_binding": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "namespace": "collections-1.4",
+        "collection": "index-code",
+        "epoch": 1,
+        "roots": [
+          {
+            "id": "src_11111111111111111111111111111111",
+            "canonical_path": "/fixtures/payments",
+            "aliases": [],
+            "owner": true
+          }
+        ],
+        "positive_includes": null,
+        "denies": [
+          {
+            "source_root_id": "src_11111111111111111111111111111111",
+            "kind": "subtree",
+            "path": "private",
+            "rule_id": "deny_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "reason": "trim",
+            "created_epoch": 1
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "escape",
+      "value": {
+        "schema": "airk.source-policy/1",
+        "index_id": "idx_11111111111111111111111111111111",
+        "owner_binding": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "namespace": "collections-1.4",
+        "collection": "index-code",
+        "epoch": 1,
+        "roots": [
+          {
+            "id": "src_11111111111111111111111111111111",
+            "canonical_path": "/fixtures/payments",
+            "aliases": [],
+            "owner": true
+          }
+        ],
+        "positive_includes": null,
+        "denies": [
+          {
+            "source_root_id": "src_11111111111111111111111111111111",
+            "kind": "subtree",
+            "path": "../secrets",
+            "rule_id": "deny_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "reason": "trim",
+            "created_epoch": 1
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "drive_stream",
+      "value": {
+        "schema": "airk.source-policy/1",
+        "index_id": "idx_11111111111111111111111111111111",
+        "owner_binding": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "namespace": "collections-1.4",
+        "collection": "index-code",
+        "epoch": 1,
+        "roots": [
+          {
+            "id": "src_11111111111111111111111111111111",
+            "canonical_path": "/fixtures/payments",
+            "aliases": [],
+            "owner": true
+          }
+        ],
+        "positive_includes": null,
+        "denies": [
+          {
+            "source_root_id": "src_11111111111111111111111111111111",
+            "kind": "exact",
+            "path": "src/a:stream",
+            "rule_id": "deny_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "reason": "trim",
+            "created_epoch": 1
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "root_exact",
+      "value": {
+        "schema": "airk.source-policy/1",
+        "index_id": "idx_11111111111111111111111111111111",
+        "owner_binding": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "namespace": "collections-1.4",
+        "collection": "index-code",
+        "epoch": 1,
+        "roots": [
+          {
+            "id": "src_11111111111111111111111111111111",
+            "canonical_path": "/fixtures/payments",
+            "aliases": [],
+            "owner": true
+          }
+        ],
+        "positive_includes": null,
+        "denies": [
+          {
+            "source_root_id": "src_11111111111111111111111111111111",
+            "kind": "exact",
+            "path": "",
+            "rule_id": "deny_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "reason": "trim",
+            "created_epoch": 1
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "noncanonical_trailing",
+      "value": {
+        "schema": "airk.source-policy/1",
+        "index_id": "idx_11111111111111111111111111111111",
+        "owner_binding": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "namespace": "collections-1.4",
+        "collection": "index-code",
+        "epoch": 1,
+        "roots": [
+          {
+            "id": "src_11111111111111111111111111111111",
+            "canonical_path": "/fixtures/payments",
+            "aliases": [],
+            "owner": true
+          }
+        ],
+        "positive_includes": null,
+        "denies": [
+          {
+            "source_root_id": "src_11111111111111111111111111111111",
+            "kind": "subtree",
+            "path": "src/",
+            "rule_id": "deny_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "reason": "trim",
+            "created_epoch": 1
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "empty_includes_is_empty",
+      "value": {
+        "schema": "airk.source-policy/1",
+        "index_id": "idx_11111111111111111111111111111111",
+        "owner_binding": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "namespace": "collections-1.4",
+        "collection": "index-code",
+        "epoch": 1,
+        "roots": [
+          {
+            "id": "src_11111111111111111111111111111111",
+            "canonical_path": "/fixtures/payments",
+            "aliases": [],
+            "owner": true
+          }
+        ],
+        "positive_includes": [],
+        "denies": [
+          {
+            "source_root_id": "src_11111111111111111111111111111111",
+            "kind": "subtree",
+            "path": "private",
+            "rule_id": "deny_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "reason": "trim",
+            "created_epoch": 1
+          }
+        ]
+      },
+      "valid": true
+    }
+  ],
+  "receipt_cases": [
+    {
+      "name": "single_index_match_and_supplement",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "report",
+        "status": "verified",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": true,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 1,
+          "matched_sources": 1,
+          "mismatched_sources": 0,
+          "unchecked_sources": 0,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "matched",
+            "reason": null,
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 128
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "mismatch",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "require",
+        "status": "requirements_unmet",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": false,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 1,
+          "matched_sources": 0,
+          "mismatched_sources": 1,
+          "unchecked_sources": 0,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": "9999999999999999999999999999999999999999999999999999999999999999",
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "mismatch",
+            "reason": "fixture_mismatch",
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 128
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ],
+        "error": {
+          "code": "verification_required_unmet",
+          "retryable": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "missing",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "require",
+        "status": "requirements_unmet",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": false,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 0,
+          "matched_sources": 0,
+          "mismatched_sources": 0,
+          "unchecked_sources": 1,
+          "bytes_read": 0
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": null,
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "missing",
+            "reason": "fixture_missing",
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 0
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ],
+        "error": {
+          "code": "verification_required_unmet",
+          "retryable": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "unreadable",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "require",
+        "status": "requirements_unmet",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": false,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 0,
+          "matched_sources": 0,
+          "mismatched_sources": 0,
+          "unchecked_sources": 1,
+          "bytes_read": 0
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": null,
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "unreadable",
+            "reason": "fixture_unreadable",
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 0
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ],
+        "error": {
+          "code": "verification_required_unmet",
+          "retryable": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "out_of_scope",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "require",
+        "status": "requirements_unmet",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": false,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 0,
+          "matched_sources": 0,
+          "mismatched_sources": 0,
+          "unchecked_sources": 1,
+          "bytes_read": 0
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": null,
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "out_of_scope",
+            "reason": "fixture_out_of_scope",
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 0
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ],
+        "error": {
+          "code": "verification_required_unmet",
+          "retryable": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "changed_during_check",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "require",
+        "status": "requirements_unmet",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": false,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 0,
+          "matched_sources": 0,
+          "mismatched_sources": 0,
+          "unchecked_sources": 1,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": null,
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "changed_during_check",
+            "reason": "fixture_changed_during_check",
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 128
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ],
+        "error": {
+          "code": "verification_required_unmet",
+          "retryable": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "budget_exhausted",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "require",
+        "status": "requirements_unmet",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": false,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 0,
+          "matched_sources": 0,
+          "mismatched_sources": 0,
+          "unchecked_sources": 1,
+          "bytes_read": 0
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": null,
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "budget_exhausted",
+            "reason": "fixture_budget_exhausted",
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 0
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ],
+        "error": {
+          "code": "verification_required_unmet",
+          "retryable": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "publication_expired",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "require",
+        "status": "requirements_unmet",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "expired",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": false,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 0,
+          "matched_sources": 0,
+          "mismatched_sources": 0,
+          "unchecked_sources": 1,
+          "bytes_read": 0
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": null,
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "publication_expired",
+            "reason": "fixture_publication_expired",
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 0
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ],
+        "error": {
+          "code": "verification_required_unmet",
+          "retryable": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "unsupported",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "require",
+        "status": "requirements_unmet",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": false,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 0,
+          "matched_sources": 0,
+          "mismatched_sources": 0,
+          "unchecked_sources": 1,
+          "bytes_read": 0
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": null,
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "unsupported",
+            "reason": "fixture_unsupported",
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 0
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ],
+        "error": {
+          "code": "verification_required_unmet",
+          "retryable": false
+        }
+      },
+      "valid": true
+    },
+    {
+      "name": "zero_references_not_applicable",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "report",
+        "status": "not_applicable",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": null,
+        "counts": {
+          "references": 0,
+          "references_lower_bound": 0,
+          "requested_sources": 0,
+          "requested_sources_lower_bound": 0,
+          "checked_sources": 0,
+          "matched_sources": 0,
+          "mismatched_sources": 0,
+          "unchecked_sources": 0,
+          "bytes_read": 0
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [],
+        "references": [],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ]
+      },
+      "valid": true
+    },
+    {
+      "name": "false_verified_empty",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "report",
+        "status": "verified",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": true,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 1,
+          "matched_sources": 1,
+          "mismatched_sources": 0,
+          "unchecked_sources": 0,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "false_verified_expired",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "report",
+        "status": "verified",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "expired",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": true,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 1,
+          "matched_sources": 1,
+          "mismatched_sources": 0,
+          "unchecked_sources": 0,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "matched",
+            "reason": null,
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 128
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "false_verified_incomplete",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "report",
+        "status": "verified",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": false,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": true,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 1,
+          "matched_sources": 1,
+          "mismatched_sources": 0,
+          "unchecked_sources": 0,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "matched",
+            "reason": null,
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 128
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "off_receipt_forbidden",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "off",
+        "status": "verified",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": true,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 1,
+          "matched_sources": 1,
+          "mismatched_sources": 0,
+          "unchecked_sources": 0,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": null,
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": []
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "matched",
+            "reason": null,
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 128
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ]
+      },
+      "valid": false
+    },
+    {
+      "name": "shared_index_precise_attribution",
+      "value": {
+        "schema": "airk.saved-source-verification/1",
+        "method": "sha256-full-saved-source/1",
+        "mode": "report",
+        "status": "verified",
+        "scope_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "selection_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "observed_from_unix_ms": 1000,
+        "observed_to_unix_ms": 1010,
+        "publication_fence": "current",
+        "inventory_complete": true,
+        "all_references_accounted": true,
+        "source_rows_omitted": 0,
+        "requirements_satisfied": true,
+        "counts": {
+          "references": 2,
+          "references_lower_bound": 2,
+          "requested_sources": 1,
+          "requested_sources_lower_bound": 1,
+          "checked_sources": 1,
+          "matched_sources": 1,
+          "mismatched_sources": 0,
+          "unchecked_sources": 0,
+          "bytes_read": 128
+        },
+        "limits": {
+          "max_sources": 25,
+          "max_bytes": 16777216,
+          "deadline_ms": 2000,
+          "stream_bytes": 65536,
+          "concurrency": 1,
+          "reference_inventory_max": 4096,
+          "receipt_bytes_max": 32768,
+          "hit": []
+        },
+        "origins": [
+          {
+            "id": "origin-0",
+            "index_id": "idx_33333333333333333333333333333333",
+            "legacy_project": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "collection": "index-code",
+            "incarnation": "11111111111111111111111111111111",
+            "publication": "airk-r1:11111111111111111111111111111111:1:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "project_ids": [
+              "prj_11111111111111111111111111111111",
+              "prj_22222222222222222222222222222222"
+            ]
+          }
+        ],
+        "sources": [
+          {
+            "id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "origin_id": "origin-0",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src/queue.rs",
+            "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "observed_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "profile_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "project_ids": [
+              "prj_11111111111111111111111111111111"
+            ],
+            "reference_ids": [
+              "ref-0",
+              "ref-1"
+            ],
+            "state": "matched",
+            "reason": null,
+            "observed_from_unix_ms": 1001,
+            "observed_to_unix_ms": 1009,
+            "bytes_read": 128
+          }
+        ],
+        "references": [
+          {
+            "id": "ref-0",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/hits/0/citation",
+            "kind": "citation"
+          },
+          {
+            "id": "ref-1",
+            "source_id": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+            "result_pointer": "/definitions/0/matches/0/citation",
+            "kind": "definition_pointer"
+          }
+        ],
+        "qualifications": [
+          {
+            "kind": "coverage_not_certified",
+            "verified": false,
+            "reason": "Returned-source checks do not establish complete search."
+          }
+        ]
+      },
+      "valid": true
+    }
+  ],
+  "graph": {
+    "granted_projects": [
+      "prj_11111111111111111111111111111111",
+      "prj_22222222222222222222222222222222"
+    ],
+    "projects": [
+      {
+        "id": "prj_11111111111111111111111111111111",
+        "defaults": [
+          "idx_11111111111111111111111111111111"
+        ],
+        "members": [
+          {
+            "index_id": "idx_11111111111111111111111111111111",
+            "source_root_id": "src_11111111111111111111111111111111",
+            "path": "src"
+          },
+          {
+            "index_id": "idx_33333333333333333333333333333333",
+            "source_root_id": "src_33333333333333333333333333333333",
+            "path": "shared/api"
+          }
+        ]
+      },
+      {
+        "id": "prj_22222222222222222222222222222222",
+        "defaults": [
+          "idx_22222222222222222222222222222222",
+          "idx_33333333333333333333333333333333"
+        ],
+        "members": [
+          {
+            "index_id": "idx_22222222222222222222222222222222",
+            "source_root_id": "src_22222222222222222222222222222222",
+            "path": ""
+          },
+          {
+            "index_id": "idx_33333333333333333333333333333333",
+            "source_root_id": "src_33333333333333333333333333333333",
+            "path": "shared/impl"
+          }
+        ]
+      },
+      {
+        "id": "prj_33333333333333333333333333333333",
+        "defaults": [],
+        "members": [
+          {
+            "index_id": "idx_33333333333333333333333333333333",
+            "source_root_id": "src_33333333333333333333333333333333",
+            "path": "private"
+          }
+        ]
+      }
+    ],
+    "selection": [
+      "prj_11111111111111111111111111111111",
+      "prj_22222222222222222222222222222222"
+    ],
+    "expected_indexes": [
+      "idx_11111111111111111111111111111111",
+      "idx_22222222222222222222222222222222",
+      "idx_33333333333333333333333333333333"
+    ],
+    "expected_shared_paths": [
+      "shared/api",
+      "shared/impl"
+    ],
+    "hits": [
+      {
+        "index_id": "idx_33333333333333333333333333333333",
+        "source_root_id": "src_33333333333333333333333333333333",
+        "path": "shared/api/types.rs",
+        "expected_projects": [
+          "prj_11111111111111111111111111111111"
+        ]
+      },
+      {
+        "index_id": "idx_33333333333333333333333333333333",
+        "source_root_id": "src_33333333333333333333333333333333",
+        "path": "shared/impl/cache.rs",
+        "expected_projects": [
+          "prj_22222222222222222222222222222222"
+        ]
+      },
+      {
+        "index_id": "idx_33333333333333333333333333333333",
+        "source_root_id": "src_33333333333333333333333333333333",
+        "path": "shared/hidden/notes.md",
+        "expected_projects": []
+      },
+      {
+        "index_id": "idx_33333333333333333333333333333333",
+        "source_root_id": "src_33333333333333333333333333333333",
+        "path": "private/key.rs",
+        "expected_projects": []
+      }
+    ]
+  },
+  "partition": {
+    "root_id": "src_11111111111111111111111111111111",
+    "eligible": [
+      "src/a.rs",
+      "src/b.rs",
+      "docs/spec.md",
+      "private/key.rs"
+    ],
+    "existing_denies": [
+      "private"
+    ],
+    "selection": [
+      {
+        "kind": "subtree",
+        "path": "docs"
+      },
+      {
+        "kind": "exact",
+        "path": "src/a.rs"
+      }
+    ],
+    "expected_selected": [
+      "docs/spec.md",
+      "src/a.rs"
+    ],
+    "expected_remainder": [
+      "src/b.rs"
+    ],
+    "new_paths": [
+      {
+        "path": "docs/new.md",
+        "destination": true
+      },
+      {
+        "path": "src/a.rs.backup",
+        "destination": false
+      },
+      {
+        "path": "private/new.rs",
+        "destination": false
+      }
+    ]
+  },
+  "workspace_scenarios": [
+    {
+      "scenario": 1,
+      "name": "repository_folder",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "choose_projects_nonmodal"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 2,
+      "name": "save_workspace_as",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "explicit_copy_reuse_associations"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 3,
+      "name": "add_sibling_folder",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "review_new_member_keep_active_grant"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 4,
+      "name": "repository_container",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "explicit_separate_or_combined_sources"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 5,
+      "name": "container_then_child",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "offer_scoped_reuse_or_review_overlap"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 6,
+      "name": "registered_subfolder",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "offer_narrow_parent_prefix_or_new_index"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 7,
+      "name": "parent_and_child_roots",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "disclose_overlap_no_duplicate_registration"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 8,
+      "name": "alias_or_link_spelling",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "native_identity_proof_or_unknown"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 9,
+      "name": "worktrees_and_clones",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "separate_source_identity_no_embedding_share"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 10,
+      "name": "submodules_and_vendor",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "no_marker_ownership_or_auto_pruning"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 11,
+      "name": "remove_folder_or_close_window",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": false,
+        "behavior": "preserve_indexes_watchers_other_window_grants"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 12,
+      "name": "reorder_or_display_rename",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": false,
+        "behavior": "stable_mcp_definition_no_restart"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 13,
+      "name": "move_repository_on_disk",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "old_binding_unavailable_no_implicit_relink"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 14,
+      "name": "remote_authority",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "host_bound_catalog_no_local_remote_union"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 15,
+      "name": "untrusted_folder",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "no_native_launch_scan_or_grant"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 16,
+      "name": "files_search_excludes",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": false,
+        "behavior": "explain_airk_ignore_no_conversion"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 17,
+      "name": "window_scoped_folder_setting",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": false,
+        "behavior": "report_effective_window_setting"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 18,
+      "name": "manual_mcp_conflict",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "per_member_manual_conflict_preview"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 19,
+      "name": "external_agent_workspace_directory",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "reviewed_saved_agent_scope_no_parent_index"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 20,
+      "name": "profile_build_schema_skew",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "template_recovery_no_regrant_old_schema_refusal"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 21,
+      "name": "empty_window",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "choose_existing_projects_without_folder_index"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 22,
+      "name": "untitled_context",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": true,
+        "behavior": "opaque_local_context_explicit_save_copy"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 23,
+      "name": "two_windows_one_context",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": false,
+        "behavior": "independent_active_grants_future_saved_defaults_only"
+      },
+      "qualification_phase": "P6/P14"
+    },
+    {
+      "scenario": 24,
+      "name": "known_saved_context_reopen",
+      "expected": {
+        "automatic_registration": false,
+        "automatic_scope_expansion": false,
+        "source_scan_on_open": false,
+        "requires_explicit_selection": false,
+        "behavior": "restore_valid_reviewed_snapshot_quietly"
+      },
+      "qualification_phase": "P6/P14"
+    }
+  ],
+  "legacy_retention": {
+    "agent_lean_included": [
+      "definition",
+      "call",
+      "dynamic_call",
+      "import",
+      "inherits",
+      "key",
+      "section",
+      "requirement",
+      "decision",
+      "acceptance",
+      "architecture",
+      "design",
+      "route_registration",
+      "route_annotation",
+      "test_registration",
+      "test_declaration",
+      "table",
+      "table_row"
+    ],
+    "agent_lean_omitted_manifest_kinds": [
+      "package_identity",
+      "package_dependency",
+      "package_script",
+      "workspace_member",
+      "workspace_configuration",
+      "project_configuration"
+    ],
+    "new_profiles_active": false
+  },
+  "migration_faults": [
+    {
+      "stage": "U0",
+      "fault": "foreign_or_newer_schema",
+      "expected": "unchanged_refusal"
+    },
+    {
+      "stage": "U0",
+      "fault": "missing_or_corrupt_initialized_table",
+      "expected": "unchanged_refusal"
+    },
+    {
+      "stage": "U1",
+      "fault": "unknown_live_owner",
+      "expected": "blocked_no_mutation"
+    },
+    {
+      "stage": "U1",
+      "fault": "accepted_jobs_in_flight",
+      "expected": "drain_preserve_receipts"
+    },
+    {
+      "stage": "U2",
+      "fault": "wal_backup_or_capacity_failure",
+      "expected": "old_schema_preserved"
+    },
+    {
+      "stage": "U2",
+      "fault": "invalid_backup_digest",
+      "expected": "activation_blocked"
+    },
+    {
+      "stage": "U3",
+      "fault": "crash_before_commit",
+      "expected": "transaction_rollback"
+    },
+    {
+      "stage": "U3",
+      "fault": "crash_after_commit",
+      "expected": "resume_without_duplicate_ids"
+    },
+    {
+      "stage": "U4",
+      "fault": "duplicate_context_import",
+      "expected": "idempotent_same_ids"
+    },
+    {
+      "stage": "U4",
+      "fault": "missing_editor_state",
+      "expected": "pending_no_guessed_union"
+    },
+    {
+      "stage": "U5",
+      "fault": "old_executable",
+      "expected": "upgrade_required_no_write"
+    },
+    {
+      "stage": "U5",
+      "fault": "probe_failure_before_new_writes",
+      "expected": "owned_recovery_only"
+    },
+    {
+      "stage": "U6",
+      "fault": "new_user_writes_then_downgrade",
+      "expected": "restore_refused_forward_repair"
+    },
+    {
+      "stage": "U6",
+      "fault": "source_missing",
+      "expected": "preserve_index_identity_no_scan"
+    }
+  ]
+}

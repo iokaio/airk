@@ -13,6 +13,8 @@ defaults; Rich cannot restore evidence omitted during indexing.
 [Evidence guidance](docs/evidence-guidance.md) explains returned limitations and
 useful next reads without extra queries or automatic indexing.
 
+P3 now records the [Project/index, migration and verification design contracts](docs/research/contracts-v190/README.md). These are implementation safeguards; management and verification remain gated by later phases.
+
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](docs/releases/release-1.8.7.md) for current behavior and dated validation.
 
 **Find the code and documents behind a feature. Give your coding agent cited evidence, or explore it yourself in AIRK Workbench.**

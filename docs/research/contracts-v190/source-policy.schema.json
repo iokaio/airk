@@ -1,0 +1,235 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "airk.source-policy/1"
+    },
+    "index_id": {
+      "type": "string",
+      "pattern": "^idx_[0-9a-f]{32}$"
+    },
+    "owner_binding": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "namespace": {
+      "const": "collections-1.4"
+    },
+    "collection": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9223372036854775807
+    },
+    "roots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^src_[0-9a-f]{32}$"
+          },
+          "canonical_path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32768,
+            "pattern": "^(?:/|[A-Za-z]:[\\\\/]|\\\\\\\\)"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "minItems": 0,
+            "maxItems": 16,
+            "uniqueItems": true
+          },
+          "owner": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "canonical_path",
+          "aliases",
+          "owner"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 17,
+      "uniqueItems": true
+    },
+    "positive_includes": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "source_root_id": {
+                "type": "string",
+                "pattern": "^src_[0-9a-f]{32}$"
+              },
+              "kind": {
+                "enum": [
+                  "exact",
+                  "subtree"
+                ]
+              },
+              "path": {
+                "type": "string",
+                "maxLength": 4096,
+                "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\/$)[^\\\\:\\u0000]*$"
+              }
+            },
+            "required": [
+              "source_root_id",
+              "kind",
+              "path"
+            ],
+            "additionalProperties": false,
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "kind": {
+                      "const": "exact"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "path": {
+                      "minLength": 1
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "minItems": 0,
+          "maxItems": 128,
+          "uniqueItems": true
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "denies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_root_id": {
+            "type": "string",
+            "pattern": "^src_[0-9a-f]{32}$"
+          },
+          "kind": {
+            "enum": [
+              "exact",
+              "subtree"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 4096,
+            "pattern": "^(?!/)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*\\/$)[^\\\\:\\u0000]*$"
+          },
+          "rule_id": {
+            "type": "string",
+            "pattern": "^deny_[0-9a-f]{32}$"
+          },
+          "reason": {
+            "enum": [
+              "trim",
+              "split_transfer"
+            ]
+          },
+          "created_epoch": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "inherited_from": {
+            "type": "object",
+            "properties": {
+              "index_id": {
+                "type": "string",
+                "pattern": "^idx_[0-9a-f]{32}$"
+              },
+              "rule_id": {
+                "type": "string",
+                "pattern": "^deny_[0-9a-f]{32}$"
+              },
+              "epoch": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "index_id",
+              "rule_id",
+              "epoch"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "source_root_id",
+          "kind",
+          "path",
+          "rule_id",
+          "reason",
+          "created_epoch"
+        ],
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "exact"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "path": {
+                  "minLength": 1
+                }
+              }
+            }
+          }
+        ]
+      },
+      "minItems": 0,
+      "maxItems": 128,
+      "uniqueItems": true
+    }
+  },
+  "required": [
+    "schema",
+    "index_id",
+    "owner_binding",
+    "namespace",
+    "collection",
+    "epoch",
+    "roots",
+    "positive_includes",
+    "denies"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://airk.local/design/v190/source-policy.schema.json",
+  "title": "source-policy.schema.json",
+  "x-airk-activation-phase": "P9 trim; P10 positive split predicates",
+  "description": "P3 design contract; not an advertised runtime capability before its phase gate."
+}
