@@ -25,6 +25,7 @@ pub mod publication;
 pub mod readiness;
 pub mod references;
 pub mod reply;
+pub mod search_execution;
 pub mod search_filters;
 pub mod service;
 pub mod service_cleanup;
@@ -200,6 +201,8 @@ pub struct Hit {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SearchResponse {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<search_execution::SearchExecution>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publication: Option<evidence::RevisionEnvelope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

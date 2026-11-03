@@ -3,7 +3,7 @@ import { render } from 'preact';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, toolFormArguments, toolFormFields, Value, WorkbenchFormDraft, WorkbenchMessage, WorkbenchState, WorkbenchTurn } from '../workbenchContracts';
 import {verificationLabel} from '../sourceVerification';
-import { canonical, discoveryDetails, markdown } from '../workbenchRender';
+import { canonical, discoveryDetails, markdown, searchExecutionLabel } from '../workbenchRender';
 import './style.css';
 declare function acquireVsCodeApi(): { postMessage(message:WorkbenchMessage):void };
 const vscode=acquireVsCodeApi(),send=(message:WorkbenchMessage)=>vscode.postMessage(message);
@@ -37,6 +37,9 @@ function DiscoveryDetails({turn,state}:{turn:WorkbenchTurn;state:WorkbenchState}
     const details=useMemo(()=>discoveryDetails(turn.envelope??{}),[turn.envelope]);
     return <>{turn.envelope?.source_verification&&<details open><summary>{verificationLabel(turn.envelope.source_verification)}</summary><p class="note">Dated saved-byte agreement; viewing this receipt performs no new check. Unsaved editor buffers, extraction accuracy and search completeness are not certified.</p><pre>{canonical(turn.envelope.source_verification)}</pre></details>}{details.map(step=><section class="discovery-details" aria-label={`${step.tool} discovery details`} key={step.id}>
         {step.sourceVerification&&<details open><summary>{verificationLabel(step.sourceVerification)}</summary><p class="note">Saved disk bytes only, at the original observation time. Extraction, coverage, relevance and unsaved buffers remain qualified.</p><pre>{canonical(step.sourceVerification)}</pre></details>}
+        {step.execution&&<details open><summary>Search execution</summary>{searchExecutionLabel(step.execution)&&<p class={step.execution.incomplete===true?'warning':'note'}>{searchExecutionLabel(step.execution)}</p>}<pre>{canonical(step.execution)}</pre></details>}
+        {step.readError&&<details open><summary>Read refusal</summary><pre>{canonical({error:step.readError,...(step.requestedMode!==undefined?{requested_mode:step.requestedMode}:{}),...(step.publication!==undefined?{publication:step.publication}:{})})}</pre></details>}
+        {(step.semanticReadiness||step.discoveryReadiness)&&<details><summary>Indexed coverage observations</summary><p class="note">These observations describe the retained index and are independent of this search's execution outcome.</p><pre>{canonical({...(step.semanticReadiness?{semantic_readiness:step.semanticReadiness}:{}),...(step.discoveryReadiness?{discovery_readiness:step.discoveryReadiness}:{})})}</pre></details>}
         {step.replyDetail&&<p class="note">Reply detail: {step.replyDetail==='lean'?'Lean':'Rich'}</p>}
         {step.readGuidance&&<details><summary>Guidance vocabulary and limits</summary><pre>{canonical(step.readGuidance)}</pre></details>}
         {step.guidance&&<details open><summary>Evidence guidance</summary><ul>{(Array.isArray(step.guidance.observations)?step.guidance.observations:[]).map((raw,i)=>{const row=object(raw);return <li key={i}><strong>{String(row.reason).replaceAll('_',' ')} ({String(row.subject).replaceAll('_',' ')}): </strong>{String(row.message)} <small>Next read: {String(row.next_read).replaceAll('_',' ')}. Basis: {String(row.basis)}.</small></li>;})}</ul>{step.guidance.truncated===true&&<p class="note">Additional guidance was omitted. Original status and coverage remain in the full response.</p>}<p class="note">Suggestions do not run tools or change indexing. Keep the original authorized scope.</p></details>}

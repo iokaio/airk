@@ -12,6 +12,17 @@ use std::{
 pub const PROTOCOL: u32 = 1;
 pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
 
+/// Transport availability only; protocol, scope and model-integrity errors do
+/// not carry this marker and must not become a degraded search success.
+#[derive(Debug)]
+pub struct HelperUnavailable;
+impl std::fmt::Display for HelperUnavailable {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("shared embedding helper temporarily unavailable")
+    }
+}
+impl std::error::Error for HelperUnavailable {}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelLocation {

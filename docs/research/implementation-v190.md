@@ -2129,3 +2129,109 @@ or version promotion occurred. Historical unexplained helper exits remain
 unattributed; malformed output can still appear as control EOF. Remaining
 signed/notarized, installed-editor/agent and platform release gates are retained
 for P14 rather than claimed from these local source results.
+
+## P6c — policy-qualified outage reads (3 November 2026, completed locally)
+
+P6b was committed and pushed as
+`c7e20221232ac8034f2b29631a92736dd8010814` with the authorized human DCO
+trailer. P6c retains working version **1.8.8** and Report verification as the
+default. Canonical, transport and presentation work was integrated and qualified
+together before the phase commit.
+
+The agreed per-search `execution` observation records version 1, original
+requested mode, actual served mode and semantic incompleteness with a typed
+reason. It does not replace indexed semantic/discovery readiness, byte/count
+truncation or source-verification receipts. A typed shared helper-availability
+failure permits Default to keep its already-collected lexical branch only when
+the saved policy allows it. Explicit vector/hybrid and RequireComplete retain
+strict helper-outage behavior. The existing explicit Hybrid semantic-upgrade
+lexical exception remains separate and will be disclosed as such.
+
+Strict helper failures use one bounded Core receipt across MCP and Kernel
+Workbench fallback, with the selected publication/readiness when known and
+`retryable: false` / `retry_later_without_replay`. They do not join the automatic
+read-retry roster. Saved opt-out preserves requested Default without being called
+a helper outage. No health probe, source refresh, helper spawn or query replay is
+introduced by this projection.
+
+The consumer audit identified an existing `execution` key used to identify
+diagnostics in Terse rendering. Search execution must remain distinguishable so
+adding the observation cannot silently expand normal replies. Complete and
+explicitly selected Workbench views/exports must retain the new qualification;
+an evidence-only plan view must still report semantic incompleteness even when
+its selected format omits raw step payloads. The completed qualification below
+exercises canonical policy/errors, actual CLI/MCP/plan paths, native package
+behavior, source-verification parity and unchanged performance limits.
+
+### P6c qualification checkpoint
+
+The native implementation is frozen at
+`28f6f23ab1860db27b21c6cef252525b5f7c668cd6e4aeb037049221fe55ef86`
+(789 native inputs). Windows workspace Clippy passed with all targets/features
+and warnings denied. The complete nextest campaign ran **1,973 cases in
+1,126.268 s: 1,972 passed, one failed, 39 skipped**. Its sole failure was the
+generated CLI reference after the intentional Search help change. Regeneration
+through the actual current parser passed; the exact nextest recheck then passed
+in **0.069 s**. The original failing campaign remains retained rather than
+described as an all-green invocation. All workspace doctest targets then passed
+(zero executable examples). The fresh Windows paired release build passed
+(**3m16s helper, 4m54s main**), with its source receipt matching the frozen
+789-input identity. Package and performance gates subsequently passed without
+repeating the full workspace campaign.
+
+Windows actual CLI/tool/shell/MCP/plan outage parity passed in **52.34 s**,
+covering all three saved policies and Off/Report/Require. The canonical policy
+matrix passed in **30.71 s**; Kernel Workbench passed **24, one measurement
+ignored**. Extension compilation and tests passed **550, 19 skipped** using
+Node **24.21.0**, rather than the repository's 24.15.0 pin. Python passed
+**360, nine skipped**; all seven fresh dependency checks passed without graph or
+policy changes. The initially failing MCP fixture supplied verification budgets
+with Off, which the existing controls correctly reject; the corrected fixture
+uses `VerificationControls::off()` and preserves finite Report/Require budgets.
+Its exact corrected test passed; the earlier failed log remains retained.
+
+On neo, current-source workspace Clippy and **211 focused/native tests** passed,
+with one explicit role measurement ignored. This includes Core 76, MCP 99,
+Kernel canonical matrix one, Kernel Workbench 24, pool-client ten and actual
+outage parity one. The fresh paired release build passed (**4m23s helper,
+5m20s main**); actual 16-file model-client smoke passed in **92.635 s**.
+The full isolated installer/repair/upgrade/rollback/retirement/uninstall and
+two-client lifetime smoke passed. All 791 declared inputs matched before and
+after; no matching owned runner/client/install processes or named fixture
+directories remained. Receipt:
+`artifacts/v190/neo-p6c/final-28f6f23/qualification.json`.
+Mac full-workspace tests were not run; the 211 cases are the focused matrix,
+alongside full-workspace Clippy. No Developer ID, notarization,
+installed-editor or native ONNX rollover acceptance is inferred from this
+checkpoint.
+
+Under the approved lean execution refinement, P6c performance retains the
+original 60 frozen/P5 comparisons and adds 24 comparisons against the immediately
+preceding accepted P6b phase. P6a comparisons remain historical evidence; they
+are not accumulated again. Limits and scenario assertions are unchanged.
+
+The fresh Windows pair passed all **three four-core package smokes**, one
+iteration each: managed MCP **58.10 s**, native clients **27.70 s** and installer
+**103.40 s**. Receipt:
+`artifacts/ci-local/20261103-150212-1756dbc9/summary.json`.
+The separate five-iteration release gate remains outstanding. The pooled-model
+smoke passed two-project model reuse, replacement/regeneration, helper-loss
+lexical/source preservation and explicit recovery. Log:
+`artifacts/v190/p6c-final-pool-smoke.log`.
+
+All **84/84** latency comparisons passed with the existing limits unchanged.
+Candidate and contemporary P5 control each ran Off and default Report:
+**90 trials / 810 calls per campaign**, zero errors/retries, and **720 verified
+receipts** in each Report campaign. Candidate binary hashes matched before and
+after; no competing builds/tests ran during measurement. Receipt:
+`artifacts/v190/p6c-gates.json`; reports:
+`p6c-{off,report,control-off,control-report}-mcp/replay/report.json`.
+
+The lead reviewed the complete combined change independently of its authors;
+separate Sol and root reviews found no remaining production blocker. Final
+source/receipt checks matched the frozen inputs. No normal hierarchy activation,
+user-runtime change, PR, publication or version promotion occurred. Remaining
+ONNX rollover, five-iteration release, signed/notarized, installed-editor/agent
+and wider platform qualification remain explicitly assigned to P14.
+Final formatting, whitespace, instruction-file byte identity, repository checks
+for **1,574 public files** and synchronized **1.8.8** versions passed.

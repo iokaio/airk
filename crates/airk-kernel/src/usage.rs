@@ -1154,6 +1154,7 @@ mod tests {
             })
             .collect();
         let baseline = airk_core::SearchResponse {
+            execution: None,
             publication: None,
             semantic_readiness: None,
             discovery_readiness: None,

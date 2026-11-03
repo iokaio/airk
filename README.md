@@ -1,5 +1,7 @@
 # AIRK: Local Search for Coding Agents
 
+P6c's [search execution contract](docs/search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
+
 **1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](docs/releases/release-1.8.8.md) and [implementation ledger](docs/research/implementation-v190.md) track implementation and validation toward the [planned 1.9.0 release](docs/research/plan-v190.md). Project/index management remains gated. Saved-source verification defaults to Report; see the [controls and limits](docs/source-verification.md).
 
 P5's catalog upgrade foundation passed local isolated qualification. Normal activation of

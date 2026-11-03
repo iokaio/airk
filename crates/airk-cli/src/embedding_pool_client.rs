@@ -22,14 +22,7 @@ struct Work {
     operation: protocol::Operation,
     reply: Option<mpsc::SyncSender<Result<Response>>>,
 }
-#[derive(Debug)]
-pub struct HelperUnavailable;
-impl std::fmt::Display for HelperUnavailable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("shared embedding helper temporarily unavailable")
-    }
-}
-impl std::error::Error for HelperUnavailable {}
+pub use airk_retrieval::embedding_worker::HelperUnavailable;
 fn transient_helper_error(error: anyhow::Error) -> anyhow::Error {
     let transient = error.chain().any(|cause| {
         cause.is::<tokio::time::error::Elapsed>()

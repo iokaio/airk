@@ -55,7 +55,35 @@ Semantic failures retain their original typed cause when recording the failure a
 
 `airk_status`, search results and the extension report `semantic_readiness`: disabled, pending, partial, ready or failed; selected/completed artifacts; optional selected unit count and completed units; saved model/selection identities and a bounded failure reason. An unknown unit total remains null. The base publication removes vectors for changed or deleted inputs immediately. Pending work binds each path to its retained source hash and extraction object plus the saved model and selection digests; a superseding scan replaces incompatible work. Vector results always cite the current retained source. Exact/lexical evidence stays queryable while vectors are pending or failed.
 
-The saved default search policy is `partial_hybrid` unless changed with `airk semantic policy lexical_while_pending` or `airk semantic policy require_complete`. The first discloses partial hybrid results; the second returns lexical evidence while enrichment runs; the third makes default search explicitly unavailable until vectors are ready. Explicit vector and hybrid requests disclose current coverage and never silently become lexical queries. Reads and status never start enrichment. The panel's vector opt-out still selects lexical search. `IndexReport.first_ready_us` measures the base publication; `fully_ready_us` is present only when semantic work completes in that invocation. Readiness timestamps around publication are wall-clock observations, not precise gate timing.
+The saved default search policy starts at `partial_hybrid`. It permits partial
+hybrid results; `lexical_while_pending` selects lexical evidence while enrichment
+runs; `require_complete` refuses Default search until discovery and semantic
+coverage are ready. The kernel's `set_default_semantic_search_policy` API persists
+that selection, and the native read interfaces honor it. The older standalone
+`semantic policy` command is not part of the current native CLI catalog.
+
+The 1.8.8 P6c working change also permits Default to retain its already-selected
+lexical evidence on a typed shared-helper availability failure when the saved
+policy is `partial_hybrid` or `lexical_while_pending`. Explicit vector/hybrid and
+`require_complete` remain errors for helper outages. Corruption, permission,
+configuration and malformed-protocol errors do not become lexical fallback.
+The existing explicit Hybrid lexical behavior during an incompatible ONNX
+publication upgrade remains separate and is disclosed as
+`semantic_upgrade_pending`.
+
+Search `execution` records requested and served modes, semantic incompleteness
+and its reason. Indexed `semantic_readiness` still describes saved coverage;
+`truncated` still describes omitted matching content from count/text/work limits.
+Verified returned source bytes do not establish that a missing semantic branch
+was complete. Strict helper failures retain known publication/readiness in a
+bounded `helper_unavailable` receipt with `retryable: false`; they never authorize
+automatic replay. Reads and status do not start enrichment or add a health probe.
+The panel's vector opt-out still selects lexical search and preserves requested
+Default without calling it an outage. `IndexReport.first_ready_us` measures the
+base publication; `fully_ready_us` is present only when semantic work completes
+in that invocation. Readiness timestamps around publication are wall-clock
+observations, not precise gate timing. P6c qualification is tracked in the
+[implementation ledger](research/implementation-v190.md).
 
 Scheduled cold scans and compatible updates can commit exact source, fact and lexical evidence in bounded batches before traversal finishes. `discovery_readiness` in status and search gives a scan epoch, processed and committed artifact counts, and `pending`, `partial`, `ready` or `failed` state. The total remains unknown until the scan completes and validates its inventory. Search sets `truncated` while discovery is incomplete: a missing result cannot establish that the source is absent. The `require_complete` default policy waits for both discovery and semantic readiness. Each batch advances the current token, and earlier committed batches remain readable after a failed scan. A later complete scan reconciles the inventory before removing absent paths. This progressive path applies to scheduled non-full scans with compatible configuration, including populated collections and interrupted scans. Full rebuilds and configuration changes publish their source inventory at completion.
 

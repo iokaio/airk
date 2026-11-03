@@ -13,6 +13,11 @@ use std::sync::Mutex;
 pub(crate) const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep scopes, locations, exact tokens/hashes/validators; finish airk_changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: airk_symbols -> airk_references -> airk_read_file/airk_context; concepts: airk_search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. {ref:publication} is reply-local. Manage via CLI.";
 
 pub(crate) fn error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
+    if let Some(receipt) = airk_core::search_execution::helper_unavailable_receipt(error) {
+        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+            receipt.to_string(),
+        )]);
+    }
     if error
         .downcast_ref::<airk_core::verification::VerificationProjectionChanged>()
         .is_some()
@@ -240,7 +245,7 @@ impl Session {
             || object
                 .get("status_detail")
                 .is_some_and(|value| value == "summary")
-            || object.contains_key("execution")
+            || diagnostic_execution(object)
             || object.contains_key("adapters")
             || object.contains_key("baseline_status");
         self.status(object, explicit);
@@ -318,7 +323,7 @@ impl Session {
 
 pub(crate) fn terse_envelope(object: &mut Map<String, Value>) {
     // Keep detailed explicit inspection output; these are diagnostic requests.
-    if object.contains_key("execution") || object.contains_key("adapters") {
+    if diagnostic_execution(object) || object.contains_key("adapters") {
         return;
     }
     object.remove("generation");
@@ -329,6 +334,17 @@ pub(crate) fn terse_envelope(object: &mut Map<String, Value>) {
         indexing.remove("note");
     }
     share_provenance(object);
+}
+
+fn diagnostic_execution(object: &Map<String, Value>) -> bool {
+    object.get("execution").is_some_and(|execution| {
+        // Search execution is a per-read observation, not an explicit runtime
+        // diagnostic. Keep that observation while applying normal Terse rules
+        // to the rest of a search response.
+        !(object.contains_key("hits")
+            && execution.get("requested_mode").is_some()
+            && execution.get("served_mode").is_some())
+    })
 }
 
 fn publication_once(object: &mut Map<String, Value>) {
@@ -419,6 +435,29 @@ fn share_record(record: &mut Map<String, Value>, table: &mut Vec<Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn helper_failure_uses_complete_canonical_receipt_without_replay_or_private_details() {
+        let error = anyhow::anyhow!("private transport path and request details").context(
+            airk_core::search_execution::SearchUnavailable {
+                requested_mode: airk_core::search_execution::RequestedMode::Vector,
+                publication: None,
+                semantic_readiness: None,
+                discovery_readiness: None,
+            },
+        );
+        let expected = airk_core::search_execution::helper_unavailable_receipt(&error).unwrap();
+        let result = error_result(&error);
+        assert_eq!(result.is_error, Some(true));
+        let actual: Value =
+            serde_json::from_str(&result.content[0].as_text().unwrap().text).unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(actual["error"]["retryable"], false);
+        assert_eq!(actual["error"]["action"], "retry_later_without_replay");
+        assert!(actual.get("retry_after_ms").is_none());
+        assert!(!actual.to_string().contains("private transport"));
+        assert!(airk_kernel::retrieval_retry::read_retry_hint(&error).is_none());
+    }
+
     #[test]
     fn structured_retry_is_an_error_without_fabricated_evidence() {
         let error =

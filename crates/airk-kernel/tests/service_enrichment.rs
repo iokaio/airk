@@ -3,7 +3,8 @@
 use airk_core::{
     SearchQuery,
     identity::{Incarnation, Sha256Digest},
-    readiness::SemanticState,
+    readiness::{DefaultSearchPolicy, SemanticState},
+    search_execution::{IncompleteReason, RequestedMode, ServedMode},
     service::WorkerIdentity,
     service_resources::WorkAllowance,
 };
@@ -25,8 +26,28 @@ use std::{
 
 struct Transport {
     available: AtomicBool,
+    failure: AtomicUsize,
+    requests: AtomicUsize,
     opens: AtomicUsize,
     embedded: AtomicUsize,
+}
+impl Transport {
+    fn require_available(&self) -> Result<()> {
+        ensure!(
+            self.available.load(Ordering::Acquire),
+            embedding_worker::HelperUnavailable
+        );
+        match self.failure.load(Ordering::Acquire) {
+            0 => Ok(()),
+            1 => anyhow::bail!("unrelated fixture failure mentioning helper unavailable"),
+            2 => Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into()),
+            3 => Err(std::io::Error::from(std::io::ErrorKind::InvalidData).into()),
+            _ => anyhow::bail!("fixture model identity mismatch"),
+        }
+    }
+    fn calls(&self) -> usize {
+        self.opens.load(Ordering::Acquire) + self.requests.load(Ordering::Acquire)
+    }
 }
 struct Adapter(Arc<Transport>);
 impl Connector for Adapter {
@@ -36,15 +57,15 @@ impl Connector for Adapter {
             "service tried a collection-local model"
         );
         self.0.opens.fetch_add(1, Ordering::AcqRel);
-        ensure!(
-            self.0.available.load(Ordering::Acquire),
-            "fixture helper is unavailable"
-        );
+        self.0.require_available()?;
         Ok(self.0.clone())
     }
 }
 impl RemoteSession for Transport {
     fn request(&self, request: Request) -> Result<Response> {
+        // Cached sessions must observe an outage too, not only new Open calls.
+        self.requests.fetch_add(1, Ordering::AcqRel);
+        self.require_available()?;
         match request {
             Request::Plan { text } => Ok(Response::Planned {
                 tokens: PlanningTokens {
@@ -67,6 +88,249 @@ impl RemoteSession for Transport {
             _ => anyhow::bail!("unexpected fixture transport operation"),
         }
     }
+}
+
+fn outage_policy_matrix(
+    kernel: &Kernel,
+    transport: &Transport,
+    identity: WorkerIdentity,
+    state: SemanticState,
+    turn: u8,
+) -> Result<()> {
+    let query = SearchQuery {
+        text: "copper".into(),
+        path_prefix: Some("memo-00.md".into()),
+        limit: 1,
+        max_bytes: 12,
+    };
+    let was_available = transport.available.swap(false, Ordering::AcqRel);
+    for (offset, policy) in [
+        DefaultSearchPolicy::PartialHybrid,
+        DefaultSearchPolicy::LexicalWhilePending,
+        DefaultSearchPolicy::RequireComplete,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        work(identity, turn + offset as u8, || {
+            kernel.set_default_semantic_search_policy(policy)
+        })?;
+        let before = kernel.status()?;
+        assert_eq!(before.semantic_readiness.state, state);
+        let calls = transport.calls();
+        let lexical = kernel.search(&query)?;
+        assert_eq!(
+            transport.calls(),
+            calls,
+            "lexical read contacted the helper"
+        );
+        assert_eq!(
+            lexical.execution.as_ref().unwrap().requested_mode,
+            RequestedMode::Lexical
+        );
+        assert!(!lexical.execution.as_ref().unwrap().incomplete);
+        let default = kernel.default_search(&query);
+        if policy == DefaultSearchPolicy::RequireComplete {
+            let error = default.unwrap_err();
+            if state == SemanticState::Ready {
+                let receipt = airk_core::search_execution::helper_unavailable_receipt(&error)
+                    .expect("ready strict Default preserves the typed helper receipt");
+                assert_eq!(receipt["requested_mode"], "default");
+                assert_eq!(receipt["error"]["retryable"], false);
+                assert_eq!(
+                    transport.calls() - calls,
+                    1,
+                    "strict query retried helper I/O"
+                );
+            } else {
+                assert!(airk_core::search_execution::helper_unavailable_receipt(&error).is_none());
+                assert_eq!(
+                    transport.calls(),
+                    calls,
+                    "coverage refusal opened the helper"
+                );
+            }
+        } else {
+            let fallback = default?;
+            let execution = fallback.execution.as_ref().unwrap();
+            assert_eq!(execution.requested_mode, RequestedMode::Default);
+            assert_eq!(execution.served_mode, ServedMode::Lexical);
+            assert!(execution.incomplete);
+            let lexical_policy =
+                policy == DefaultSearchPolicy::LexicalWhilePending && state != SemanticState::Ready;
+            assert_eq!(
+                execution.incomplete_reason,
+                Some(if lexical_policy {
+                    IncompleteReason::SemanticCoverageIncomplete
+                } else {
+                    IncompleteReason::HelperUnavailable
+                })
+            );
+            assert_eq!(transport.calls() - calls, usize::from(!lexical_policy));
+            assert_eq!(
+                serde_json::to_value(&fallback.hits)?,
+                serde_json::to_value(&lexical.hits)?
+            );
+            assert_eq!(
+                fallback.truncated, lexical.truncated,
+                "semantic loss is not clipping"
+            );
+            assert_eq!(fallback.publication, lexical.publication);
+            assert_eq!(fallback.semantic_readiness.as_ref().unwrap().state, state);
+            assert!(fallback.hits[0].text.len() <= query.max_bytes);
+        }
+        for mode in [
+            airk_kernel::current::CurrentSearchMode::Vector,
+            airk_kernel::current::CurrentSearchMode::Hybrid,
+        ] {
+            let calls = transport.calls();
+            let error = kernel.search_response(&query, mode, None).unwrap_err();
+            let receipt = airk_core::search_execution::helper_unavailable_receipt(&error)
+                .expect("explicit modes do not degrade during a helper outage");
+            assert_eq!(receipt["error"]["retryable"], false);
+            assert_eq!(
+                receipt["publication"],
+                serde_json::to_value(&before.publication)?
+            );
+            assert_eq!(
+                receipt["semantic_readiness"]["state"],
+                serde_json::to_value(state)?
+            );
+            assert_eq!(
+                transport.calls() - calls,
+                1,
+                "explicit query retried helper I/O"
+            );
+        }
+        assert_eq!(
+            kernel.status()?.publication,
+            before.publication,
+            "read published new evidence"
+        );
+        assert_eq!(
+            kernel.status()?.semantic_readiness.state,
+            state,
+            "outage changed indexed coverage"
+        );
+    }
+    work(identity, turn + 3, || {
+        kernel.set_default_semantic_search_policy(DefaultSearchPolicy::PartialHybrid)
+    })?;
+    transport.available.store(was_available, Ordering::Release);
+    Ok(())
+}
+
+fn ready_execution_observations(
+    kernel: &Kernel,
+    transport: &Transport,
+    identity: WorkerIdentity,
+) -> Result<()> {
+    outage_policy_matrix(kernel, transport, identity, SemanticState::Ready, 32)?;
+    let query = SearchQuery {
+        text: "copper".into(),
+        path_prefix: Some("memo-00.md".into()),
+        limit: 4,
+        max_bytes: 4096,
+    };
+    let healthy = kernel.default_search(&query)?;
+    let execution = healthy.execution.as_ref().unwrap();
+    assert_eq!(execution.requested_mode, RequestedMode::Default);
+    assert_eq!(execution.served_mode, ServedMode::Hybrid);
+    assert!(!execution.incomplete);
+    let publication = healthy.publication;
+
+    for failure in 1..=4 {
+        transport.failure.store(failure, Ordering::Release);
+        let calls = transport.calls();
+        let error = kernel.default_search(&query).unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<embedding_worker::HelperUnavailable>()
+                .is_none()
+        );
+        assert!(airk_core::search_execution::helper_unavailable_receipt(&error).is_none());
+        assert_eq!(
+            transport.calls() - calls,
+            1,
+            "unrelated error retried helper I/O"
+        );
+        assert_eq!(kernel.status()?.publication, publication);
+    }
+    transport.failure.store(0, Ordering::Release);
+    transport.available.store(false, Ordering::Release);
+    let mut empty_query = query.clone();
+    empty_query.text = "unseen_literal_marker_691".into();
+    let empty = kernel.default_search(&empty_query)?;
+    assert!(empty.hits.is_empty());
+    assert_eq!(
+        empty.execution.as_ref().unwrap().incomplete_reason,
+        Some(IncompleteReason::HelperUnavailable)
+    );
+    assert!(
+        !empty.truncated,
+        "semantic availability is not a count/text cut"
+    );
+
+    work(identity, 40, || kernel.configure_vectors(false))?;
+    let calls = transport.calls();
+    let opted_out = kernel.default_search(&query)?;
+    let execution = opted_out.execution.unwrap();
+    assert_eq!(execution.requested_mode, RequestedMode::Default);
+    assert_eq!(execution.served_mode, ServedMode::Lexical);
+    assert!(!execution.incomplete, "saved opt-out was called an outage");
+    assert_eq!(
+        transport.calls(),
+        calls,
+        "saved opt-out contacted the helper"
+    );
+    work(identity, 41, || kernel.configure_vectors(true))?;
+
+    // Exercise the actual Kernel Workbench fallback, not a renderer or injected
+    // pre-rendered result. Off preserves the separate source-verification choice.
+    let execute_plan = |mode: Option<&str>| -> Result<airk_core::workbench::ResultEnvelope> {
+        let mut arguments = serde_json::json!({
+            "query":"copper", "path_prefix":"memo-00.md", "full_chunks":true,
+            "limit":4, "max_bytes":4096
+        });
+        if let Some(mode) = mode {
+            arguments["mode"] = mode.into();
+        }
+        kernel.evidence_plan(serde_json::from_value(serde_json::json!({
+            "schema":"airk.parse.request/1", "mode":"execute", "verification":"off",
+            "plan":{"steps":[{"id":"outage","tool":"search","args":arguments}]}
+        }))?)
+    };
+    let strict = execute_plan(Some("vector"))?;
+    assert_eq!(strict.status, "failed");
+    assert_eq!(strict.steps[0].status, "failed");
+    let envelope = strict.steps[0].result.as_ref().unwrap();
+    assert_eq!(envelope["isError"], true);
+    let body: serde_json::Value =
+        serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap())?;
+    let direct_error = kernel.semantic_search(&query).unwrap_err();
+    assert_eq!(
+        body,
+        airk_core::search_execution::helper_unavailable_receipt(&direct_error).unwrap()
+    );
+    let allowed = execute_plan(None)?;
+    assert_eq!(allowed.status, "partial");
+    assert_eq!(allowed.steps[0].status, "complete");
+    let body = allowed.steps[0].result.as_ref().unwrap();
+    assert_eq!(body["execution"]["incomplete_reason"], "helper_unavailable");
+    assert_eq!(body["truncated"], false);
+    assert!(
+        !allowed.truncated,
+        "semantic degradation was reported as clipping"
+    );
+
+    transport.available.store(true, Ordering::Release);
+    let recovered = kernel.default_search(&query)?;
+    assert!(!recovered.execution.unwrap().incomplete);
+    assert_eq!(
+        recovered.publication, publication,
+        "helper recovery replaced indexed evidence"
+    );
+    Ok(())
 }
 fn work<T>(identity: WorkerIdentity, turn: u8, operation: impl FnOnce() -> Result<T>) -> Result<T> {
     let allowance = WorkAllowance {
@@ -121,6 +385,8 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
     files.publish_default(&plan)?;
     let transport = Arc::new(Transport {
         available: AtomicBool::new(false),
+        failure: AtomicUsize::new(0),
+        requests: AtomicUsize::new(0),
         opens: AtomicUsize::new(0),
         embedded: AtomicUsize::new(0),
     });
@@ -158,11 +424,13 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
             .is_empty()
     );
     let original = kernel.status()?.publication.unwrap().token;
+    outage_policy_matrix(&kernel, &transport, identity, SemanticState::Pending, 20)?;
     assert!(work(identity, 2, || kernel.service_enrichment_turn()).is_err());
     assert_eq!(
         kernel.status()?.semantic_readiness.state,
         SemanticState::Failed
     );
+    outage_policy_matrix(&kernel, &transport, identity, SemanticState::Failed, 24)?;
     assert!(
         !kernel
             .search(&SearchQuery {
@@ -193,6 +461,7 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
     assert_eq!(readiness.state, SemanticState::Partial);
     assert_eq!(readiness.completed_artifacts, 32);
     assert_eq!(readiness.selected_artifacts, 40);
+    outage_policy_matrix(&current, &transport, identity, SemanticState::Partial, 28)?;
     work(identity, 5, || current.service_enrichment_turn())?;
     assert_eq!(
         current.status()?.semantic_readiness.state,
@@ -327,5 +596,6 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
         fs::read_to_string(source.join("memo-00.md"))?,
         "Copper beacon original entry 0.\n"
     );
+    ready_execution_observations(&current, &transport, identity)?;
     Ok(())
 }

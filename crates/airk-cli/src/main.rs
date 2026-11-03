@@ -321,9 +321,11 @@ enum Command {
     },
     /// Search indexed evidence; results carry file, line and revision citations.
     ///
-    /// Without --mode the project's search policy applies, which uses vectors when they are enabled; that
-    /// fails until the embedding model is set up (`setup-model`). --mode lexical (all words must appear)
-    /// always works on a published index; vector and hybrid need ready vectors.
+    /// Without --mode the saved search policy applies. Eligible policies can return
+    /// lexical matches during helper outages; execution reports the served mode and
+    /// semantic incompleteness. Explicit vector/hybrid and saved RequireComplete refuse
+    /// helper outages. Hybrid can still serve lexical evidence during a pending index
+    /// upgrade, with that separate limitation disclosed. --mode lexical uses AND terms.
     Search {
         #[command(flatten)]
         verification: VerificationOptions,

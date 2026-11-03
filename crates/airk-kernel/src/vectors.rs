@@ -475,10 +475,6 @@ impl Kernel {
 
     /// Reads never provision assets or silently downgrade an enabled collection.
     pub fn default_search(&self, query: &SearchQuery) -> Result<SearchResponse> {
-        if self.vectors_enabled()? {
-            self.current_search(query, crate::current::CurrentSearchMode::Default)
-        } else {
-            self.search(query)
-        }
+        self.current_search(query, crate::current::CurrentSearchMode::Default)
     }
 }

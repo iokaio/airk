@@ -108,6 +108,31 @@ pub fn annotate(value: &mut Value) {
     {
         advice.add(Reason::Unavailable,"source_access","source_availability.state","The saved source root is unavailable. Retained evidence may remain readable; inspect status and the existing availability reason before requesting source work.",NextRead::InspectSourceStatus);
     }
+    if let Some(execution) = get("execution")
+        && execution.get("version").and_then(Value::as_u64) == Some(1)
+        && execution.get("incomplete") == Some(&Value::Bool(true))
+        && matches!(
+            execution.get("requested_mode").and_then(Value::as_str),
+            Some("default" | "lexical" | "vector" | "hybrid")
+        )
+        && matches!(
+            execution.get("served_mode").and_then(Value::as_str),
+            Some("lexical" | "vector" | "hybrid")
+        )
+    {
+        match execution.get("incomplete_reason").and_then(Value::as_str) {
+            Some("helper_unavailable") => advice.add(Reason::Unavailable,"semantic_execution","execution.incomplete_reason","This search reports helper unavailability and incomplete semantic retrieval. Keep its served mode and indexed publication. Saved-source checks apply to returned file references and do not establish semantic completeness. Review recovery before an explicit later read; do not replay an uncertain operation.",NextRead::InspectSourceStatus),
+            Some("semantic_coverage_incomplete") => advice.add(if get("semantic_readiness").and_then(|value| value.get("state")).and_then(Value::as_str)==Some("failed"){Reason::Failed}else{Reason::Pending},"semantic_execution","execution.incomplete_reason","Semantic coverage for this search is incomplete. Keep the served mode and indexed publication with the evidence. Saved-source checks apply to returned file references and do not establish semantic completeness.",NextRead::InspectSourceStatus),
+            Some("semantic_upgrade_pending") => advice.add(Reason::Pending,"semantic_execution","execution.incomplete_reason","A semantic index upgrade was pending for this search. Keep its served mode and publication; saved-source matches do not establish complete semantic retrieval. This is not an observation of helper health.",NextRead::InspectSourceStatus),
+            _ => {}
+        }
+    } else if get("error")
+        .and_then(|error| error.get("code"))
+        .and_then(Value::as_str)
+        == Some("helper_unavailable")
+    {
+        advice.add(Reason::Unavailable,"semantic_execution","error.code","This search returned a helper-unavailable refusal. Review recovery before an explicit later read; do not replay an uncertain operation. Saved-source checks do not establish semantic completeness.",NextRead::InspectSourceStatus);
+    }
     if get("indexing")
         .and_then(|v| v.get("level"))
         .and_then(Value::as_str)
@@ -316,5 +341,77 @@ mod tests {
             "continue_page"
         );
         assert_eq!(paged["page"]["required_record_bytes"], 4096);
+    }
+
+    #[test]
+    fn execution_advice_is_distinct_from_index_readiness_and_source_verification() {
+        for (reason, state, expected) in [
+            ("helper_unavailable", "ready", "unavailable"),
+            ("semantic_coverage_incomplete", "partial", "pending"),
+            ("semantic_coverage_incomplete", "failed", "failed"),
+            ("semantic_upgrade_pending", "pending", "pending"),
+        ] {
+            let mut value = json!({"publication":{"token":"retained-publication"},"hits":[{}],
+                "execution":{"version":1,"requested_mode":"default","served_mode":"lexical","incomplete":true,"incomplete_reason":reason},
+                "semantic_readiness":{"state":state},
+                "source_verification":{"status":"verified","observed_to_unix_ms":1000}});
+            let before = value.clone();
+            annotate(&mut value);
+            let execution = value["guidance"]["observations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["subject"] == "semantic_execution")
+                .unwrap();
+            assert_eq!(execution["reason"], expected);
+            assert_eq!(execution["basis"], "execution.incomplete_reason");
+            let message = execution["message"].as_str().unwrap();
+            assert!(message.contains("semantic"));
+            assert!(message.contains("source"));
+            assert!(message.len() <= 512);
+            value.as_object_mut().unwrap().remove("guidance");
+            assert_eq!(value, before, "advice cannot rewrite the returned evidence");
+        }
+        let mut strict = json!({"error":{"code":"helper_unavailable","retryable":false,"action":"retry_later_without_replay"},
+            "requested_mode":"vector","semantic_readiness":{"state":"ready"}});
+        let before = strict.clone();
+        annotate(&mut strict);
+        assert_eq!(
+            strict["guidance"]["observations"][0]["reason"],
+            "unavailable"
+        );
+        assert_eq!(strict["guidance"]["observations"][0]["basis"], "error.code");
+        assert!(
+            strict["guidance"]["observations"][0]["message"]
+                .as_str()
+                .unwrap()
+                .contains("do not replay")
+        );
+        strict.as_object_mut().unwrap().remove("guidance");
+        assert_eq!(strict, before);
+    }
+
+    #[test]
+    fn execution_guidance_never_infers_helper_health_from_unknown_or_complete_metadata() {
+        for execution in [
+            json!({"version":1,"requested_mode":"lexical","served_mode":"lexical","incomplete":false}),
+            json!({"version":1,"requested_mode":"default","served_mode":"lexical","incomplete":false}),
+            json!({"version":2,"requested_mode":"default","served_mode":"lexical","incomplete":true,"incomplete_reason":"helper_unavailable"}),
+            json!({"version":1,"requested_mode":"future","served_mode":"lexical","incomplete":true,"incomplete_reason":"helper_unavailable"}),
+            json!({"version":1,"requested_mode":"default","served_mode":"lexical","incomplete":true,"incomplete_reason":"future-reason"}),
+        ] {
+            let mut value =
+                json!({"hits":[{}],"semantic_readiness":{"state":"ready"},"execution":execution});
+            let before = value.clone();
+            annotate(&mut value);
+            assert_eq!(
+                value, before,
+                "unknown execution metadata is not a new verdict"
+            );
+        }
+        let mut absent = json!({"hits":[{}],"semantic_readiness":{"state":"ready"}});
+        let before = absent.clone();
+        annotate(&mut absent);
+        assert_eq!(absent, before);
     }
 }

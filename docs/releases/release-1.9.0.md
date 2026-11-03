@@ -1,5 +1,7 @@
 # Planned AIRK 1.9.0 release and development checkpoints
 
+P6c's [search execution contract](../search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
+
 Started 2 November 2026 on `feat/finetuning`, from the 1.8.7 source baseline.
 Native workspace/local lock entries, extension manifest/npm lock entries and
 versioned MCP catalogs initially used **1.9.0**. On 3 November the maintainer

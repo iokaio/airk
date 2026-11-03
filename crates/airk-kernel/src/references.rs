@@ -470,6 +470,7 @@ impl Kernel {
         let mut position = decode(options.cursor.as_deref(), &binding, options.order)?;
         let first_page = options.cursor.is_none();
         let mut evidence = SearchResponse {
+            execution: None,
             publication: Some(publication),
             semantic_readiness: Some(current::enrichment::readiness(&read, &self.store)?),
             discovery_readiness: Some(current::progress::readiness(&read, &self.store)?),

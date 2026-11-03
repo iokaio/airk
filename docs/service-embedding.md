@@ -70,6 +70,15 @@ one known outstanding observation: its exact reply must finish before another
 operation is submitted. Invalid or disconnected Status fails closed. These
 fences add no health request or query replay.
 
+P6c's read adapter separately qualifies what a search could execute during helper
+loss. Allowed Default policies can retain the existing lexical branch with
+`execution.incomplete_reason: helper_unavailable`; explicit vector/hybrid and
+RequireComplete retain a structured failure. The availability marker is shared
+by Retrieval and native transport, so Kernel does not classify display strings
+or depend on CLI. A search does not restart the helper, probe its health or
+replay an accepted inference. See [search execution](current-index-runtime.md)
+and the [P6c qualification record](research/implementation-v190.md).
+
 Existing project workers receive replacement capabilities over their private control pipes without changing their project identity or fencing generation. The direct connector checks service, worker, project, runtime and endpoint role before accepting an update. A retained model session reopens its original exact model descriptor on the replacement connection, validates the model handshake and retires its old session. Compatible projects still share one loaded model in each helper instance. Neither the broker nor the private rebind message carries model inputs or vectors.
 
 An in-flight request that loses its connection fails explicitly; it is never replayed automatically. Only a later request can reconnect. Each grant has three connection attempts with backoff; a duplicate grant cannot reset exhaustion. Tokenizer/calibration sessions and provisioning requests do not replay live filesystem inputs after failure: retry the trusted operation explicitly. Already failed or canceled semantic jobs also need explicit retry; helper recovery does not rewrite their receipts or automatically resubmit them.

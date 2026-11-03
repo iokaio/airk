@@ -25,6 +25,8 @@ export interface DiscoveryStepDetails {
     guidance?:Value;
     readGuidance?:Value;
     sourceVerification?:Value;
+    execution?:Value;semanticReadiness?:Value;discoveryReadiness?:Value;readError?:Value;
+    requestedMode?:string;publication?:unknown;
     coverage?:Value;countUnit?:string;
     more:boolean;incompleteReason?:string;suggestions:{target:string;symbolId?:string;path?:string;coverage?:string}[];
     definitions:Value[];omittedFiles:number;omittedSuggestions:number;omittedDefinitions:number;
@@ -60,7 +62,19 @@ function resultMetadata(raw:unknown):Value {
         guidance:guidanceMetadata(source.guidance??evidence.guidance),
         read_guidance:Object.keys(object(source.read_guidance)).length?source.read_guidance:undefined,
         source_verification:nativeVerification(source.source_verification),
+        execution:source.execution??evidence.execution,
+        semantic_readiness:source.semantic_readiness??evidence.semantic_readiness,
+        discovery_readiness:source.discovery_readiness??evidence.discovery_readiness,
+        error:source.error??evidence.error,requested_mode:source.requested_mode??evidence.requested_mode,
+        publication:source.publication??evidence.publication,
     }).filter(([,value])=>value!==undefined));
+}
+/** Describe only the recognized execution schema; unknown metadata stays intact. */
+export function searchExecutionLabel(raw:unknown):string|undefined {
+    const value=object(raw),requested=value.requested_mode,served=value.served_mode;
+    if(value.version!==1||typeof requested!=='string'||!['default','lexical','vector','hybrid'].includes(requested)
+        ||typeof served!=='string'||!['lexical','vector','hybrid'].includes(served)||typeof value.incomplete!=='boolean')return undefined;
+    return `Search requested ${requested}; served ${served} evidence.${value.incomplete?' The semantic component is incomplete. Saved-source verification applies to returned file references and does not establish semantic completeness.':''}`;
 }
 /** Bounded display projection only; exports below retain the native metadata itself. */
 export function discoveryDetails(envelope:Value):DiscoveryStepDetails[]{
@@ -74,6 +88,12 @@ export function discoveryDetails(envelope:Value):DiscoveryStepDetails[]{
             ...(metadata.guidance?{guidance:object(metadata.guidance)}:{}),
             ...(metadata.read_guidance?{readGuidance:object(metadata.read_guidance)}:{}),
             ...(metadata.source_verification?{sourceVerification:object(metadata.source_verification)}:{}),
+            ...(Object.keys(object(metadata.execution)).length?{execution:object(metadata.execution)}:{}),
+            ...(Object.keys(object(metadata.semantic_readiness)).length?{semanticReadiness:object(metadata.semantic_readiness)}:{}),
+            ...(Object.keys(object(metadata.discovery_readiness)).length?{discoveryReadiness:object(metadata.discovery_readiness)}:{}),
+            ...(Object.keys(object(metadata.error)).length?{readError:object(metadata.error)}:{}),
+            ...(typeof metadata.requested_mode==='string'?{requestedMode:metadata.requested_mode}:{}),
+            ...(metadata.publication!==undefined?{publication:metadata.publication}:{}),
             ...(Object.keys(coverage).length?{coverage}:{}),...(typeof metadata.count_unit==='string'?{countUnit:metadata.count_unit}:{}),
             files:files.slice(0,100).flatMap(value=>{const file=object(value);return typeof file.path==='string'&&Number.isSafeInteger(file.count)&&Number(file.count)>=0?[{path:file.path,count:Number(file.count)}]:[];}),
             filesTruncated:metadata.files_truncated===true,more:metadata.more===true||continuationCursor(report.result)!==undefined,...(typeof metadata.incomplete_reason==='string'?{incompleteReason:metadata.incomplete_reason}:{}),
@@ -162,6 +182,12 @@ function selectedSourceCoverage(turn:WorkbenchTurn,selected:Set<string>):Value[]
         if(typeof metadata.resolution==='string')qualification.resolution=metadata.resolution;
         if(metadata.reply_detail==='lean'||metadata.reply_detail==='rich')qualification.reply_detail=metadata.reply_detail;
         if(metadata.guidance)qualification.guidance=metadata.guidance;
+        // These observations qualify the selected evidence's original request,
+        // not merely its saved bytes. Retain complete native objects, including
+        // unknown future fields, without deriving a fresh availability claim.
+        for(const key of ['execution','semantic_readiness','discovery_readiness','error','requested_mode','publication','read_guidance']){
+            if(metadata[key]!==undefined)qualification[key]=metadata[key];
+        }
         return Object.keys(qualification).length?[{step:report.id,tool:typeof report.tool==='string'?report.tool:'',scope:'original_source_request',...qualification}]:[];
     });
 }
@@ -175,9 +201,10 @@ export function markdown(turn: WorkbenchTurn, selected?: Set<string>): string {
     const sourceCoverage=selected?selectedSourceCoverage(turn,selected):[];
     const selectedRows=selected?cards.map(card=>(e.evidence as unknown[])[Number(card.id.slice('record-'.length))]):[];
     const selectedChecks=selected?selectedVerification(e,cards):undefined;
-    const metadata=selected?(sourceCoverage.length?[`### Original source request coverage for selected evidence\n\n${fenced(canonical(sourceCoverage))}`]:[]):(Array.isArray(e.steps)?e.steps:[]).flatMap(raw=>{
+    const metadata=selected?(sourceCoverage.length?[...sourceCoverage.flatMap(value=>{const label=searchExecutionLabel(value.execution);return label?[escape(label)]:[];}),`### Original source request coverage for selected evidence\n\n${fenced(canonical(sourceCoverage))}`]:[]):(Array.isArray(e.steps)?e.steps:[]).flatMap(raw=>{
         const report=object(raw),details=resultMetadata(report.result);
-        return Object.keys(details).length?[`### ${escape(String(report.tool??report.id??'Step'))} discovery details\n\n${fenced(canonical(details))}`]:[];
+        const label=searchExecutionLabel(details.execution);
+        return Object.keys(details).length?[...(label?[escape(label)]:[]),`### ${escape(String(report.tool??report.id??'Step'))} discovery details\n\n${fenced(canonical(details))}`]:[];
     });
     return [`## ${escape(turn.input.replaceAll('\n',' '))}`, `Status: ${escape(String(e.status ?? turn.error ?? 'trimmed'))}`, `Publication: ${escape(String(e.publication ?? 'not available'))}`,
         `Scope: ${escape(String(object(e.plan).path_prefix ?? ''))}`, ...(turn.trimmed ? ['Saved result was trimmed; re-run to collect current evidence.'] : []), ...content,

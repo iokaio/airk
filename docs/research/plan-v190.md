@@ -294,6 +294,39 @@ instructions govern implementation rather than importing its entire 90-day plan.
 
 ### Tests, review, commits and resuming work
 
+**Execution refinement approved 3 November 2026:** use one integration owner
+for the shared branch, build queues, evidence ledger and phase acceptance.
+Delegate independent components with explicit file ownership and frozen shared
+contracts; prepare the next independent slice while current checks run. P6d
+source admission and P6e transport/publication work may be developed in parallel
+after the P6c checkpoint. Preserve their separate acceptance cases and commit
+boundaries; do not activate management before its dependencies are accepted.
+
+During development, run focused behavioral and actual-transport tests for the
+changed path. Freeze the integrated source before the required broad phase
+checks and measure performance only after competing builds/tests finish. Reuse
+completed evidence for unchanged inputs and unaffected contracts, identifying
+its exact source/payload and limits. After a correction, collect all results,
+audit sibling paths, and rerun the affected tests and newly invalidated gates;
+do not automatically restart an already completed full campaign. Changes to
+native production bytes require a matching runtime build and affected platform
+qualification; documentation-only edits do not require rebuilding that runtime.
+
+Keep performance comparisons bounded to the frozen baseline and immediately
+preceding accepted phase, plus the phase's affected workload scenarios. Retain
+older reports as historical evidence rather than adding every previous phase
+as another comparison campaign. Preserve thresholds, sample requirements,
+correctness checks and the cumulative baseline gate. A source/hash, contract or
+workload change that invalidates evidence requires a new measurement.
+
+Use the existing isolated Windows and neo ARM environments with cached pinned
+dependencies and verified model assets. Keep signing/notarization, installed
+editor and wider platform release gates at their assigned qualification
+checkpoints unless the current change directly affects them. Record pending
+coverage honestly; never substitute an unrelated earlier pass. This refinement
+reduces duplicate work without waiving required checks or accepting known
+integrity, isolation, correctness or performance failures.
+
 For each phase, record its entry commit, acceptance cases, exact test commands,
 pass/fail/skip counts, artifact identities, benchmark comparisons, known limits,
 documentation changes and recovery boundary in a dated implementation ledger

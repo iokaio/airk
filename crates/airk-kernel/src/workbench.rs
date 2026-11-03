@@ -32,6 +32,16 @@ impl std::fmt::Display for ReadFailure {
 }
 impl std::error::Error for ReadFailure {}
 
+fn retain_search_failure(error: anyhow::Error) -> anyhow::Error {
+    match airk_core::search_execution::helper_unavailable_receipt(&error) {
+        Some(receipt) => error.context(ReadFailure(json!({
+            "isError": true,
+            "content": [{"type":"text", "text":receipt.to_string()}]
+        }))),
+        None => error,
+    }
+}
+
 const TOOLS: &[&str] = &[
     "search",
     "symbols",
@@ -1702,6 +1712,25 @@ fn clipped(value: &Value) -> bool {
     }
 }
 
+fn incomplete_search_reason(value: &Value) -> Option<&'static str> {
+    let execution = value.get("execution");
+    if execution.and_then(|value| value.get("incomplete")) == Some(&Value::Bool(true)) {
+        return Some(
+            match execution
+                .and_then(|value| value.get("incomplete_reason"))
+                .and_then(Value::as_str)
+            {
+                Some("helper_unavailable") => "helper_unavailable",
+                Some("semantic_coverage_incomplete") => "semantic_coverage_incomplete",
+                Some("semantic_upgrade_pending") => "semantic_upgrade_pending",
+                _ => "unknown",
+            },
+        );
+    }
+    // A resolved navigation read can retain its canonical response in evidence.
+    value.get("evidence").and_then(incomplete_search_reason)
+}
+
 /// Reapply the output bound after a transport adds observations to a result.
 pub fn bounded_result(mut result: ResultEnvelope) -> Result<ResultEnvelope> {
     // Preserve the existing whole-record removal order, with linear encoded
@@ -2494,6 +2523,14 @@ impl Kernel {
                             report.error = Some("payload budget exceeded".into());
                         } else {
                             result.payload_bytes += bytes;
+                            if step.tool == "search"
+                                && let Some(reason) = incomplete_search_reason(&value)
+                            {
+                                result.completeness.push(format!(
+                                    "{}: semantic search incomplete ({reason})",
+                                    step.id
+                                ));
+                            }
                             if clipped(&value) {
                                 result.truncated = true;
                                 result.completeness.push(format!(
@@ -2550,7 +2587,11 @@ impl Kernel {
         }
         if plan.output.view == "evidence" {
             for report in &mut result.steps {
-                report.result = None;
+                if report.result.take().is_some() && report.status == "failed" {
+                    report.error = Some(
+                        "native read failed; receipt omitted by selected evidence view".into(),
+                    );
+                }
             }
         }
         if let Some(budget) = verification {
@@ -2672,7 +2713,8 @@ impl Kernel {
                         .unwrap_or(false))
                     .then_some(768),
                     &search_filters(args)?,
-                )?,
+                )
+                .map_err(retain_search_failure)?,
             )?,
             "list_files" => serde_json::to_value(self.list_files_page(
                 args.get("prefix").and_then(Value::as_str).unwrap_or(""),
@@ -2908,6 +2950,149 @@ fn expand(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strict_search_failure_retains_the_canonical_receipt_and_underlying_context() -> Result<()> {
+        let error = anyhow::anyhow!("private transport failure").context(
+            airk_core::search_execution::SearchUnavailable {
+                requested_mode: airk_core::search_execution::RequestedMode::Hybrid,
+                publication: None,
+                semantic_readiness: None,
+                discovery_readiness: None,
+            },
+        );
+        let expected = airk_core::search_execution::helper_unavailable_receipt(&error).unwrap();
+        let error = retain_search_failure(error);
+        let receipt = &error
+            .downcast_ref::<ReadFailure>()
+            .context("complete receipt")?
+            .0;
+        assert_eq!(receipt["isError"], true);
+        assert_eq!(
+            serde_json::from_str::<Value>(receipt["content"][0]["text"].as_str().unwrap())?,
+            expected
+        );
+        assert!(
+            error
+                .downcast_ref::<airk_core::search_execution::SearchUnavailable>()
+                .is_some()
+        );
+        assert!(
+            error
+                .chain()
+                .any(|cause| cause.to_string() == "private transport failure")
+        );
+        assert!(crate::retrieval_retry::read_retry_hint(&error).is_none());
+        let ordinary = retain_search_failure(anyhow::anyhow!("permanent source failure"));
+        assert!(ordinary.downcast_ref::<ReadFailure>().is_none());
+        assert_eq!(ordinary.to_string(), "permanent source failure");
+        Ok(())
+    }
+
+    #[test]
+    fn incomplete_search_makes_raw_and_selected_evidence_plans_partial_without_clipping()
+    -> Result<()> {
+        use std::cell::Cell;
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("source");
+        std::fs::create_dir(&root)?;
+        std::fs::write(
+            root.join("queue.md"),
+            "# Queue\nQueue evidence remains available.\n",
+        )?;
+        let kernel = Kernel::open(&root, Some(temp.path().join("state")))?;
+        kernel.configure_vectors(false)?;
+        kernel.index()?;
+        let mut read = serde_json::to_value(kernel.search_response_with_navigation(
+            &SearchQuery {
+                text: "Queue".into(),
+                path_prefix: None,
+                limit: 10,
+                max_bytes: 8192,
+            },
+            crate::current::CurrentSearchMode::Lexical,
+            None,
+            &SearchFilters::default(),
+        )?)?;
+        // Model a canonical Terse response: dated readiness may be omitted, but
+        // the current execution observation must survive even at one publication.
+        read.as_object_mut().unwrap().remove("semantic_readiness");
+        read.as_object_mut().unwrap().remove("discovery_readiness");
+        read["execution"] =
+            serde_json::to_value(airk_core::search_execution::SearchExecution::new(
+                airk_core::search_execution::RequestedMode::Default,
+                airk_core::search_execution::ServedMode::Lexical,
+                Some(airk_core::search_execution::IncompleteReason::HelperUnavailable),
+            ))?;
+        assert!(!read["hits"].as_array().unwrap().is_empty());
+        for view in ["raw", "evidence"] {
+            let calls = Cell::new(0);
+            let reader = |tool: &str, _: &Map<String, Value>, _: Option<&str>| {
+                assert_eq!(tool, "search");
+                calls.set(calls.get() + 1);
+                Ok(read.clone())
+            };
+            let request = serde_json::from_value(json!({
+                "schema":REQUEST_SCHEMA,"mode":"execute","verification":"off",
+                "output":{"view":view},
+                "plan":{"steps":[{"id":"outage","tool":"search","args":{"query":"Queue","full_chunks":true}}]}
+            }))?;
+            let result = kernel.evidence_plan_with_reader(request, &Value::Null, Some(&reader))?;
+            assert_eq!(calls.get(), 1);
+            assert_eq!(result.status, "partial");
+            assert!(
+                !result.truncated,
+                "semantic incompleteness is not byte/count clipping"
+            );
+            assert_eq!(result.steps[0].status, "complete");
+            assert!(
+                result
+                    .completeness
+                    .iter()
+                    .any(|reason| reason
+                        == "outage: semantic search incomplete (helper_unavailable)")
+            );
+            assert!(!result.evidence.is_empty());
+            if view == "raw" {
+                assert_eq!(
+                    result.steps[0].result.as_ref().unwrap()["execution"],
+                    read["execution"]
+                );
+            } else {
+                assert!(
+                    result.steps[0].result.is_none(),
+                    "explicit evidence view retains its selected-subset contract"
+                );
+            }
+        }
+        let failed_reader = |_: &str, _: &Map<String, Value>, _: Option<&str>| {
+            Err(retain_search_failure(
+                anyhow::anyhow!("private transport failure").context(
+                    airk_core::search_execution::SearchUnavailable {
+                        requested_mode: airk_core::search_execution::RequestedMode::Vector,
+                        publication: None,
+                        semantic_readiness: None,
+                        discovery_readiness: None,
+                    },
+                ),
+            ))
+        };
+        let request = serde_json::from_value(json!({
+            "schema":REQUEST_SCHEMA,"mode":"execute","verification":"off",
+            "output":{"view":"evidence"},
+            "plan":{"steps":[{"id":"outage","tool":"search","args":{"query":"Queue","mode":"vector"}}]}
+        }))?;
+        let result =
+            kernel.evidence_plan_with_reader(request, &Value::Null, Some(&failed_reader))?;
+        assert_eq!(result.status, "failed");
+        assert!(result.steps[0].result.is_none());
+        assert_eq!(
+            result.steps[0].error.as_deref(),
+            Some("native read failed; receipt omitted by selected evidence view")
+        );
+        assert!(!serde_json::to_string(&result)?.contains("private transport failure"));
+        Ok(())
+    }
 
     #[test]
     fn navigation_catalog_and_slash_options_use_the_same_typed_validation() -> Result<()> {

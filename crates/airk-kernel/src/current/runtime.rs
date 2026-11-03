@@ -299,6 +299,7 @@ impl Kernel {
                 "vector search is disabled for this collection"
             );
         }
+        let requested_mode = mode.into();
         let mode =
             if matches!(mode, super::CurrentSearchMode::Default) && !self.vectors_enabled()? {
                 super::CurrentSearchMode::Lexical
@@ -313,11 +314,13 @@ impl Kernel {
             query,
             Arc::new(|_| Ok(())),
             super::search::SearchOptions {
+                requested_mode: Some(requested_mode),
                 snippet_bytes,
                 filters,
             },
         )?;
         Ok(SearchResponse {
+            execution: Some(evidence.execution),
             publication: Some(RevisionEnvelope::new(
                 self.collection.clone(),
                 revision(evidence.token),
@@ -410,6 +413,7 @@ impl Kernel {
             };
             if let Some((start, end, location, text, truncated)) = selected {
                 return Ok(SearchResponse {
+                    execution: None,
                     publication: Some(envelope(read)?),
                     semantic_readiness: None,
                     discovery_readiness: None,

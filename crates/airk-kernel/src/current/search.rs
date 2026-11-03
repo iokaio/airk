@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! One request gate for lexical selection, current DiskANN and exact citations.
 use super::{MAX_LEXICAL_VALIDATION_BYTES, open_selected_lexical};
+use airk_core::search_execution::{
+    IncompleteReason, RequestedMode, SearchExecution, SearchUnavailable, ServedMode,
+};
 use airk_core::{Hit, SearchFilters, SearchQuery, SearchResponse, identity::Sha256Digest};
 use airk_retrieval::{bounded::Charge, terms, truncate_utf8, vector::mutable::MutableDiskIndex};
 use airk_store::current::lexical::{CurrentLexicalCandidate, stable_id};
@@ -63,11 +66,23 @@ pub enum CurrentSearchMode {
     Hybrid,
 }
 
+impl From<CurrentSearchMode> for RequestedMode {
+    fn from(mode: CurrentSearchMode) -> Self {
+        match mode {
+            CurrentSearchMode::Default => Self::Default,
+            CurrentSearchMode::Lexical => Self::Lexical,
+            CurrentSearchMode::Vector => Self::Vector,
+            CurrentSearchMode::Hybrid => Self::Hybrid,
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct CurrentSearchEvidence {
     pub token: CurrentToken,
     pub collection: String,
     pub mode: CurrentSearchMode,
+    pub execution: SearchExecution,
     pub semantic_readiness: airk_core::readiness::SemanticReadiness,
     pub discovery_readiness: airk_core::readiness::DiscoveryReadiness,
     pub hits: Vec<Hit>,
@@ -93,6 +108,8 @@ struct PointerBudget {
 }
 
 pub(crate) struct SearchOptions<'a> {
+    /// Retain Default when a saved opt-out has already selected lexical search.
+    pub requested_mode: Option<RequestedMode>,
     pub snippet_bytes: Option<usize>,
     pub filters: &'a SearchFilters,
 }
@@ -166,6 +183,7 @@ pub(crate) fn search_current_read_with_snippets(
         query,
         _charge,
         SearchOptions {
+            requested_mode: None,
             snippet_bytes,
             filters: &SearchFilters::default(),
         },
@@ -182,9 +200,12 @@ pub(crate) fn search_current_read_with_filters(
     options: SearchOptions<'_>,
 ) -> Result<CurrentSearchEvidence> {
     let SearchOptions {
+        requested_mode,
         snippet_bytes,
         filters,
     } = options;
+    let requested_mode = requested_mode.unwrap_or_else(|| mode.into());
+    let semantic_requested = !matches!(mode, CurrentSearchMode::Lexical);
     query.validate()?;
     filters.validate()?;
     if let Some(expected) = expected {
@@ -227,7 +248,7 @@ pub(crate) fn search_current_read_with_filters(
     } else {
         mode
     };
-    let mode = if upgrade_pending {
+    let mut mode = if upgrade_pending {
         ensure!(
             !matches!(mode, CurrentSearchMode::Vector),
             "semantic index upgrade pending; text search remains available"
@@ -235,6 +256,15 @@ pub(crate) fn search_current_read_with_filters(
         CurrentSearchMode::Lexical
     } else {
         mode
+    };
+    let mut incomplete_reason = if semantic_requested && upgrade_pending {
+        Some(IncompleteReason::SemanticUpgradePending)
+    } else if semantic_requested
+        && semantic_readiness.state != airk_core::readiness::SemanticState::Ready
+    {
+        Some(IncompleteReason::SemanticCoverageIncomplete)
+    } else {
+        None
     };
     let scoped_paths = filtered_paths(&read, query, filters)?;
     let mut branches = Vec::new();
@@ -267,12 +297,33 @@ pub(crate) fn search_current_read_with_filters(
         if matches!(mode, CurrentSearchMode::Hybrid) {
             selection.limit = BRANCH_CANDIDATES;
         }
-        branches.push(vector_candidates(
-            store,
-            &read,
-            &selection,
-            scoped_paths.as_ref(),
-        )?);
+        match vector_candidates(store, &read, &selection, scoped_paths.as_ref()) {
+            Ok(branch) => branches.push(branch),
+            Err(error)
+                if error
+                    .downcast_ref::<airk_retrieval::embedding_worker::HelperUnavailable>()
+                    .is_some() =>
+            {
+                if requested_mode == RequestedMode::Default
+                    && matches!(mode, CurrentSearchMode::Hybrid)
+                    && semantic_readiness.default_search_policy
+                        != airk_core::readiness::DefaultSearchPolicy::RequireComplete
+                {
+                    // The lexical branch above is already selected from this
+                    // exact reader. Never repeat it or replay failed inference.
+                    mode = CurrentSearchMode::Lexical;
+                    incomplete_reason = Some(IncompleteReason::HelperUnavailable);
+                } else {
+                    return Err(error.context(SearchUnavailable {
+                        requested_mode,
+                        publication: Some(super::runtime::envelope(&read)?),
+                        semantic_readiness: Some(semantic_readiness),
+                        discovery_readiness: Some(discovery_readiness),
+                    }));
+                }
+            }
+            Err(error) => return Err(error),
+        }
     }
     let mut incomplete = branches.iter().any(|branch| branch.incomplete)
         || scoped_paths.as_ref().is_some_and(|scope| scope.incomplete)
@@ -329,6 +380,16 @@ pub(crate) fn search_current_read_with_filters(
         token: read.token()?,
         collection: read.head().scope.collection.clone(),
         mode,
+        execution: SearchExecution::new(
+            requested_mode,
+            match mode {
+                CurrentSearchMode::Lexical => ServedMode::Lexical,
+                CurrentSearchMode::Vector => ServedMode::Vector,
+                CurrentSearchMode::Hybrid => ServedMode::Hybrid,
+                CurrentSearchMode::Default => unreachable!("default search mode was resolved"),
+            },
+            incomplete_reason,
+        ),
         semantic_readiness,
         discovery_readiness,
         hits,

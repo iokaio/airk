@@ -25,6 +25,13 @@ recovery log category; existing native and editor readers preserve its complete
 records. No query-triggered startup, health probe or additional scheduler is
 introduced. See [helper recovery](service-embedding.md#helper-recovery).
 
+P6c places the typed helper-availability marker at Retrieval's embedding boundary
+and the search execution/failure receipt in Core. Kernel applies the saved search
+policy to the already-admitted reader and lexical candidates; CLI, MCP and
+Workbench preserve the canonical result. Core guidance projects returned metadata
+without I/O. Semantic incompleteness, indexed readiness, truncation and source
+verification remain separate contracts. See [search execution](search-execution.md).
+
 P5 prepares an inactive normalized catalog behind an explicit upgrade fence.
 Core owns typed index/Project/source identities, scope and policy formats; Store
 owns the exact SQLite shape, bounded snapshots, imports, migration and recovery

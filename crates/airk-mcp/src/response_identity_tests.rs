@@ -16,6 +16,47 @@ fn evidence(token: &str, collection: &str, incarnation: &str) -> Value {
 }
 
 #[test]
+fn search_execution_is_retained_on_every_terse_reply_without_forcing_full_status() {
+    let session = Session::default();
+    let healthy =
+        json!({"version":1,"requested_mode":"default","served_mode":"hybrid","incomplete":false});
+    let degraded = json!({"version":1,"requested_mode":"default","served_mode":"lexical",
+        "incomplete":true,"incomplete_reason":"helper_unavailable"});
+    for (index, execution) in [&healthy, &degraded, &healthy].into_iter().enumerate() {
+        let mut response = evidence("same-publication", "same-index", "same-owner");
+        response["generation"] = json!(7);
+        response["hits"] = json!([]);
+        response["execution"] = execution.clone();
+        session.display(&mut response, ResponseMode::Terse, false);
+        assert_eq!(&response["execution"], execution);
+        assert_eq!(response["publication"], json!({"token":"same-publication"}));
+        assert!(response.get("generation").is_none());
+        if index > 0 {
+            assert!(response.get("semantic_readiness").is_none());
+            assert!(response.get("freshness").is_none());
+        }
+        let exported: Value =
+            serde_json::from_slice(&serde_json::to_vec(&response).unwrap()).unwrap();
+        assert_eq!(&exported["execution"], execution);
+        assert_eq!(
+            exported["citation"]["content_hash"],
+            "unchanged-source-hash"
+        );
+    }
+}
+
+#[test]
+fn runtime_execution_diagnostics_keep_their_existing_explicit_detail() {
+    let session = Session::default();
+    let mut response = evidence("same-publication", "same-index", "same-owner");
+    response["generation"] = json!(7);
+    response["execution"] = json!({"runtime":"native","bounded":true});
+    let expected = response.clone();
+    session.display(&mut response, ResponseMode::Terse, false);
+    assert_eq!(response, expected);
+}
+
+#[test]
 fn every_terse_reply_remains_independently_exportable_after_repeated_status() {
     let session = Session::default();
     let mut first = evidence("publication-a", "first", "owner-a");

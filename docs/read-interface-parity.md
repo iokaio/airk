@@ -1,5 +1,7 @@
 # CLI, MCP and Workbench read parity
 
+P6c's [search execution contract](search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
+
 The current manual-test working version is **1.8.8**, implementing the planned
 1.9.0 work. Earlier 1.9.0 phase headings below identify original development
 checkpoints; their implemented interfaces remain in this branch. Current build

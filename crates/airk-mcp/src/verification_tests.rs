@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 use super::*;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 
 fn body(reply: &CallToolResult) -> Result<Value> {
@@ -10,6 +10,120 @@ fn body(reply: &CallToolResult) -> Result<Value> {
 }
 fn controls(mode: &str) -> Value {
     json!({"verification":mode,"verification_max_sources":25,"verification_max_bytes":16777216,"verification_deadline_ms":2000})
+}
+
+#[tokio::test]
+async fn search_execution_survives_verification_results_and_all_reply_projections() -> Result<()> {
+    use airk_core::{
+        SearchFilters, SearchQuery,
+        reply::ReplyDetail,
+        search_execution::{IncompleteReason, RequestedMode, SearchExecution, ServedMode},
+    };
+    let temp = tempfile::tempdir()?;
+    let root = temp.path().join("source");
+    std::fs::create_dir(&root)?;
+    let source = root.join("queue.md");
+    let original = "# Queue\nQueue evidence remains independently verifiable.\n";
+    std::fs::write(&source, original)?;
+    let kernel = Kernel::open(&root, Some(temp.path().join("data")))?;
+    kernel.configure_vectors(false)?;
+    kernel.index()?;
+    let mut materialized = serde_json::to_value(kernel.search_response_with_navigation(
+        &SearchQuery {
+            text: "Queue".into(),
+            path_prefix: None,
+            limit: 10,
+            max_bytes: 8192,
+        },
+        airk_kernel::current::CurrentSearchMode::Lexical,
+        None,
+        &SearchFilters::default(),
+    )?)?;
+    let execution = serde_json::to_value(SearchExecution::new(
+        RequestedMode::Default,
+        ServedMode::Lexical,
+        Some(IncompleteReason::HelperUnavailable),
+    ))?;
+    // Exercise actual framing, projection and source verification of a completed
+    // search body. The separate native outage fixture establishes its producer.
+    materialized["execution"] = execution.clone();
+    assert!(!materialized["hits"].as_array().unwrap().is_empty());
+    let server = AirkServer::new(kernel);
+    for response_mode in [response::ResponseMode::Terse, response::ResponseMode::Full] {
+        for detail in [ReplyDetail::Lean, ReplyDetail::Rich] {
+            for (verification, changed) in [("report", false), ("require", true), ("off", true)] {
+                std::fs::write(
+                    &source,
+                    if changed {
+                        "Changed saved source bytes.\n"
+                    } else {
+                        original
+                    },
+                )?;
+                let value = materialized.clone();
+                let verification_controls = if verification == "off" {
+                    // Off intentionally rejects verification-only budgets.
+                    airk_core::verification::VerificationControls::off()
+                } else {
+                    serde_json::from_value(controls(verification))?
+                };
+                let reply = server
+                    .execute_verified_response(
+                        UsageOperation::Search,
+                        response::ResponseArgs {
+                            reply_detail: Some(detail),
+                            response_mode: Some(response_mode),
+                            include_status: false,
+                        },
+                        verification_controls,
+                        move |_| Ok(value),
+                    )
+                    .await;
+                let body = body(&reply).with_context(|| {
+                    let text: String = reply.content[0]
+                        .as_text()
+                        .map_or("<non-text>", |content| content.text.as_str())
+                        .chars()
+                        .take(1024)
+                        .collect();
+                    format!(
+                        "search projection case mode={response_mode:?}, detail={detail:?}, verification={verification}, is_error={:?}, body={text:?}",
+                        reply.is_error
+                    )
+                })?;
+                assert_eq!(body["execution"], execution);
+                assert_eq!(body["hits"], materialized["hits"]);
+                assert_eq!(
+                    body["publication"]["token"],
+                    materialized["publication"]["token"]
+                );
+                assert_eq!(body["reply_detail"], detail.as_str());
+                match verification {
+                    "report" => {
+                        assert_ne!(reply.is_error, Some(true), "{body}");
+                        assert_eq!(body["source_verification"]["status"], "verified");
+                        assert_eq!(body["execution"]["incomplete"], true);
+                    }
+                    "require" => {
+                        assert_eq!(reply.is_error, Some(true), "{body}");
+                        assert_eq!(body["source_verification"]["status"], "requirements_unmet");
+                        assert_eq!(
+                            body["source_verification"]["sources"][0]["state"],
+                            "mismatch"
+                        );
+                    }
+                    _ => {
+                        assert_ne!(reply.is_error, Some(true), "{body}");
+                        assert!(body.get("source_verification").is_none());
+                    }
+                }
+                if verification != "off" {
+                    airk_core::verification::validate_projection(&body)?;
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tokio::test]
