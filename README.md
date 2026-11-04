@@ -1,5 +1,7 @@
 # AIRK: Local Search for Coding Agents
 
+P6e makes [oversized stdio input](docs/mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](docs/workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
+
 P6d's [source admission changes](docs/service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.
 
 P6c's [search execution contract](docs/search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.

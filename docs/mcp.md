@@ -22,6 +22,16 @@ Explicit `plan`, `recipe`, `budgets` and `output` fields accept JSON objects; do
 
 AIRK uses the official Rust SDK and [stdio transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports). Its stdio lifecycle adapter keeps protocol negotiation per connection; the SDK retains framing, cancellation and request dispatch. Stdout contains only protocol messages during MCP operation; diagnostics use stderr.
 
+The 1.8.8 P6e working adapter preserves the existing **65,536-byte input-line
+bound, including its newline**. An oversized line closes new admission, drains
+already accepted work, then exits nonzero with a content-free stderr diagnostic;
+it is not a clean EOF or permission to replay a request. Rejected payload text
+is not retained or printed. Partial/chunked reads share the same bound. Clean
+EOF, a final line without a newline and malformed messages retain the SDK's
+existing protocol behavior. The legacy native server and unified frontend use
+the same bounded runner. Current qualification is in the
+[implementation ledger](research/implementation-v190.md).
+
 Version 1.5.9 corrects discovery followed by a timed-out client's legacy fallback. After a successful `initialize`, requests may use that connection's negotiated version/capabilities without modern per-request metadata, even if `server/discover` was received first or replies late. Discovery never changes an initialized session. Modern connections still require valid version/capability metadata on every request; explicitly malformed or unsupported metadata is rejected. A reconnect negotiates afresh. Client names do not select protocol behavior. See the [compatibility regression and limits](releases/release-1.5.9.md).
 
 Each launch fixes an explicit allowlist of configured source scopes (or legacy pinned project bindings), with a single-project default when configured. Tools cannot register projects or escape that scope, index source, run commands, remove collections or access another collection. Use CLI/extension operations for setup, indexing and maintenance.

@@ -488,3 +488,66 @@ test('history load errors remain visible only to the transcript that requested t
         }finally{f.provider.dispose();}
     }
 });
+
+const publicationToken=(generation:number,digest='cd'.repeat(32))=>`airk-r1:${'ab'.repeat(16)}:${generation}:${digest}`;
+test('live host publication relations preserve separately observed status and immutable query evidence',async()=>{
+    const f=fixture(true);let generation=2;
+    const payload:Value={status:'complete',collection:'fixture',publication:publicationToken(3),plan:{collection:'fixture'},evidence:[]};
+    f.respond(async tool=>({payload:tool==='airk_parse'?payload:{collection:'fixture',publication:{token:publicationToken(generation)},semantic_readiness:{state:'partial'},observed_unix_ms:123}}));
+    const snapshot=()=> (f.provider as unknown as {state():WorkbenchState}).state();
+    try{
+        await f.state.select(A);await tick();const originalStatus=structuredClone(f.state.status);
+        await f.state.run('/search observed');await f.state.saveQueue;
+        const turn=f.state.session!.turns[0];
+        assert.equal(snapshot().publicationRelations?.[turn.id],'newer');
+        assert.deepEqual(f.state.status,originalStatus,'query publication never promotes status, readiness or observation time');
+        assert.deepEqual(turn.envelope,payload);
+        const exported=renderExport(f.state.session!,'json');
+        generation=4;const calls=f.created[0].calls.length;f.messages.length=0;
+        await f.state.message({type:'refresh'});
+        assert.equal(f.created[0].calls.length,calls+1,'only the explicit refresh observes status');
+        assert.equal(snapshot().publicationRelations?.[turn.id],'older');
+        const delta=f.messages.find(raw=>(raw as WorkbenchUpdate).type==='status') as Extract<WorkbenchUpdate,{type:'status'}>;
+        assert.equal(delta.publicationRelations?.[turn.id],'older');
+        assert.ok(!JSON.stringify(delta).includes('/fixture/'),'captured launcher authority never reaches the webview');
+        assert.equal(renderExport(f.state.session!,'json'),exported,'observation metadata is outside saved evidence and exports');
+        generation=3;await f.state.message({type:'refresh'});
+        assert.equal(snapshot().publicationRelations?.[turn.id],'equal');
+        assert.deepEqual(turn.envelope,payload);
+        assert.deepEqual(f.created[0].calls,['airk_status','airk_parse','airk_status','airk_status']);
+    }finally{f.provider.dispose();}
+});
+
+test('saved and forked turns lack authority; changing a live launcher never fabricates publication age',async()=>{
+    const f=fixture(true),snapshot=()=> (f.provider as unknown as {state():WorkbenchState}).state();
+    f.respond(async tool=>({payload:tool==='airk_parse'?{status:'complete',collection:'fixture',publication:publicationToken(1)}:{collection:'fixture',publication:{token:publicationToken(2)}}}));
+    try{
+        await f.state.select(A);await tick();await f.state.run('/search retained');await f.state.saveQueue;
+        const turn=f.state.session!.turns[0];assert.equal(snapshot().publicationRelations?.[turn.id],'older');
+        const saved=structuredClone(f.state.session!);
+        await f.state.message({type:'fork'});await f.state.saveQueue;
+        assert.equal(snapshot().publicationRelations?.[turn.id],'unknown');
+        Object.assign(f.store,{load:async()=>saved});await f.state.message({type:'recent',id:saved.id});
+        assert.equal(snapshot().publicationRelations?.[turn.id],'unknown');
+        await f.state.run('/search live');await f.state.saveQueue;
+        const live=f.state.session!.turns.at(-1)!;assert.equal(snapshot().publicationRelations?.[live.id],'older');
+        const changed={...f.specs()[0],dataDir:'/fixture/changed-data'};
+        f.replace([changed,f.specs()[1]]);await tick();
+        assert.equal(snapshot().publicationRelations?.[live.id],'unknown','old status is invalidated when authority changes');
+        await f.state.message({type:'refresh'});
+        assert.equal(snapshot().publicationRelations?.[live.id],'different','equal token shapes under a changed authority have no order');
+    }finally{f.provider.dispose();}
+});
+
+test('explicit held status replies remain fenced across same-project launcher replacement',async()=>{
+    const f=fixture(),held=deferred<{payload:Value}>(),entered=deferred<void>();
+    f.respond(async()=>({payload:{collection:'fixture',publication:{token:publicationToken(1)}}}));
+    try{
+        await f.state.select(A);await tick();
+        f.respond(()=>{entered.resolve();return held.promise;});
+        const refreshing=f.state.message({type:'refresh'});await entered.promise;
+        f.replace([{...f.specs()[0],dataDir:'/fixture/replaced'},f.specs()[1]]);
+        held.resolve({payload:{collection:'fixture',publication:{token:publicationToken(99)},tag:'late-foreign-authority'}});
+        await refreshing;assert.notEqual(f.state.status?.tag,'late-foreign-authority');
+    }finally{held.resolve({payload:{}});f.provider.dispose();}
+});

@@ -2448,3 +2448,92 @@ Version remains **1.8.8**, synchronized across native/extension lockfiles. READM
 documentation index, working release record and Marketplace copy describe the
 implemented source-priority behavior. The final phase commit is recorded by the
 next phase's ledger entry; no PR, CI or publication is part of this checkpoint.
+
+
+## P6e — bounded transport and truthful publication observations (3 November 2026, accepted)
+
+Entry commit is completed P6d **`195eb7f371a331acd8c2d02314a3b9bf362f7aeb`**,
+DCO-signed and pushed to `feat/finetuning`. Source remains working **1.8.8**.
+The integrated native source is
+`62db764503f4f76ede4cf512f30211aff0e3dd95aa8476062a739a124cbc4b59`
+/789. It changes only four native inputs from D; UI/package changes remain
+separate from that native fingerprint.
+
+The shared stdio runner preserves the 65,536-byte physical line limit including
+newline, rejects an overflowing chunk atomically without retaining its payload,
+closes admission at terminal input and preserves typed overflow through SDK drain.
+Clean EOF remains distinct. The unified frontend and legacy native handler share
+the implementation. Actual SDK blocked-handler cases verify accepted work drains;
+actual native process pipes cover exact-bound/newline, chunked/no-newline overflow,
+content-free stderr/nonzero failure and malformed/EOF behavior.
+
+The first three process tests failed before framing because their helper used
+`common::command` without an owned Service; that deliberately selects a missing
+installation instead of user state. The corrected helper holds an owned temporary
+service through process/output drain, then uses its managed shutdown/reap and
+asserts one unchanged source sentinel with no extra source entries. All original
+framing assertions remain intact; independent review passed. The setup failures
+are retained in `p6e-cli-pipe-missing-runtime-failed.log` and do not count as
+framing results.
+
+Windows remote/SDK unit tests passed **18/18**; final native pipe cases passed
+**3/3 in 5.65 s**. Formatting and workspace all-target/all-feature Clippy passed
+(**13.13 s**). The full all-feature workspace passed **1,989 tests with 39 skips**
+in **1,139.429 s**; all doctest targets passed with no executable examples. The
+source-bound release pair and final package/performance gates passed as recorded below.
+
+The pure bounded publication comparator orders generations only within the same
+captured authority, collection and incarnation. It preserves equal, older, newer,
+different, inconsistent and unknown observations, including u64 boundaries and
+conflicting envelopes. Host/client lifetime tests prevent late or foreign status
+from relabeling retained turns. No comparison performs another status request or
+rewrites retained results/exports. Review repaired unintended encoding changes
+before integration. The Workbench bundle permits only this exact pure module,
+and the package explicitly includes its compiled host module.
+
+Pinned Node **24.15.0** passed the isolated extension compile and **32** focused
+publication/lifetime/boundary cases. The integrated canonical extension command
+passed **555 tests with 19 skips** (**574 total**, **6.813 s**), including all three
+TypeScript graphs and guarded bundles. This is current pinned-tool evidence;
+it does not relabel P6c's older Node receipt.
+
+On neo, formatting, workspace all-target/all-feature Clippy (**18.54 s**), all
+**18** remote cases and **three** actual pipe cases (**13.42 s**) passed. The
+fresh pair built helper/main in **1m53s / 4m26s**, and all **795** declared inputs
+matched before/after at the frozen source. Owned process cleanup passed. Receipt:
+`artifacts/v190/neo-p6e/final-62db764/qualification.json`. No D fairness, model or
+installer macro was repeated; those earlier receipts retain their source scope.
+Full public-repository Mac qualification remains required after all P6 and before
+P7. No installed editor, Developer ID/notarization, Linux or release claim follows
+from these local tests.
+
+
+### Final P6e acceptance
+
+The final Windows pair `artifacts/v190/p6e-qualified-runtime` retains native source
+`62db764503f4f76ede4cf512f30211aff0e3dd95aa8476062a739a124cbc4b59`
+/789; main executable SHA-256 is
+`e5cee25c9776c19b66f5ed4ddad2a8618d1400847352695d667ccc9e9db3f7b8`.
+Helper/main release profiles completed in **2m18s / 4m31s**. Native CLI/MCP/install
+smokes passed **3/3** (installer **95.90 s**) and the actual shared embedding-pool
+regeneration/failure/recovery smoke passed. All **84/84** unchanged latency gates
+passed against the fixed frozen baseline and immediately preceding P6d, without
+adding older phase campaigns. Four cohorts each recorded **90 trials / 810 calls,
+zero errors and zero retries**; each Report cohort retained **720 verified
+receipts**. Report: `artifacts/v190/p6e-gates.json`.
+
+The Python suite passed **404 tests with nine skips** in **20.770 s**; repository
+checks passed for **1,578** public files. Dependency evidence reuse verified all
+**24** protected hashes, pinned tool versions, receipt freshness and unexpired
+review dates (`p6e-dependency-reuse.json`). The original full advisory receipt
+remains `p6c-fresh.json`; no new network/advisory scan is claimed. Current Node
+qualification uses pinned 24.15.0, separately from the original advisory tool
+versions. Native/extension/lockfile versions remain **1.8.8**.
+
+Independent review covered the complete native/UI/package diff and final
+validation, including the final process-fixture correction. Exact pure-module
+allowlists remain bounded; all original Unicode UI text is preserved. README,
+documentation index, working release notes and Marketplace copy agree with the
+implemented behavior. The next phase records the resulting DCO commit ID. No PR,
+CI run, marketplace publication or user runtime installation accompanies this
+checkpoint. Full neo public-repository qualification after all P6 remains pending.

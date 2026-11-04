@@ -1,5 +1,14 @@
 # Workbench development branch
 
+**1.8.8 P6e working change:** Workbench orders publication generations only
+within the same host-captured backend authority, collection and index incarnation.
+Different scopes and inconsistent same-generation digests receive qualified
+messages; saved or unknown observations receive no ordering claim. Generation
+order proves neither ancestry nor live-source freshness. Comparisons reuse
+existing observations without another status request, and complete/selected
+exports retain the original result data. Qualification and remaining limits are
+in the [ledger](../research/implementation-v190.md).
+
 **1.8.8 P4 development:** [Saved-source verification](../source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](../research/implementation-v190.md).
 
 The 1.8.8 working build supplies optional [evidence guidance](../evidence-guidance.md)

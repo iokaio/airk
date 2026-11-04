@@ -1642,3 +1642,192 @@ fn setup_outputs_client_config_and_mcp_exposes_specialized_tools() -> anyhow::Re
 
 #[path = "support/current_recovery.rs"]
 mod current_recovery;
+
+/// Pipe framing tests use metadata-only MCP startup against an owned temporary service.
+/// No user runtime installation, index, or read replay is involved.
+fn frame_pipe(bytes: Vec<u8>, chunk: usize) -> anyhow::Result<std::process::Output> {
+    use std::io::Read;
+    let root = tempfile::tempdir()?;
+    let state = tempfile::tempdir()?;
+    let source = root.path().join("original.txt");
+    fs::write(&source, b"Original framing source\n")?;
+    let service = common::Service::start(root.path(), state.path(), "frame-bound");
+    let mut child = common::command(root.path(), state.path(), "frame-bound")
+        .arg("mcp")
+        .env_remove("AIRK_PROCESS_DIAGNOSTICS")
+        .env_remove("AIRK_ERROR_FORMAT")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+    // Keep independent drains so neither output pipe can block the process.
+    let drain = |reader: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            reader
+                .take(1024 * 1024)
+                .read_to_end(&mut bytes)
+                .map(|_| bytes)
+        })
+    };
+    let out = drain(Box::new(stdout));
+    let err = drain(Box::new(stderr));
+    let mut input = child.stdin.take().unwrap();
+    let writer = std::thread::spawn(move || -> std::io::Result<()> {
+        for part in bytes.chunks(chunk) {
+            if let Err(error) = input.write_all(part) {
+                if error.kind() == std::io::ErrorKind::BrokenPipe {
+                    return Ok(());
+                }
+                return Err(error);
+            }
+            input.flush()?;
+        }
+        Ok(()) // drop stdin: real EOF
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill()?;
+            child.wait()?;
+            anyhow::bail!("bounded MCP process did not exit before deadline");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    writer.join().expect("pipe writer")?;
+    let stdout = out.join().expect("stdout drain")?;
+    let stderr = err.join().expect("stderr drain")?;
+    // The fixture's existing managed shutdown reaps its service before cleanup.
+    drop(service);
+    anyhow::ensure!(fs::read(&source)? == b"Original framing source\n");
+    anyhow::ensure!(fs::read_dir(root.path())?.count() == 1);
+    anyhow::ensure!(
+        stdout.len() < 1024 * 1024 && stderr.len() < 1024 * 1024,
+        "MCP fixture output exceeded its bound"
+    );
+    for line in stdout
+        .split(|&byte| byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        let value: Value = serde_json::from_slice(line)?;
+        anyhow::ensure!(
+            value["jsonrpc"] == "2.0",
+            "stdout must contain protocol frames only"
+        );
+    }
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+fn frame_initialize() -> Vec<u8> {
+    format!("{}\n", json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"frame-fixture","version":"1"}
+    }})).into_bytes()
+}
+
+#[test]
+fn mcp_pipe_frame_bound_counts_newline_and_resets_per_frame() -> anyhow::Result<()> {
+    const LIMIT: usize = airk_core::service::MAX_FRAME_BYTES;
+    // JSON trailing whitespace is valid, and counts toward the physical line cap.
+    for chunk in [1, 8192, LIMIT + 1] {
+        let mut bytes = frame_initialize();
+        bytes.pop();
+        bytes.resize(LIMIT - 1, b' ');
+        bytes.push(b'\n');
+        bytes.extend_from_slice(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n");
+        let output = frame_pipe(bytes, chunk)?;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let replies: Vec<Value> = String::from_utf8(output.stdout)?
+            .lines()
+            .map(serde_json::from_str)
+            .collect::<Result<_, _>>()?;
+        assert!(replies.iter().any(|reply| reply["id"] == 1));
+        assert!(replies.iter().any(|reply| reply["id"] == 2));
+    }
+    Ok(())
+}
+
+#[test]
+fn mcp_pipe_overflow_is_nonzero_bounded_and_content_free() -> anyhow::Result<()> {
+    const LIMIT: usize = airk_core::service::MAX_FRAME_BYTES;
+    for (newline, chunk) in [(true, 1), (true, 8192), (false, LIMIT + 1)] {
+        let mut bytes = frame_initialize();
+        bytes.pop();
+        bytes.resize(LIMIT, b' ');
+        if newline {
+            bytes.push(b'\n');
+        } else {
+            bytes.push(b'x');
+        }
+        bytes.extend_from_slice(b"PRIVATE_REJECTED_PAYLOAD\n");
+        let output = frame_pipe(bytes, chunk)?;
+        assert!(!output.status.success());
+        assert_eq!(
+            String::from_utf8(output.stderr)?,
+            "Error: MCP request exceeds frame bound\n"
+        );
+        assert!(!String::from_utf8(output.stdout)?.contains("PRIVATE_REJECTED_PAYLOAD"));
+    }
+    Ok(())
+}
+
+#[test]
+fn mcp_pipe_clean_eof_without_newline_and_malformed_input_keep_sdk_semantics() -> anyhow::Result<()>
+{
+    let mut bytes = frame_initialize();
+    bytes.pop();
+    let output = frame_pipe(bytes, 17)?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let replies: Vec<Value> = String::from_utf8(output.stdout)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    assert!(replies.iter().any(|reply| reply["id"] == 1));
+
+    let mut bytes = frame_initialize();
+    bytes.pop();
+    bytes.resize(airk_core::service::MAX_FRAME_BYTES, b' ');
+    let output = frame_pipe(bytes, 8192)?;
+    assert!(
+        output.status.success(),
+        "exact-limit unterminated JSON line is allowed"
+    );
+    assert!(output.stderr.is_empty());
+    let replies: Vec<Value> = String::from_utf8(output.stdout)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    assert!(replies.iter().any(|reply| reply["id"] == 1));
+
+    // Preserve the SDK's existing behavior: ignore unparsable JSON, then
+    // handle the next complete line. Add no custom parser/resynchronization
+    // and never reflect rejected bytes into stderr/stdout.
+    let output = frame_pipe(
+        b"PRIVATE_MALFORMED\n{\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"ping\"}\n".to_vec(),
+        8192,
+    )?;
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let replies: Vec<Value> = String::from_utf8(output.stdout)?
+        .lines()
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()?;
+    assert_eq!(replies.len(), 1);
+    assert_eq!(replies[0]["id"], 99);
+    assert!(replies[0]["result"].is_object());
+    Ok(())
+}

@@ -1432,12 +1432,14 @@ impl ServerHandler for AirkServer {
 pub async fn serve(kernel: Kernel) -> anyhow::Result<()> {
     let server = AirkServer::new(kernel);
     let admission = server.admission.clone();
-    let service = rmcp::service::serve_directly(
-        lifecycle::StdioLifecycle::new(server),
-        rmcp::transport::stdio(),
-        None,
-    );
-    let result = service.waiting().await;
+    let close = admission.clone();
+    let result = remote::serve_bounded_io(
+        server,
+        tokio::io::stdin(),
+        tokio::io::stdout(),
+        std::sync::Arc::new(move || close.close()),
+    )
+    .await;
     admission.shutdown().await;
     result?;
     Ok(())
