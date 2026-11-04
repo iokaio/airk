@@ -150,6 +150,7 @@ class BootstrapTests(unittest.TestCase):
                     patch.object(MODULE, "pins", return_value={"rust": "1.98.0"}), \
                     patch.object(MODULE, "prerequisites", return_value={"rustup": ["rustup"], "git": ["git"]}), \
                     patch.object(MODULE.subprocess, "check_output", return_value="fixture\n"), \
+                    patch.object(MODULE.platform, "platform", return_value="fixture platform"), \
                     patch.object(MODULE, "steps", return_value=[("dependency-policy", ["policy"]), ("runtime-build", ["build"])]):
                 policy = {"schema": "airk.dependency-policy-check/1", "status": mode,
                           "all_requested_checks_passed": code == 0, "fresh_full_advisory_check": False,
@@ -178,6 +179,7 @@ class BootstrapTests(unittest.TestCase):
                     patch.object(MODULE, "pins", return_value={"rust": "1.98.0"}), \
                     patch.object(MODULE, "prerequisites", return_value={"rustup": ["rustup"], "git": ["git"]}), \
                     patch.object(MODULE.subprocess, "check_output", return_value="fixture\n"), \
+                    patch.object(MODULE.platform, "platform", return_value="fixture platform"), \
                     patch.object(MODULE, "steps", return_value=[("dependency-policy", ["policy"]), ("model-inputs", ["download"])]):
                 def execute(name, command, directory, environment):
                     if policy is not None:

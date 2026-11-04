@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
+"""Historical single-helper setup contracts; native fixtures require pre-1.4 inputs."""
 import importlib.util
 import json
 import os
@@ -203,9 +204,9 @@ class LocalSetupTests(unittest.TestCase):
                 execute.assert_called_once()
                 pause.assert_not_called()
 
-    @unittest.skipUnless(os.environ.get('AIRK_TEST_BINARY'), 'Set AIRK_TEST_BINARY for native writer-lock retry')
+    @unittest.skipUnless(os.environ.get('AIRK_LEGACY_TEST_BINARY'), 'Set AIRK_LEGACY_TEST_BINARY to a pre-1.4 standalone helper for historical writer-lock retry')
     def test_actual_native_writer_lock_is_retried_after_owner_releases_it(self):
-        binary = str(Path(os.environ['AIRK_TEST_BINARY']).resolve())
+        binary = str(Path(os.environ['AIRK_LEGACY_TEST_BINARY']).resolve())
         (self.root / 'README.md').write_text('Original lock contention fixture.\n', encoding='utf-8')
         command = [binary, *self.args[:-1]]
         subprocess.run([*command, 'collections', 'vectors', 'set', '--enabled', 'false'],
@@ -320,13 +321,13 @@ class LocalSetupTests(unittest.TestCase):
         self.assertEqual(config.read_bytes(), b'# changed during verification\n')
         self.assertFalse((run / 'local-agent-setup.json').exists())
 
-    @unittest.skipUnless(os.environ.get('AIRK_TEST_BINARY') and os.environ.get('AIRK_TEST_MODEL_DIR'),
-                         'Set AIRK_TEST_BINARY and AIRK_TEST_MODEL_DIR for real vector MCP smoke')
+    @unittest.skipUnless(os.environ.get('AIRK_LEGACY_TEST_BINARY') and os.environ.get('AIRK_LEGACY_TEST_MODEL_DIR'),
+                         'Set AIRK_LEGACY_TEST_BINARY and AIRK_LEGACY_TEST_MODEL_DIR for historical standalone vector MCP smoke')
     def test_actual_model_default_and_explicit_vector_mcp_search(self):
-        binary = str(Path(os.environ['AIRK_TEST_BINARY']).resolve())
+        binary = str(Path(os.environ['AIRK_LEGACY_TEST_BINARY']).resolve())
         (self.root / 'README.md').write_text('# Account recovery\nReset a forgotten password with an email recovery link.\n', encoding='utf-8')
         (self.root / 'bread.txt').write_text('Bread dough combines flour and yeast before baking.\n', encoding='utf-8')
-        for arguments in (['collections', 'vectors', 'install', str(Path(os.environ['AIRK_TEST_MODEL_DIR']).resolve())], ['index']):
+        for arguments in (['collections', 'vectors', 'install', str(Path(os.environ['AIRK_LEGACY_TEST_MODEL_DIR']).resolve())], ['index']):
             subprocess.run([binary, *self.args[:-1], *arguments], check=True, stdout=subprocess.DEVNULL,
                            **setup.process_options())
         version = subprocess.check_output([binary, '--version'], text=True, **setup.process_options()).strip().split()[1]
@@ -335,9 +336,9 @@ class LocalSetupTests(unittest.TestCase):
         self.assertEqual(result['default_search'], 'passed')
         self.assertGreaterEqual(result['indexed_vectors'], 2)
 
-    @unittest.skipUnless(os.environ.get('AIRK_TEST_BINARY'), 'Set AIRK_TEST_BINARY for real native MCP smoke')
+    @unittest.skipUnless(os.environ.get('AIRK_LEGACY_TEST_BINARY'), 'Set AIRK_LEGACY_TEST_BINARY to a pre-1.4 standalone helper for historical MCP smoke')
     def test_actual_mcp_checks_index_revision_and_rejects_stale_source(self):
-        binary = str(Path(os.environ['AIRK_TEST_BINARY']).resolve())
+        binary = str(Path(os.environ['AIRK_LEGACY_TEST_BINARY']).resolve())
         (self.root / 'README.md').write_text('# Fixture\nUnique smoke evidence.\n', encoding='utf-8')
         env = {**os.environ, 'AIRK_USAGE_MODE': 'disabled'}
         subprocess.run([binary, *self.args[:-1], 'collections', 'vectors', 'set', '--enabled', 'false'],

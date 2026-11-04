@@ -1,6 +1,6 @@
 # AIRK: Local Search for Coding Agents
 
-P6f implements reviewed Indexing/setup/grant forms and scoped native reads. Native Genesis/upgrade admits only qualified authority-1 activation. Windows implementation, installed-editor and all 84 matched native performance gates passed, alongside focused Neo tests. The full Neo checkpoint remains required before P7. [Evidence and platform limits](docs/research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation). Version remains **1.8.8**.
+P6f implements reviewed Indexing/setup/grant forms and scoped native reads. Native Genesis/upgrade admits only qualified authority-1 activation. Windows installed-editor qualification and all 84 matched native performance gates passed. The full Neo checkpoint is complete, including recorded fixture corrections and qualified reruns. P7 has not started. [Evidence and platform limits](docs/research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation). Version remains **1.8.8**.
 
 P6e makes [oversized stdio input](docs/mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](docs/workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
 
@@ -171,7 +171,7 @@ AIRK indexes local code and documents and serves bounded, cited evidence to codi
 
 A per-user service brokers authenticated connections and owns registration, durable work and resource policy. Retrieval flows directly between clients and project workers. Project workers also talk directly to the shared inference helper; the broker does not forward evidence, source text, model weights or embeddings.
 
-The approved runtime pair contains two executables: a lightweight `airk` for native service/client/worker roles, and `airk-embed` for inference and embedded offline MiniLM assets. Compatible projects share verified model files and loaded sessions. Inference starts when needed; connecting a read-only client does not load a model. Native operation targets Windows, Linux and both Mac architectures. Windows/Linux x64 and private Windows editor evidence is recorded separately; native Mac and the complete installed-platform matrix remain unqualified.
+The approved runtime pair contains two executables: a lightweight `airk` for native service/client/worker roles, and `airk-embed` for inference and embedded offline MiniLM assets. Compatible projects share verified model files and loaded sessions. Inference starts when needed; connecting a read-only client does not load a model. Native operation targets Windows, Linux and both Mac architectures. The current P6 checkpoint records Windows installed-editor and Neo ARM64 native evidence. Linux/Intel, installed Mac editors and the complete release matrix require separate qualification.
 
 The Mac layout uses a [GUI-less signed app bundle](docs/service-macos-login.md) containing those same two executables, with a macOS 13.3 deployment baseline and optional bundle-scoped login registration. The bundled inference library sets that minimum; its license notices reside in bundle resources. Native signing, lifecycle and installed-platform qualification are recorded separately from portable ownership/package checks.
 

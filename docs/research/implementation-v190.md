@@ -44,7 +44,7 @@ cross-platform qualification.
 | P3 | Complete - `b72fbc8` | ADRs, schemas, authority/partition fixtures and upgrade fault boundaries |
 | P4 | Complete - `a425ba0` | Single-index saved-source verification; maintainer selected Report as the default, with explicit Off and Require |
 | P5 | Complete — this locally qualified checkpoint | Inert normalized catalogs and owned U0–U6 upgrade/recovery; production activation disabled until P6 |
-| P6 | P6a–P6f locally qualified; full Neo checkpoint pending | Guarded authority-1 activation, reviewed setup/grants, installed Windows scenarios and all 84 matched native latency gates passed; full source-bound Neo campaign precedes P7 |
+| P6 | Complete — Windows local qualification and required full Neo checkpoint | Guarded authority-1 activation, reviewed setup/grants, installed Windows scenarios, all 84 matched native latency gates and source-bound Neo campaign with explicit corrections/reruns; release/platform limits remain separate |
 | P7 | Not started | Complete combined-read parity after P6 |
 | P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
 | P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
@@ -3204,3 +3204,142 @@ advisory qualification and baseline review exemptions are not relabeled as a
 fresh full release audit. Full Neo source-bound qualification is the next
 required checkpoint before P7; Linux, Intel, credentials and publication gates
 remain separate. P7 has not started.
+
+#### Full Neo checkpoint started from committed P6f — 4 November 2026
+
+P6f local acceptance was committed as `1837f586b005ab0f26f7f0ad1f20aedbe5939017`
+with the authorized human DCO. The post-P6 full Neo campaign uses a new owned
+public-only snapshot of that exact commit: **1,694** source files, native identity
+`386c0882bd5b657ecfe85c67f7af121a04e6c8c868ed8eb92a64fb3c5b28ba18` (**893** inputs),
+archive `7f30d56188087863e2a2214ce847c041dca28bc911148acdf627de03e26aeb9d`.
+Its generated shallow Git metadata contains only the current public commit's
+reachable objects; the original Git directory, ignored data and unrelated
+untracked audit note were excluded. Source and qualification-harness hashes are
+checked before and after execution. No P7 work has started.
+
+The initial complete Neo extension suite ran **665** cases: **634 passed, one
+failed, thirty skipped**. The stable-executable fixture incorrectly expected mode
+0755 after atomic creation under the campaign's restrictive umask 077, which
+correctly produces 0700. The test now compares against the existing process
+creation mask without changing permissions or umask. A separate immutable source
+copy, differing only in that test, passed **635/635** executed cases with thirty
+skips; its before/after correspondence verifies unchanged production/native
+sources. The Windows extension suite also passed **646**, with nineteen skips.
+The original failed run and its exact source remain retained; they are not
+relabeled as a passing full campaign. Full native build/tests and the remaining
+Neo checks continued from the unchanged snapshot; the final outcomes below supersede this pending status.
+
+
+The original full native run also exposed two host-specific fixture conditions.
+The administrative pagination fixture built approximately 1.4 KiB paths, beyond
+macOS PATH_MAX. Its correction retains the sixteen-root native limit and every
+size, continuation and complete-result assertion: Unix filenames contain literal
+backslashes, whose JSON escaping keeps the response above 20 KiB while each
+filesystem path stays below the platform limit. Windows keeps its original
+extended-path geometry. An initial local attempt to use thirty-two shorter roots
+correctly failed the native sixteen-root limit and remains retained; the accepted
+correction does not change that limit. The corrected Windows fixture passed and
+warning-denied workspace Clippy and formatting passed.
+
+The unchanged configured-capacity fixture failed its real sixty-four concurrent
+channels under the SSH shell's inherited soft descriptor limit of 256 (hard limit
+unlimited). A separate owned child shell with soft limit 4,096 passed the exact
+unchanged fixture, preserving all channel, capacity, identity, source-preservation
+and shutdown assertions. Only that child shell's limit changed; no global limit,
+ACL or application policy changed. CONTRIBUTING now records this qualification
+prerequisite. Original failures remain distinct from these observations. The
+supplementary capacity Cargo invocation reused the target cache after the full
+campaign had finished its CLI fixture phase; later tests use their original
+compiled binaries, and the sealed release payload is unchanged. Further builds
+and correction checks waited for the complete campaign to finish.
+
+
+#### Full Neo checkpoint completed — 4 November 2026
+
+P6a–P6f and the required post-P6 Neo checkpoint are complete. P7 has not started.
+This completion supersedes the pending statuses above; it does not relabel the
+original campaign as an all-pass run. Full evidence is retained locally under
+`artifacts/v190/p6f-neo-full-public-r1/`, including the original failed results,
+separate immutable correction snapshots and `qualification-summary.json`.
+
+The exact committed source `1837f586b005ab0f26f7f0ad1f20aedbe5939017` passed
+release-pair construction, workspace build, formatting, warning-denied full
+workspace/all-target/all-feature Clippy and doctests. The complete native catalog
+ran **2,296 tests across 67 binaries: 2,294 passed, two failed, 46 skipped**
+(1,433.645 s). The two failures were the administrative pagination path geometry
+and the sixty-four-channel fixture under the SSH descriptor limit described
+above. The corrected native administrative module passed **4/4** tests on Neo;
+the unchanged capacity fixture passed with the owned shell's soft limit 4,096.
+All original assertions, concurrency, budgets and retry rules remain intact.
+
+The release runtime passed **7/7** actual MCP smoke cases, native clients/model
+qualification (**two projects, sixteen files per project, eighteen client tools
+and the complete twenty-eight-tool MCP catalog**), complete installed lifecycle
+qualification and an actual retained-predecessor upgrade. That upgrade retained
+the original manual MCP configuration and source hashes, settled authority-1
+through the native coordinator, read the sealed `imported_legacy_snapshot`, and
+completed native Stop. Source bytes were preserved by the native client campaign.
+The installer verified abrupt-client loss, sibling preservation, stopped-owner
+repair, exact-payload health, upgrade, rollback, retirement and resumable uninstall.
+
+All three vector-component workloads initially refused the harness's U8 selection
+on ARM64. They passed **3/3** (40.30 s) with the provisioned, hash-verified S8
+profile selected by the native CPU policy. No model admission check, workload,
+threshold or assertion changed. The existing opt-in CI step now selects S8 for
+ARM64 and U8 for x64; routine suite selection and the matrix are unchanged.
+
+The full Python run initially reported eight error observations across five test
+methods (five subtest errors in two bootstrap tests and three legacy native
+fixtures), with three skips. The bootstrap mocks had intercepted Python's own
+macOS platform subprocess; those tests now isolate the platform observation as
+existing sibling tests already do. The other three fixtures require the removed
+pre-1.4 standalone command syntax, already documented as historical in
+`docs/windows-local-build.md`; they now require explicit separate legacy binary
+and model inputs. No legacy input was supplied, so those three remain unavailable
+and are reported as skipped, not successful current-service qualification.
+Current-service coverage is the actual native campaign described above.
+
+The corrected complete Python suite passed **405 tests, six skipped** (411 total),
+including the actual compiled-extension/parser/license packaging checks. The
+first correction snapshot lacked generated npm/extension inputs and passed with
+nine skips; that record remains retained. After locked offline npm preparation
+and compilation, the final rerun exercised the three packaging checks. One
+supplemental launcher initially lacked `python` on its SSH PATH and failed before
+starting tests; its log remains retained and the final runner uses the pinned
+interpreter and tool environment. Windows Python passed **402, nine skipped**.
+The corrected Neo extension suite passed **635, thirty skipped**; Windows passed
+**646, nineteen skipped**. Its original 634/one-failure/thirty-skip run is preserved.
+
+The public-only snapshot exposed a documentation-index link to the unrelated
+untracked audit note. The note was not copied or committed. Its dangling public
+link was removed; its local bytes remain unchanged. Corrected repository checks
+passed **1,694 public source files** on Neo. Licenses, whitespace and native/VSIX
+packaging passed in the original full campaign. Before/after verification proved
+all 1,694 public source files and the frozen harness unchanged. The correction
+snapshot verifies every source byte against the original snapshot plus its eight
+declared fixture/configuration/documentation changes; its native identity is
+`9de048920ff36f71bfe52633ca983368c372fea64cb3c6df6cfa4dd4c0a70929` (**893** inputs).
+Only the Rust test module changes native inputs, and that module is `cfg(test)`;
+production Rust and extension implementation sources are unchanged by this
+qualification correction. The final documentation records the observed outcomes.
+
+The tested Neo release pair and packages remain bound to the original committed
+source identity `386c0882bd5b657ecfe85c67f7af121a04e6c8c868ed8eb92a64fb3c5b28ba18`,
+not relabeled as builds from the later test/documentation correction:
+
+- Install manifest: `f3d54c6bf40208d51785bf139a69844ee61013fcd0cb79b4c7161d72e6a3c1cb`.
+- Main: `12433069e8227262b72615c4419540e77df30214ddb3bd12b5c198eccc5f554c`.
+- Helper: `62434e1d47178a8efdf163b8c4b7cd3332dcaccc900d638dcb3bb6d50902ce75`.
+- Native ZIP: `40ecefd28025f9a9b12fecbd4231b632a0acea2fa55be970d076d0d51593a0c7`.
+- ARM64 VSIX: `75662f851a292b1e2036c70b055b802ef3502ca54ebf73519eac9d87a82bbcb7`.
+
+Neo used pinned Rust 1.98.0, nextest 0.9.148, Node 24.15.0 and Python 3.13.18
+on macOS 26.5.1 ARM64. Runtime signing is ad-hoc. Developer ID/notarization,
+installed Mac editors, current Linux/Intel and the full release matrix remain
+separate qualification; no cross-platform release success is claimed. The offline
+dependency check passed all requested checks with a **limited** result, two
+exceptions and no fresh/yanked/npm advisory claim. No global tool installation,
+ACL, global resource limit, installed user runtime or private/index-state export
+was required. No P7, push, PR or publication occurred. Version remains **1.8.8**.
+The primary agent reviewed the combined change and validation evidence; no
+independent review is claimed.

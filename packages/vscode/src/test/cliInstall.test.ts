@@ -96,6 +96,7 @@ test('service CLI install retries retirement even when its current wrapper is un
 
 test('stable executable updates without stale copies, preserves old binary on missing input, and is idempotent', async context => {
     const root = await fixture(context), helper = path.join(root, 'verified-helper');
+    const creationMode = 0o755 & ~process.umask();
     await fs.writeFile(helper, 'first version');
     const directory = await publishCli(helper, path.join(root, 'Editor Storage'));
     const executable = path.join(directory, process.platform === 'win32' ? 'airk.exe' : 'airk');
@@ -108,7 +109,8 @@ test('stable executable updates without stale copies, preserves old binary on mi
     await assert.rejects(publishCli(path.join(root, 'missing'), path.join(root, 'Editor Storage')), /ENOENT/);
     assert.equal(await fs.readFile(executable, 'utf8'), 'next version');
     assert.deepEqual(await fs.readdir(directory), [path.basename(executable)]);
-    if (process.platform !== 'win32') { assert.equal((await fs.stat(executable)).mode & 0o777, 0o755); }
+    // Atomic replacement creates a new file and retains the process creation mask.
+    if (process.platform !== 'win32') { assert.equal((await fs.stat(executable)).mode & 0o777, creationMode); }
 });
 
 test('shell setup preserves startup commands and login selection, respects custom directories and repeats without duplicates', async context => {

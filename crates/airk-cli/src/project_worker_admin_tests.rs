@@ -90,10 +90,13 @@ async fn administrative_native_reads_retain_actual_complete_handler_pages() -> R
     assert!(initialized.publication.is_some());
     // Real native Roots metadata exceeds the minimum supported page budget.
     // Build sibling sources outside the primary/data roots, without files or
-    // an index scan. Canonical extended paths also exercise Windows long paths.
+    // an index scan. Unix backslashes are ordinary filename bytes but escape
+    // in JSON, retaining the oversized metadata below macOS PATH_MAX. Windows
+    // uses canonical extended paths to exercise its long-path support.
+    let (depths, padding) = if cfg!(windows) { (8, "x") } else { (4, "\\") };
     let mut external = base.join("external");
-    for depth in 0..8 {
-        external = external.join(format!("segment-{depth}-{}", "x".repeat(170)));
+    for depth in 0..depths {
+        external = external.join(format!("segment-{depth}-{}", padding.repeat(170)));
     }
     for n in 0..16 {
         let path = external.join(format!("root-{n:02}"));

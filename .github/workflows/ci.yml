@@ -220,7 +220,7 @@ jobs:
       - name: Kernel real-model cache and incremental-work regressions
         if: ${{ steps.resume.outputs.restored != 'true' && inputs.qualification }}
         env:
-          AIRK_TEST_MODEL_DIR: ${{ github.workspace }}/target/local-vector-model/minilm-l6-v2-u8-v1
+          AIRK_TEST_MODEL_DIR: ${{ github.workspace }}/target/local-vector-model/${{ startsWith(matrix.target, 'aarch64-') && 'minilm-l6-v2-s8-v1' || 'minilm-l6-v2-u8-v1' }}
         run: cargo test -p airk-kernel --features local-inference --test vector_performance --locked --target ${{ matrix.target }} -- --ignored --test-threads=1
       - name: Build pinned native candidate
         if: steps.resume.outputs.restored != 'true'
