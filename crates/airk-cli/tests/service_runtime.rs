@@ -2311,6 +2311,7 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
                     grant,
                     paused: true,
                     canceled: false,
+                    yield_to_source: false,
                 }),
             },
         )?;
@@ -2340,6 +2341,7 @@ fn private_worker_channel_renews_only_the_live_scoped_generation() -> Result<()>
                     grant,
                     paused: false,
                     canceled: true,
+                    yield_to_source: false,
                 }),
             },
         )?;

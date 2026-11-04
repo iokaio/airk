@@ -1165,7 +1165,7 @@ mod tests {
         assert!(registry.project_setup_pending(active.binding)?);
         assert!(registry.project_setup_pending(paused.binding)?);
         assert!(!registry.project_setup_pending(removed.binding)?);
-        let due = registry.due_background_jobs(None, 32)?;
+        let due = registry.due_background_jobs(None, 0, 32)?;
         assert_eq!(due.len(), 1);
         assert_eq!((due[0].0, due[0].2), (active.binding, JobKind::ModelSetup));
         background::set(
@@ -1178,7 +1178,7 @@ mod tests {
         drop(registry);
         let registry = ServiceRegistry::open(directory.path(), namespace)?;
         assert!(!registry.project_setup_pending(active.binding)?);
-        let due = registry.due_background_jobs(None, 32)?;
+        let due = registry.due_background_jobs(None, 0, 32)?;
         assert_eq!(due.len(), 1);
         assert_eq!((due[0].0, due[0].2), (paused.binding, JobKind::ModelSetup));
         Ok(())

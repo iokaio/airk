@@ -1,5 +1,7 @@
 # AIRK 1.8.8 manual-test working build
 
+P6d's [source admission changes](../service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.
+
 P6c's [search execution contract](../search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
 
 On 3 November 2026, the maintainer selected **1.8.8** as the working version for

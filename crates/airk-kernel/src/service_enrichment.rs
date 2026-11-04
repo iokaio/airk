@@ -48,6 +48,8 @@ impl Kernel {
     }
     /// One bounded 32-artifact semantic batch; the soft deadline is checked at
     /// publication boundaries. Native inference still has its own hard budgets.
+    /// An admitted source hint yields before model admission or after the current
+    /// atomic batch, retaining the saved semantic watermark and pending inputs.
     pub fn service_enrichment_turn(&self) -> Result<airk_ingest::IndexReport> {
         ensure!(
             self.is_service_collection(),

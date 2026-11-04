@@ -1371,7 +1371,7 @@ pub async fn run() -> Result<()> {
                     Some(Command::WorkStatus{identity:expected,control,keep_for_maintenance,freshness})=>{
                         if expected==identity {freshness_kernel.observe_service_freshness(identity, freshness.map(|sample| *sample))?;}
                         if expected==identity {maintenance_waiting.store(keep_for_maintenance,Ordering::Release);}
-                        if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled)?;}
+                        if expected==identity && let Some(control)=control {airk_kernel::service_execution::control(identity,control.grant,control.paused,control.canceled,control.yield_to_source)?;}
                         let mut status=work_status.lock().map_err(|_|anyhow::anyhow!("work status unavailable"))?;
                         let reply=if expected==identity{Reply::WorkStatus{observation:protocol::WorkObservation{active:status.active,finished:status.finished,maintenance:status.maintenance.clone(),failure:status.failure.clone(),integrity_observation_failure:status.integrity_observation_failure.take(),progress:airk_kernel::service_execution::progress().map(Box::new),waiting_for:status.active.and_then(|_|airk_kernel::service_execution::waiting_for())}}}else{Reply::Failed};
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;

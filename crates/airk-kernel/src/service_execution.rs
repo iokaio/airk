@@ -25,6 +25,7 @@ struct Owner {
     active: Mutex<Option<airk_core::identity::Incarnation>>,
     paused: AtomicBool,
     canceled: AtomicBool,
+    yield_to_source: AtomicBool,
     progress: Mutex<Option<progress::Tracker>>,
     stalled: AtomicBool,
     waiting: Mutex<Option<airk_core::service_resources::WaitReason>>,
@@ -114,6 +115,7 @@ pub fn install(root: &Path, identity: WorkerIdentity) -> Result<()> {
                 active: Mutex::new(None),
                 paused: AtomicBool::new(false),
                 canceled: AtomicBool::new(false),
+                yield_to_source: AtomicBool::new(false),
                 progress: Mutex::new(None),
                 stalled: AtomicBool::new(false),
                 waiting: Mutex::new(None),
@@ -127,12 +129,14 @@ pub fn activate(grant: &WorkAllowance) -> Result<()> {
     grant.validate()?;
     let owner = OWNER.get().context("service execution not installed")?;
     ensure!(owner.identity == grant.identity, "foreign work grant");
-    *owner
+    let mut active = owner
         .active
         .lock()
-        .map_err(|_| anyhow::anyhow!("work control unavailable"))? = Some(grant.id);
+        .map_err(|_| anyhow::anyhow!("work control unavailable"))?;
+    *active = Some(grant.id);
     owner.paused.store(false, Ordering::Release);
     owner.canceled.store(false, Ordering::Release);
+    owner.yield_to_source.store(false, Ordering::Release);
     owner.stalled.store(false, Ordering::Release);
     *owner
         .waiting
@@ -159,15 +163,15 @@ pub fn control(
     id: airk_core::identity::Incarnation,
     paused: bool,
     canceled: bool,
+    yield_to_source: bool,
 ) -> Result<()> {
     let owner = OWNER.get().context("service execution not installed")?;
+    let active = owner
+        .active
+        .lock()
+        .map_err(|_| anyhow::anyhow!("work control unavailable"))?;
     ensure!(
-        owner.identity == identity
-            && *owner
-                .active
-                .lock()
-                .map_err(|_| anyhow::anyhow!("work control unavailable"))?
-                == Some(id),
+        owner.identity == identity && *active == Some(id),
         "foreign work control"
     );
     owner.paused.store(paused, Ordering::Release);
@@ -176,7 +180,27 @@ pub fn control(
     if canceled {
         owner.canceled.store(true, Ordering::Release);
     }
+    // Admission is recomputed by the owner. Unlike cancellation, a source hint
+    // can be withdrawn without changing this exact accepted grant.
+    owner
+        .yield_to_source
+        .store(yield_to_source, Ordering::Release);
     Ok(())
+}
+
+/// A process-owned metadata hint for this thread's exact active work grant.
+/// This never inspects sources, databases, model state or another worker.
+pub fn source_yield_requested() -> bool {
+    let Some(owner) = OWNER.get() else {
+        return false;
+    };
+    let Some(id) = WORK.with(|slot| slot.borrow().as_ref().map(|work| work.grant.id)) else {
+        return false;
+    };
+    owner
+        .active
+        .lock()
+        .is_ok_and(|active| *active == Some(id) && owner.yield_to_source.load(Ordering::Acquire))
 }
 #[derive(Debug)]
 pub struct Canceled;

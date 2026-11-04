@@ -1478,28 +1478,14 @@ impl Supervisor {
                         Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         Err(mpsc::RecvTimeoutError::Timeout) => {}
                     }
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64);
                     if let Some(registry) = registry.as_mut() {
                         if Instant::now() >= next_receipt_maintenance {
                             let _ = registry.maintain_job_receipts();
                             next_receipt_maintenance = Instant::now() + Duration::from_secs(2);
                         }
-                        if let Ok(due) = registry.due_background_jobs(background_after, 8) {
-                            background_after = if due.len() == 8 {
-                                due.last().map(|item| item.0)
-                            } else {
-                                None
-                            };
-                            for (project, revision, kind) in due {
-                                if let Ok(nonce) = new_instance_id() {
-                                    let _ = registry.enqueue_background_job(
-                                        project, revision, kind, instance, nonce,
-                                    );
-                                }
-                            }
-                        }
-                        let now_ms = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map_or(0, |time| time.as_millis().min(u64::MAX as u128) as u64);
                         if let Ok(due) = registry.due_source_projects(source_after, now_ms, 32) {
                             source_after = due.last().map(|(project, _)| *project);
                             for (project, revision) in due {
@@ -1509,6 +1495,23 @@ impl Supervisor {
                                 let _ = registry.enqueue_source_reconcile(
                                     project, instance, nonce, revision, now_ms,
                                 );
+                            }
+                        }
+                        // Source admission gets the existing writer opportunity first.
+                        // Store also fences Vector admission transactionally, including
+                        // admissible source projects beyond this bounded source page.
+                        if let Ok(due) = registry.due_background_jobs(background_after, now_ms, 8) {
+                            background_after = if due.len() == 8 {
+                                due.last().map(|item| item.0)
+                            } else {
+                                None
+                            };
+                            for (project, revision, kind) in due {
+                                if let Ok(nonce) = new_instance_id() {
+                                    let _ = registry.enqueue_background_job(
+                                        project, revision, kind, instance, nonce, now_ms,
+                                    );
+                                }
                             }
                         }
                         if let Ok(due) = registry.due_automatic_audits(now_ms, 8) {
@@ -1684,6 +1687,16 @@ impl Supervisor {
                             registry.as_ref().and_then(|registry| {
                                 let (plan_paused, plan_canceled) =
                                     registry.maintenance_job_control(grant.job).ok()?;
+                                let yield_to_source = registry
+                                    .source_yield_requested(*project, grant.job, now_ms)
+                                    .unwrap_or_else(|_| {
+                                        log.record_code(
+                                            airk_core::service_logs::LogKind::MetadataUnavailable,
+                                            Some(*project), None,
+                                            Some("source_yield_observation_failed"),
+                                        );
+                                        false
+                                    });
                                 Some(protocol::WorkControl {
                                     grant: grant.id,
                                     paused: plan_paused
@@ -1691,6 +1704,7 @@ impl Supervisor {
                                             && !registry.job_runs_while_paused(grant.job).ok()?),
                                     canceled: plan_canceled
                                         || registry.cancellation_requested(grant.job).ok()?,
+                                    yield_to_source,
                                 })
                             })
                         });

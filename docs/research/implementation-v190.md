@@ -2235,3 +2235,216 @@ ONNX rollover, five-iteration release, signed/notarized, installed-editor/agent
 and wider platform qualification remain explicitly assigned to P14.
 Final formatting, whitespace, instruction-file byte identity, repository checks
 for **1,574 public files** and synchronized **1.8.8** versions passed.
+
+## P6d — source admission fairness (3 November 2026, accepted)
+
+Final acceptance is recorded at the end of this section. The intervening
+checkpoints preserve the development history; their pending and failure states
+describe those earlier checkpoints, not the final accepted source.
+
+P6c was committed and pushed as
+`d098d2cd4d5b3935494e4554e2ba1cbaf7398ac3`, with the human DCO trailer
+verified. Working version remains **1.8.8**. P6d separates source admission
+eligibility from merely observed source lag. One shared metadata-only Store
+predicate governs source discovery/acceptance and suppression of semantic-only
+continuations, including a transactional recheck after a stale Vector preview.
+Setup/source continuation priority, accepted request replay and durable vector
+intent remain intact. The supervisor samples one time, visits bounded source
+pages before background pages and sends a reversible, exact-grant source-yield
+hint through the existing work-status pulse. Worker pause/cancellation takes
+precedence; yielding occurs at safe enrichment boundaries without interrupting
+inference or publication.
+
+The first focused Store background/source-watch/job run passed **34/34** in
+**3.578 s** (471 unrelated cases unselected), including five new regressions.
+Log: `artifacts/v190/p6d-store-focused.log`. Worker/kernel, actual native
+backlog, package/platform and performance qualification remain pending. The
+native fixture must prove source publication before backlog completion and
+subsequent vector progress, including explicitly accepted source work with watch
+disabled; an insufficient backlog cannot count as a passing fairness test.
+
+P6e's independent Rust and TypeScript slices are being prepared in an isolated
+checkout of P6c. They do not enter P6d's source-bound test/commit checkpoint.
+Review caught and corrected unintended UI Unicode encoding changes and a
+duplicate import before any P6e compile or integration. No P6e test result is
+claimed yet.
+
+### Historical frozen P6d checkpoint
+
+At this checkpoint, native source was frozen at
+`85f439d63f1e3ed13604de1166926900cb1fe8e0c98e2e7a6afc6fc3fa616ffb`
+(789 native inputs). The final canonical Kernel matrix passed in **30.89 s**;
+the mixed-private-frame regression and actual claim/finish observation-race
+regression passed. Review retained the existing data-root/grant validation on
+early yielding, before skipping execution/model admission. A completed or
+not-yet-claimed job no longer emits a false metadata failure merely because its
+supervisor grant is still being observed. Wrong-project/missing-job refusals and
+exact worker/grant checks remain intact.
+
+The optimized Windows native fairness run passed automatic edit/add/delete/rename
+and accepted Index work with watching disabled: **zero Vector overtakers**,
+source publication before backlog completion, exact citation paths/raw source
+hashes, and subsequent saved Vector progress. Observed overhead beyond the
+existing turn was **5.857 s / 4.044 s**, below the unchanged **10 s** fixture
+allowance. Receipt: `artifacts/v190/p6d-source-fairness-release.json`.
+
+Its matched final-corpus samples contain **30 actual partial-readiness reads**
+and **30 semantic-ready reads**, each bound to its returned publication. Backlog
+median/p95 was **261.75 / 336.46 ms**; ready-stage median/p95 was **279.61 /
+377.48 ms**. The ready-stage resource snapshot still reported one running job:
+this is a load-effect observation, not an uncontended-idle or prior-phase
+regression qualification. The matched retained-P6c backlog control passed unchanged median/p95 gates:
+**290.87 / 381.13 ms** control versus **261.75 / 336.46 ms** candidate, with
+the same 387-file corpus, query recipe and partial-readiness cohort. This is
+limited to that scenario; normal frozen/preceding phase gates remain pending.
+
+Fixture development retained its failures: a raw debug directory without the
+required paired manifest was rejected by the helper; canonical payload validation
+now fails before launch. A Windows host-discovery mock and an incorrect automatic
+Index-kind assumption were corrected against the real protocol. Sampling only a
+brief current Embedding phase was replaced by exact-running-grant inference
+evidence. Cached scalar status is diagnostic; actual search publications,
+readiness and source hashes qualify source/read observations. One uninstrumented
+diagnostics timeout remains unattributed; a subsequent bounded full-diagnostics
+probe completed in **0.133 s / 18,035 bytes** without an oversized frame. A debug
+timing miss (**11.548 s**) remains diagnostic and did not relax the optimized
+allowance. Full bounded failed-wave evidence is retained.
+
+On neo, workspace Clippy and all **36** focused cases passed (Store 34, Kernel
+one, private protocol one), followed by the fresh release pair, **91.105 s**
+16-file model clients and the full isolated installer lifecycle. Native hashes
+and 791 declared inputs matched before/after. Its separate first fairness attempt
+refused an original-witness replacement before observed source eligibility; no
+production failure was inferred. Durable event-interval proof and the remaining
+Mac fairness scenario are being qualified separately. No native source rebuild
+is required by a fixture-only validation change.
+
+
+### Historical P6d claim-race correction checkpoint
+
+The refined neo fairness attempt passed automatic source ordering and the
+unchanged 10-second overhead allowance (**5.341 s**), then found a real manual
+source race. A Vector continuation was pending at event 43; an explicit Index
+was accepted at event 44; that Vector began running at event 45 before the Index
+at event 47. This is not the earlier fixture-witness limitation. Receipt:
+`artifacts/v190/neo-p6d/fairness-482be3e/qualification.json`; bounded events and
+raw failure evidence remain adjacent. The run was not retried and its matched
+latency stage did not run.
+
+The correction must cover both pending-job selection and the transactional
+claim of an already selected Vector. Eligible source work takes priority over
+pending semantic-only Vectors, including explicitly requested Vectors, while
+retaining their job IDs, receipts and saved intent. Other accepted work retains
+its ordering and pause/recovery rules. Automatic source admission must also
+ignore pending Vectors as competitors, so a refused stale Vector claim cannot
+leave source work blocked by the same pending job. There is no persisted
+background/manual provenance for Vectors; automatic audit metadata describes
+Verify work and cannot classify Vectors. No schema or caller-identity inference
+is used for this distinction.
+
+Before this correction, frozen Windows formatting, workspace Clippy, all
+**1,979** selected workspace tests (**39** explicitly skipped) and all doctest
+targets passed. The doctest targets contained no executable examples. Those
+results qualify the old `85f439d...` checkpoint, not the pending correction.
+New source-bound checks and affected actual native/platform tests remain
+required before P6d acceptance. At that checkpoint the phase remained uncommitted.
+
+After all P6a–P6f work is accepted, run a full frozen test build and test campaign
+on neo before starting P7, as separately requested. Focused Mac receipts do not
+substitute for that checkpoint. Keep working version **1.8.8** and do not infer
+release signing, publication or user installation from test-build authorization.
+
+
+The coherent claim correction also covers saved Index continuations with
+watching disabled, automatic watch reconciliation ahead of queued Vectors, exact
+stale-grant refusal, request replay, restart and subsequent Vector resumption.
+Four regressions were added without changing the schema. Independent review
+confirmed that pending semantic-only work cannot block its own source replacement.
+
+The correction's complete Windows Store run selected **597 tests**: **596 passed,
+one failed, six were skipped** in **208.641 s**. The sole failure was an old
+fixture that tried to claim a new Vector after accepting Index work, ignored the
+now-correct `None`, then expected a running-Vector yield hint. The test now proves
+that refusal, completes the accepted source, requires an actual new Vector claim,
+and only then accepts another source job to exercise yield/pause/cancellation.
+Its assertions remain intact and independent review passed. A preceding new-test
+field-access compile failure is retained separately; it executed no tests.
+
+Final source is
+`a87a1bc8377699c7ae6da76f2aa7dbb23fe3386816bf5edb87af0546b2d6cbf7`
+(789 native inputs). All **16** final background tests passed in **1.602 s** and
+workspace all-target/all-feature Clippy passed in **16.11 s**. The other **581**
+passing Store cases and six original skips are reused from the complete run,
+explicitly across this test-only correction. The 587 unselected/skipped entries
+in the focused report are not 587 additional unavailable cases. The complete
+Python suite passed **404 tests with nine skips** in **22.545 s**; repository
+checks passed for **1,576** public files. Final runtime and performance results
+are recorded below.
+
+
+Review ownership is separate and explicit: the primary reviewer assessed the
+original D implementation and native fixture, then authored the three-file Store
+claim correction. The integration lead independently reviewed that correction,
+found the saved-source sibling and reviewed its complete amendment. The lead
+subsequently repaired the invalid test setup; the primary independently reviewed
+that test-only change. No author review is labeled independent.
+
+
+### P6d accepted — 3 November 2026
+
+The final Windows pair is `artifacts/v190/p6d-claim-qualified-runtime`, source
+`a87a1bc8377699c7ae6da76f2aa7dbb23fe3386816bf5edb87af0546b2d6cbf7`
+/789; main executable SHA-256 is
+`5146a4140f615746347c8e18a898890f4d8fef1debdc516303358847071d0eca`.
+The canonical release builder completed helper/main profiles in **3m03s / 4m49s**.
+The final canonical Kernel source/semantic-resumption matrix passed in **30.75 s**.
+The earlier full workspace/doctest receipt remains explicitly at `85f439d...`;
+only affected checks were repeated after the coherent Store correction. Combined
+Store coverage is **597 unique passing cases**, with six original skips, across
+the complete correction run and the independently reviewed test-only rerun.
+
+Actual Windows fairness passed automatic edit/add/delete/rename and manual Index
+with watching disabled, no Vector overtakers, exact source hash/citation and
+publication observations, publication before backlog completion, saved Vector
+resumption and owned cleanup. Final overhead was **6.107 / 4.154 s**. The raw
+Windows run left its optional inline overhead limit null; the separate
+`p6d-claim-source-gates.json` derives both checks against the unchanged frozen
+**10 s** allowance and binds the new raw receipt SHA, native source and executable
+hash. It does not rewrite the raw receipt or reuse the old source's gate result.
+
+The corrected Windows backlog cohort uses the same 387-file corpus, lexical/Off
+query recipe, resource configuration and partial-readiness range as the retained
+P6c control. Candidate median/p95 **292.14 / 347.65 ms** passed unchanged bounds
+**319.95 / 438.30 ms** against control **290.87 / 381.13 ms**. This is a bounded
+regression check, not a speedup claim. Original control receipts remain unchanged;
+`p6d-claim-backlog-control-gates.json` records the new comparison.
+
+Windows native CLI/MCP/install smokes passed **3/3**, followed by the actual shared
+pool regeneration, helper-failure and existing-session recovery smoke. All **84/84**
+normal Off/Report latency comparisons passed unchanged frozen and preceding-phase
+bounds (`artifacts/v190/p6d-gates.json`); all four measured cohorts completed before
+phase acceptance. Supply-chain evidence is reused from `p6c-fresh.json`: all 24
+protected input fingerprints, pinned tool versions, freshness and exception dates
+were verified unchanged in `p6d-dependency-reuse.json`. No new advisory/network
+audit is claimed. No extension source changed in P6d; its P6c test receipt remains
+historical with its original Node-version qualification limit.
+
+On neo, final source and all **795** declared inputs matched before/after.
+Formatting, full workspace all-target/all-feature Clippy (**20.86 s**) and all
+**38** focused Store cases passed; the fresh pair built in **3m36s / 4m55s**.
+One final unchanged fairness run enforced **10 s** inline and passed at **6.400 /
+3.413 s**, with zero overtakers. The manual Index moved from pending event 41 to
+running event 42 in **68 ms**. Source bytes, hashes, publication/citations and
+cleanup all passed. Receipt:
+`artifacts/v190/neo-p6d/final-a87a1bc/qualification.json`. Its 30 backlog and 30
+semantic-ready samples are same-candidate load observations, without regression
+thresholds or a proven idle claim. Earlier failed receipts and the old `85f439d...`
+model/installer macro remain separately identified; those macros were not rerun
+on final source. Full Mac qualification after all P6a–P6f and before P7 remains
+required. No Linux, installed-editor, Developer ID/notarization or release
+publication qualification is inferred.
+
+Version remains **1.8.8**, synchronized across native/extension lockfiles. README,
+documentation index, working release record and Marketplace copy describe the
+implemented source-priority behavior. The final phase commit is recorded by the
+next phase's ledger entry; no PR, CI or publication is part of this checkpoint.

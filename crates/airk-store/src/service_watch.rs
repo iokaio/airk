@@ -8,7 +8,7 @@ use airk_core::{
     service_watch::{WatchBackend, WatchFailure, WatchObservation, WatchTraversal},
 };
 use anyhow::{Context, Result, ensure};
-use rusqlite::{OptionalExtension, TransactionBehavior, params};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
 pub(super) const TRAVERSAL_SCHEMA: &str = "
     CREATE TABLE service_watch_traversal(
@@ -98,6 +98,32 @@ pub(super) fn roots(bytes: &[u8]) -> Result<Vec<String>> {
     Ok(roots)
 }
 
+/// Shared metadata-only eligibility for source admission and vector yielding.
+/// SQL expressions are fixed by native callers, never supplied by a request.
+pub(super) fn automatic_source_where(now_ms: &str, ignored_job: &str) -> String {
+    format!("w.enabled=1 AND p.registered=1 AND p.paused=0 AND w.requested>w.indexed AND w.attempts<3
+        AND (w.blocked_revision IS NULL OR w.blocked_revision<w.requested) AND w.next_ms<={now_ms}
+        AND NOT EXISTS(SELECT 1 FROM service_recovery_budget budget WHERE budget.scope='source:'||w.project AND (budget.failures>=3 OR budget.next_ms>{now_ms}))
+        AND NOT EXISTS(SELECT 1 FROM service_jobs busy WHERE busy.project=w.project AND ({ignored_job} IS NULL OR busy.id<>{ignored_job}) AND busy.state IN('pending','running')
+            AND NOT (busy.state='pending' AND busy.kind='vectors')
+            AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=busy.id AND a.manual=0 AND busy.state='pending')
+            AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=busy.id AND r.waiting=1 AND busy.kind='model_setup'))")
+}
+
+pub(super) fn automatic_source_candidate(
+    connection: &Connection,
+    project: ProjectBinding,
+    now_ms: u64,
+    ignored_job: Option<Sha256Digest>,
+) -> Result<Option<u64>> {
+    let revision: Option<i64> = connection.query_row(
+        &format!("SELECT w.requested FROM service_watch w JOIN projects p ON p.binding=w.project WHERE w.project=?1 AND {}", automatic_source_where("?2", "?3")),
+        params![project.to_string(), i64::try_from(now_ms)?, ignored_job.map(|id| id.to_string())],
+        |row| row.get(0),
+    ).optional()?;
+    revision.map(u64::try_from).transpose().map_err(Into::into)
+}
+
 impl ServiceRegistry {
     /// A new private watcher incarnation cannot inherit another process's claim
     /// that native registrations are active. Root configuration stays retained.
@@ -157,11 +183,10 @@ impl ServiceRegistry {
             (1..=32).contains(&limit),
             "invalid source admission page limit"
         );
-        let mut statement=self.connection.prepare("SELECT w.project,w.requested FROM service_watch w JOIN projects p ON p.binding=w.project
-            WHERE w.project>?1 AND w.enabled=1 AND p.paused=0 AND w.requested>w.indexed AND w.attempts<3
-            AND (w.blocked_revision IS NULL OR w.blocked_revision<w.requested) AND w.next_ms<=?2
-            AND NOT EXISTS(SELECT 1 FROM service_recovery_budget b WHERE b.scope='source:'||w.project AND (b.failures>=3 OR b.next_ms>?2))
-            AND NOT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=w.project AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=j.id AND a.manual=0 AND j.state='pending') AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')) ORDER BY w.project LIMIT ?3")?;
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT w.project,w.requested FROM service_watch w JOIN projects p ON p.binding=w.project WHERE w.project>?1 AND {} ORDER BY w.project LIMIT ?3",
+            automatic_source_where("?2", "NULL"),
+        ))?;
         let rows = statement.query_map(
             params![
                 after.map(|id| id.to_string()).unwrap_or_default(),
@@ -175,6 +200,56 @@ impl ServiceRegistry {
             Ok((id.parse()?, u64::try_from(revision)?))
         })
         .collect()
+    }
+
+    /// Bounded metadata hint for an existing running vector grant. This does not
+    /// admit work or consume a source retry, and never reads source/index files.
+    pub fn source_yield_requested(
+        &self,
+        project: ProjectBinding,
+        active_job: Sha256Digest,
+        now_ms: u64,
+    ) -> Result<bool> {
+        let active = self.job(active_job)?;
+        ensure!(
+            active.project == project,
+            "source yield observation does not match project work"
+        );
+        // Supervisor ownership can briefly outlive a completed job or precede
+        // its worker claim. Those normal transitions are not metadata failures.
+        if active.state != airk_core::service::JobState::Running
+            || active.kind != airk_core::service::JobKind::Vectors
+        {
+            return Ok(false);
+        }
+        if automatic_source_candidate(&self.connection, project, now_ms, Some(active_job))?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        // Respect the same pending ordering, pause and recovery rules as actual
+        // worker admission. Explicit source work remains eligible with watch off.
+        if let Some(next) = self.next_pending_job(project)? {
+            if self.cancellation_requested(next.id)? {
+                return Ok(false);
+            }
+            return Ok(self.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM service_job_source s JOIN service_jobs j ON j.id=s.job JOIN projects p ON p.binding=j.project WHERE s.job=?1 AND p.registered=1)",
+                [next.id.to_string()],
+                |row| row.get(0),
+            )?);
+        }
+        // A partial/manual source pass may have saved its continuation without a
+        // public job. Preserve that intent and give it the same priority as preview.
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project WHERE b.project=?1 AND b.source_pending=1 AND p.registered=1 AND p.paused=0
+                AND NOT EXISTS(SELECT 1 FROM service_jobs busy WHERE busy.project=b.project AND busy.id<>?2 AND busy.state IN('pending','running')
+                    AND NOT (busy.state='pending' AND busy.kind='vectors')
+                    AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=busy.id AND a.manual=0 AND busy.state='pending')
+                    AND NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=busy.id AND r.waiting=1 AND busy.kind='model_setup')))",
+            params![project.to_string(), active_job.to_string()],
+            |row| row.get(0),
+        )?)
     }
 
     pub fn watch(&self, project: ProjectBinding) -> Result<WatchProject> {

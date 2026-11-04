@@ -1,5 +1,7 @@
 # AIRK: Local Search for Coding Agents
 
+P6d's [source admission changes](https://github.com/iokaio/airk/blob/main/docs/service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.
+
 P6c's [search execution contract](https://github.com/iokaio/airk/blob/main/docs/search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
 
 **1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) records accepted development phases toward the planned 1.9.0 release. Project/index management remains gated. Saved-source verification defaults to Report; see the [controls and limits](https://github.com/iokaio/airk/blob/main/docs/source-verification.md).

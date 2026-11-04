@@ -4,6 +4,36 @@
 
 Service freshness describes saved source-work intent independently of authenticated index identity and extraction coverage. It does not verify live source files. The service registry combines its watcher state, pending/running source jobs and latest source outcome in one bounded read transaction. Verification, vector-only work and other derived maintenance cannot overwrite the latest source failure. Planned repair work reuses its existing durable source-job association.
 
+## Source work during semantic backlogs
+
+The P6d working implementation visits bounded source-admission pages before
+semantic continuations. A shared Store eligibility predicate also guards the
+Vector preview and transactional debit, so a stale preview cannot consume the
+next writer opportunity ahead of admissible source work. Disabled watching,
+pause, retry/backoff and blocked revisions remain meaningful; source lag alone
+does not authorize work. Explicitly accepted source jobs can take priority when
+watching is disabled. Pending-job selection and transactional claims also prefer eligible source work
+over pending semantic-only Vectors, including an explicitly requested Vector. Their saved job IDs, request receipts and remaining
+work stay intact. Other accepted work retains its ordering. Automatic reconciliation and saved
+source continuations can be admitted while those Vectors remain pending; the
+transactional claim recheck refuses a stale Vector grant without canceling its
+job or substituting another job.
+
+The existing work-status pulse carries a reversible source-yield hint, fenced to
+the current worker and work grant. A Vector turn checks it at safe boundaries,
+preserves its published work and saved continuation, then relinquishes its
+writer. Pause and cancellation retain precedence. The hint introduces no source
+walk, model opening or registry work into retrieval calls. Pending/finished job
+observation races return a quiet false hint; a wrong project or missing job
+still fails validation.
+
+The existing 32-artifact/30-second turn limits are soft budgets. Inference and an
+atomic publication are not interrupted to promise a hard 30-second deadline.
+Native fairness fixtures measure the existing turn and bounded admission/source
+publication overhead separately, and require subsequent Vector progress. Current
+qualification and remaining platform limits are in the
+[implementation ledger](research/implementation-v190.md#p6d--source-admission-fairness-3-november-2026-accepted).
+
 Explorer labels this observation **Source work**. From 1.5.5, native directory planning uses indexing's ignore policy, so an unreadable fully ignored output directory does not by itself make the watched source scope unavailable. Included-directory failures, ignore-rule errors and exhausted traversal budgets remain explicit. This changes notification scope, not semantic coverage or the meaning of a published revision; see [source watching](service-source-watching.md).
 
 Each project retains one source-outcome summary, at most 2 KiB of outcome payload, within the registry's existing 32 MiB ceiling. Terminal transitions update it in the same transaction as the job receipt, including pending cancellation and interrupted-start settlement. Job-receipt rotation cannot erase the latest source failure. On open, existing retained terminal jobs seed missing summaries using bounded aggregation over the registry's maximum 1,024 jobs. Source attempts have distinct `source_job` IDs; a new failure with the same code is still a changed observation. A job ID is separate from the exact index revision token.

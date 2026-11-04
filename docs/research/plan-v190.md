@@ -1369,6 +1369,17 @@ indexing and whole-workspace freshness claims.
 
 ## Validation and release decisions
 
+**Maintainer checkpoint added 3 November 2026:** after completing P6a–P6f,
+run a full source-bound build and test campaign on the existing SSH-connected
+Neo Mac before starting P7. This supplements the focused Mac checks performed
+along the way. Use the pinned toolchain and the complete applicable checks in
+CONTRIBUTING.md, including native workspace and extension builds/tests, repository
+checks and isolated runtime/model/installation exercises. Record the exact source,
+runtime and package identities, actual pass/fail/skip counts and unavailable
+coverage in the implementation ledger. Resolve relevant failures before continuing;
+do not treat a successful build as test or installed-editor qualification. This
+checkpoint keeps the working version at 1.8.8 and authorizes no publication.
+
 Set numerical quality and resource thresholds before experiments, after recording
 the baseline, following the performance contract above. Gate each accepted phase
 and the cumulative change; enabling an opt-in path is measured separately from

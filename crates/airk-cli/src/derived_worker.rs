@@ -236,6 +236,7 @@ pub fn run() -> Result<()> {
                         control.grant,
                         control.paused,
                         control.canceled,
+                        control.yield_to_source,
                     )?;
                 }
                 let mut observation = status

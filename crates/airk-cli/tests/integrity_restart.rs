@@ -765,6 +765,7 @@ fn native_project_worker_accepted_verify_cancel_and_closed_input_retain_owned_dr
                     grant: grant_id,
                     paused: false,
                     canceled: true,
+                    yield_to_source: false,
                 }),
                 keep_for_maintenance: false,
                 freshness: None,

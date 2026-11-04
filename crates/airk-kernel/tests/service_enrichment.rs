@@ -332,8 +332,8 @@ fn ready_execution_observations(
     );
     Ok(())
 }
-fn work<T>(identity: WorkerIdentity, turn: u8, operation: impl FnOnce() -> Result<T>) -> Result<T> {
-    let allowance = WorkAllowance {
+fn allowance(identity: WorkerIdentity, turn: u8) -> WorkAllowance {
+    WorkAllowance {
         id: Incarnation::from_bytes([turn; 16]),
         identity,
         job: Sha256Digest::from_bytes([turn; 32]),
@@ -342,9 +342,128 @@ fn work<T>(identity: WorkerIdentity, turn: u8, operation: impl FnOnce() -> Resul
         working_memory_bytes: 768 << 20,
         background_io_bytes_per_second: 32 << 20,
         ttl_ms: 300_000,
-    };
+    }
+}
+
+fn work<T>(identity: WorkerIdentity, turn: u8, operation: impl FnOnce() -> Result<T>) -> Result<T> {
+    let allowance = allowance(identity, turn);
     service_execution::activate(&allowance)?;
     service_execution::run(allowance, operation)
+}
+
+fn source_hint_control_is_grant_fenced_and_reversible(identity: WorkerIdentity) -> Result<()> {
+    let first = allowance(identity, 60);
+    service_execution::activate(&first)?;
+    service_execution::control(identity, first.id, false, false, true)?;
+    assert!(
+        !service_execution::source_yield_requested(),
+        "hint escaped accepted work context"
+    );
+    service_execution::run(first.clone(), || {
+        assert!(service_execution::source_yield_requested());
+        let foreign = WorkerIdentity {
+            worker: Incarnation::from_bytes([99; 16]),
+            ..identity
+        };
+        assert!(service_execution::control(foreign, first.id, false, false, false).is_err());
+        assert!(
+            service_execution::source_yield_requested(),
+            "foreign identity withdrew hint"
+        );
+        assert!(
+            service_execution::control(
+                identity,
+                Incarnation::from_bytes([61; 16]),
+                false,
+                false,
+                false
+            )
+            .is_err()
+        );
+        assert!(
+            service_execution::source_yield_requested(),
+            "foreign grant withdrew hint"
+        );
+        service_execution::control(identity, first.id, false, false, false)?;
+        assert!(!service_execution::source_yield_requested());
+        service_execution::control(identity, first.id, false, false, true)?;
+        assert!(service_execution::source_yield_requested());
+        Ok(())
+    })?;
+
+    let next = allowance(identity, 61);
+    service_execution::activate(&next)?;
+    service_execution::run(next.clone(), || {
+        assert!(
+            !service_execution::source_yield_requested(),
+            "activation retained the old hint"
+        );
+        assert!(service_execution::control(identity, first.id, false, false, true).is_err());
+        assert!(!service_execution::source_yield_requested());
+        service_execution::control(identity, next.id, true, true, true)?;
+        let canceled = service_execution::checkpoint().unwrap_err();
+        assert!(
+            canceled.is::<service_execution::Canceled>(),
+            "cancel lost precedence to pause/yield"
+        );
+        service_execution::control(identity, next.id, false, false, false)?;
+        assert!(!service_execution::source_yield_requested());
+        assert!(
+            service_execution::checkpoint()
+                .unwrap_err()
+                .is::<service_execution::Canceled>(),
+            "cancel was not monotonic"
+        );
+        Ok(())
+    })?;
+    Ok(())
+}
+
+fn source_hint_at_entry_preserves_pending_without_model_work(
+    kernel: &Kernel,
+    foreign: &Kernel,
+    transport: &Transport,
+    identity: WorkerIdentity,
+) -> Result<()> {
+    let before = kernel.status()?;
+    let calls = transport.calls();
+    let report = work(identity, 62, || {
+        service_execution::control(
+            identity,
+            Incarnation::from_bytes([62; 16]),
+            false,
+            false,
+            true,
+        )?;
+        let rejected = foreign.service_enrichment_turn().unwrap_err();
+        assert!(
+            rejected
+                .to_string()
+                .contains("service grant storage root mismatch"),
+            "entry yield bypassed the accepted grant's data root: {rejected:#}"
+        );
+        kernel.service_enrichment_turn()
+    })?;
+    assert!(report.yield_to_source);
+    assert_eq!(report.generation, before.generation);
+    assert_eq!(report.semantic_readiness.unwrap().completed_artifacts, 0);
+    assert_eq!(report.embedding_inferences, 0);
+    assert_eq!(
+        transport.calls(),
+        calls,
+        "entry yield opened or requested a model"
+    );
+    assert_eq!(kernel.status()?.publication, before.publication);
+    // A new source turn can immediately acquire the released writer. Resetting
+    // the accepted grant also clears a previously requested vector yield.
+    let source = work(identity, 63, || {
+        assert!(!service_execution::source_yield_requested());
+        kernel.index_service_sources()
+    })?;
+    assert!(!source.yield_to_source);
+    assert_eq!(transport.calls(), calls);
+    assert_eq!(kernel.status()?.semantic_readiness.completed_artifacts, 0);
+    Ok(())
 }
 
 #[test]
@@ -393,6 +512,23 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
     embedding_worker::install_connector(Arc::new(Adapter(transport.clone())))?;
     let kernel = Kernel::open_service_collection(&source, Some(data.clone()), "phases")?
         .with_service_models(&runtime, plan.clone())?;
+    // Prepare a distinct retained service index before installing this process's
+    // single worker owner. Its pending metadata must not authorize the later grant.
+    let foreign_source = owner.path().join("foreign-source");
+    let foreign_data = owner.path().join("foreign-data");
+    fs::create_dir(&foreign_source)?;
+    fs::create_dir(&foreign_data)?;
+    fs::write(
+        foreign_source.join("foreign.md"),
+        "Unrelated retained fixture.\n",
+    )?;
+    let foreign = Kernel::open_service_collection(&foreign_source, Some(foreign_data), "foreign")?
+        .with_service_models(&runtime, plan.clone())?;
+    foreign.index_service_sources()?;
+    assert_eq!(
+        foreign.status()?.semantic_readiness.state,
+        SemanticState::Pending
+    );
     let project = airk_kernel::service_projects::registration(&source, &data, "phases")?;
     let identity = WorkerIdentity {
         service: Incarnation::from_bytes([81; 16]),
@@ -401,6 +537,7 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
         fencing_generation: 1,
     };
     service_execution::install(&data, identity)?;
+    source_hint_control_is_grant_fenced_and_reversible(identity)?;
     let source_report = work(identity, 1, || kernel.index_service_sources())?;
     assert_eq!(source_report.indexed, 40);
     assert_eq!(
@@ -412,6 +549,9 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
         0,
         "source publication opened the helper"
     );
+    source_hint_at_entry_preserves_pending_without_model_work(
+        &kernel, &foreign, &transport, identity,
+    )?;
     assert!(
         !kernel
             .search(&SearchQuery {
@@ -456,7 +596,29 @@ fn source_and_replacement_publish_without_helper_and_semantics_resume_in_bounded
     let offline = owner.path().join("offline-source");
     fs::rename(&source, &offline)?;
     transport.available.store(true, Ordering::Release);
-    let first = work(identity, 4, || current.service_enrichment_turn())?;
+    let hinted = Arc::new(AtomicBool::new(false));
+    let hint_observed = hinted.clone();
+    let yielding = current.clone().with_index_progress(move |event| {
+        if event.phase == "enrichment_prepared" {
+            hint_observed.store(
+                service_execution::control(
+                    identity,
+                    Incarnation::from_bytes([4; 16]),
+                    false,
+                    false,
+                    true,
+                )
+                .is_ok(),
+                Ordering::Release,
+            );
+        }
+    });
+    let first = work(identity, 4, || yielding.service_enrichment_turn())?;
+    assert!(hinted.load(Ordering::Acquire));
+    assert!(
+        first.yield_to_source,
+        "completed batch did not return source priority"
+    );
     let readiness = first.semantic_readiness.unwrap();
     assert_eq!(readiness.state, SemanticState::Partial);
     assert_eq!(readiness.completed_artifacts, 32);

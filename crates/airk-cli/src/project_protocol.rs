@@ -115,6 +115,31 @@ mod helper_admission_tests {
     use super::*;
 
     #[test]
+    fn source_yield_control_requires_an_explicit_compatible_private_frame() -> anyhow::Result<()> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PreviousControl {
+            #[serde(rename = "grant")]
+            _grant: Incarnation,
+            #[serde(rename = "paused")]
+            _paused: bool,
+            #[serde(rename = "canceled")]
+            _canceled: bool,
+        }
+        let mut frame = serde_json::json!({
+            "grant":Incarnation::from_bytes([9;16]), "paused":false, "canceled":false
+        });
+        assert!(serde_json::from_value::<WorkControl>(frame.clone()).is_err());
+        frame["yield_to_source"] = true.into();
+        let current: WorkControl = serde_json::from_value(frame.clone())?;
+        assert!(current.yield_to_source);
+        assert!(serde_json::from_value::<PreviousControl>(frame.clone()).is_err());
+        frame["yield_to_source"] = "true".into();
+        assert!(serde_json::from_value::<WorkControl>(frame).is_err());
+        Ok(())
+    }
+
+    #[test]
     fn legacy_activation_and_pool_updates_never_invent_pending_authority() -> anyhow::Result<()> {
         let identity = WorkerIdentity {
             service: Incarnation::from_bytes([1; 16]),
@@ -176,6 +201,7 @@ pub struct WorkControl {
     pub grant: Incarnation,
     pub paused: bool,
     pub canceled: bool,
+    pub yield_to_source: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

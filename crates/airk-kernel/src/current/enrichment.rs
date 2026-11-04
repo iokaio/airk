@@ -23,6 +23,7 @@ const POLICY_KEY: &str = "semantic-policy";
 pub(super) struct DrainOutcome {
     generation: Option<u64>,
     maintenance_error: Option<String>,
+    yield_to_source: bool,
 }
 
 /// Keep model loading and inference under the same admitted resource lease.
@@ -750,6 +751,7 @@ impl Kernel {
     /// Resume retained semantic inputs without reading live workspace files.
     /// Each batch publishes its vectors and reduced pending set in one transaction.
     pub fn resume_current_enrichment(&self) -> Result<Option<u64>> {
+        crate::service_execution::checkpoint()?;
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         super::recover_current(&self.store, &self.collection_quota()?, &scope)
             .context("recover current before semantic enrichment")?;
@@ -758,6 +760,11 @@ impl Kernel {
             return Ok(None);
         };
         if work.pending.is_empty() {
+            return Ok(Some(read.head().sequence));
+        }
+        if self.service_collection.is_some() && crate::service_execution::source_yield_requested() {
+            // Yielding skips execution admission, not its existing storage/grant fence.
+            crate::service_execution::plan(&self.data_root)?;
             return Ok(Some(read.head().sequence));
         }
         let execution = match crate::execution::acquire(&self.data_root) {
@@ -819,6 +826,7 @@ impl Kernel {
             max_batches > 0 && max_batches <= 8,
             "semantic batch limit exceeded"
         );
+        crate::service_execution::checkpoint()?;
         let started = std::time::Instant::now();
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         super::recover_current(&self.store, &self.collection_quota()?, &scope)?;
@@ -829,6 +837,14 @@ impl Kernel {
         };
         if work.pending.is_empty() {
             let report = self.semantic_report(&read, &EmbeddingCacheStats::default(), started)?;
+            return Ok((Some(read.head().sequence), report));
+        }
+        if self.service_collection.is_some() && crate::service_execution::source_yield_requested() {
+            crate::service_execution::plan(&self.data_root)?;
+            let mut report =
+                self.semantic_report(&read, &EmbeddingCacheStats::default(), started)?;
+            report.yield_to_source = true;
+            report.current = Some(airk_ingest::CurrentIndexWork::default());
             return Ok((Some(read.head().sequence), report));
         }
         let execution = match crate::execution::acquire(&self.data_root) {
@@ -875,14 +891,15 @@ impl Kernel {
             .map_err(|error| self.semantic_failure(error))?;
         let read = self.store.current_read(&scope)?;
         let mut report = self.semantic_report(&read, &stats, started)?;
-        report.yield_to_source = self.service_collection.is_none()
-            && airk_store::scheduler::Queue::new(&self.data_root)
-                .status(&self.collection, &self.root_id())?
-                .is_some_and(|job| {
-                    job.requested_revision > job.completed_revision
-                        && !job.blocked
-                        && (!job.paused || job.manual)
-                });
+        report.yield_to_source = result.yield_to_source
+            || (self.service_collection.is_none()
+                && airk_store::scheduler::Queue::new(&self.data_root)
+                    .status(&self.collection, &self.root_id())?
+                    .is_some_and(|job| {
+                        job.requested_revision > job.completed_revision
+                            && !job.blocked
+                            && (!job.paused || job.manual)
+                    }));
         report.current = Some(current_work);
         report.maintenance_error = result.maintenance_error;
         Ok((result.generation, report))
@@ -926,8 +943,15 @@ impl Kernel {
         let quota = self.collection_quota()?;
         let captures = writer.capture_objects();
         let mut generation = None;
+        let mut yield_to_source = false;
         for batch in 0..max_batches {
             crate::service_execution::checkpoint()?;
+            if self.service_collection.is_some()
+                && crate::service_execution::source_yield_requested()
+            {
+                yield_to_source = true;
+                break;
+            }
             if batch > 0 && deadline.is_some_and(|end| std::time::Instant::now() >= end) {
                 break;
             }
@@ -1107,9 +1131,18 @@ impl Kernel {
                 completed_artifacts: Some(work.completed_artifacts),
                 completed_units: Some(work.completed_units),
             });
+            // The accepted batch has durably published before relinquishing its
+            // writer. A hint never interrupts an inference call or atomic commit.
+            crate::service_execution::checkpoint()?;
+            if self.service_collection.is_some()
+                && crate::service_execution::source_yield_requested()
+            {
+                yield_to_source = true;
+                break;
+            }
         }
         drop(captures);
-        let maintenance_error = if generation.is_some() {
+        let maintenance_error = if generation.is_some() && !yield_to_source {
             super::update::reclaim_current_objects(&self.store, &quota, &scope, &writer)
                 .err()
                 .map(|error| format!("current object cleanup: {error:#}"))
@@ -1119,6 +1152,7 @@ impl Kernel {
         Ok(DrainOutcome {
             generation,
             maintenance_error,
+            yield_to_source,
         })
     }
 }

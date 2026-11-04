@@ -41,11 +41,32 @@ pub(super) const SCHEMA: &str = "
 const MAX_JOBS: i64 = 1024;
 const MAX_REQUESTS: i64 = 4096;
 
+/// Source priority applies to semantic-only work, regardless of who requested
+/// it. The legacy registry does not persist automatic/manual Vector provenance.
+/// Preserve the relative order of all other accepted jobs.
+fn pending_source_work(connection: &Connection, project: ProjectBinding) -> Result<bool> {
+    Ok(connection.query_row(
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN projects p ON p.binding=j.project
+          WHERE j.project=?1 AND p.registered=1 AND j.state='pending'
+          AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND ({}) AND {}
+          AND EXISTS(SELECT 1 FROM service_job_source source WHERE source.job=j.id)
+          AND NOT EXISTS(SELECT 1 FROM service_job_cancellation canceled WHERE canceled.job=j.id))
+          OR EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project
+            WHERE b.project=?1 AND b.source_pending=1 AND p.registered=1 AND p.paused=0)",
+            super::maintenance::ELIGIBLE,
+            super::recovery::ELIGIBLE
+        ),
+        [project.to_string()],
+        |row| row.get(0),
+    )?)
+}
+
 #[derive(Default)]
 struct EnqueueOptions {
     explicit: bool,
     configuration: Option<Box<airk_core::service_configuration::ConfigurationWork>>,
-    background_revision: Option<u64>,
+    background_revision: Option<(u64, u64)>,
     audit_revision: Option<(u64, u64)>,
     maintenance_now_ms: Option<u64>,
     source_request: Option<(u64, u64)>,
@@ -219,8 +240,33 @@ impl ServiceRegistry {
                 |row| row.get(0),
             )
             .optional()?;
-        id.map(|id| record(&self.connection, id.parse()?))
-            .transpose()
+        let head = id
+            .map(|id| record(&self.connection, id.parse()?))
+            .transpose()?;
+        if head
+            .as_ref()
+            .is_some_and(|job| job.kind == JobKind::Vectors)
+            && pending_source_work(&self.connection, project)?
+        {
+            let id: Option<String> = self
+                .connection
+                .query_row(
+                    &format!(
+                        "SELECT j.id FROM service_jobs j JOIN projects p ON p.binding=j.project
+                    WHERE j.project=?1 AND j.state='pending' AND j.kind<>'vectors'
+                    AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND ({}) AND {} ORDER BY j.seq LIMIT 1",
+                        super::maintenance::ELIGIBLE,
+                        super::recovery::ELIGIBLE
+                    ),
+                    [project.to_string()],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            return id
+                .map(|id| record(&self.connection, id.parse()?))
+                .transpose();
+        }
+        Ok(head)
     }
     /// Cached-console observation includes paused jobs without admitting work.
     pub fn pending_job_observation(&self, project: ProjectBinding) -> Result<Option<JobRecord>> {
@@ -572,7 +618,7 @@ impl ServiceRegistry {
         }
         if maintenance_now_ms.is_some() || source_request.is_some() {
             let busy: bool = transaction.query_row(
-                "SELECT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=?1 AND j.state IN('pending','running') AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=j.id AND a.manual=0 AND j.state='pending') AND (?2=0 OR NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')))",
+                "SELECT EXISTS(SELECT 1 FROM service_jobs j WHERE j.project=?1 AND j.state IN('pending','running') AND NOT (?2=1 AND j.state='pending' AND j.kind='vectors') AND NOT EXISTS(SELECT 1 FROM service_background_audit a WHERE a.job=j.id AND a.manual=0 AND j.state='pending') AND (?2=0 OR NOT EXISTS(SELECT 1 FROM service_job_recovery r WHERE r.job=j.id AND r.waiting=1 AND j.kind='model_setup')))",
                 params![project.to_string(), source_request.is_some()], |row| row.get(0))?;
             ensure!(!busy, "project already has admitted work");
         }
@@ -659,8 +705,8 @@ impl ServiceRegistry {
                 )?;
             }
         }
-        if let Some(revision) = background_revision {
-            super::background::debit(&transaction, project, kind, revision, id)?;
+        if let Some((revision, now_ms)) = background_revision {
+            super::background::debit(&transaction, project, kind, revision, id, now_ms)?;
         }
         if let Some(now_ms) = maintenance_now_ms {
             // Admission and retry debit share this transaction. Replaying an accepted
@@ -688,12 +734,20 @@ impl ServiceRegistry {
                 transaction.execute("UPDATE service_watch SET attempts=0,next_ms=0,blocked_revision=NULL WHERE project=?1",[project.to_string()])?;
             }
             if let Some((revision, now_ms)) = source_request {
-                let attempts:u32=transaction.query_row("SELECT w.attempts FROM service_watch w JOIN projects p ON p.binding=w.project
-                    WHERE w.project=?1 AND w.enabled=1 AND p.paused=0 AND w.requested=?2 AND w.requested>w.indexed
-                    AND w.attempts<3 AND (w.blocked_revision IS NULL OR w.blocked_revision<w.requested) AND w.next_ms<=?3
-                    AND NOT EXISTS(SELECT 1 FROM service_recovery_budget b WHERE b.scope='source:'||w.project AND (b.failures>=3 OR b.next_ms>?3))",
-                    params![project.to_string(),i64::try_from(revision)?,i64::try_from(now_ms)?],|row|row.get(0))
-                    .context("source reconciliation is no longer eligible")?;
+                ensure!(
+                    super::watch::automatic_source_candidate(
+                        &transaction,
+                        project,
+                        now_ms,
+                        Some(id)
+                    )? == Some(revision),
+                    "source reconciliation is no longer eligible"
+                );
+                let attempts: u32 = transaction.query_row(
+                    "SELECT attempts FROM service_watch WHERE project=?1",
+                    [project.to_string()],
+                    |row| row.get(0),
+                )?;
                 let next = now_ms
                     .checked_add((1u64 << (attempts + 1)) * 1000)
                     .context("source retry deadline exhausted")?;
@@ -898,6 +952,7 @@ impl ServiceRegistry {
         kind: JobKind,
         caller: Incarnation,
         nonce: Incarnation,
+        now_ms: u64,
     ) -> Result<JobRecord> {
         ensure!(
             matches!(
@@ -917,7 +972,7 @@ impl ServiceRegistry {
             },
             kind,
             EnqueueOptions {
-                background_revision: Some(revision),
+                background_revision: Some((revision, now_ms)),
                 ..Default::default()
             },
         )
@@ -1050,6 +1105,14 @@ impl ServiceRegistry {
         lease: &ProjectLease,
         selected: Option<Sha256Digest>,
     ) -> Result<Option<JobRecord>> {
+        self.claim_selected_job_at(lease, selected, super::maintenance::clock_ms()?)
+    }
+    pub(super) fn claim_selected_job_at(
+        &mut self,
+        lease: &ProjectLease,
+        selected: Option<Sha256Digest>,
+        now_ms: u64,
+    ) -> Result<Option<JobRecord>> {
         let transaction = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -1067,10 +1130,49 @@ impl ServiceRegistry {
         if running {
             return Ok(None);
         }
-        let id: Option<String> = transaction.query_row(&format!("SELECT j.id FROM service_jobs j WHERE j.project=?1 AND j.state='pending' AND (?2 IS NULL OR j.id=?2) AND (NOT ?3 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)), params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| row.get(0)).optional()?;
-        let Some(id) = id else {
+        let candidate: Option<(String, bool)> = transaction.query_row(&format!("SELECT j.id,j.kind='vectors' FROM service_jobs j WHERE j.project=?1 AND j.state='pending' AND (?2 IS NULL OR j.id=?2) AND (NOT ?3 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)), params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+        let Some((mut id, mut vector)) = candidate else {
             return Ok(None);
         };
+        if vector && pending_source_work(&transaction, lease.binding)? {
+            if selected.is_some() {
+                return Ok(None);
+            }
+            // An unselected claim follows the same non-Vector FIFO as preview.
+            // Exact service grants never substitute a different job.
+            let priority: Option<String> = transaction
+                .query_row(
+                    &format!(
+                        "SELECT j.id FROM service_jobs j WHERE j.project=?1 AND j.state='pending'
+                    AND j.kind<>'vectors' AND (NOT ?2 OR {RUN_WHILE_PAUSED}) AND ({}) AND {}
+                    ORDER BY j.seq LIMIT 1",
+                        super::maintenance::ELIGIBLE,
+                        super::recovery::ELIGIBLE
+                    ),
+                    params![lease.binding.to_string(), paused],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            let Some(priority) = priority else {
+                return Ok(None);
+            };
+            id = priority;
+            vector = false;
+        }
+        if vector
+            && super::watch::automatic_source_candidate(
+                &transaction,
+                lease.binding,
+                now_ms,
+                Some(id.parse()?),
+            )?
+            .is_some()
+        {
+            // A supervisor grant can become stale before this transaction. Do
+            // not substitute another job, debit retries, or lose the saved
+            // Vector request; the worker releases only this unclaimed grant.
+            return Ok(None);
+        }
         let derived = super::configuration::work(&transaction, id.parse()?)?
             .is_some_and(|work| work.request.configuration.is_derived_cleanup());
         let registered: bool = transaction.query_row(
@@ -2366,7 +2468,7 @@ mod tests {
         registry.recover_jobs_with_rebuild_receipt(&replacement, Some(&receipt))?;
         assert_eq!(registry.job(job.id)?.state, JobState::Succeeded);
         assert_eq!(
-            registry.due_background_jobs(None, 1)?[0].2,
+            registry.due_background_jobs(None, 0, 1)?[0].2,
             JobKind::Vectors
         );
         registry.set_background_pending(&replacement, JobKind::Vectors, false)?;
