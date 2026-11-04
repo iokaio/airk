@@ -21,10 +21,12 @@ impl Kernel {
     }
 
     pub fn quota_status(&self) -> Result<QuotaStatus> {
+        self.require_unrestricted_read()?;
         self.storage_quota()?.status()
     }
 
     pub fn quota_policy(&self) -> Result<QuotaPolicy> {
+        self.require_unrestricted_read()?;
         self.storage_quota()?.policy()
     }
 

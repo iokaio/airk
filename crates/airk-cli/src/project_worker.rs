@@ -8,7 +8,7 @@ use crate::{
 use airk_core::service::{ConnectionGrant, JobKind, JobOutcome, MAX_FRAME_BYTES, WorkerIdentity};
 use airk_kernel::{
     Kernel,
-    service_broker::{Broker, BrokerLimits},
+    service_broker::{Broker, BrokerLimits, SessionPurpose},
 };
 use airk_store::service::{ProjectLease, registry::ServiceRegistry};
 use anyhow::{Context, Result, ensure};
@@ -99,8 +99,12 @@ use tokio::{
     task::JoinSet,
 };
 
+#[path = "project_worker_admin.rs"]
+mod admin;
 #[path = "project_worker_admission.rs"]
 mod admission;
+#[path = "project_worker_scopes.rs"]
+mod scopes;
 
 struct State {
     control: std::path::PathBuf,
@@ -110,6 +114,7 @@ struct State {
     tools: airk_mcp::local::LocalTools,
     closing: Arc<AtomicBool>,
     admission: Arc<admission::QueryAdmission>,
+    scopes: Arc<Mutex<scopes::Scopes>>,
 }
 
 #[derive(Default)]
@@ -203,18 +208,17 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
         !state.closing.load(Ordering::Acquire),
         "project ownership is draining"
     );
-    let session = state
-        .broker
-        .lock()
-        .map_err(|_| anyhow::anyhow!("query policy unavailable"))?
-        .redeem(
-            &grant,
-            state.identity,
-            local_ipc::caller_identity()?,
-            Instant::now(),
-            Duration::from_secs(60),
-        )?;
-    let mut tools = match state.tools.session_with_client(grant.client).await {
+    let (session, purpose, authority) = admin::redeem(&state, &grant)?;
+    let session_tools = match authority {
+        Some(authority) => {
+            state
+                .tools
+                .scoped_session_with_client(authority, grant.client)
+                .await
+        }
+        None => state.tools.session_with_client(grant.client).await,
+    };
+    let mut tools = match session_tools {
         Ok(tools) => tools,
         Err(error) => {
             state
@@ -225,7 +229,17 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             return Err(error);
         }
     };
+    let _session_fence = scopes::SessionFence {
+        scopes: state.scopes.clone(),
+        reference: grant.scope,
+        session,
+    };
+    let response_kernel = tools.scoped_read_revocation_handle();
     let result = async {
+        if let Some(scope) = grant.scope {
+            state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
+                .attach(scope, session, tools.scoped_read_revocation_handle())?;
+        }
         local_ipc::write_message(
             &mut stream,
             &protocol::Accepted {
@@ -249,7 +263,12 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 if request.native.is_some() { request.tool.is_empty() && request.arguments.is_empty() } else { !request.tool.is_empty() && request.tool.len() <= 128 },
                 "invalid tool name"
             );
+            admin::validate_request(purpose, &request)?;
             state.storage.check()?;
+            {
+                let scopes=state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?;
+                admin::check_scope(&scopes,grant.scope,purpose)?;
+            }
             // This one received request has not been accepted by the broker.
             // Wait briefly for its slot rather than making the agent replay it;
             // authorization and ownership are rechecked on every attempt.
@@ -268,6 +287,13 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 if state.storage.check().is_err() {
                     return Err(AdmissionError::OwnershipLost);
                 }
+                let scope_allowed = {
+                    let scopes=state.scopes.lock().map_err(|_| AdmissionError::OwnershipLost)?;
+                    admin::check_scope(&scopes,grant.scope,purpose)
+                };
+                if scope_allowed.is_err() {
+                    return Err(AdmissionError::InvalidGrant);
+                }
                 let mut policy = state.broker.lock().map_err(|_| AdmissionError::OwnershipLost)?;
                 let now = Instant::now();
                 if tokio::time::Instant::from_std(now) >= admission_deadline {
@@ -282,9 +308,9 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
             let request_id = match admission {
                 Ok(request) => request,
                 Err(error) => {
-                    let mut reply = admission_rejection(error);
+                    let mut reply = admission_rejection_observed(error, &response_kernel)?;
                     reply.status_receipt = tools.status_receipt();
-                    local_ipc::write_message(&mut stream, &reply, Duration::from_secs(5)).await?;
+                    deliver(&mut stream, &reply, &state, grant.scope, purpose).await?;
                     if reply.rebind { return Ok(()); }
                     continue;
                 }
@@ -296,7 +322,7 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 match request.native {
                     Some(native) => tools.read_native(native, state.identity.project).await,
                     None => {
-                        if request.tool == "airk_diagnostics" {
+                        if request.tool == "airk_diagnostics" && grant.scope.is_none() {
                             tools.set_runtime(crate::runtime_metadata::bundle(&state.control, state.identity, request.frontend).await);
                             tools.set_work(crate::runtime_metadata::work(&state.control, state.identity).await);
                         }
@@ -313,11 +339,14 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 }
             };
             let value = response.unwrap_or_else(|error| {
+                if response_kernel.scope_observation().is_some() {
+                    return scoped_worker_error(&response_kernel, &error, native_read);
+                }
                 if native_read { serde_json::json!({"error":{"code":"native_read_failed","message":format!("{error:#}").chars().take(1024).collect::<String>()}}) }
                 else { serde_json::json!({"content":[{"type":"text","text":"AIRK read-only tool failed or is unavailable."}],"isError":true}) }
             });
             let reply = protocol::QueryResult { result: value, status_receipt: tools.status_receipt(), rebind: false };
-            let result = local_ipc::write_message(&mut stream,&reply,Duration::from_secs(5)).await;
+            let result = deliver(&mut stream, &reply, &state, grant.scope, purpose).await;
             state
                 .broker
                 .lock()
@@ -337,6 +366,72 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
     result
 }
 
+/// Serialize first, then fence immediately before delivery. A result completed
+/// before revocation cannot be delivered from a retained serialized response.
+async fn deliver(
+    stream: &mut Stream,
+    reply: &protocol::QueryResult,
+    state: &State,
+    scope: Option<airk_core::service::ScopedReadRef>,
+    purpose: SessionPurpose,
+) -> Result<()> {
+    let mut frame = Vec::new();
+    service_ipc::write_frame_limited(&mut frame, reply, MAX_FRAME_BYTES)?;
+    deliver_frame(stream, &frame, || {
+        let guard = state
+            .scopes
+            .lock()
+            .map_err(|_| anyhow::anyhow!("scope policy unavailable"))?;
+        ensure!(
+            !state.closing.load(Ordering::Acquire),
+            "project ownership is draining"
+        );
+        admin::check_scope(&guard, scope, purpose)?;
+        Ok(guard)
+    })
+    .await
+}
+
+async fn deliver_frame<G>(
+    stream: &mut (impl tokio::io::AsyncWrite + Unpin),
+    frame: &[u8],
+    fence: impl Fn() -> Result<G>,
+) -> Result<()> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let mut offset = 0;
+        while offset < frame.len() {
+            // A backpressured stream may yield before writing any bytes. Fence
+            // every resumed write poll, not only creation of the write future.
+            let count = std::future::poll_fn(|cx| {
+                let _guard = match fence() {
+                    Ok(guard) => guard,
+                    Err(error) => return std::task::Poll::Ready(Err(std::io::Error::other(error))),
+                };
+                tokio::io::AsyncWrite::poll_write(
+                    std::pin::Pin::new(&mut *stream),
+                    cx,
+                    &frame[offset..],
+                )
+            })
+            .await?;
+            ensure!(count > 0, "native frame writer closed");
+            offset += count;
+        }
+        std::future::poll_fn(|cx| {
+            let _guard = match fence() {
+                Ok(guard) => guard,
+                Err(error) => return std::task::Poll::Ready(Err(std::io::Error::other(error))),
+            };
+            tokio::io::AsyncWrite::poll_flush(std::pin::Pin::new(&mut *stream), cx)
+        })
+        .await?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .context("native frame write deadline exceeded")??;
+    Ok(())
+}
+
 fn admission_rejection(error: airk_core::service::AdmissionError) -> protocol::QueryResult {
     let busy = error == airk_core::service::AdmissionError::Busy;
     let detail = serde_json::json!({"error":{"code":"direct_query_admission", "reason":error,
@@ -347,6 +442,45 @@ fn admission_rejection(error: airk_core::service::AdmissionError) -> protocol::Q
         status_receipt: Default::default(),
         rebind: !busy,
     }
+}
+
+/// Preserve the direct transport's native/MCP envelope distinction while using
+/// the same bounded, typed refusal factory as canonical MCP reads.
+fn scoped_worker_error(kernel: &Kernel, error: &anyhow::Error, native: bool) -> serde_json::Value {
+    let reply = airk_mcp::response::scoped_error_result(kernel, error);
+    if native {
+        // The canonical factory always supplies JSON for a scoped response,
+        // including generic failures and frame-budget refusals.
+        reply
+            .content
+            .iter()
+            .find_map(|block| {
+                block
+                    .as_text()
+                    .and_then(|text| serde_json::from_str(&text.text).ok())
+            })
+            .expect("canonical scoped error JSON")
+    } else {
+        serde_json::to_value(reply).expect("canonical scoped error serialization")
+    }
+}
+
+fn admission_rejection_observed(
+    error: airk_core::service::AdmissionError,
+    kernel: &Kernel,
+) -> Result<protocol::QueryResult> {
+    let mut reply = admission_rejection(error);
+    if kernel.scope_observation().is_some() {
+        let text = reply.result["content"][0]["text"]
+            .as_str()
+            .context("direct admission receipt missing")?;
+        let mut detail: serde_json::Value = serde_json::from_str(text)?;
+        match kernel.annotate_scoped_read(&mut detail) {
+            Ok(()) => reply.result["content"][0]["text"] = detail.to_string().into(),
+            Err(error) => reply.result = scoped_worker_error(kernel, &error, false),
+        }
+    }
+    Ok(reply)
 }
 
 fn execute(
@@ -468,6 +602,13 @@ pub async fn run() -> Result<()> {
     local_ipc::prepare_root(&init.runtime)?;
     let mut lease = ProjectLease::acquire(&init.runtime, init.project)?;
     let mut registry = ServiceRegistry::open(&init.runtime, init.service)?;
+    // Native persisted authority, pinned before serving. No wire omission or
+    // frontend assertion may select the legacy unrestricted branch. The native
+    // coordinator must fence/restart all legacy workers BEFORE authority promotion;
+    // this startup pin alone cannot fence a later live catalog upgrade.
+    let scopes_required = registry
+        .catalog_state()?
+        .is_some_and(|state| state.authority_contract >= 1);
     let registration = registry.get(init.project)?.registration;
     airk_kernel::service_projects::validate_retained(&registration)?;
     let epoch = registry.admit_worker(&mut lease)?;
@@ -534,6 +675,7 @@ pub async fn run() -> Result<()> {
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = kernel.service_rebuild_receipt()?;
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
+    source_configuration::recover(&kernel, &mut registry, &lease, init.engine)?;
     // Only an actually opened retained index can become an automatic audit
     // candidate. A fresh/unprepared registration remains ordinary setup work.
     let initial_integrity_failure = observe_native_integrity(
@@ -614,12 +756,14 @@ pub async fn run() -> Result<()> {
         .await?,
         closing: closing.clone(),
         admission: Default::default(),
+        scopes: Arc::new(Mutex::new(scopes::Scopes::new(identity, scopes_required))),
     });
     service_ipc::write_frame(&mut std::io::stdout().lock(), &Reply::Activated)?;
     let (sender, mut commands) = mpsc::channel(8);
     let control_closing = closing.clone();
     let control_activity = activity.clone();
     let control_admission = state.admission.clone();
+    let control_scopes = state.scopes.clone();
     std::thread::Builder::new()
         .name("airk-project-control".into())
         .spawn(move || {
@@ -631,6 +775,9 @@ pub async fn run() -> Result<()> {
             }
             crate::embedding_pool_client::close();
             control_closing.store(true, Ordering::Release);
+            if let Ok(mut scopes) = control_scopes.lock() {
+                scopes.close();
+            }
             control_admission.close();
             control_activity.notify_one();
         })?;
@@ -671,6 +818,7 @@ pub async fn run() -> Result<()> {
                 let mut audit_drain = None;
                 let mut audit_completion = None;
                 let mut query_completion = None;
+                let mut source_completion = None;
                 use airk_store::service::registry::RecoveryCondition;
                 let mut recovery_condition = RecoveryCondition::Delay;
                 let mut outcome = if registry.cancellation_requested(job.id)? {
@@ -692,6 +840,20 @@ pub async fn run() -> Result<()> {
                                 work.engine == init.engine,
                                 airk_kernel::service_configuration::ConfigurationChanged
                             );
+                            if let Some(source_work) = registry.catalog_source_work(&job_lease, job.id)? {
+                                let airk_core::catalog_management::CatalogOperation::BeginIndexSourceChange { plan, .. } = &source_work.begin.operation else {
+                                    anyhow::bail!("source work lacks its accepted plan");
+                                };
+                                registry.record_watch_roots(&job_lease, &plan.after.aliases.values().cloned().collect::<Vec<_>>())?;
+                                let prepared = source_configuration::prepare(
+                                    &kernel, &source_work, &work, init.engine)?;
+                                let result = registry.qualify_catalog_source_result(
+                                    &job_lease, job.id, prepared.native(),
+                                    &serde_json::json!({"updated":true,"source_pass_requested":true}))?;
+                                registry.record_configuration_result(&job_lease, job.id, &result)?;
+                                source_completion = Some(prepared);
+                                return Ok(JobOutcome::Succeeded { revision: None });
+                            }
                             if work.request.prepare {
                                 work.request.validate()?;
                                 let observed = kernel.inspect_service(identity.project)?;
@@ -1270,6 +1432,12 @@ pub async fn run() -> Result<()> {
                         ),
                     )?;
                     outcome = completed.outcome.context("settled job outcome missing")?;
+                    if matches!(outcome, JobOutcome::Succeeded { .. })
+                        && let Some(prepared) = source_completion.take()
+                    {
+                        prepared.complete(&mut registry)?;
+                    }
+                    drop(source_completion.take());
                     if job.kind == JobKind::Configure {
                         let _ = reconcile_semantic_setup(
                             &kernel,
@@ -1341,6 +1509,61 @@ pub async fn run() -> Result<()> {
         tokio::select! {
             command=commands.recv()=>{
                 match command {
+                    Some(Command::GrantAdmin { identity: expected, caller, nonce }) => {
+                        let grant = if expected == identity && !closing.load(Ordering::Acquire) {
+                            state.broker.lock().map_err(|_| anyhow::anyhow!("query policy unavailable"))?
+                                .issue_native_admin(identity,caller,Instant::now(),Duration::from_secs(15)).map_err(anyhow::Error::from)
+                        } else { Err(anyhow::anyhow!("foreign native administrative worker")) };
+                        let reply = Reply::AdminGrant {identity,nonce,grant:grant.ok()};
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                        idle=Instant::now();
+                    },
+                    Some(Command::ResolveSourceChange {identity:expected,nonce,begin_operation}) => {
+                        let admitted=expected==identity && busy.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_ok();
+                        let observation=if admitted {
+                            let resolved=(||->Result<_>{
+                                let mut registry=ServiceRegistry::open(&state.control,identity.service)?;
+                                source_configuration::resolve(&freshness_kernel,&mut registry,&lease,begin_operation,init.engine)
+                            })();
+                            busy.store(false,Ordering::Release);
+                            resolved.ok().map(Box::new)
+                        } else {None};
+                        state.admission.completed();
+                        service_ipc::write_frame(&mut std::io::stdout().lock(),&Reply::SourceChangeResolution {identity,nonce,observation})?;
+                        idle=Instant::now();
+                    },
+                    Some(Command::InstallScope { identity: expected, authority, lease_generation, expires_unix_ms }) => {
+                        let installed = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
+                            .install(expected, *authority, lease_generation, expires_unix_ms);
+                        let reply = match installed { Ok(scope) => Reply::ScopeInstalled { identity, scope }, Err(_) => Reply::Failed };
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                    },
+                    Some(Command::RenewScopeLease { identity: expected, authority, previous, lease_generation, expires_unix_ms }) => {
+                        let installed = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
+                            .renew_scope_lease(expected, *authority, previous, lease_generation, expires_unix_ms);
+                        let reply = match installed { Ok(scope) => Reply::ScopeInstalled { identity, scope }, Err(_) => Reply::Failed };
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                    },
+                    Some(Command::RevokeScope { identity: expected, scope }) => {
+                        let revoked = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?.revoke(expected, scope);
+                        state.admission.completed();
+                        let reply = if revoked.is_ok() { Reply::ScopeRevoked { identity, scope } } else { Reply::Failed };
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                    },
+                    Some(Command::GrantScoped { identity: expected, caller, scope }) => {
+                        let grant = (|| -> Result<ConnectionGrant> {
+                            ensure!(expected == identity, "scope identity mismatch");
+                            let mut scopes = state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?;
+                            scopes.check(Some(scope))?;
+                            let mut grant = state.broker.lock().map_err(|_| anyhow::anyhow!("query policy unavailable"))?
+                                .issue(identity, caller, Instant::now(), Duration::from_secs(15))?;
+                            scopes.bind(&mut grant, scope)?;
+                            Ok(grant)
+                        })();
+                        let reply = match grant { Ok(grant) => Reply::Grant { grant }, Err(_) => Reply::Failed };
+                        service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
+                        idle = Instant::now();
+                    },
                     Some(Command::ConfigureQueries { identity:expected, concurrency }) => {
                         let accepted = expected == identity && state.broker.lock().map_err(|_| anyhow::anyhow!("query policy unavailable"))?
                             .configure_queries(identity, concurrency, Instant::now()).is_ok();
@@ -1377,7 +1600,8 @@ pub async fn run() -> Result<()> {
                         service_ipc::write_frame(&mut std::io::stdout().lock(), &reply)?;
                     },
                     Some(Command::Grant{caller})=>{
-                        let grant=state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.issue(identity,caller,Instant::now(),Duration::from_secs(15));
+                        let legacy = state.scopes.lock().map_err(|_|anyhow::anyhow!("scope policy unavailable"))?.legacy_allowed();
+                        let grant=if legacy {state.broker.lock().map_err(|_|anyhow::anyhow!("query policy unavailable"))?.issue(identity,caller,Instant::now(),Duration::from_secs(15))} else {Err(airk_core::service::AdmissionError::InvalidGrant)};
                         let reply=match grant{Ok(grant)=>Reply::Grant{grant},Err(_)=>Reply::Failed};
                         service_ipc::write_frame(&mut std::io::stdout().lock(),&reply)?;
                         idle=Instant::now();
@@ -1392,6 +1616,7 @@ pub async fn run() -> Result<()> {
             _=activity.notified()=>{idle=Instant::now();},
             _=connections.join_next(),if !connections.is_empty()=>{idle=Instant::now();},
             _=tick.tick()=>{
+                state.scopes.lock().map_err(|_| anyhow::anyhow!("scope policy unavailable"))?.expire();
                 if busy.load(Ordering::Acquire) && airk_kernel::service_execution::watchdog() {
                     // A native call that never reaches a safe boundary cannot be
                     // canceled by dropping its future. The parent retains the
@@ -1408,6 +1633,11 @@ pub async fn run() -> Result<()> {
     }
     crate::embedding_pool_client::close();
     closing.store(true, Ordering::Release);
+    state
+        .scopes
+        .lock()
+        .map_err(|_| anyhow::anyhow!("scope policy unavailable"))?
+        .close();
     state.admission.close();
     drop(work_sender);
     // Idle client reads must not hold an intentionally stopped owner open.
@@ -1427,7 +1657,90 @@ pub async fn run() -> Result<()> {
 }
 
 #[cfg(test)]
+#[path = "project_worker_response_tests.rs"]
+mod response_tests;
+
+#[path = "project_worker_source_configuration.rs"]
+mod source_configuration;
+
+#[cfg(test)]
 mod admission_tests {
+    #[tokio::test]
+    async fn delivery_rechecks_fence_after_backpressure_before_any_reply_byte() -> anyhow::Result<()>
+    {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        struct CheckedWriter {
+            inner: tokio::io::DuplexStream,
+            fence: std::sync::Arc<std::sync::Mutex<bool>>,
+            polls: usize,
+        }
+        impl tokio::io::AsyncWrite for CheckedWriter {
+            fn poll_write(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+                bytes: &[u8],
+            ) -> std::task::Poll<std::io::Result<usize>> {
+                assert!(
+                    matches!(
+                        self.fence.try_lock(),
+                        Err(std::sync::TryLockError::WouldBlock)
+                    ),
+                    "scope guard released before write poll"
+                );
+                self.polls += 1;
+                tokio::io::AsyncWrite::poll_write(std::pin::Pin::new(&mut self.inner), cx, bytes)
+            }
+            fn poll_flush(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                assert!(matches!(
+                    self.fence.try_lock(),
+                    Err(std::sync::TryLockError::WouldBlock)
+                ));
+                tokio::io::AsyncWrite::poll_flush(std::pin::Pin::new(&mut self.inner), cx)
+            }
+            fn poll_shutdown(
+                mut self: std::pin::Pin<&mut Self>,
+                cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                tokio::io::AsyncWrite::poll_shutdown(std::pin::Pin::new(&mut self.inner), cx)
+            }
+        }
+        let (mut inner, mut receiver) = tokio::io::duplex(1);
+        inner.write_all(b"x").await?;
+        let live = std::sync::Arc::new(std::sync::Mutex::new(true));
+        let mut sender = CheckedWriter {
+            inner,
+            fence: live.clone(),
+            polls: 0,
+        };
+        let mut delivery = Box::pin(super::deliver_frame(&mut sender, b"protected", || {
+            let guard = live.lock().unwrap();
+            anyhow::ensure!(*guard, "scope revoked");
+            Ok(guard)
+        }));
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        use std::future::Future;
+        assert!(delivery.as_mut().poll(&mut cx).is_pending());
+        // Acquiring this lock is the same linearization as revoke+ack. The
+        // earlier pending write retained no guard across its yield.
+        *live.lock().unwrap() = false;
+        let mut previous = [0];
+        receiver.read_exact(&mut previous).await?;
+        assert_eq!(&previous, b"x");
+        assert!(delivery.await.is_err());
+        assert_eq!(
+            sender.polls, 1,
+            "write was polled after revocation acknowledged"
+        );
+        drop(sender);
+        let mut bytes = Vec::new();
+        receiver.read_to_end(&mut bytes).await?;
+        assert!(bytes.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn verify_exceptional_admission_requires_actual_refusal_and_existing_full_work_grant() {
         assert_eq!(super::verify_turn_bytes(false, 768 << 20), 64 << 20);

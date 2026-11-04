@@ -9,59 +9,20 @@ use rmcp::{
     service::RunningService,
 };
 
-/// Native read capabilities are separate from the fixed MCP tool inventory.
-#[derive(Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReportFormat {
-    #[default]
-    Json,
-    Csv,
-    Markdown,
-}
-impl ReportFormat {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Json => "json",
-            Self::Csv => "csv",
-            Self::Markdown => "markdown",
-        }
-    }
-}
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case", deny_unknown_fields)]
-pub enum NativeRead {
-    ValidateSettings {
-        view: SettingsView,
-        input: airk_core::service_configuration::InputFile,
-        cursor: Option<String>,
-        max_bytes: usize,
-    },
-    Settings {
-        view: SettingsView,
-        cursor: Option<String>,
-        max_bytes: usize,
-    },
-    UsageReport {
-        days: u16,
-        cursor: Option<String>,
-        max_bytes: usize,
-        #[serde(default)]
-        format: ReportFormat,
-        #[serde(default)]
-        price: Option<airk_core::usage::PriceScenario>,
-    },
-    UsagePolicy,
-}
-#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SettingsView {
-    ExtractionPolicy,
-    VectorSelection,
-    VectorStatus,
-    Roots,
-    ScanLimits,
-    QuotaPolicy,
-    QuotaStatus,
+pub use airk_core::native_reads::{NativeRead, ReportFormat, SettingsView};
+
+fn scoped_metadata_view(
+    view: SettingsView,
+) -> Option<airk_kernel::scoped_reads::ScopedIndexMetadataView> {
+    use airk_kernel::scoped_reads::ScopedIndexMetadataView as Scoped;
+    Some(match view {
+        SettingsView::ExtractionPolicy => Scoped::ExtractionPolicy,
+        SettingsView::VectorSelection => Scoped::VectorSelection,
+        SettingsView::VectorStatus => Scoped::VectorStatus,
+        SettingsView::Roots => Scoped::Roots,
+        SettingsView::ScanLimits => Scoped::ScanLimits,
+        SettingsView::QuotaPolicy | SettingsView::QuotaStatus => return None,
+    })
 }
 
 /// Listing/help require neither a collection nor a source scan.
@@ -138,6 +99,31 @@ impl LocalTools {
         Self::with_admission(self.kernel.clone(), client, self.admission.clone(), false).await
     }
 
+    /// Separate native session with frozen read authority; shares only admission.
+    pub async fn scoped_session(
+        &self,
+        authority: airk_kernel::scoped_reads::ScopedReadAuthority,
+    ) -> anyhow::Result<Self> {
+        self.scoped_session_with_client(authority, self.family)
+            .await
+    }
+    pub async fn scoped_session_with_client(
+        &self,
+        authority: airk_kernel::scoped_reads::ScopedReadAuthority,
+        client: ClientFamily,
+    ) -> anyhow::Result<Self> {
+        let kernel = self.kernel.with_scoped_reads(authority)?;
+        Self::with_admission(kernel, client, self.admission.clone(), false).await
+    }
+    pub fn revoke_scoped_reads(&self) {
+        self.kernel.revoke_scoped_reads();
+    }
+
+    /// In-process fence handle for the owning native worker; no transport authority.
+    pub fn scoped_read_revocation_handle(&self) -> Kernel {
+        self.kernel.clone()
+    }
+
     pub fn set_runtime(&self, value: serde_json::Value) {
         if let Ok(mut runtime) = self.runtime.write() {
             *runtime = Some(value);
@@ -165,19 +151,60 @@ impl LocalTools {
         request: NativeRead,
         project: airk_core::service::ProjectBinding,
     ) -> anyhow::Result<serde_json::Value> {
-        let permit = self
-            .admission
-            .admit(true)
-            .await
-            .map_err(|_| anyhow::anyhow!("native read admission unavailable"))?;
+        if self
+            .kernel
+            .scoped_read_fingerprint()
+            .map_err(|error| self.kernel.observe_scoped_error(error))?
+            .is_some()
+        {
+            // InputFile validation opens caller-selected paths; quota is shared
+            // across collections and usage includes retained historical scopes.
+            // Full current-index permission does not authorize those families.
+            if !matches!(&request,NativeRead::Settings {view,..} if scoped_metadata_view(*view).is_some())
+            {
+                return Err(self
+                    .kernel
+                    .observe_scoped_error(airk_core::scoped_reads::ScopeReadRefused.into()));
+            }
+        }
+        let permit = self.admission.admit(true).await.map_err(|_| {
+            self.kernel
+                .observe_scoped_error(anyhow::anyhow!("native read admission unavailable"))
+        })?;
         let kernel = self.kernel.clone();
-        tokio::task::spawn_blocking(move || {
+        let result = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             retry_native_read(
                 std::time::Instant::now() + std::time::Duration::from_secs(5),
                 || {
                     let kernel = kernel.refresh_service_snapshot()?;
-                    match request.clone() {
+                    if kernel.scoped_read_fingerprint()?.is_some() {
+                        let NativeRead::Settings {
+                            view,
+                            cursor,
+                            max_bytes,
+                        } = request.clone()
+                        else {
+                            return Err(airk_core::scoped_reads::ScopeReadRefused.into());
+                        };
+                        let metadata = kernel.scoped_index_metadata(
+                            project,
+                            scoped_metadata_view(view)
+                                .ok_or(airk_core::scoped_reads::ScopeReadRefused)?,
+                        )?;
+                        return Ok(serde_json::to_value(airk_kernel::usage_page::scoped_page(
+                            serde_json::json!({"project":project,"value":metadata.value}),
+                            cursor.as_deref(),
+                            max_bytes,
+                            metadata.observation,
+                            metadata.publication,
+                        )?)?);
+                    }
+                    match kernel.prepare_native_read(request.clone())? {
+                        NativeRead::ValidateSettingsFile { .. }
+                        | NativeRead::UsageReportFile { .. } => {
+                            anyhow::bail!("native file intent was not prepared")
+                        }
                         NativeRead::ValidateSettings {
                             view,
                             input,
@@ -298,7 +325,13 @@ impl LocalTools {
                 },
             )
         })
-        .await?
+        .await
+        .map_err(|error| self.kernel.observe_scoped_error(error.into()))?
+        .map_err(|error| self.kernel.observe_scoped_error(error))?;
+        self.kernel
+            .scoped_read_fingerprint()
+            .map_err(|error| self.kernel.observe_scoped_error(error))?;
+        Ok(result)
     }
 
     pub fn status_receipt(&self) -> crate::response::StatusReceipt {
@@ -322,6 +355,10 @@ impl LocalTools {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "native_scoped_settings_tests.rs"]
+mod native_scoped_settings_tests;
 
 /// Native settings/report reads use the same typed contention contract as MCP
 /// evidence reads. Keep the original request/cursor and one bounded deadline.

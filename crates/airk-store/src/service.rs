@@ -16,6 +16,11 @@ pub mod collection;
 pub mod model_files;
 #[path = "service_registry.rs"]
 pub mod registry;
+#[cfg(unix)]
+#[path = "service_shared_helper_lease.rs"]
+mod shared_helper_lease;
+#[cfg(unix)]
+pub use shared_helper_lease::{SharedHelperLease, shared_helper_pin_name};
 
 pub(crate) struct OwnershipFile(File, AtomicBool);
 impl Drop for OwnershipFile {

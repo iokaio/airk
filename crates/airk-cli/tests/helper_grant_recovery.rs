@@ -78,6 +78,7 @@ fn missing_and_revoked_grants_repair_without_restarting_healthy_pool() -> Result
                     worker: member,
                     token: Sha256Digest::from_bytes([token; 32]),
                 },
+                worker_identity: None,
             },
         )?;
         ensure!(matches!(receive()?, protocol::Observation::Registered));
@@ -98,6 +99,7 @@ fn missing_and_revoked_grants_repair_without_restarting_healthy_pool() -> Result
                 worker,
                 token: Sha256Digest::from_bytes([7; 32]),
             },
+            worker_identity: None,
         },
     )?;
     ensure!(matches!(receive()?, protocol::Observation::Registered));

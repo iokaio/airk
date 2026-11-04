@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { newSession, SessionStore, trimSession } from '../workbenchSessions';
 import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, parseWorkbenchMessage, WORKBENCH_HELP_ROUTE } from '../workbenchContracts';
 import { parseRoute } from '../explorerRoutes';
-import { evidenceCards, renderExport } from '../workbenchRender';
+import { canonical, evidenceCards, renderExport } from '../workbenchRender';
 import { EvidenceClient } from '../explorerEvidence';
 import { assertPortablePlanInputs, planForWorkbenchRerun, strategyFromPlan } from '../workbenchStrategies';
 
@@ -140,11 +140,11 @@ test('session retention, optimistic revisions and result privacy preserve unrela
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-workbench-'));
     try{
         const store=new SessionStore(root);
-        for(let i=0;i<12;i++){const session=newSession(project);session.updatedAt=i;session.turns=[{id:'t',at:0,input:'query',format:'structured',envelope:{source:'sensitive'}}];await store.save(session);}
+        for(let i=0;i<12;i++){const session=newSession(project);session.updatedAt=i;session.turns=[{id:'t',at:0,input:'query',format:'structured',envelope:{source:'sensitive'},nativeFailure:{content:['private refusal']}}];await store.save(session);}
         assert.equal((await store.list(project)).length,10);
         const session=(await store.list(project))[0],old=structuredClone(session);session.title='changed';await store.save(session);
         await assert.rejects(store.save(old),/another window/);
-        await store.clearResults(project);assert.ok((await store.list(project)).every(s=>s.turns.every(t=>!t.envelope&&t.trimmed)));
+        await store.clearResults(project);assert.ok((await store.list(project)).every(s=>s.turns.every(t=>!t.envelope&&!t.nativeFailure&&t.trimmed)));
         const future=newSession(project);const futurePath=path.join(root,project,`${future.id}.json`);await fs.writeFile(futurePath,JSON.stringify({...future,schema:999}));
         const next=newSession(project);next.turns=[{id:'t',at:0,input:'next',format:'structured'}];await store.save(next);assert.ok((await fs.readFile(futurePath,'utf8')).includes('999'));
         await store.remember(project,'  Inspect policy ',{catalog:'airk.evidence-plans/1',path_prefix:'docs/',publication:'old',digest:'old',steps:[{id:'read',tool:'read_file',args:{path:'docs/policy.md',start_line:1,end_line:2,known_hash:'old',revision:'old'}}]});
@@ -159,11 +159,11 @@ test('result privacy controls reach saved excerpts in every project, not only th
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-workbench-'));
     try{
         const store=new SessionStore(root),other='cd'.repeat(32);
-        for(const id of [project,other]){const session=newSession(id);session.turns=[{id:'t',at:0,input:'query',format:'structured',envelope:{source:'fictional excerpt'}}];await store.save(session);}
+        for(const id of [project,other]){const session=newSession(id);session.turns=[{id:'t',at:0,input:'query',format:'structured',envelope:{source:'fictional excerpt'},nativeFailure:{content:['private refusal']}}];await store.save(session);}
         await fs.mkdir(path.join(root,'not-a-project'));
         assert.deepEqual((await store.projects()).sort(),[project,other].sort());
         for(const id of await store.projects()){await store.clearResults(id);}
-        for(const id of [project,other]){assert.ok((await store.list(id)).every(s=>s.turns.every(t=>!t.envelope&&t.trimmed)));}
+        for(const id of [project,other]){assert.ok((await store.list(id)).every(s=>s.turns.every(t=>!t.envelope&&!t.nativeFailure&&t.trimmed)));}
         for(const id of await store.projects()){await store.remove(id);}
         for(const id of [project,other]){assert.equal((await store.list(id)).length,0);}
         assert.deepEqual(await new SessionStore(path.join(root,'missing')).projects(),[]);
@@ -220,4 +220,27 @@ test('save returns bounded recent summaries from its existing prune scan',async(
         assert.equal(store.loads,0,'an empty session remains a no-op');
         assert.deepEqual(recent,(await store.list(project)).map(value=>({id:value.id,title:value.title,updatedAt:value.updatedAt,turns:value.turns.length})));
     }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+
+test('privacy opt-out and byte trimming clear failure payloads alongside successful evidence',async()=>{
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-workbench-failure-'));
+    try{
+        const store=new SessionStore(root),session=newSession(project);
+        session.turns=[{id:'failure',at:0,input:'query',format:'structured',error:'Denied',nativeFailure:{content:['private']}}];
+        await store.save(session,false);const saved=await store.load(project,session.id);
+        assert.equal(saved.turns[0].nativeFailure,undefined);assert.equal(saved.turns[0].error,undefined);assert.equal(saved.turns[0].input,'query');assert.equal(saved.turns[0].trimmed,true);
+        session.turns[0].error='historical private error';session.turns[0].nativeFailure={content:['x'.repeat(5*1024*1024)]};trimSession(session);
+        assert.equal(session.turns[0].nativeFailure,undefined);assert.equal(session.turns[0].error,undefined);assert.equal(session.turns[0].trimmed,true);
+    }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+
+test('selected Markdown and JSON share the complete selected response including future fields',()=>{
+    const session=newSession(project),turn={id:'selected',at:0,input:'Subset',format:'structured' as const,envelope:{status:'partial',publication:{token:'captured'},scope_observation:{full:{future:['scope']}},retry:{future:'retained'},future_contract:{nested:['unknown']},evidence:[{step:'s',text:'body',citation:{path:'x.md',start_line:1,end_line:1,content_hash:'12'.repeat(32),future_citation:{retain:true}}},{step:'s',text:'unselected',citation:{path:'y.md',start_line:1,end_line:1}}]}};
+    session.turns.push(turn);
+    const selected=JSON.parse(renderExport(session,'json',turn.id,['record-0'])).turns[0].envelope;
+    const md=renderExport(session,'markdown',turn.id,['record-0']);
+    assert.ok(md.includes(canonical(selected)),'Markdown retains exactly the same complete selected response as JSON');
+    assert.equal(selected.evidence.length,1);assert.deepEqual(selected.evidence[0],turn.envelope.evidence[0]);assert.doesNotMatch(md,/unselected/);
 });

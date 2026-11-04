@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { renderUsage, reductionPercent, usageAction } from '../usageReport';
+import { ADMINISTRATIVE_USAGE_LABEL, OPEN_INDEX_ADMINISTRATION, renderUsage, reductionPercent, usageAction } from '../usageReport';
+
+test('scoped usage is explicitly unavailable without fabricated measurements or global controls',()=>{
+    const html=renderUsage({scoped_unavailable:true,can_open_index_administration:true,report:{calls:999}});
+    assert.ok(html.includes(OPEN_INDEX_ADMINISTRATION));
+    assert.match(html,/unavailable within the selected evidence scope/);
+    for(const hidden of ['999','Daily activity','data-usage="clear"','data-usage="import"','data-usage="recording"','data-usage="refresh"'])assert.ok(!html.includes(hidden));
+    assert.deepEqual(usageAction({type:'usage',action:'openIndexAdministration'}),{type:'usage',action:'openIndexAdministration'});
+    assert.equal(usageAction({type:'usage',action:'openIndexAdministration',backing:'forged'}),undefined);
+    assert.ok(!renderUsage({scoped_unavailable:true}).includes('data-usage="openIndexAdministration"'));
+    assert.ok(renderUsage({administrative_scope:{purpose:'index_administration'},report:{}}).includes(ADMINISTRATIVE_USAGE_LABEL));
+});
 
 test('usage headline preserves negative reductions, comparable denominator and missing data', () => {
     const html = renderUsage({ report: { calls: 10, eligible_evidence_calls: 6, comparisons: { full_returned_sources: {

@@ -3,7 +3,9 @@
 import type { PublicationRelation } from './publications';
 export type Value = Record<string, unknown>;
 export const WORKBENCH_HELP_ROUTE='help?focus=engine-workbench';
-export interface WorkbenchTurn { id: string; at: number; input: string; format: 'structured' | 'json' | 'markdown'; request?: Value; envelope?: Value; error?: string; trimmed?: boolean }
+export interface WorkbenchTurn { id: string; at: number; input: string; format: 'structured' | 'json' | 'markdown'; request?: Value; envelope?: Value; error?: string;
+    /** Full original native error reply, never a fabricated successful result. */
+    nativeFailure?:Value;trimmed?: boolean }
 export interface WorkbenchFormDraft { activeTool:string; values:Record<string,Record<string,string>>; revision:number; scope:string; recipe:string }
 export interface WorkbenchSession { schema: 1; id: string; project: string; title: string; createdAt: number; updatedAt: number; revision: number; omitted: number; turns: WorkbenchTurn[]; formDraft?:WorkbenchFormDraft }
 const FORM_TOOLS=['search','symbols','references','read_file','outline','list_files','file_info','imports','code_facts','document_facts','changes','context','relationships','status','diagnostics','capabilities','help'];

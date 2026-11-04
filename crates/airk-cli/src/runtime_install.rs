@@ -325,6 +325,19 @@ pub enum RuntimeCommand {
         #[arg(long)]
         nonce: airk_core::identity::Incarnation,
     },
+    /// Installer-only, nonce-bound observation of the promoted inactive catalog.
+    #[command(hide = true)]
+    CatalogAuthorityProbe {
+        #[arg(long)]
+        control_root: PathBuf,
+        #[arg(long)]
+        operation: airk_core::identity::Incarnation,
+        /// Present only for a sealed legacy upgrade; omitted for fresh genesis.
+        #[arg(long)]
+        native_host: Option<airk_core::identity::Sha256Digest>,
+        #[arg(long)]
+        nonce: airk_core::identity::Incarnation,
+    },
     /// Native owner for an already admitted installer migration. Leaves admission
     /// fenced for imports/readiness; never initializes or activates a catalog.
     #[command(hide = true)]
@@ -338,6 +351,7 @@ pub enum RuntimeCommand {
 
 pub(crate) fn validate_control_root(control: &Path) -> Result<()> {
     layout::validate_control(control)?;
+    layout::require_managed_control_ready(control)?;
     airk_store::service::registry::data_relocation::require_settled(control)
 }
 pub(crate) fn record_control_root(lease: &airk_store::service::ServiceLease) -> Result<()> {
@@ -397,7 +411,11 @@ pub async fn installed_control(root: &Path) -> Result<PathBuf> {
     // Keep managed policies on their original complete preflight/ensure route in
     // this slice. An external supervisor must never fall back to user election.
     if let Some(policy) = managed::read(root)? {
-        return installed_control_legacy(root, policy.verify()?.1).await;
+        return installed_control_legacy(root, policy.approval.clone()).await;
+    }
+    if layout::managed_origin(root)?.is_some() {
+        ensure_running(root).await?;
+        bail!("repeat_same_approved_managed_configure_to_resume");
     }
     let preflight = selected_preflight(root)?;
     let lock = connection_install_lock(root, Duration::from_secs(60)).await?;
@@ -1810,6 +1828,7 @@ async fn ensure_running_locked_checked_after_settlement(
     // Preserve direct callers' settlement order: a pending STOP authenticates
     // saved identity and must not require a runnable payload just to drain it.
     payload_repair::require_settled(root)?;
+    managed::catalog::resume_before_lifecycle(authority, cancel)?;
     setup::settle_then_checkpoint(
         async {
             activation::resume_catalog_before_lifecycle(root, None)
@@ -1821,8 +1840,12 @@ async fn ensure_running_locked_checked_after_settlement(
     .await?;
     setup::settle_then_checkpoint(lifecycle::settle(root), cancel).await?;
     if managed::read(root)?.is_some() {
-        return managed::ensure_checked(root, cancel).await;
+        return managed::ensure_checked(authority, cancel, after_settlement).await;
     }
+    ensure!(
+        layout::managed_origin(root)?.is_none(),
+        "repeat_same_approved_managed_configure_to_resume"
+    );
     if activation::pending(root)?.is_some() {
         if let Some(cancel) = cancel {
             cancel.checkpoint()?;
@@ -1842,6 +1865,7 @@ async fn ensure_running_locked_checked_after_settlement(
 
 pub(crate) fn startup_selected(root: &Path) -> Result<(PathBuf, Approval)> {
     payload_repair::require_settled(root)?;
+    layout::require_managed_ready(root)?;
     lifecycle::require_start_allowed(root)?;
     if let Some(selected) = activation::startup(root)? {
         return Ok(selected);

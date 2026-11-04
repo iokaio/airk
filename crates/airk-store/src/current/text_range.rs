@@ -479,6 +479,7 @@ impl TextRangeRead<'_> {
         end: usize,
         maximum: usize,
     ) -> Result<SelectedTextRange> {
+        self._read.require_path(&self.artifact.path)?;
         self.store.verify_retained_source_deep(&self.artifact)?;
         let artifact = self.store.load_projection_artifact(&self.artifact)?;
         self.store.verify_text_ranges(&self.reference, &artifact)?;
@@ -488,6 +489,7 @@ impl TextRangeRead<'_> {
     /// candidate. Reading by ordinal preserves overlapping/document locations;
     /// line-range concatenation would duplicate text from neighboring chunks.
     pub fn chunk_private(&self, ordinal: usize) -> Result<airk_core::Chunk> {
+        self._read.require_path(&self.artifact.path)?;
         ensure!(
             self._read.private_query_eligible()?,
             "private query authority unavailable"
@@ -553,6 +555,7 @@ impl TextRangeRead<'_> {
         end: usize,
         maximum: usize,
     ) -> Result<SelectedTextRange> {
+        self._read.require_path(&self.artifact.path)?;
         airk_core::validate_budget(1, maximum)?;
         ensure!(start > 0 && end >= start, "invalid line range");
         ensure!(
@@ -608,6 +611,9 @@ impl TextRangeRead<'_> {
                 break;
             }
         }
+        if self._read.read_scope_fingerprint().is_some() {
+            self._read.token()?;
+        }
         Ok(SelectedTextRange {
             text,
             location,
@@ -639,6 +645,7 @@ impl TextRangeRead<'_> {
         index: usize,
         cache: &'b mut BTreeMap<usize, Vec<u8>>,
     ) -> Result<&'b [u8]> {
+        self._read.require_path(&self.artifact.path)?;
         if let std::collections::btree_map::Entry::Vacant(entry) = cache.entry(index) {
             let block = chunk
                 .blocks

@@ -178,11 +178,13 @@ impl StatusOwner {
         scope.map(|scope| match scope {
             CacheScope::Pinned(namespace) => namespace,
             CacheScope::Source(fence) | CacheScope::Registered(fence) => fence.namespace,
+            CacheScope::Scoped { namespace, .. } => namespace,
         })
     }
     fn project(scope: Option<CacheScope>) -> Option<ProjectBinding> {
         match scope {
             Some(CacheScope::Source(fence) | CacheScope::Registered(fence)) => Some(fence.project),
+            Some(CacheScope::Scoped { project, .. }) => Some(project),
             _ => None,
         }
     }
@@ -195,6 +197,11 @@ impl StatusOwner {
         }
     }
     fn scope_domain_same(left: Option<CacheScope>, right: Option<CacheScope>) -> bool {
+        if matches!(left, Some(CacheScope::Scoped { .. }))
+            || matches!(right, Some(CacheScope::Scoped { .. }))
+        {
+            return left == right;
+        }
         Self::namespace(left) == Self::namespace(right)
             && Self::project(left) == Self::project(right)
     }
@@ -392,6 +399,18 @@ impl StatusOwner {
     }
     pub(crate) fn source_scope(&self, fence: SourceFence) {
         self.set_scope(CacheScope::Source(fence));
+    }
+    pub(super) fn scoped_scope(
+        &self,
+        namespace: airk_core::identity::Incarnation,
+        project: ProjectBinding,
+        selection: airk_core::identity::Sha256Digest,
+    ) {
+        self.set_scope(CacheScope::Scoped {
+            namespace,
+            project,
+            selection,
+        });
     }
     pub(crate) fn clear_scope(&self) {
         let mut scope = self.scope.lock().unwrap_or_else(|e| e.into_inner());
@@ -1156,6 +1175,7 @@ mod ownership_tests {
         let stream = local_ipc::connect(&endpoint).await?;
         let now = Instant::now();
         let mut connection = Connection {
+            scoped: false,
             stream,
             identity: airk_core::service::WorkerIdentity {
                 service: airk_core::identity::Incarnation::from_bytes([1; 16]),

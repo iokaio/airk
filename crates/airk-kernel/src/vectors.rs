@@ -246,6 +246,7 @@ impl Kernel {
 
     /// Saved policy used for the next publication; does not interpret old indexes.
     pub fn vector_selection(&self) -> Result<VectorSelectionPolicy> {
+        self.require_unrestricted_read()?;
         self.vector_policy()?
             .selection
             .map(Ok)
@@ -273,6 +274,11 @@ impl Kernel {
     }
 
     pub fn vector_status(&self) -> Result<VectorStatus> {
+        self.require_unrestricted_read()?;
+        self.index_vector_status()
+    }
+    /// Canonical body shared with the closed, fully scoped metadata adapter.
+    pub(crate) fn index_vector_status(&self) -> Result<VectorStatus> {
         self.status_for_vector_policy(self.vector_policy()?)
     }
 
@@ -356,6 +362,11 @@ impl Kernel {
     }
 
     pub fn vector_selection_status(&self) -> Result<VectorSelectionStatus> {
+        self.require_unrestricted_read()?;
+        self.index_vector_selection_status()
+    }
+    /// Canonical body; its published status read retains the installed scope.
+    pub(crate) fn index_vector_selection_status(&self) -> Result<VectorSelectionStatus> {
         let policy = self.vector_policy()?;
         let origin = if policy.selection.is_some() {
             "explicit"

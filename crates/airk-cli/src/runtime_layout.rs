@@ -22,6 +22,9 @@ struct Layout {
     logs: Option<PathBuf>,
     channel: RuntimeChannel,
     ready: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    managed_catalog_origin:
+        Option<airk_store::service::registry::catalog::genesis::ManagedGenesisOrigin>,
 }
 fn exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
@@ -90,6 +93,13 @@ impl Layout {
             return Ok(None);
         }
         let layout: Self = serde_json::from_slice(&read_bounded(&root.join(LAYOUT), MAX_LAYOUT)?)?;
+        if let Some(origin) = &layout.managed_catalog_origin {
+            origin.validate()?;
+            ensure!(
+                origin.install == layout.install && origin.state == layout.state,
+                "managed layout reservation changed"
+            );
+        }
         ensure!(
             layout.schema == 1 && layout.install == root.canonicalize()?,
             "runtime layout installation identity mismatch"
@@ -248,6 +258,24 @@ pub(super) fn initialize(
     requested: Option<&Path>,
     channel: RuntimeChannel,
 ) -> Result<()> {
+    initialize_with_origin(root, requested, channel, None)
+}
+
+pub(super) fn initialize_managed(
+    root: &Path,
+    requested: Option<&Path>,
+    channel: RuntimeChannel,
+    reservation: &managed::catalog::VerifiedManagedReservation,
+) -> Result<()> {
+    initialize_with_origin(root, requested, channel, Some(reservation.origin()))
+}
+
+fn initialize_with_origin(
+    root: &Path,
+    requested: Option<&Path>,
+    channel: RuntimeChannel,
+    origin: Option<&airk_store::service::registry::catalog::genesis::ManagedGenesisOrigin>,
+) -> Result<()> {
     let install = root.canonicalize()?;
     let existing = Layout::read(root)?;
     let state = planned_state(root, requested, channel)?;
@@ -298,6 +326,7 @@ pub(super) fn initialize(
         logs,
         channel,
         ready: false,
+        managed_catalog_origin: origin.cloned(),
     };
     if existing.is_none() && exists(&root.join("selected.json"))? {
         ensure!(
@@ -312,6 +341,13 @@ pub(super) fn initialize(
         );
         layout.ready = existing.ready;
     } else {
+        if let Some(origin) = origin {
+            origin.validate()?;
+            ensure!(
+                origin.install == layout.install && origin.state == layout.state,
+                "managed reservation state differs"
+            );
+        }
         if !layout.claimed()? {
             ensure!(
                 !exists(&layout.state.join(OWNER_PART))?,
@@ -324,10 +360,7 @@ pub(super) fn initialize(
                 );
             }
         }
-        ensure!(
-            serde_json::to_vec(&layout)?.len() as u64 <= MAX_LAYOUT,
-            "runtime layout exceeds metadata bound"
-        );
+        preflight_layout(&layout)?;
         // This is also the durable initialization intent. A failed claim remains
         // diagnosable and cannot silently route requests back to install/control.
         replace_json(root, LAYOUT, &layout)?;
@@ -336,6 +369,74 @@ pub(super) fn initialize(
     if !layout.ready {
         layout.ready = true;
         replace_json(root, LAYOUT, &layout)?;
+    }
+    Ok(())
+}
+
+fn preflight_layout(layout: &Layout) -> Result<()> {
+    ensure!(
+        serde_json::to_vec(layout)?.len() as u64 <= MAX_LAYOUT
+            && serde_json::to_vec(&layout.owner())?.len() as u64 <= MAX_LAYOUT,
+        "runtime layout exceeds metadata bound"
+    );
+    registry_binding::preflight(&layout.owner())
+}
+
+pub(super) fn managed_origin(
+    root: &Path,
+) -> Result<Option<airk_store::service::registry::catalog::genesis::ManagedGenesisOrigin>> {
+    Ok(Layout::read(root)?.and_then(|layout| layout.managed_catalog_origin))
+}
+
+/// Establish only the control directory already reserved by the exact initial
+/// managed layout. This is an owning write path, never a read/help fallback.
+pub(super) fn prepare_managed_control(
+    authority: &InstallerAuthority<'_>,
+    origin: &airk_store::service::registry::catalog::genesis::ManagedGenesisOrigin,
+) -> Result<()> {
+    let layout = Layout::read(authority.root)?.context("managed layout reservation missing")?;
+    ensure!(
+        layout.ready
+            && layout.claimed()?
+            && layout.managed_catalog_origin.as_ref() == Some(origin)
+            && origin.install == authority.root.canonicalize()?
+            && origin.state == layout.state
+            && origin.control == layout.state.join("control"),
+        "managed control creation differs from the claimed reservation"
+    );
+    local_ipc::require_existing_root(&layout.state)?;
+    ensure!(
+        crate::user_paths::canonical_location(&origin.control)? == origin.control,
+        "managed control destination is redirected"
+    );
+    if !exists(&origin.control)? {
+        // Existing initialization/namespace markers prohibit recreation of a
+        // lost control directory. A genuine first pin has only state ownership.
+        // Existing fenced directories resume through their owned catalog lane.
+        control_binding(&origin.control)?;
+    }
+    // Both platforms validate preexisting directories rather than repairing
+    // their ownership/permissions. The claimed parent is already present.
+    local_ipc::prepare_root(&origin.control)
+        .context("prepare reserved managed control directory")?;
+    require_control(&origin.control)
+}
+
+pub(super) fn require_managed_ready(root: &Path) -> Result<()> {
+    if let Some(origin) = managed_origin(root)? {
+        airk_store::service::registry::catalog::genesis::require_managed_settled(
+            &origin.control,
+            &origin,
+        )?;
+    }
+    Ok(())
+}
+
+pub(super) fn require_managed_control_ready(control: &Path) -> Result<()> {
+    if let Some(layout) = control_binding(&control_location(control)?)?
+        && let Some(origin) = layout.managed_catalog_origin
+    {
+        airk_store::service::registry::catalog::genesis::require_managed_settled(control, &origin)?;
     }
     Ok(())
 }

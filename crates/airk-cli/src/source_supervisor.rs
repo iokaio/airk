@@ -40,6 +40,60 @@ struct Replies {
     removal_results: BTreeMap<ProjectBinding, (bool, bool)>,
 }
 
+/// Native watcher evidence only. Wire callers cannot construct or deserialize
+/// this event; the accepted metadata owner rechecks its current catalog binding.
+pub(crate) struct NativeMissingSourceEvent {
+    project: ProjectBinding,
+    registration_epoch: u64,
+    configuration_epoch: u64,
+}
+impl NativeMissingSourceEvent {
+    pub(crate) fn binding(&self) -> ProjectBinding {
+        self.project
+    }
+    pub(crate) fn registration_epoch(&self) -> u64 {
+        self.registration_epoch
+    }
+    pub(crate) fn configuration_epoch(&self) -> u64 {
+        self.configuration_epoch
+    }
+    fn observed(
+        registry: &ServiceRegistry,
+        project: ProjectBinding,
+        registration_epoch: u64,
+        configuration_epoch: u64,
+    ) -> Result<Option<Self>> {
+        if !registry.is_registered(project)? {
+            return Ok(None);
+        }
+        let current = registry.watch(project)?;
+        if current.project.fencing_generation != registration_epoch
+            || current.configuration_epoch != configuration_epoch
+            || !current.observation.enabled
+        {
+            return Ok(None);
+        }
+        match std::fs::symlink_metadata(&current.project.registration.root) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Some(Self {
+                project,
+                registration_epoch,
+                configuration_epoch,
+            })),
+            Ok(_) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+/// Implementations retain only a weak metadata-actor sender. An unavailable or
+/// full queue returns ownership so the bounded watcher can retry without loss.
+pub(crate) trait MissingSourceReporter: Send + Sync {
+    fn try_report(
+        &self,
+        event: NativeMissingSourceEvent,
+    ) -> std::result::Result<(), NativeMissingSourceEvent>;
+}
+
 struct WatchReport {
     epoch: u64,
     native: u16,
@@ -368,6 +422,7 @@ pub struct SourceSupervisor {
     cache: Arc<Mutex<Cache>>,
     idle_safe: Arc<AtomicBool>,
     configuration_revision: Arc<AtomicU64>,
+    missing_reporter: Arc<Mutex<Option<Arc<dyn MissingSourceReporter>>>>,
 }
 impl Drop for SourceSupervisor {
     fn drop(&mut self) {
@@ -394,6 +449,8 @@ impl SourceSupervisor {
         let idle = idle_safe.clone();
         let configuration_revision = Arc::new(AtomicU64::new(0));
         let configuration = configuration_revision.clone();
+        let missing_reporter = Arc::new(Mutex::new(None::<Arc<dyn MissingSourceReporter>>));
+        let report_missing = missing_reporter.clone();
         let thread = std::thread::Builder::new()
             .name("airk-source-coordinator".into())
             .spawn(move || {
@@ -518,6 +575,37 @@ impl SourceSupervisor {
                                 (vec![], vec![], vec![])
                             };
                             for (project, (registration_epoch, configuration_epoch)) in missing {
+                                match registry.catalog_state() {
+                                    Ok(Some(catalog)) if catalog.authority_contract == 1 => {
+                                        let event = NativeMissingSourceEvent::observed(registry,
+                                            project, registration_epoch, configuration_epoch);
+                                        match event {
+                                            Ok(Some(event)) => {
+                                                let reporter = report_missing.lock().ok()
+                                                    .and_then(|value| value.clone());
+                                                let retry = match reporter {
+                                                    Some(reporter) => reporter.try_report(event).is_err(),
+                                                    None => true,
+                                                };
+                                                if retry && let Ok(mut replies) = active.replies.lock() {
+                                                    if replies.missing.contains_key(&project) || replies.missing.len() < 1024 {
+                                                        replies.missing.entry(project).or_insert((registration_epoch, configuration_epoch));
+                                                    } else {
+                                                        log.record(airk_core::service_logs::LogKind::MetadataUnavailable, Some(project), None);
+                                                    }
+                                                }
+                                            }
+                                            Ok(None) => (),
+                                            Err(_) => log.record(airk_core::service_logs::LogKind::MetadataUnavailable, Some(project), None),
+                                        }
+                                        continue;
+                                    }
+                                    Ok(_) => (),
+                                    Err(_) => {
+                                        log.record(airk_core::service_logs::LogKind::MetadataUnavailable, Some(project), None);
+                                        continue;
+                                    }
+                                }
                                 match registry.retire_missing_source(
                                     project,
                                     registration_epoch,
@@ -763,7 +851,23 @@ impl SourceSupervisor {
             cache,
             idle_safe,
             configuration_revision,
+            missing_reporter,
         })
+    }
+    pub(crate) fn set_missing_reporter(
+        &self,
+        reporter: Arc<dyn MissingSourceReporter>,
+    ) -> Result<()> {
+        let mut current = self
+            .missing_reporter
+            .lock()
+            .map_err(|_| anyhow::anyhow!("missing-source metadata port unavailable"))?;
+        ensure!(
+            current.is_none(),
+            "missing-source metadata port is already bound"
+        );
+        *current = Some(reporter);
+        Ok(())
     }
     pub fn can_idle_exit(&self) -> bool {
         self.idle_safe.load(Ordering::Acquire)
@@ -859,6 +963,88 @@ fn send_configuration(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_missing_event_requires_current_enabled_epochs_and_actual_missing_root() -> Result<()>
+    {
+        let owner = tempfile::tempdir()?;
+        let base = owner.path().canonicalize()?;
+        let source = base.join("source");
+        std::fs::create_dir(&source)?;
+        std::fs::write(source.join("retained.txt"), b"preserved")?;
+        let control = base.join("control");
+        crate::local_ipc::prepare_root(&control)?;
+        let mut registry = ServiceRegistry::open(&control, new_instance_id()?)?;
+        let registration = airk_kernel::service_projects::planned_registration(
+            &source,
+            &base.join("data"),
+            "missing-event",
+        )?;
+        registry.register(&registration)?;
+        registry.configure_watch(registration.binding, true)?;
+        let watch = registry.watch(registration.binding)?;
+        let epoch = watch.project.fencing_generation;
+        let configuration = watch.configuration_epoch;
+        assert!(
+            NativeMissingSourceEvent::observed(
+                &registry,
+                registration.binding,
+                epoch,
+                configuration
+            )?
+            .is_none()
+        );
+        std::fs::rename(&source, base.join("parked"))?;
+        let event = NativeMissingSourceEvent::observed(
+            &registry,
+            registration.binding,
+            epoch,
+            configuration,
+        )?
+        .context("actual missing source did not produce native evidence")?;
+        assert_eq!(event.binding(), registration.binding);
+        assert_eq!(event.registration_epoch(), epoch);
+        assert_eq!(event.configuration_epoch(), configuration);
+        assert!(
+            NativeMissingSourceEvent::observed(
+                &registry,
+                registration.binding,
+                epoch + 1,
+                configuration
+            )?
+            .is_none()
+        );
+        assert!(
+            NativeMissingSourceEvent::observed(
+                &registry,
+                registration.binding,
+                epoch,
+                configuration + 1
+            )?
+            .is_none()
+        );
+        registry.configure_watch(registration.binding, false)?;
+        let disabled = registry.watch(registration.binding)?;
+        assert!(
+            NativeMissingSourceEvent::observed(
+                &registry,
+                registration.binding,
+                epoch,
+                disabled.configuration_epoch
+            )?
+            .is_none()
+        );
+        assert_eq!(
+            std::fs::read(base.join("parked/retained.txt"))?,
+            b"preserved"
+        );
+        assert!(!base.join("data").exists());
+        assert!(
+            registry.is_registered(registration.binding)?,
+            "an observation cannot retire metadata"
+        );
+        Ok(())
+    }
 
     #[test]
     fn source_coordination_waits_for_metadata_bootstrap_and_can_drop_before_release() -> Result<()>

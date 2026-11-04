@@ -9,7 +9,7 @@ export const EXPLORER_ERRORS = {
     // Explorer Assistance MCP server (drafts and binding).
     UI_NOT_ATTACHED: { plane: 'assistance', message: 'No trusted AIRK Explorer window is attached to receive a draft.' },
     HOST_UNAVAILABLE: { plane: 'assistance', message: 'The VS Code extension host is not reachable.' },
-    WORKSPACE_UNTRUSTED: { plane: 'assistance', message: 'The workspace is not trusted.' },
+    WORKSPACE_UNTRUSTED: { plane: 'assistance', message: 'VS Code Restricted Mode is active. Use Manage Workspace Trust to review this workspace.' },
     AMBIGUOUS_TARGET: { plane: 'assistance', message: 'More than one Explorer window matches; select a workspace explicitly.' },
     STALE_BINDING: { plane: 'assistance', message: 'The window, workspace or project binding changed since the request was prepared.' },
     SCHEMA_UNSUPPORTED: { plane: 'assistance', message: 'The request schema version is not supported by this extension.' },
@@ -24,6 +24,7 @@ export const EXPLORER_ERRORS = {
     HELP_TOPIC_UNKNOWN: { plane: 'assistance', message: 'No Explorer help topic has that id; search the catalog first.' },
     // Extension host.
     SERVICE_UNAVAILABLE: { plane: 'host', message: 'The AIRK service is not connected.' },
+    CLIENT_NOT_AUTHORIZED: { plane: 'host', message: 'This AIRK client is no longer authorized. Reopen AIRK after the client or window has been renewed.' },
     SERVICE_INCOMPATIBLE: { plane: 'host', message: 'The AIRK runtime version does not match this extension.' },
     EMBEDDING_UNAVAILABLE: { plane: 'host', message: 'Local vector search is unavailable for this project.' },
     NO_PROJECT: { plane: 'host', message: 'No registered AIRK project is selected.' },

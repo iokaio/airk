@@ -38,10 +38,30 @@ async fn handle(
     // The console never receives an evidence bearer credential. Evidence
     // brokerage remains the dedicated direct-project client/stdio MCP path.
     match &method {
-        ControlMethod::Connect { .. } => return failure("console_brokerage_forbidden"),
+        ControlMethod::Connect { .. } | ControlMethod::ConnectScoped { .. } => {
+            return failure("console_brokerage_forbidden");
+        }
         // Exhaustive review: a new service method must be considered here before
         // a trusted console can expose it. No default credential-bearing path.
-        ControlMethod::Logs { .. }
+        ControlMethod::NativeRead { .. }
+        | ControlMethod::CatalogPage { .. }
+        | ControlMethod::CatalogDetail { .. }
+        | ControlMethod::CatalogContext { .. }
+        | ControlMethod::CatalogHostContext { .. }
+        | ControlMethod::CatalogLegacyBinding { .. }
+        | ControlMethod::CatalogGrantDraft { .. }
+        | ControlMethod::CatalogSourceMutationDraft { .. }
+        | ControlMethod::CatalogSourceChangeObservation { .. }
+        | ControlMethod::CatalogPendingSourceChange { .. }
+        | ControlMethod::CatalogIndexRetirementEvidence { .. }
+        | ControlMethod::CatalogSourceChangeResolve { .. }
+        | ControlMethod::CatalogIndexSetupDraft { .. }
+        | ControlMethod::CatalogIndexSetupApply { .. }
+        | ControlMethod::CatalogIndexSetupReceipt { .. }
+        | ControlMethod::CatalogPreview { .. }
+        | ControlMethod::CatalogApply { .. }
+        | ControlMethod::CatalogReceipt { .. }
+        | ControlMethod::Logs { .. }
         | ControlMethod::Health
         | ControlMethod::Shutdown
         | ControlMethod::Register { .. }
@@ -170,6 +190,7 @@ mod tests {
         let response = metadata_only(ControlResponse::Connection {
             role: "original-private-fixture".into(),
             grant: ConnectionGrant {
+                scope: None,
                 client: airk_core::usage::ClientFamily::Unknown,
                 protocol: 1,
                 identity: WorkerIdentity {

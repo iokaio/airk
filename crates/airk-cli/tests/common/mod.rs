@@ -41,6 +41,74 @@ pub fn rpc(control: &Path, method: Method) -> Response {
         .unwrap()
 }
 
+/// Failure-only evidence from this test's owned native runtime. Preserve the
+/// complete canonical result; raw details stay local and are filtered by job.
+pub fn job_failure_diagnostics(control: &Path, job: &JobRecord) -> serde_json::Value {
+    struct BoundedCapture(Vec<u8>);
+    impl std::io::Write for BoundedCapture {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.0.len() + bytes.len() > (1 << 20) {
+                return Err(std::io::Error::other(
+                    "fixture raw diagnostic capture exceeds 1 MiB",
+                ));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build();
+    let observe = |method| match &runtime {
+        Ok(runtime) => {
+            match runtime.block_on(airk_cli::service_runtime::request(control, method)) {
+                Ok(response) => serde_json::to_value(response).unwrap(),
+                Err(error) => serde_json::json!({"diagnostic_rpc_error": format!("{error:#}")}),
+            }
+        }
+        Err(error) => serde_json::json!({"diagnostic_runtime_error": error.to_string()}),
+    };
+    let configuration = observe(Method::ConfigurationResult { id: job.id });
+    let worker = observe(Method::Worker {
+        project: job.project,
+    });
+    let resources = observe(Method::Resources);
+    let job_id = serde_json::to_value(job.id).unwrap();
+    let mut exact_raw = None;
+    let mut capture_error = None;
+    for attempt in 0..3 {
+        let mut capture = BoundedCapture(Vec::new());
+        capture_error = airk_cli::service_logs::export_raw_to(control, &mut capture)
+            .err()
+            .map(|error| error.to_string());
+        // Each raw record is independently bounded by the native producer.
+        // Never print another job's paths/values or an unparsed partial record.
+        for line in capture.0.split(|byte| *byte == b'\n') {
+            if line.len() <= 64 << 10
+                && let Ok(value) = serde_json::from_slice::<serde_json::Value>(line)
+                && value["failure"]["job"] == job_id
+            {
+                exact_raw = Some(value);
+            }
+        }
+        if exact_raw.is_some() || capture_error.is_some() || attempt == 2 {
+            break;
+        }
+        // Worker status/log delivery can follow the terminal metadata receipt.
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    serde_json::json!({
+        "configuration_result": configuration,
+        "worker": worker,
+        "resources": resources,
+        "raw_job_error": exact_raw,
+        "raw_capture_error": capture_error,
+    })
+}
+
 pub fn native_command() -> Command {
     #[cfg(windows)]
     {
@@ -293,6 +361,12 @@ impl Service {
                 )
             };
             if job.outcome.is_some() {
+                if matches!(job.outcome, Some(JobOutcome::Failed { .. })) {
+                    eprintln!(
+                        "native failed-job evidence: {}",
+                        job_failure_diagnostics(&self.control, &job)
+                    );
+                }
                 return job;
             }
             if Instant::now() >= until {

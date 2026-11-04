@@ -21,16 +21,19 @@ pub struct RootConfig {
 }
 
 impl RootConfig {
+    fn empty(owner_root: &str) -> Self {
+        Self {
+            schema: 1,
+            owner_root: owner_root.into(),
+            roots: BTreeMap::new(),
+        }
+    }
     pub fn load(directory: &Path, owner_root: &str) -> Result<Self> {
         let path = directory.join("roots.json");
         let metadata = match fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self {
-                    schema: 1,
-                    owner_root: owner_root.into(),
-                    roots: BTreeMap::new(),
-                });
+                return Ok(Self::empty(owner_root));
             }
             Err(error) => return Err(error.into()),
         };
@@ -111,6 +114,22 @@ impl RootConfig {
         );
         Ok(())
     }
+
+    pub(crate) fn initial_setup_bytes(
+        owner: &Path,
+        data: &Path,
+        roots: &BTreeMap<String, String>,
+    ) -> Result<Vec<u8>> {
+        validate_planned_sources(owner, data, roots)?;
+        let mut configuration = Self::empty(owner.to_str().context("non-UTF-8 setup root")?);
+        configuration.roots = roots.clone();
+        let bytes = serde_json::to_vec(&configuration)?;
+        ensure!(
+            bytes.len() as u64 <= MAX_CONFIG_BYTES,
+            "source configuration exceeds 96 KiB"
+        );
+        Ok(bytes)
+    }
 }
 
 pub fn validate_alias(alias: &str) -> Result<()> {
@@ -150,7 +169,28 @@ pub fn validate_sources(owner: &Path, data: &Path, roots: &BTreeMap<String, Stri
     validate_map(roots)?;
     let owner = owner.canonicalize()?;
     let data = data.canonicalize()?;
-    let mut accepted = vec![owner.clone()];
+    validate_resolved_sources(&owner, &data, roots)
+}
+
+/// The same native alias/topology contract before a selected storage leaf has
+/// been created. Resolves existing ancestors read-only; never creates storage.
+pub fn validate_planned_sources(
+    owner: &Path,
+    data: &Path,
+    roots: &BTreeMap<String, String>,
+) -> Result<()> {
+    validate_map(roots)?;
+    let owner = owner.canonicalize()?;
+    let data = crate::service::data_scope::canonical_location(data)?;
+    validate_resolved_sources(&owner, &data, roots)
+}
+
+fn validate_resolved_sources(
+    owner: &Path,
+    data: &Path,
+    roots: &BTreeMap<String, String>,
+) -> Result<()> {
+    let mut accepted = vec![owner.to_path_buf()];
     for (alias, root) in roots {
         let path = Path::new(root);
         let resolved = path
@@ -161,7 +201,7 @@ pub fn validate_sources(owner: &Path, data: &Path, roots: &BTreeMap<String, Stri
             "source alias {alias} changed identity or is not a directory"
         );
         ensure!(
-            !resolved.starts_with(&data),
+            !resolved.starts_with(data),
             "source alias {alias} is inside index storage"
         );
         ensure!(

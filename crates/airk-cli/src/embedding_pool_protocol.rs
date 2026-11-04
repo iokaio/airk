@@ -2,7 +2,7 @@
 //! Bounded shared-pool framing. Service control carries capabilities, never input payloads.
 use airk_core::{
     identity::{Incarnation, Sha256Digest},
-    service::ProjectRegistration,
+    service::{ProjectRegistration, WorkerIdentity},
 };
 use airk_retrieval::embedding_worker::{Request, Response};
 use serde::{Deserialize, Serialize};
@@ -35,13 +35,51 @@ pub struct Access {
     pub grant: Grant,
 }
 
+pub const MAX_PROVIDER_DRAINS: usize = 32;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProviderDrainTicket {
+    pub helper: Incarnation,
+    pub worker: WorkerIdentity,
+    pub ticket: Incarnation,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderDrainObservation {
+    Pending,
+    Drained,
+    Refused,
+    Forgotten,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Control {
-    Renew { worker: Incarnation },
-    Register { grant: Grant },
-    Revoke { worker: Incarnation },
-    ConfigureThreads { threads: u16 },
+    Renew {
+        worker: Incarnation,
+    },
+    Register {
+        grant: Grant,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worker_identity: Option<WorkerIdentity>,
+    },
+    Revoke {
+        worker: Incarnation,
+    },
+    BeginDrain {
+        ticket: ProviderDrainTicket,
+    },
+    PollDrain {
+        ticket: ProviderDrainTicket,
+    },
+    ForgetDrain {
+        ticket: ProviderDrainTicket,
+    },
+    ConfigureThreads {
+        threads: u16,
+    },
     Status,
     Stop,
 }
@@ -49,6 +87,11 @@ pub enum Control {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Observation {
+    GuardedReady {
+        namespace: Incarnation,
+        service: Incarnation,
+        pool: Incarnation,
+    },
     Renewed,
     GrantMissing {
         worker: Incarnation,
@@ -59,6 +102,10 @@ pub enum Observation {
     },
     Registered,
     Revoked,
+    Drain {
+        ticket: ProviderDrainTicket,
+        observation: ProviderDrainObservation,
+    },
     Status {
         loads: u64,
         reuses: u64,

@@ -26,7 +26,7 @@ pub struct HelpArgs {
     pub topic: Option<String>,
     /// Exact CLI command path, e.g. runtime retire-previous, tools call or usage report. Never executed.
     pub command: Option<String>,
-    /// Exact MCP tool name, e.g. airk_search; returns its current description and input schema.
+    /// Known MCP tool name or its single airk_ compatibility alias, e.g. search or airk_search; returns the selected catalog's current description and input schema. Exact catalog names take precedence.
     pub tool: Option<String>,
     /// 1-based continuation line in the selected help content.
     #[serde(default = "first_line")]
@@ -56,7 +56,7 @@ fn answer(args: HelpArgs) -> Result<Value, &'static str> {
     answer_with_catalog(args, None)
 }
 fn answer_with_catalog(
-    args: HelpArgs,
+    mut args: HelpArgs,
     tools: Option<Vec<rmcp::model::Tool>>,
 ) -> Result<Value, &'static str> {
     if !(4096..=32768).contains(&args.max_bytes) || args.start_line == 0 {
@@ -111,12 +111,30 @@ fn answer_with_catalog(
         if args.topic.is_some() && !matches!(topic.as_str(), "tools" | "mcp") {
             return Err("conflicting_help_selectors");
         }
+        let tools = tools.unwrap_or_else(crate::local::tools);
         let tool = tools
-            .unwrap_or_else(crate::local::tools)
-            .into_iter()
+            .iter()
             .find(|entry| entry.name == *tool)
+            .or_else(|| {
+                if let Some(public) = tool.strip_prefix("airk_") {
+                    // One known compatibility prefix only; never recursively
+                    // strip a malformed or unknown tool name.
+                    (!public.starts_with("airk_"))
+                        .then(|| tools.iter().find(|entry| entry.name == public))
+                        .flatten()
+                } else {
+                    tools
+                        .iter()
+                        .find(|entry| entry.name.strip_prefix("airk_") == Some(tool.as_str()))
+                }
+            })
             .ok_or("unknown_mcp_tool")?;
-        serde_json::to_string_pretty(&tool).map_err(|_| "help_serialization_failed")?
+        let content =
+            serde_json::to_string_pretty(&tool).map_err(|_| "help_serialization_failed")?;
+        // Disclose the resolved catalog identity, so compatibility spellings
+        // produce the same complete native help document.
+        args.tool = Some(tool.name.to_string());
+        content
     } else if topic == "commands" {
         let names = catalog
             .map(|commands| {
@@ -253,6 +271,53 @@ mod tests {
     use super::*;
     fn args(value: Value) -> HelpArgs {
         serde_json::from_value(value).unwrap()
+    }
+    #[test]
+    fn tool_aliases_resolve_known_catalog_entries_with_exact_match_precedence() {
+        let native = crate::local::tools()
+            .into_iter()
+            .find(|t| t.name == "airk_search")
+            .unwrap();
+        let mut public = native.clone();
+        public.name = "search".into();
+        public.description = Some("Explicit public catalog entry".into());
+        for catalog in [vec![native.clone()], vec![public.clone()]] {
+            let exact = catalog[0].name.to_string();
+            let expected = answer_with_catalog(
+                args(json!({"tool":exact,"max_bytes":32768})),
+                Some(catalog.clone()),
+            )
+            .unwrap();
+            for name in ["search", "airk_search"] {
+                assert_eq!(
+                    answer_with_catalog(
+                        args(json!({"tool":name,"max_bytes":32768})),
+                        Some(catalog.clone())
+                    )
+                    .unwrap(),
+                    expected
+                );
+            }
+            for name in ["airk_airk_search", "unknown", "airk_unknown"] {
+                assert_eq!(
+                    answer_with_catalog(args(json!({"tool":name})), Some(catalog.clone()))
+                        .unwrap_err(),
+                    "unknown_mcp_tool"
+                );
+            }
+        }
+        let catalog = vec![native.clone(), public.clone()];
+        for selected in [native, public] {
+            let result = answer_with_catalog(
+                args(json!({"tool":selected.name,"max_bytes":32768})),
+                Some(catalog.clone()),
+            )
+            .unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(result["content"].as_str().unwrap()).unwrap(),
+                serde_json::to_value(selected).unwrap()
+            );
+        }
     }
     #[test]
     fn supplied_tool_catalog_remains_request_local_and_unknown_names_still_fail() {

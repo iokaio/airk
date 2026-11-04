@@ -6,13 +6,24 @@ use airk_core::{
     service::JobError,
     service_configuration::{ConfigurationWork, MAX_CONFIGURATION_BYTES},
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub(super) const SCHEMA: &str = "CREATE TABLE service_configuration(
     job TEXT PRIMARY KEY REFERENCES service_jobs(id) ON DELETE CASCADE,
     payload BLOB NOT NULL CHECK(length(payload)<=16640),
     result BLOB NOT NULL CHECK(length(result)=16392));";
+
+/// Successfully read bytes are damaged, not an absent result. SQL/ownership
+/// failures must never acquire this classification or become retry permission.
+#[derive(Debug)]
+struct ConfigurationResultCorrupt(&'static str);
+impl std::fmt::Display for ConfigurationResultCorrupt {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "damaged configuration result: {}", self.0)
+    }
+}
+impl std::error::Error for ConfigurationResultCorrupt {}
 
 pub(super) fn write_result(connection: &Connection, job: Sha256Digest, bytes: &[u8]) -> Result<()> {
     ensure!(
@@ -138,21 +149,24 @@ pub(super) fn result(
     )?;
     ensure!(
         bytes.len() == MAX_CONFIGURATION_BYTES + 8,
-        "configuration result reservation changed"
+        ConfigurationResultCorrupt("reservation length changed")
     );
     if bytes[..8] == [0; 8] {
         return Ok(None);
     }
     ensure!(
         &bytes[..4] == b"ACR1",
-        "invalid configuration result header"
+        ConfigurationResultCorrupt("invalid recorded header")
     );
     let length = u32::from_be_bytes(bytes[4..8].try_into()?) as usize;
     ensure!(
         length <= MAX_CONFIGURATION_BYTES,
-        "configuration result exceeds budget"
+        ConfigurationResultCorrupt("recorded length exceeds budget")
     );
-    Ok(Some(serde_json::from_slice(&bytes[8..8 + length])?))
+    Ok(Some(
+        serde_json::from_slice(&bytes[8..8 + length])
+            .context(ConfigurationResultCorrupt("invalid recorded JSON"))?,
+    ))
 }
 pub(super) fn recover_results(
     connection: &Connection,
@@ -172,7 +186,34 @@ pub(super) fn recover_results(
     );
     drop(statement);
     for id in ids {
-        if matches!(result(connection, id.parse()?), Ok(Some(_))) {
+        let saved = match result(connection, id.parse()?) {
+            Ok(saved) => saved,
+            Err(error) if error.is::<ConfigurationResultCorrupt>() => {
+                // A damaged recorded result cannot authorize completion OR
+                // replay, including otherwise repeatable prepare/cleanup work.
+                // Preserve its bytes for inspection and settle only this exact
+                // interrupted job; SQL and native effect-validation errors below
+                // still abort the enclosing recovery transaction.
+                let outcome = airk_core::service::JobOutcome::Failed {
+                    code: "configuration_outcome_unknown_reinspect".into(),
+                };
+                ensure!(
+                    connection.execute(
+                        "UPDATE service_jobs SET state='failed',outcome=?1 WHERE id=?2 AND project=?3 AND kind='configure' AND state='running' AND epoch<>?4",
+                        params![serde_json::to_vec(&outcome)?, id, lease.binding.to_string(), i64::try_from(epoch)?],
+                    )? == 1,
+                    "damaged configuration result job changed during recovery"
+                );
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some(saved) = saved {
+            super::catalog::source_change::validate_configuration_result(
+                connection,
+                id.parse()?,
+                &saved,
+            )?;
             connection.execute(
                 "UPDATE service_jobs SET state='succeeded',outcome=?1 WHERE id=?2",
                 params![
@@ -224,6 +265,7 @@ impl ServiceRegistry {
                 && record.fencing_generation == epoch,
             JobError::StaleWorker
         );
+        super::catalog::source_change::validate_configuration_result(&transaction, job, result)?;
         let unrecorded: bool = transaction.query_row(
             "SELECT substr(result,1,8)=zeroblob(8) FROM service_configuration WHERE job=?1",
             [job.to_string()],
@@ -779,6 +821,132 @@ mod tests {
     }
     #[test]
     fn damaged_configuration_result_is_preserved_and_never_replayed() -> Result<()> {
+        for configuration in ["ordinary", "prepare", "prepare_cleanup", "delete_cleanup"] {
+            for damage in ["json", "header", "length"] {
+                damaged_result_case(configuration, damage)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn damaged_result_case(configuration: &str, damage: &str) -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let caller = Incarnation::from_bytes([1; 16]);
+        let mut registry = open(temporary.path(), caller)?;
+        let project = project(temporary.path())?;
+        registry.register(&project)?;
+        let derived = matches!(configuration, "prepare_cleanup" | "delete_cleanup");
+        if derived {
+            let transaction = registry.connection.transaction()?;
+            super::super::unregistration::retire(&transaction, project.binding, None)?;
+            transaction.commit()?;
+        }
+        let accepted_key = key(&mut registry, 1)?;
+        let mut requested = request(false);
+        match configuration {
+            "ordinary" => {}
+            "prepare" => requested.prepare = true,
+            "prepare_cleanup" => {
+                requested.configuration = ProjectConfiguration::PrepareDerivedCleanup;
+            }
+            "delete_cleanup" => {
+                requested.configuration = ProjectConfiguration::DeleteDerived {
+                    preview: Sha256Digest::from_bytes([5; 32]),
+                };
+            }
+            _ => unreachable!(),
+        }
+        if derived || requested.prepare {
+            requested.incarnation = accepted_key.namespace;
+            requested.settings = project.binding;
+        }
+        let job = registry.enqueue_configuration(
+            project.binding,
+            caller,
+            &accepted_key,
+            &requested,
+            Sha256Digest::from_bytes([4; 32]),
+        )?;
+        let mut lease = ProjectLease::acquire(&temporary.path().join("control"), project.binding)?;
+        if derived {
+            registry.admit_derived_worker(&mut lease)?;
+        } else {
+            registry.admit_worker(&mut lease)?;
+        }
+        let claimed = registry.claim_job_id(&lease, job.id)?.unwrap();
+        write_result(&registry.connection, job.id, b"{")?;
+        if damage != "json" {
+            let mut damaged: Vec<u8> = registry.connection.query_row(
+                "SELECT result FROM service_configuration WHERE job=?1",
+                [job.id.to_string()],
+                |row| row.get(0),
+            )?;
+            match damage {
+                "header" => damaged[..4].copy_from_slice(b"BAD1"),
+                "length" => damaged[4..8]
+                    .copy_from_slice(&u32::try_from(MAX_CONFIGURATION_BYTES + 1)?.to_be_bytes()),
+                _ => unreachable!(),
+            }
+            registry.connection.execute(
+                "UPDATE service_configuration SET result=?1 WHERE job=?2",
+                params![damaged, job.id.to_string()],
+            )?;
+        }
+        assert!(
+            registry
+                .configuration_result(job.id)
+                .unwrap_err()
+                .is::<ConfigurationResultCorrupt>(),
+            "{configuration}/{damage} must remain an explicit damaged result"
+        );
+        let before: Vec<u8> = registry.connection.query_row(
+            "SELECT result FROM service_configuration WHERE job=?1",
+            [job.id.to_string()],
+            |row| row.get(0),
+        )?;
+        drop(lease);
+        let mut lease = ProjectLease::acquire(&temporary.path().join("control"), project.binding)?;
+        if derived {
+            registry.admit_derived_worker(&mut lease)?;
+        } else {
+            registry.admit_worker(&mut lease)?;
+        }
+        registry.recover_jobs(&lease)?;
+        let mut expected = serde_json::to_value(claimed)?;
+        expected["state"] = "failed".into();
+        expected["outcome"] = serde_json::to_value(airk_core::service::JobOutcome::Failed {
+            code: "configuration_outcome_unknown_reinspect".into(),
+        })?;
+        assert_eq!(serde_json::to_value(registry.job(job.id)?)?, expected);
+        registry.recover_jobs(&lease)?;
+        assert_eq!(
+            serde_json::to_value(registry.job(job.id)?)?,
+            expected,
+            "recovery must preserve the exact terminal job and attempts"
+        );
+        assert!(registry.next_pending_job(project.binding)?.is_none());
+        assert!(registry.claim_job_id(&lease, job.id)?.is_none());
+        assert!(
+            registry
+                .configuration_result(job.id)
+                .unwrap_err()
+                .is::<ConfigurationResultCorrupt>()
+        );
+        assert_eq!(
+            registry.configuration_work(job.id)?.unwrap().request,
+            requested
+        );
+        let after: Vec<u8> = registry.connection.query_row(
+            "SELECT result FROM service_configuration WHERE job=?1",
+            [job.id.to_string()],
+            |row| row.get(0),
+        )?;
+        assert_eq!(after, before);
+        Ok(())
+    }
+
+    #[test]
+    fn configuration_result_sql_failure_does_not_become_damage_or_recovery_success() -> Result<()> {
         let temporary = tempfile::tempdir()?;
         let caller = Incarnation::from_bytes([1; 16]);
         let mut registry = open(temporary.path(), caller)?;
@@ -795,30 +963,37 @@ mod tests {
         let mut lease = ProjectLease::acquire(&temporary.path().join("control"), project.binding)?;
         registry.admit_worker(&mut lease)?;
         registry.claim_job_id(&lease, job.id)?.unwrap();
-        // A valid marker with invalid JSON is not proof of a completed operation.
-        write_result(&registry.connection, job.id, b"{")?;
-        let before: Vec<u8> = registry.connection.query_row(
-            "SELECT result FROM service_configuration WHERE job=?1",
-            [job.id.to_string()],
-            |row| row.get(0),
-        )?;
+        write_result(&registry.connection, job.id, b"{}")?;
         drop(lease);
         let mut lease = ProjectLease::acquire(&temporary.path().join("control"), project.binding)?;
         registry.admit_worker(&mut lease)?;
-        registry.recover_jobs(&lease)?;
-        assert_eq!(registry.job(job.id)?.state, JobState::Failed);
-        assert_eq!(
-            serde_json::to_value(registry.job(job.id)?.outcome)?["code"],
-            "configuration_outcome_unknown_reinspect"
-        );
-        assert!(registry.next_pending_job(project.binding)?.is_none());
-        assert!(registry.configuration_result(job.id).is_err());
-        let after: Vec<u8> = registry.connection.query_row(
+        let before = serde_json::to_value(registry.job(job.id)?)?;
+        let before_bytes: Vec<u8> = registry.connection.query_row(
             "SELECT result FROM service_configuration WHERE job=?1",
             [job.id.to_string()],
             |row| row.get(0),
         )?;
-        assert_eq!(after, before);
+        registry.connection.execute_batch(
+            "ALTER TABLE service_configuration RENAME TO unavailable_configuration",
+        )?;
+        let error = registry.configuration_result(job.id).unwrap_err();
+        assert!(error.is::<rusqlite::Error>() && !error.is::<ConfigurationResultCorrupt>());
+        let error = registry.recover_jobs(&lease).unwrap_err();
+        assert!(error.is::<rusqlite::Error>() && !error.is::<ConfigurationResultCorrupt>());
+        assert_eq!(serde_json::to_value(registry.job(job.id)?)?, before);
+        registry.connection.execute_batch(
+            "ALTER TABLE unavailable_configuration RENAME TO service_configuration",
+        )?;
+        let after_bytes: Vec<u8> = registry.connection.query_row(
+            "SELECT result FROM service_configuration WHERE job=?1",
+            [job.id.to_string()],
+            |row| row.get(0),
+        )?;
+        assert_eq!(after_bytes, before_bytes);
+        assert_eq!(
+            registry.configuration_result(job.id)?,
+            Some(serde_json::json!({}))
+        );
         Ok(())
     }
     #[test]

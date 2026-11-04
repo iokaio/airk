@@ -249,14 +249,17 @@ impl CurrentRead {
             .map(|term| format!("\"{}\"", token(term)))
             .collect::<Vec<_>>()
             .join(" AND ");
+        let scope = self.scope_atoms_json()?;
+        let scope_aliases = self.scope_aliases_json()?;
         let paths = paths.map(serde_json::to_string).transpose()?;
         ensure!(
             paths.as_ref().is_none_or(|paths| paths.len() <= 4 << 20),
             "filtered lexical path selector exceeds byte budget"
         );
         let result = self.with_connection(|connection| {
-            let mut statement = connection.prepare("SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?4 IS NULL OR d.path IN (SELECT value FROM json_each(?4))) ORDER BY d.stable_id LIMIT ?3")?;
-            let mut rows = statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64,paths])?;
+            let sql = if scope.is_some() { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?4 IS NULL OR d.path IN (SELECT value FROM json_each(?4))) AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_each(?5) AS a WHERE NOT EXISTS (SELECT 1 FROM json_each(?6) AS alias WHERE ((d.path='@'||alias.value COLLATE BINARY OR substr(d.path,1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY) != (json_extract(a.value,'$.path')='@'||alias.value COLLATE BINARY OR substr(json_extract(a.value,'$.path'),1,length(alias.value)+2)='@'||alias.value||'/' COLLATE BINARY))) AND (d.path=json_extract(a.value,'$.path') COLLATE BINARY OR (json_extract(a.value,'$.kind')='subtree' AND (json_extract(a.value,'$.path')='' OR substr(d.path,1,length(json_extract(a.value,'$.path'))+1)=json_extract(a.value,'$.path')||'/' COLLATE BINARY))))) ORDER BY d.stable_id LIMIT ?3" } else { "SELECT d.path,d.local,d.stable_id,d.payload FROM current_fts JOIN current_lexical_docs AS d NOT INDEXED ON d.id=current_fts.rowid WHERE current_fts MATCH ?1 AND (?2 IS NULL OR substr(d.path,1,length(?2))=?2 COLLATE BINARY) AND (?4 IS NULL OR d.path IN (SELECT value FROM json_each(?4))) ORDER BY d.stable_id LIMIT ?3" };
+            let mut statement = connection.prepare(sql)?;
+            let mut rows = if scope.is_some() { statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64,paths,scope,scope_aliases])? } else { statement.query(params![expression,query.path_prefix,(query.limit + 1) as i64,paths])? };
             let mut values = Vec::new();
             let mut incomplete = false;
             while let Some(row) = rows.next()? {

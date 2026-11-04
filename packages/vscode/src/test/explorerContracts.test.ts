@@ -33,6 +33,11 @@ test('every route has an availability and unknown keys are unsupported', () => {
     assert.ok(Object.isFrozen(FEATURES));
 });
 
+test('Manage Workspace Trust is a strict zero-argument host action',()=>{
+    assert.ok(parseWebviewMessage({v:1,type:'workspace.manageTrust',requestId:'trust'}));
+    for(const input of [{command:'arbitrary'},{url:'https://example.invalid'},{trusted:true}])assert.equal(parseWebviewMessage({v:1,type:'workspace.manageTrust',requestId:'trust',...input}),undefined);
+});
+
 test('errors come from one registry and native codes pass through bounded', () => {
     for (const entry of Object.values(EXPLORER_ERRORS)) { assert.ok(['assistance', 'host', 'service', 'webview'].includes(entry.plane)); }
     assert.equal(explorerError('UI_NOT_ATTACHED').code, 'UI_NOT_ATTACHED');

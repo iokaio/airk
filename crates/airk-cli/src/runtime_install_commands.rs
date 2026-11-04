@@ -557,6 +557,27 @@ pub async fn run(command: &RuntimeCommand) -> Result<()> {
             layout::validate_catalog_control(control_root, observation.catalog.namespace)?;
             serde_json::to_value(observation)?
         }
+        RuntimeCommand::CatalogAuthorityProbe {
+            control_root,
+            operation,
+            native_host,
+            nonce,
+        } => {
+            use airk_store::service::registry::catalog::{
+                genesis::activation, upgrade::authority_v1,
+            };
+            let observation = if let Some(host) = native_host {
+                authority_v1::observe_authority_v1(control_root, *operation, *host, *nonce)?
+            } else {
+                activation::observe_authority_v1(control_root, *operation, *nonce)?
+            };
+            ensure!(
+                runtime_pair::engine_identity()? == observation.installer_identity,
+                "catalog authority candidate differs from the admitted installer"
+            );
+            layout::validate_catalog_control(control_root, observation.catalog.namespace)?;
+            serde_json::to_value(observation)?
+        }
         RuntimeCommand::SelfTest => {
             let main = std::env::current_exe()?;
             let helper = runtime_pair::verify_helper(&main)?;

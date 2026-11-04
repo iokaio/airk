@@ -7,6 +7,21 @@ import { LaunchSpec } from './model';
 import { exactScopeMatches, NativeSourceScope, ProjectRegistrationReview, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { identifier, record, ServiceError, type ConsolePage } from './serviceClient';
 import { IntentStorage } from './serviceIntents';
+import type { ReviewedScopeSelection } from './scopeSelection';
+import { validateCatalogSession } from './catalogSession';
+
+/** Pure adapter from reviewed native metadata. It does not resolve folders,
+ * register an Index, connect, activate preferences or manufacture authority. */
+export function nativeScopeLaunchSpec(binding:RuntimeBinding,selection:ReviewedScopeSelection):LaunchSpec {
+    if(!binding.launcher||binding.payloadVerified===false)throw new ServiceError('stable_launcher_unavailable');
+    const session=validateCatalogSession(selection.session),index=selection.index;
+    if(index.id!==session.index_id)throw new ServiceError('crossed_scope_launch_index');
+    identifier(index.backing.binding,32);
+    return {command:binding.universalLauncher??binding.launcher,root:absolute(index.backing.root),
+        dataDir:absolute(index.backing.data_root),collection:index.backing.collection,name:selection.label,
+        catalogSession:session,service:{installDir:binding.installDir,project:index.backing.binding,
+            ...(binding.universalLauncher?{universal:true}:{})}};
+}
 
 const PREFIX='airk.service.workspace.1.';
 const ACTIVE='airk.service.workspace.active.1.';
@@ -89,7 +104,8 @@ export class ServiceWorkspace {
             spec:{command:binding.universalLauncher??binding.launcher,root:project.root,dataDir:project.data_root,collection:project.collection,name:path.basename(opened),
             service:{installDir:binding.installDir,project:project.binding,...(binding.universalLauncher?{universal:true}:{})}}};
     }
-    /** Trusted startup may recreate a lost registration; native removal remains authoritative. */
+    /** Adopt only existing native bindings into editor preferences. Missing
+     * registrations require explicit setup; native removal remains authoritative. */
     async reconcileStartup(binding:RuntimeBinding,opened:string,observed:WorkspaceRegistrations):Promise<'registered'|'removed'|'missing'>{
         this.active();const saved=(await this.definitions(binding,[opened]))[0];
         let root:string;

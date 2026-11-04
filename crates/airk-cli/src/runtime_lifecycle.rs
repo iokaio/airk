@@ -31,7 +31,7 @@ fn registry(root: &Path) -> Result<ServiceRegistry> {
     ServiceRegistry::open(&control, airk_kernel::service_broker::new_instance_id()?)
 }
 fn owner(root: &Path) -> Result<bool> {
-    if let Some(policy) = managed::read(root)? {
+    if let Some(policy) = managed::saved_policy_for_lifecycle(root)? {
         ensure!(
             policy.lifecycle == ManagedLifecycle::UserOnDemand,
             "lifecycle_managed_externally"
@@ -123,8 +123,10 @@ pub(super) async fn settle(root: &Path) -> Result<()> {
     require_start_allowed(root)
 }
 pub(super) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
-    let _lock = install_lock(root)?;
+    let lock = install_lock(root)?;
+    let authority = InstallerAuthority { root, _lock: &lock };
     payload_repair::require_settled(root)?;
+    managed::catalog::resume_before_lifecycle(&authority, None)?;
     owner(root)?;
     let control = layout::control(root)?;
     if control.join("service-1.4.sqlite3").try_exists()? {
@@ -132,12 +134,16 @@ pub(super) async fn explicit_start(root: &Path) -> Result<ServiceHealth> {
         if let Some(record) = ledger.pending_lifecycle()? {
             resume(root, record, false).await?;
         }
+        ensure!(
+            managed::read(root)?.is_some() || layout::managed_origin(root)?.is_none(),
+            "repeat_same_approved_managed_configure_to_resume"
+        );
         ledger.clear_service_stop()?;
     } else {
         require_start_allowed(root)?;
     }
     if managed::read(root)?.is_some() {
-        return managed::ensure(root).await;
+        return managed::ensure_checked(&authority, None, || Ok(())).await;
     }
     if activation::pending(root)?.is_some() {
         activation::resume(root).await?;

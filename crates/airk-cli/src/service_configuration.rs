@@ -9,11 +9,9 @@ use airk_core::{
 };
 use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
+#[cfg(test)]
 use sha2::{Digest, Sha256};
-use std::{
-    io::Read,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
@@ -83,31 +81,7 @@ fn selected(path: &Path) -> Result<PathBuf> {
     Ok(path.canonicalize()?)
 }
 pub fn input(path: &Path, limit: u64) -> Result<InputFile> {
-    let path = selected(path)?;
-    crate::runtime_install::safe_file(&path)?;
-    let mut file = std::fs::File::open(&path)?;
-    let before = file.metadata()?;
-    ensure!(
-        before.is_file() && before.len() <= limit,
-        "configuration input exceeds budget"
-    );
-    let mut bytes = Vec::new();
-    (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() as u64 <= limit
-            && bytes.len() as u64 == before.len()
-            && file.metadata()?.len() == before.len(),
-        "configuration input changed during preparation"
-    );
-    let reference = InputFile {
-        path: path
-            .to_str()
-            .context("configuration input must be UTF-8")?
-            .into(),
-        sha256: airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(bytes).into()),
-    };
-    reference.validate()?;
-    Ok(reference)
+    airk_kernel::service_configuration::prepare_input(path, limit)
 }
 impl Draft {
     pub fn prepare(self) -> Result<ProjectConfiguration> {

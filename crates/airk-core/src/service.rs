@@ -8,9 +8,126 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_BYTES: usize = 65_536;
 pub const MAX_GRANT_TTL_MS: u64 = 30_000;
 
+/// Complete native records observed after an accepted catalog request became
+/// uncertain. Missing observation is not evidence that no effects occurred.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum CatalogOutcomeObservation {
+    AuthorityFence {
+        fence: Box<crate::catalog_fences::FenceObservation>,
+    },
+    IndexSetup {
+        receipt: Box<crate::catalog_setup::IndexSetupReceipt>,
+    },
+}
+
+/// An explicit selection within a persisted native-reviewed grant. Host/caller
+/// identity and backing registration are derived by the native owner.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedConnectRequest {
+    pub schema: u32,
+    pub context_key: Sha256Digest,
+    pub namespace: Incarnation,
+    pub expected_catalog_revision: crate::index_catalog::CatalogRevision,
+    pub grant_id: crate::index_catalog::GrantId,
+    pub expected_grant_revision: crate::index_catalog::CatalogRevision,
+    pub index_id: crate::index_catalog::IndexId,
+    pub project_ids: Vec<crate::index_catalog::QueryProjectId>,
+}
+impl ScopedConnectRequest {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == 1 && !self.project_ids.is_empty(),
+            crate::scoped_reads::ScopeReadRefused
+        );
+        crate::index_catalog::unique_bounded(
+            &self.project_ids,
+            crate::index_catalog::MAX_SELECTION,
+        )?;
+        crate::index_catalog::encoded_size(self, 4096)?;
+        Ok(())
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlMethod {
+    /// Native administrative read. Runtime consumes its worker credential;
+    /// this route never returns a reusable evidence connection.
+    NativeRead {
+        project: ProjectBinding,
+        request: crate::native_reads::NativeRead,
+        #[serde(default = "unknown_client")]
+        usage_client: crate::usage::ClientFamily,
+    },
+    ConnectScoped {
+        request: ScopedConnectRequest,
+    },
+    /// Administrative metadata only; no evidence admission or implicit activation.
+    CatalogPage {
+        request: crate::catalog_management::CatalogPageRequest,
+    },
+    CatalogDetail {
+        entity: crate::catalog_management::CatalogEntity,
+        expected_catalog_revision: Option<crate::index_catalog::CatalogRevision>,
+    },
+    CatalogContext {
+        host: Sha256Digest,
+        key: Sha256Digest,
+        expected_catalog_revision: Option<crate::index_catalog::CatalogRevision>,
+    },
+    /// Native administrative identity; never accepts a claimed wire host/caller.
+    CatalogHostContext {
+        key: Sha256Digest,
+        expected_catalog_revision: Option<crate::index_catalog::CatalogRevision>,
+    },
+    CatalogLegacyBinding {
+        project: ProjectBinding,
+        expected_catalog_revision: Option<crate::index_catalog::CatalogRevision>,
+    },
+    /// Prepare an inert, complete reviewed grant; never installs or issues it.
+    CatalogGrantDraft {
+        context_key: Sha256Digest,
+        selection: crate::catalog_host::GrantDraftSelection,
+    },
+    CatalogSourceMutationDraft {
+        selection: crate::catalog_source_draft::SourceMutationDraftSelection,
+    },
+    CatalogSourceChangeObservation {
+        begin_operation: Incarnation,
+    },
+    /// Explicit native recovery discovery; None is not completion evidence.
+    CatalogPendingSourceChange {
+        index_id: crate::index_catalog::IndexId,
+    },
+    CatalogIndexRetirementEvidence {
+        index_id: crate::index_catalog::IndexId,
+    },
+    CatalogSourceChangeResolve {
+        begin_operation: Incarnation,
+    },
+    CatalogIndexSetupDraft {
+        selection: crate::catalog_setup::IndexSetupSelection,
+    },
+    CatalogIndexSetupApply {
+        draft: crate::catalog_setup::IndexSetupDraft,
+    },
+    CatalogIndexSetupReceipt {
+        caller: Incarnation,
+        key: RequestKey,
+    },
+    CatalogPreview {
+        request: crate::catalog_management::CatalogRequest,
+    },
+    CatalogApply {
+        request: crate::catalog_management::CatalogRequest,
+        preview_digest: Sha256Digest,
+    },
+    CatalogReceipt {
+        caller: Incarnation,
+        key: RequestKey,
+    },
     Logs {
         limit: usize,
     },
@@ -169,6 +286,8 @@ pub struct ControlRequest {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ServiceHealth {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_clock: Option<CatalogClock>,
     #[serde(default)]
     pub storage_formats: Option<crate::storage_format::StorageFormats>,
     #[serde(default)]
@@ -186,6 +305,14 @@ pub struct ServiceHealth {
     pub user: String,
     pub uptime_ms: u64,
     pub policy: BrokerStatus,
+}
+
+/// Cached native catalog identity/revision only, not authorization or readiness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogClock {
+    pub namespace: Incarnation,
+    pub revision: crate::index_catalog::CatalogRevision,
 }
 
 /// Bounded, path-free build receipt metadata; not an executable approval.
@@ -215,6 +342,90 @@ pub struct RuntimeProcess {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
+    SourceChangeBusy {
+        code: String,
+        busy: crate::catalog_source_change::SourceChangeBusy,
+    },
+    NativeRead {
+        result: serde_json::Value,
+    },
+    CatalogOutcomeUnknown {
+        code: String,
+        caller: Incarnation,
+        key: RequestKey,
+        request_digest: Sha256Digest,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<CatalogOutcomeObservation>,
+    },
+    CatalogPage {
+        page: crate::catalog_management::CatalogPage,
+    },
+    CatalogDetail {
+        detail: crate::catalog_management::CatalogDetail,
+    },
+    CatalogHostContext {
+        descriptor: crate::catalog_host::NativeHostContextDescriptor,
+    },
+    CatalogLegacyBinding {
+        observation: crate::catalog_host::NativeLegacyBindingObservation,
+    },
+    CatalogGrantDraft {
+        draft: crate::catalog_host::ReviewedGrantDraft,
+    },
+    CatalogSourceMutationDraft {
+        draft: crate::catalog_source_draft::SourceMutationDraft,
+    },
+    CatalogSourceChangeObservation {
+        observation: crate::catalog_source_change::SourceChangeObservation,
+    },
+    CatalogPendingSourceChange {
+        index_id: crate::index_catalog::IndexId,
+        observation: Option<crate::catalog_source_change::SourceChangeObservation>,
+    },
+    CatalogIndexRetirementEvidence {
+        index_id: crate::index_catalog::IndexId,
+        evidence: Option<crate::catalog_fences::NativeIndexRetirementEvidence>,
+    },
+    CatalogSourceChangeResolved {
+        observation: crate::catalog_source_change::SourceChangeObservation,
+    },
+    SourceChangeResolutionOutcomeUnknown {
+        code: String,
+        begin_operation: Incarnation,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        observation: Option<crate::catalog_source_change::SourceChangeObservation>,
+    },
+    CatalogIndexSetupDraft {
+        draft: crate::catalog_setup::IndexSetupDraft,
+        request_digest: Sha256Digest,
+    },
+    CatalogIndexSetupApplied {
+        receipt: crate::catalog_setup::IndexSetupReceipt,
+    },
+    CatalogIndexSetupReceipt {
+        receipt: Option<crate::catalog_setup::IndexSetupReceipt>,
+    },
+    CatalogPreview {
+        preview: crate::catalog_management::CatalogPreview,
+        preview_digest: Sha256Digest,
+    },
+    CatalogApplied {
+        receipt: crate::catalog_management::CatalogReceipt,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fenced_receipt: Option<crate::catalog_fences::FencedReceipt>,
+    },
+    CatalogReceipt {
+        receipt: Option<crate::catalog_management::CatalogReceipt>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fence: Option<crate::catalog_fences::FenceObservation>,
+    },
+    /// Same-service observation of exact saved absence, not a durable receipt
+    /// or permission to resubmit the expired/stale original mutation.
+    CatalogReceiptUnprepared {
+        request: crate::catalog_management::CatalogRequest,
+        request_digest: Sha256Digest,
+        catalog_clock: CatalogClock,
+    },
     Configuration {
         job: JobRecord,
         result: Option<serde_json::Value>,
@@ -531,6 +742,28 @@ pub struct WorkerIdentity {
     pub fencing_generation: u64,
 }
 
+/// Frozen native scope identity. This metadata is never a bearer credential.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScopedReadRef {
+    pub schema: u32,
+    /// Native-reserved, worker-monotonic installation lease; never a bearer.
+    pub lease_generation: u64,
+    pub index_id: crate::index_catalog::IndexId,
+    pub grant_id: crate::index_catalog::GrantId,
+    pub grant_revision: crate::index_catalog::CatalogRevision,
+    pub fingerprint: Sha256Digest,
+}
+impl ScopedReadRef {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.schema == 1 && self.lease_generation > 0,
+            "unsupported scoped read contract"
+        );
+        Ok(())
+    }
+}
+
 /// Bearer credential: serializable only for protected IPC, intentionally redacted in Debug.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -543,6 +776,9 @@ pub struct ConnectionGrant {
     /// Informational accounting label, never authority or an authentication claim.
     #[serde(default = "unknown_client")]
     pub client: crate::usage::ClientFamily,
+    /// Required by an authority-contract-1 worker; omission never widens access.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ScopedReadRef>,
 }
 fn unknown_client() -> crate::usage::ClientFamily {
     crate::usage::ClientFamily::Unknown

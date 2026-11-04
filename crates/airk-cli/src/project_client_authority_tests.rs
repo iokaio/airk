@@ -31,6 +31,7 @@ struct Controls {
     connect: AtomicUsize,
     hold_health: Mutex<Option<Arc<Gate>>>,
     hold_grant: Mutex<Option<Arc<Gate>>>,
+    health_response: Mutex<Option<ControlResponse>>,
 }
 #[derive(Default)]
 struct Queries {
@@ -113,8 +114,18 @@ impl OwnedIpc {
                             if let Some(gate) = gate {
                                 gate.hold().await;
                             }
+                            let override_response = observed.health_response.lock().unwrap().take();
+                            if let Some(response) = override_response {
+                                return local_ipc::write_message(
+                                    &mut stream,
+                                    &response,
+                                    Duration::from_secs(5),
+                                )
+                                .await;
+                            }
                             ControlResponse::Health {
                                 observation: Box::new(ServiceHealth {
+                                    catalog_clock: None,
                                     storage_formats: None,
                                     build: None,
                                     build_error: None,
@@ -149,6 +160,7 @@ impl OwnedIpc {
                             ControlResponse::Connection {
                                 role: protocol::role(identity.worker),
                                 grant: ConnectionGrant {
+                                    scope: None,
                                     protocol: PROTOCOL_VERSION,
                                     identity,
                                     caller: local_ipc::caller_identity()?,
@@ -223,6 +235,79 @@ impl OwnedIpc {
         self.tasks.clear();
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn scoped_health_refusals_preserve_complete_native_response_before_any_connect_or_query()
+-> Result<()> {
+    // This is client-protocol evidence using real same-user IPC peers, not
+    // native authority, installer, or publication qualification.
+    for response in [
+        ControlResponse::Failure {
+            code: "fixture_health_refused".into(),
+        },
+        ControlResponse::Incompatible {
+            protocol: PROTOCOL_VERSION + 1,
+        },
+    ] {
+        let (_directory, root, scope, _backend) = fixture(false)?;
+        let identity = test_identity(scope.project, scope.fencing_generation, 103);
+        let mut ipc = OwnedIpc::new(&root, identity)?;
+        let queries = ipc.add_worker(&root, identity)?;
+        let expected = serde_json::to_value(&response)?;
+        *ipc.controls.health_response.lock().unwrap() = Some(response);
+        let selection = airk_core::service::ScopedConnectRequest {
+            schema: 1,
+            context_key: airk_core::identity::Sha256Digest::from_bytes([1; 32]),
+            namespace: scope.namespace,
+            expected_catalog_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+            grant_id: airk_core::index_catalog::GrantId::from_identity(Incarnation::from_bytes(
+                [2; 16],
+            )),
+            expected_grant_revision: airk_core::index_catalog::CatalogRevision::INITIAL,
+            index_id: airk_core::index_catalog::IndexId::from_identity(Incarnation::from_bytes(
+                [3; 16],
+            )),
+            project_ids: vec![airk_core::index_catalog::QueryProjectId::from_identity(
+                Incarnation::from_bytes([4; 16]),
+            )],
+        };
+        let error = tokio::time::timeout(
+            Duration::from_secs(2),
+            Connection::connect_scoped(
+                &root,
+                scope.project,
+                &selection,
+                airk_core::usage::ClientFamily::Cli,
+            ),
+        )
+        .await
+        .context("permanent health refusal was retried")?
+        .err()
+        .context("health refusal unexpectedly connected")?;
+        let reply = error
+            .downcast_ref::<crate::usage_client::NativeReadFailure>()
+            .context("selected native failure envelope missing")?
+            .body();
+        assert_eq!(reply["isError"], true);
+        let body = response_body(reply)?;
+        assert_eq!(body["error"]["native_control_response"], expected);
+        assert_eq!(body["error"]["query_submitted"], false);
+        assert_eq!(body["error"]["retryable"], false);
+        assert_eq!(body["requested_scope"]["confirmed"], false);
+        assert_eq!(
+            body["requested_scope"]["selection"],
+            serde_json::to_value(selection)?
+        );
+        for field in ["scope_observation", "publication", "files", "index_state"] {
+            assert!(body.get(field).is_none());
+        }
+        assert_eq!(ipc.controls.health.load(Ordering::SeqCst), 1);
+        assert_eq!(ipc.controls.connect.load(Ordering::SeqCst), 0);
+        assert_eq!(queries.count.load(Ordering::SeqCst), 0);
+        ipc.finish().await?;
+    }
+    Ok(())
 }
 fn fixture(pinned: bool) -> Result<(tempfile::TempDir, PathBuf, SourceFence, Arc<Backend>)> {
     let owner = tempfile::tempdir()?;

@@ -20,6 +20,11 @@ pub trait GroupOwner: Send {
     fn try_wait(&mut self) -> io::Result<Option<ExitStatus>>;
     fn kill(&mut self) -> io::Result<()>;
     fn terminate_and_wait(&mut self, timeout: Duration) -> io::Result<ExitStatus>;
+    /// Physical completion can be known even if a failed native guardian could
+    /// not deliver the helper's actual exit status. Never invent that status.
+    fn drain_once(&mut self, timeout: Duration) -> io::Result<()> {
+        self.terminate_and_wait(timeout).map(|_| ())
+    }
 }
 #[derive(Clone, Copy)]
 pub struct ProviderLimits {
@@ -280,11 +285,18 @@ impl GroupChild {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    pub fn drain_once(&mut self, timeout: Duration) -> io::Result<()> {
+        if let Some(owner) = self.remote.as_mut() {
+            owner.drain_once(timeout)
+        } else {
+            self.terminate_and_wait(timeout).map(|_| ())
+        }
+    }
     pub fn drain(&mut self) {
         diagnostic("drain: owner cleanup started");
         let mut reported = false;
         loop {
-            match self.terminate_and_wait(Duration::from_secs(2)) {
+            match self.drain_once(Duration::from_secs(2)) {
                 Ok(_) => {
                     diagnostic("drain: owner cleanup completed");
                     return;

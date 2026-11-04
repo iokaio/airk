@@ -5,12 +5,19 @@ import { comparePublication, type PublicationObservation, type PublicationRelati
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ExplorerHost } from './explorerController';
 import type { LaunchSpec } from './model';
-import { EvidenceClient } from './explorerEvidence';
+import { observedScopeSelectionIdentity, scopeSelectionIdentity } from './scopeSelection';
+import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
+import { explorerError } from './explorerErrors';
 import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
 import { assertOriginalPublicationForSymbolInputs, assertPortablePlanInputs, planForWorkbenchRerun, strategyFromPlan } from './workbenchStrategies';
 import { newSession, SessionStore } from './workbenchSessions';
 import { CurrentTurnProjections, continuationCursor, continuationRequiredRecordBytes, continuations, discoveryFollowupPlan, evidenceCards, renderExport } from './workbenchRender';
 import { defaultWorkbenchFormDraft, normalizeWorkbenchFormDraft, object, parseWorkbenchMessage, Value, WorkbenchMessage, WorkbenchSession, WorkbenchState, WORKBENCH_HELP_ROUTE } from './workbenchContracts';
+
+/** Separate saved histories for explicit scopes; native backing remains service.project. */
+export function workbenchProjectKey(spec:LaunchSpec):string|undefined {
+    return spec.catalogSession?scopeSelectionIdentity(spec.catalogSession):spec.service?.project;
+}
 
 // Cold native setup (10 s) plus scalar observation (2 s), with transport slack.
 export const STATUS_RESPONSE_TIMEOUT_MS=15000;
@@ -58,7 +65,12 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private publicationObservation(value:Value,authority:string):PublicationObservation|undefined{
         const collection=typeof value.collection==='string'?value.collection:typeof object(value.plan).collection==='string'?String(object(value.plan).collection):undefined;
-        return collection?{authority,collection,publication:value.publication}:undefined;
+        if(!collection)return undefined;
+        try{
+            const spec=JSON.parse(authority) as LaunchSpec;
+            if(spec.catalogSession){authority=JSON.stringify([spec.command,spec.service?.installDir,observedScopeSelectionIdentity(spec.catalogSession,value.scope_observation)]);}
+            return {authority,collection,publication:value.publication};
+        }catch{return undefined;}
     }
     private observeStatus(value:Value,authority:string):void{this.status=value;this.statusAuthority=authority;}
 
@@ -80,7 +92,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private permitted():boolean{return this.localAllowed()&&this.nativeAllowed();}
     private authorized():void{if(!this.host.trusted()||this.disposed){throw new Error('A trusted workspace is required.');}}
     private releaseClient():void{this.client?.dispose();this.client=undefined;this.clientIdentity=undefined;}
-    private selectedSpec():LaunchSpec|undefined{return this.host.specs().find(spec=>spec.service?.project===this.session?.project);}
+    private selectedSpec():LaunchSpec|undefined{return this.host.specs().find(spec=>workbenchProjectKey(spec)===this.session?.project);}
     /** Invalidate synchronously before refresh/list awaits, including hidden views. */
     private invalidateChangedClient():void{
         const spec=this.selectedSpec();
@@ -103,7 +115,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         void this.refresh().catch(error=>this.fail(error));
     }
     private state():WorkbenchState{
-        return {projects:this.host.specs().flatMap(s=>s.service?[{id:s.service.project,name:s.name}]:[]),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
+        return {projects:this.host.specs().flatMap(s=>{const id=workbenchProjectKey(s);return id?[{id,name:s.name}]:[];}),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
             ...this.display.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations};
     }
     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
@@ -118,12 +130,20 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         this.invalidateChangedClient();
         if(!this.permitted()){this.send();return;}
         const specs=this.host.specs();
-        if(!this.session){const id=this.host.activeProject()??(specs.length===1?specs[0].service?.project:undefined);if(id){await this.select(id);return;}}
-        if(this.session&&!specs.some(s=>s.service?.project===this.session!.project)){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
+        if(!this.session){const active=this.host.activeProject(),legacy=specs.find(spec=>!spec.catalogSession&&spec.service?.project===active);const id=legacy?workbenchProjectKey(legacy):specs.length===1?workbenchProjectKey(specs[0]):undefined;if(id){await this.select(id);return;}}
+        if(this.session&&!specs.some(s=>workbenchProjectKey(s)===this.session!.project)){this.stop();this.releaseClient();this.session=undefined;this.status=undefined;}
         this.send();
     }
+    /** Host calls only after an explicit reviewed scope choice is exposed in specs. */
+    async useScope(spec:LaunchSpec):Promise<void>{
+        const id=workbenchProjectKey(spec);
+        if(!spec.catalogSession||!id||!this.host.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('Reviewed scope is not available in this workspace.');
+        this.invalidateChangedClient();
+        if(this.session?.project===id){await this.refresh();return;}
+        await this.select(id);
+    }
     private async select(id:string):Promise<void>{
-        this.authorized();const spec=this.host.specs().find(value=>value.service?.project===id);if(!spec){throw new Error('Project is not registered in this workspace.');}
+        this.authorized();const spec=this.host.specs().find(value=>workbenchProjectKey(value)===id);if(!spec){throw new Error('Project is not registered in this workspace.');}
         const identity=JSON.stringify(spec);
         this.stop();
         if(this.client&&this.clientIdentity!==identity){this.releaseClient();}
@@ -223,7 +243,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
         // Form values stay saved, but literal IDs must retain their own fence.
         if(plan)assertOriginalPublicationForSymbolInputs(plan);
         this.stop();const session=this.session,client=this.evidence(),generation=this.generation;this.busy=true;this.notice=undefined;
-        const turn={id:randomUUID(),at:Date.now(),input:(input||`${recipe??'Plan'} evidence`).slice(0,4096),format:'structured' as const,request:undefined as Value|undefined,envelope:undefined as Value|undefined,error:undefined as string|undefined};
+        const turn={id:randomUUID(),at:Date.now(),input:(input||`${recipe??'Plan'} evidence`).slice(0,4096),format:'structured' as const,request:undefined as Value|undefined,envelope:undefined as Value|undefined,error:undefined as string|undefined,nativeFailure:undefined as Value|undefined};
         session.turns.push(turn);if(session.turns.length===1){session.title=turn.input.replaceAll('\n',' ').slice(0,80);}this.send();
         try{
             let remembered=false;
@@ -241,7 +261,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
             if(generation!==this.generation||session!==this.session||client!==this.client||this.clientIdentity!==JSON.stringify(this.selectedSpec())||!this.permitted()){return;}
             turn.envelope=result.payload;this.turnAuthorities.set(turn,this.clientIdentity!);
             if(result.payload.status==='prepared'){this.notice='Plan prepared. Review or edit it, then choose Run plan.';}
-        }catch(error){if(generation===this.generation){turn.error=error instanceof Error?error.message:String(error);}}
+        }catch(error){if(generation===this.generation){turn.error=error instanceof Error?error.message:String(error);if(error instanceof EvidenceFailure&&error.nativeResponse){turn.error=explorerError(error.error.code).message;turn.nativeFailure=structuredClone(error.nativeResponse);}}}
         finally{if(generation===this.generation){this.busy=false;session.updatedAt=Date.now();this.save(session);this.send();}}
     }
     private async message(message:WorkbenchMessage):Promise<void>{

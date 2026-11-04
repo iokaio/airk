@@ -2,6 +2,7 @@
 // Service console state, message validation and the bounded diagnostic report. Explorer › Management
 // renders this state; the separate Service Console webview was removed in 1.5.0.
 import { ConsolePage, RecordValue, RepairOperation, identifier, record } from './serviceClient';
+import type { CapturedLifecycleResponse } from './explorerContracts';
 export interface ConsoleObservation { state: 'live'|'cached'|'failed'|'unavailable'; value?:RecordValue; code?:string; checkedAt:number }
 export interface ServiceConsoleState {
     revision:string; trusted:boolean; busy:boolean; authority:string; version:string; connected:boolean;
@@ -13,13 +14,14 @@ export interface ServiceConsoleState {
     health:ConsoleObservation; resources:ConsoleObservation; model:ConsoleObservation; sources:ConsoleObservation;
     bootstrap:ConsoleObservation; page?:ConsolePage; activePage?:ConsolePage; workers?:RecordValue; events:RecordValue[]; historyOmitted:boolean;
     serviceEvents?:ConsoleObservation;
+    capturedLifecycle?:CapturedLifecycleResponse; capturedLifecycleUnavailable?:string;
     configurationResults?:Map<string,{job:string;jobState:string;value?:RecordValue;code?:string;checkedAt:number}>;
     configurationResultsOmitted?:boolean;
     selected:Set<string>; plan?:{value:RecordValue;items:RecordValue[];after:string|null};
     pending:{id:string;title:string;unknown:boolean;lifecycle?:boolean;forceAvailable?:boolean}[]; preview?:string; includePaths:boolean; message?:string;
 }
 export type ConsoleAction = {type:'service';revision:string;action:string;project?:string;id?:string;selected?:boolean;scope?:'one'|'selected'|'all';operation?:RepairOperation;includePaths?:boolean;allowFallback?:boolean};
-export const CONSOLE_SIMPLE_ACTIONS=['reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','queryConcurrency','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport','openReport','saveReport','exportLogs','openRawLogs','saveRawLogs'];
+export const CONSOLE_SIMPLE_ACTIONS=['copyLifecycle','openLifecycle','saveLifecycle','reviewLegacyStartup','legacyStartupReceipts','removeLegacyStartup','copyLegacyStartup','registeredProjects','inactiveProjects','registerWorkspace','refresh','connect','start','stop','restart','repairRuntime','upgradeRuntime','rollbackRuntime','resumeActivation','logs','resources','queryConcurrency','responseMode','recoverLifecycle','abandonLifecycle','startEmbedding','stopEmbedding','forceEmbedding','firstPage','nextPage','morePlan','refreshPlan','pausePlan','resumePlan','cancelPlan','approvePlan','previewReport','copyReport','openReport','saveReport','exportLogs','openRawLogs','saveRawLogs'];
 export const CONSOLE_PROJECT_ACTIONS=['unregisterProject','previewCleanup','deleteDerived','inspect','index','pause','resume','restartProject','retryRecovery','watch','modelSetup','configureProject','copyConfiguration','enableSemantic','disableSemantic','configureDetail'];
 export const CONSOLE_OPERATIONS=['auto','verify','recover','reconcile','vectors','rebuild'];
 /** Messages select fixed host-owned operations; no paths, commands, tokens or RPC bodies are accepted. */
@@ -79,6 +81,7 @@ export function diagnosticPreview(state:ServiceConsoleState,includePaths:boolean
     const fields=(value:RecordValue,keys:string[])=>Object.fromEntries(keys.filter(key=>['string','number','boolean'].includes(typeof value[key])||value[key]===null).map(key=>[key,typeof value[key]==='string'?String(value[key]).slice(0,512):value[key]]));
     const health=obj(state.health.value?.observation),resources=obj(state.resources.value?.observation),model=obj(state.model.value);
     const report:RecordValue={schemaVersion:1,capturedAt:new Date().toISOString(),authority:includePaths?state.authority:'selected execution host',extensionVersion:state.version,
+        ...(state.trusted&&state.capturedLifecycle?{capturedLifecycleSummary:{capturedAt:state.capturedLifecycle.capturedAt,qualification:state.capturedLifecycle.qualification,completeNativeJson:'Available separately through the explicit lifecycle JSON copy/open/export actions.'}}:{}),
         observations:Object.fromEntries(['health','resources','model','sources','bootstrap'].map(name=>{const observation=state[name as 'health'];return [name,{state:observation.state,checkedAt:observation.checkedAt,code:observation.code}];})),
         service:fields(health,['instance','version','protocol','process_id','executable_sha256','runtime_sha256','uptime_ms',...(includePaths?['user']:[])]),
         storageFormats:fields(obj(health.storage_formats),['index','service_state','logs']),

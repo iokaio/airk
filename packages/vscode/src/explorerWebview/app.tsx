@@ -41,11 +41,12 @@ export function App() {
                 owner.current = nextOwner;
                 selectDraftProject(message.state.selectedProject, message.state.selectionEpoch);
                 selectSearchProject(message.state.selectedProject, message.state.selectionEpoch);
-                setState(message.state);
+                setState(prior=>({...message.state,...(message.state.trusted&&prior?.selectionEpoch===message.state.selectionEpoch?{indexing:prior?.indexing}:{})}));
                 const token = message.state.status?.publication;
                 if (token) { setPublications(prior => prior.some(entry => entry.token === token) ? prior : [{ token, observedAt: Date.now() }, ...prior].slice(0, 20)); }
             }
             else if (message.type === 'search.session') { acceptSearchSession(message.session); }
+            else if (message.type === 'indexing.session') { setState(prior=>prior?{...prior,indexing:message.session}:prior); }
             else if (message.type === 'navigate') { const next = parseRoute(message.route); if (next) { setRoute(next); } }
             else if (message.type === 'inbox') { setInbox(true); }
             else if (message.type === 'search') { setRoute({ workspace: 'search', tab: 'query' }); setIncoming(prior => ({ query: message.query, serial: (prior?.serial ?? 0) + 1 })); }
@@ -118,6 +119,9 @@ export function App() {
                 <button class="link" disabled={choosingSource || !state.trusted || !state.selectedProject} onClick={() => void chooseSource()}>Choose file…</button>
                 <small>Choose a file for Code › Outline and Evidence › Inspector. These views use the saved index.</small></div>
             {sourceError && <p class="notice" role="alert">{sourceError}</p>}
+            {state.workspaceTrusted===false&&<div class="notice" role="status"><p>VS Code Restricted Mode is active. AIRK native commands and evidence reads are unavailable.</p><button onClick={()=>{void request('workspace.manageTrust',{}).catch(failure=>setSourceError(failure instanceof Error?failure.message:String(failure)));}}>Manage Workspace Trust</button></div>}
+            {!state.trusted&&state.workspaceTrusted!==false&&<div class="notice" role="status"><p>{state.workspaceTrusted===true?'This AIRK client is no longer authorized. Reopen AIRK after the client or window has been renewed.':'AIRK client authority is unavailable. Workspace trust has not been reported by this host.'}</p></div>}
+            {state.nativeExecutionEnabled===false&&state.workspaceTrusted!==false&&<p class="notice" role="status">AIRK native execution is turned off in User settings. Navigation, help and local logs remain available.</p>}
             {pill && <StatusPopover state={state} project={project} onClose={() => setPill(false)} />}
             {state.notice && <div class="notice" role="alert"><p>{friendlyError(state.notice)}</p><button class="ghost" onClick={() => go({ workspace: 'help', focus: 'recovering-errors' })}>Recovery help</button></div>}
             {inbox && <Inbox view={state.suggestions} close={() => setInbox(false)}

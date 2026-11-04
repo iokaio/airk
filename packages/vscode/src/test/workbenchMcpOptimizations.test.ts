@@ -256,16 +256,21 @@ test('fragment results retain qualified unit and partial coverage without invent
 
 test('selected exports retain only their source uncertainty and omit unrelated metadata and counts',()=>{
     for(const queryTotal of [null,77]){
+        const scopeObservation={schema:1,qualifier:'selected_subset',fingerprint:'ab'.repeat(32),grant:{id:'grt_'+'12'.repeat(16),revision:3},members:[{
+            index_id:'idx_'+'34'.repeat(16),memberships:[{project_id:'prj_'+'56'.repeat(16),membership_revision:4}],
+            source_root_ids:['src_'+'78'.repeat(16)],source_revision:5,policy_epoch:6,policy_digest:null,future_member_field:{retained:true},
+        }],future_scope_field:{preserve:['unknown','native','fields']}};
+        const rootScopeObservation={...scopeObservation,fingerprint:'cd'.repeat(32)};
         const selectedCitation={path:'src/chosen.rs',start_line:4,end_line:4,content_hash:'ab'.repeat(32),location:{Lines:{start:4,end:4}}};
-        const turn:WorkbenchTurn={id:'selection',at:1,input:'Inspect Session',format:'structured',envelope:{publication:'original-publication',status:'partial',steps:[
-            {id:'chosen',tool:'references',arguments:{private:'argument-secret'},result:{evidence:{truncated:true,resolution:'textual'},page:{
+        const turn:WorkbenchTurn={id:'selection',at:1,input:'Inspect Session',format:'structured',envelope:{publication:'original-publication',scope_observation:rootScopeObservation,status:'partial',steps:[
+            {id:'chosen',tool:'references',arguments:{private:'argument-secret'},result:{scope_observation:scopeObservation,evidence:{truncated:true,resolution:'textual'},page:{
                 count_unit:'matching_line_fragments',coverage:{basis:'verified_lexical_candidates',candidate_scan_complete:true,query_complete:false,
                     token_boundary_complete:false,line_completeness:'includes_unverified_fragments',query_total_matches:queryTotal,
                     private:'coverage-secret',lower_bound:999},
                 match_count:{total_matches:77,lower_bound:77,complete:true,scope:'verified_lexical_candidates'},
                 files:[{path:'private-file-secret',count:88}],definitions:[{name:'definition-secret'}],suggested_targets:[{target:'target-secret'}],
             }}},
-            {id:'other',tool:'search',result:{coverage:'other-step-secret',hits:[{text:'other-result-secret'}]}},
+            {id:'other',tool:'search',result:{scope_observation:{unrelated:'other-scope-secret'},coverage:'other-step-secret',hits:[{text:'other-result-secret'}]}},
         ],evidence:[
             {step:'chosen',publication:'original-publication',text:'selected source',citation:selectedCitation},
             {step:'other',publication:'original-publication',text:'unselected-source-secret',citation:{...selectedCitation,path:'src/other.rs'}},
@@ -277,12 +282,15 @@ test('selected exports retain only their source uncertainty and omit unrelated m
         assert.equal(envelope.evidence.length,1);
         assert.deepEqual(envelope.evidence[0].citation,selectedCitation);
         assert.equal(envelope.publication,'original-publication');
+        assert.deepEqual(envelope.scope_observation,rootScopeObservation);
+        assert.deepEqual(discoveryDetails(turn.envelope!)[0].scopeObservation,scopeObservation);
         assert.deepEqual(envelope.steps,[]);
         assert.equal(envelope.source_coverage.length,1);
         const qualification=envelope.source_coverage[0];
         assert.equal(qualification.step,'chosen');
         assert.equal(qualification.scope,'original_source_request');
         assert.equal(qualification.truncated,true);
+        assert.deepEqual(qualification.scope_observation,scopeObservation);
         assert.equal(qualification.count_unit,'matching_line_fragments');
         assert.equal(qualification.coverage.query_complete,false);
         assert.equal(qualification.coverage.token_boundary_complete,false);
@@ -290,13 +298,31 @@ test('selected exports retain only their source uncertainty and omit unrelated m
         const selectedMarkdown=renderExport(session,'markdown',undefined,['record-0']);
         assert.match(selectedMarkdown,/Original source request coverage for selected evidence/);
         assert.match(selectedMarkdown,/includes_unverified_fragments/);
-        for(const secret of ['argument-secret','coverage-secret','private-file-secret','definition-secret','target-secret','other-step-secret','other-result-secret','unselected-source-secret','"total_matches"','"lower_bound"']){
+        assert.match(selectedMarkdown,/Recorded scope observation/);
+        assert.ok(selectedMarkdown.includes(rootScopeObservation.fingerprint));assert.ok(selectedMarkdown.includes(scopeObservation.fingerprint));
+        assert.match(selectedMarkdown,/future_scope_field/);assert.match(selectedMarkdown,/future_member_field/);
+        for(const secret of ['argument-secret','coverage-secret','private-file-secret','definition-secret','target-secret','other-step-secret','other-result-secret','other-scope-secret','unselected-source-secret','"total_matches"','"lower_bound"']){
             assert.equal(selected.includes(secret),false,`JSON selection must omit ${secret}`);
             assert.equal(selectedMarkdown.includes(secret),false,`Markdown selection must omit ${secret}`);
         }
         assert.deepEqual(turn.envelope,original);
         assert.equal(renderExport(session,'json'),fullBefore,'selected export cannot mutate the full authoritative result');
     }
+});
+
+test('scope observations survive selected copy when only the native root envelope carries them',()=>{
+    const observation={schema:1,qualifier:'selected_subset',fingerprint:'91'.repeat(32),grant:{id:'grt_'+'12'.repeat(16),revision:1},members:[],future_scope_field:'keep-root-only'};
+    const turn:WorkbenchTurn={id:'root-scope',at:1,input:'Read selected file',format:'structured',envelope:{scope_observation:observation,status:'partial',steps:[{id:'read',tool:'read_file',result:{}}],evidence:[{
+        step:'read',text:'Selected text',citation:{path:'file.ts',start_line:1,end_line:1,content_hash:'ab'.repeat(32)},
+    }]}};
+    const session:WorkbenchSession={schema:1,id:'root-only',project:'ab'.repeat(32),title:'Root scope',createdAt:1,updatedAt:1,revision:1,omitted:0,turns:[turn]};
+    const before=structuredClone(turn.envelope);
+    assert.deepEqual(JSON.parse(renderExport(session,'json',undefined,['record-0'])).turns[0].envelope.scope_observation,observation);
+    assert.match(markdown(turn,new Set(['record-0'])),/keep-root-only/);
+    for(const result of [{scope_observation:observation},{isError:true,content:[],structuredContent:{scope_observation:observation,error:{code:'scope_refused'}}}]){
+        assert.deepEqual(discoveryDetails({steps:[{id:'read',tool:'read_file',result}]})[0].scopeObservation,observation);
+    }
+    assert.deepEqual(turn.envelope,before);
 });
 
 

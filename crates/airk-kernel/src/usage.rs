@@ -73,6 +73,13 @@ impl crate::Kernel {
     }
 
     pub fn usage_policy(&self) -> Result<UsagePolicy> {
+        self.require_unrestricted_read()?;
+        self.recording_usage_policy()
+    }
+
+    // Internal content-free accounting must honor the actual policy even when
+    // the caller cannot inspect collection-wide policy or usage aggregates.
+    fn recording_usage_policy(&self) -> Result<UsagePolicy> {
         if std::env::var_os("AIRK_USAGE_MODE").is_some_and(|s| s == "disabled") {
             return Ok(UsagePolicy {
                 mode: RecordingMode::Disabled,
@@ -114,6 +121,7 @@ impl crate::Kernel {
     }
 
     pub fn usage_report(&self, days: u16) -> Result<UsageView> {
+        self.require_unrestricted_read()?;
         ensure!((1..=30).contains(&days), "usage report days must be 1..30");
         if self.usage_directory().exists() {
             airk_store::usage::validate_binding(
@@ -174,7 +182,7 @@ impl crate::Kernel {
                 .ok()
                 .map_or(client, |label| ClientFamily::from_label(&label))
         };
-        let policy = self.usage_policy();
+        let policy = self.recording_usage_policy();
         // A corrupt/unreadable policy is a dropped observation, not an implicit opt-out.
         // Only an explicit disabled policy (or environment override) bypasses accounting.
         let enabled = match &policy {
@@ -243,7 +251,7 @@ impl crate::Kernel {
                 store = UsageStore::open_best_effort(
                     &self.usage_directory(),
                     &self.usage_scope(),
-                    &self.usage_policy()?,
+                    &self.recording_usage_policy()?,
                 )?;
             }
             let Some(store) = store else {
@@ -1059,6 +1067,104 @@ impl LocalByteBpe {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scoped_read_recording_honors_enabled_and_disabled_policies() -> Result<()> {
+        use airk_core::{
+            identity::{Incarnation, Sha256Digest},
+            index_catalog::*,
+            scoped_reads::SourceDescriptor,
+        };
+        let root = tempfile::tempdir()?;
+        let kernel = crate::Kernel::open(root.path(), None)?;
+        kernel.configure_vectors(false)?;
+        kernel.configure_usage(RecordingMode::AggregatesOnly)?;
+        let project = QueryProjectId::from_identity(Incarnation::from_bytes([1; 16]));
+        let index = IndexId::from_identity(Incarnation::from_bytes([2; 16]));
+        let source = SourceRootId::from_identity(Incarnation::from_bytes([3; 16]));
+        let scoped = kernel.with_scoped_reads(crate::scoped_reads::ScopedReadAuthority {
+            schema: 1,
+            backing: airk_core::service::ProjectRegistration::new(
+                kernel.root_id(),
+                kernel.data_root.to_str().unwrap().into(),
+                kernel.collection.clone(),
+            )?
+            .binding,
+            index_id: index,
+            project_ids: vec![project],
+            provenance: airk_core::grant_provenance::GrantProvenance::UserReviewedProjectGrant,
+            grant: ReviewedGrant {
+                id: GrantId::from_identity(Incarnation::from_bytes([4; 16])),
+                host: Sha256Digest::from_bytes([5; 32]),
+                revision: CatalogRevision::INITIAL,
+                revoked: false,
+                memberships: vec![GrantedMembership {
+                    membership: Membership {
+                        project_id: project,
+                        index_id: index,
+                        revision: CatalogRevision::INITIAL,
+                        scope: vec![ScopeAtom {
+                            source_root_id: source,
+                            kind: PathScope::Subtree,
+                            path: "public".into(),
+                        }],
+                    },
+                    source_revision: CatalogRevision::INITIAL,
+                    policy_epoch: 0,
+                    policy_digest: None,
+                }],
+            },
+            sources: vec![SourceDescriptor {
+                source_root_id: source,
+                original_root: kernel.root_id(),
+            }],
+        })?;
+        let environment_disabled =
+            std::env::var_os("AIRK_USAGE_MODE").is_some_and(|mode| mode == "disabled");
+        for mode in [RecordingMode::AggregatesOnly, RecordingMode::Disabled] {
+            kernel.configure_usage(mode)?;
+            let expected_enabled = mode != RecordingMode::Disabled && !environment_disabled;
+            assert_eq!(
+                scoped.recording_usage_policy()?.mode,
+                if environment_disabled {
+                    RecordingMode::Disabled
+                } else {
+                    mode
+                }
+            );
+            assert!(
+                scoped
+                    .usage_policy()
+                    .unwrap_err()
+                    .is::<airk_core::scoped_reads::ScopeReadRefused>()
+            );
+            assert!(scoped.usage_report(30).is_err());
+            let before = kernel.usage_report(30)?.report.calls;
+            let span = scoped.usage_span(UsageOperation::ListFiles, ClientFamily::Cli);
+            assert_eq!(span.enabled, expected_enabled);
+            assert_eq!(
+                span.store.is_some(),
+                expected_enabled,
+                "scoped policy refusal must not masquerade as recorder failure"
+            );
+            assert_eq!(span.request_id().is_some(), expected_enabled);
+            let response = scoped.list_files("", 10, 4096)?;
+            let logical = serde_json::to_value(response)?;
+            let bytes = serde_json::to_vec(&logical)?.len();
+            scoped.finish_usage(
+                span,
+                Some(&logical),
+                bytes,
+                false,
+                ResponseRepresentation::LogicalResultJson,
+            );
+            assert_eq!(
+                kernel.usage_report(30)?.report.calls,
+                before + u64::from(expected_enabled)
+            );
+        }
+        Ok(())
+    }
 
     fn strict_span(
         kernel: &crate::Kernel,

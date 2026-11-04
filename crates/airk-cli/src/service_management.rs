@@ -2,7 +2,7 @@
 //! Bounded metadata actor keeps registry I/O off independent native health handlers.
 use airk_core::{
     identity::Incarnation,
-    service::{ControlMethod, ControlResponse, JobError},
+    service::{ControlMethod, ControlResponse, JobError, ProjectBinding},
 };
 use airk_store::service::registry::ServiceRegistry;
 use anyhow::Result;
@@ -10,19 +10,260 @@ use std::{
     path::PathBuf,
     sync::mpsc::{SyncSender, sync_channel},
     sync::{
-        Arc,
+        Arc, Weak,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Duration,
 };
 use tokio::sync::oneshot;
 
-type Envelope = (ControlMethod, oneshot::Sender<ControlResponse>);
+enum ManagementReply {
+    Control(oneshot::Sender<ControlResponse>),
+    Scoped(oneshot::Sender<Result<crate::project_supervisor::ScopedConnectionDelivery>>),
+}
+impl ManagementReply {
+    fn send(self, response: ControlResponse) -> std::result::Result<(), Box<ControlResponse>> {
+        match self {
+            Self::Control(sender) => sender.send(response).map_err(Box::new),
+            Self::Scoped(sender) => {
+                let _ = sender.send(Err(anyhow::anyhow!(
+                    "scoped connection requires direct delivery"
+                )));
+                Err(Box::new(response))
+            }
+        }
+    }
+}
+enum Envelope {
+    Request(Box<ControlMethod>, ManagementReply),
+    Missing(crate::source_supervisor::NativeMissingSourceEvent),
+    AdministrativeRead(
+        ProjectBinding,
+        oneshot::Sender<Result<crate::project_supervisor::NativeAdministrativeRead>>,
+    ),
+}
+
+struct MissingReporter {
+    sender: Weak<SyncSender<Envelope>>,
+    pending: Arc<AtomicUsize>,
+    missing: Arc<AtomicUsize>,
+}
+impl crate::source_supervisor::MissingSourceReporter for MissingReporter {
+    fn try_report(
+        &self,
+        event: crate::source_supervisor::NativeMissingSourceEvent,
+    ) -> std::result::Result<(), crate::source_supervisor::NativeMissingSourceEvent> {
+        let Some(sender) = self.sender.upgrade() else {
+            return Err(event);
+        };
+        if self
+            .missing
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < 32).then_some(n + 1)
+            })
+            .is_err()
+        {
+            return Err(event);
+        }
+        self.pending.fetch_add(1, Ordering::AcqRel);
+        match sender.try_send(Envelope::Missing(event)) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.pending.fetch_sub(1, Ordering::AcqRel);
+                self.missing.fetch_sub(1, Ordering::AcqRel);
+                let envelope = match error {
+                    std::sync::mpsc::TrySendError::Full(envelope)
+                    | std::sync::mpsc::TrySendError::Disconnected(envelope) => envelope,
+                };
+                let Envelope::Missing(event) = envelope else {
+                    unreachable!("missing-only reporter");
+                };
+                Err(event)
+            }
+        }
+    }
+}
+struct MissingWork {
+    event: crate::source_supervisor::NativeMissingSourceEvent,
+    nonce: Option<Incarnation>,
+    draft: Option<airk_core::catalog_source_draft::SourceMutationDraft>,
+    next_attempt: std::time::Instant,
+}
+impl MissingWork {
+    fn advance(
+        &mut self,
+        registry: &mut ServiceRegistry,
+        root: &std::path::Path,
+        native: &mut CatalogRuntime,
+    ) -> Result<()> {
+        if self.draft.is_none() {
+            native.reconcile(registry)?;
+            if !registry.is_registered(self.event.binding())? {
+                return Err(crate::catalog_source_change_control::NativeMissingSourceObsolete::RegistrationRetired.into());
+            }
+            let current = registry.watch(self.event.binding())?;
+            anyhow::ensure!(
+                current.project.fencing_generation == self.event.registration_epoch()
+                    && current.configuration_epoch == self.event.configuration_epoch()
+                    && current.observation.enabled,
+                crate::catalog_source_change_control::NativeMissingSourceObsolete::EpochChanged
+            );
+            let state = registry
+                .catalog_state()?
+                .ok_or_else(|| anyhow::anyhow!("native missing-source catalog unavailable"))?;
+            // Waiting behind an existing fence must not manufacture a second
+            // draft that will become stale as that accepted operation commits.
+            native.gate.begin_issue(state.namespace, state.revision)?;
+            let index = registry
+                .catalog_index_for_binding(self.event.binding())?
+                .ok_or_else(|| anyhow::anyhow!("native missing-source index unavailable"))?;
+            let (namespace, epoch) = registry.saved_request_epoch()?;
+            let nonce = match self.nonce {
+                Some(nonce) => nonce,
+                None => {
+                    let nonce = airk_kernel::service_broker::new_instance_id()?;
+                    self.nonce = Some(nonce);
+                    nonce
+                }
+            };
+            let selection = airk_core::catalog_source_draft::SourceMutationDraftSelection {
+                key: airk_core::service::RequestKey {
+                    namespace,
+                    epoch,
+                    nonce,
+                },
+                expected_catalog_revision: state.revision,
+                index_id: index.id,
+                change: airk_core::catalog_source_draft::SourceMutationSelection::RetireIndex,
+            };
+            // Until this succeeds, there is no canonical request and no Store
+            // mutation/fence effect. Snapshot refresh retains the event nonce.
+            self.draft = Some(
+                crate::catalog_source_change_control::draft_missing_from_event(
+                    registry,
+                    root,
+                    &selection,
+                    &self.event,
+                )?,
+            );
+        }
+        let draft = self
+            .draft
+            .as_ref()
+            .expect("retained canonical native draft");
+        if matches!(
+            registry.catalog_fence_observation(draft.request.caller, &draft.request.key)?,
+            Some(airk_core::catalog_fences::FenceObservation::Pending(_))
+        ) {
+            anyhow::bail!("native accepted fence continuation pending");
+        }
+        native
+            .coordinator
+            .apply_fenced(registry, &draft.request, draft.preview_digest)?;
+        native.reconcile(registry)?;
+        Ok(())
+    }
+}
+
+pub(crate) struct CatalogBinding {
+    pub gate: crate::catalog_admission::NativeCatalogAdmission,
+    pub control: crate::project_supervisor::CatalogControlHandle,
+}
+struct CatalogRuntime {
+    gate: crate::catalog_admission::NativeCatalogAdmission,
+    control: crate::project_supervisor::CatalogControlHandle,
+    coordinator: crate::catalog_coordinator::NativeCatalogCoordinator,
+}
+impl CatalogRuntime {
+    fn initialize(binding: CatalogBinding, registry: &ServiceRegistry) -> Result<Self> {
+        let state = registry
+            .catalog_state()?
+            .ok_or_else(|| anyhow::anyhow!("native catalog unavailable"))?;
+        anyhow::ensure!(
+            state.activated && state.authority_contract == 1 && state.policy_contract == 0,
+            "native catalog authority unavailable"
+        );
+        binding.gate.begin_issue(state.namespace, state.revision)?;
+        let mut coordinator = crate::catalog_coordinator::CatalogCoordinator::new(
+            binding.gate.clone(),
+            binding.control.clone(),
+        )?;
+        coordinator.restore_pending(registry)?;
+        Ok(Self {
+            gate: binding.gate,
+            control: binding.control,
+            coordinator,
+        })
+    }
+    fn connect(
+        &self,
+        registry: &mut ServiceRegistry,
+        request: &airk_core::service::ScopedConnectRequest,
+    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+        self.reconcile(registry)?;
+        anyhow::ensure!(
+            self.gate
+                .catalog_clock()
+                .is_some_and(|clock| clock.namespace == request.namespace
+                    && clock.revision == request.expected_catalog_revision),
+            crate::catalog_coordinator::CatalogRevisionChanged
+        );
+        let selection = crate::catalog_coordinator::native_scoped_selection(registry, request)?;
+        self.control
+            .issue_scoped(selection, Duration::from_secs(300))
+    }
+    fn connect_legacy(
+        &self,
+        registry: &mut ServiceRegistry,
+        binding: airk_core::service::ProjectBinding,
+    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+        self.reconcile(registry)?;
+        let state = registry
+            .catalog_state()?
+            .ok_or_else(|| anyhow::anyhow!("native catalog unavailable"))?;
+        let key = airk_core::identity::framed_digest(
+            b"airk/native-legacy-connection-context/1",
+            &[binding.as_bytes()],
+        );
+        let context = crate::catalog_host_context::NativeHostContext::load(
+            registry,
+            key,
+            Some(state.revision),
+        )?;
+        let descriptor = context.descriptor();
+        anyhow::ensure!(
+            descriptor.namespace == state.namespace
+                && descriptor.catalog_revision == state.revision,
+            "native compatibility context changed"
+        );
+        self.control.issue_legacy(
+            crate::project_supervisor::NativeLegacyAuthoritySelection {
+                namespace: descriptor.namespace,
+                host: descriptor.host,
+                catalog_revision: descriptor.catalog_revision,
+                binding,
+            },
+            Duration::from_secs(300),
+        )
+    }
+    fn reconcile(&self, registry: &ServiceRegistry) -> Result<()> {
+        let state = registry
+            .catalog_state()?
+            .ok_or_else(|| anyhow::anyhow!("native catalog unavailable"))?;
+        anyhow::ensure!(
+            state.activated && state.authority_contract == 1 && state.policy_contract == 0,
+            "native catalog authority changed"
+        );
+        self.gate
+            .reconcile_catalog_snapshot(state.namespace, state.revision)
+    }
+}
 pub struct Management {
-    sender: Option<SyncSender<Envelope>>,
+    sender: Option<Arc<SyncSender<Envelope>>>,
     thread: Option<std::thread::JoinHandle<()>>,
     pending: Arc<AtomicUsize>,
     plans: Arc<AtomicBool>,
+    missing: Arc<AtomicUsize>,
 }
 
 impl Drop for Management {
@@ -40,7 +281,18 @@ fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> Con
     // and all mutations remain outside this whitelist, even when receipt-keyed.
     let read_only = matches!(
         method,
-        ControlMethod::Job { .. }
+        ControlMethod::CatalogPage { .. }
+            | ControlMethod::CatalogDetail { .. }
+            | ControlMethod::CatalogContext { .. }
+            | ControlMethod::CatalogHostContext { .. }
+            | ControlMethod::CatalogLegacyBinding { .. }
+            | ControlMethod::CatalogGrantDraft { .. }
+            | ControlMethod::CatalogSourceMutationDraft { .. }
+            | ControlMethod::CatalogSourceChangeObservation { .. }
+            | ControlMethod::CatalogPendingSourceChange { .. }
+            | ControlMethod::CatalogIndexRetirementEvidence { .. }
+            | ControlMethod::CatalogReceipt { .. }
+            | ControlMethod::Job { .. }
             | ControlMethod::RequestReceipt { .. }
             | ControlMethod::ConfigurationResult { .. }
             | ControlMethod::Plan { .. }
@@ -54,32 +306,245 @@ fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> Con
             | ControlMethod::Console { .. }
             | ControlMethod::InactiveConsole { .. }
     );
-    execute(registry, method).unwrap_or_else(|error| {
-        let code = if read_only && airk_store::service::registry::is_read_contention(&error) {
-            "registry_busy".into()
-        } else {
-            error
-                .downcast_ref::<JobError>()
-                .map(|code| format!("{code:?}"))
-                .or_else(|| {
-                    error
-                        .downcast_ref::<airk_core::service_events::EventError>()
-                        .map(ToString::to_string)
-                })
-                .or_else(|| {
-                    error
-                        .downcast_ref::<airk_core::service_maintenance::PlanError>()
-                        .map(ToString::to_string)
-                })
-                .or_else(|| {
-                    (error.is::<airk_store::service::data_scope::ForeignDataRoot>()
-                        || error.is::<airk_store::service::data_scope::UnboundDataRoot>())
-                    .then(|| "data_root_scope_conflict".into())
-                })
-                .unwrap_or_else(|| "invalid_registry_request".into())
+    execute(registry, method).unwrap_or_else(|error| failure_response(error, read_only))
+}
+fn failure_response(error: anyhow::Error, read_only: bool) -> ControlResponse {
+    if let Some(unknown) =
+        error.downcast_ref::<crate::catalog_coordinator::CatalogApplyOutcomeUnknown>()
+    {
+        return unknown.response();
+    }
+    if error
+        .is::<airk_store::service::registry::catalog::source_change::SourceChangeReviewRequired>()
+    {
+        return ControlResponse::Failure {
+            code: "source_change_review_required".into(),
         };
-        ControlResponse::Failure { code }
-    })
+    }
+    if let Some(busy) = error.downcast_ref::<airk_core::catalog_source_change::SourceChangeBusy>() {
+        return ControlResponse::SourceChangeBusy {
+            code: "source_change_jobs_pending".into(),
+            busy: *busy,
+        };
+    }
+    if error
+        .downcast_ref::<crate::catalog_coordinator::CatalogApplyRejectedNoEffects>()
+        .is_some()
+        || error
+            .downcast_ref::<airk_core::catalog_fences::FencePrepareRejected>()
+            .is_some()
+    {
+        return ControlResponse::Failure {
+            code: if error.is::<crate::catalog_admission::NativeCatalogRetentionFull>() {
+                "catalog_native_reconciliation_capacity"
+            } else {
+                "catalog_preparation_rejected"
+            }
+            .into(),
+        };
+    }
+    let code = if read_only && airk_store::service::registry::is_read_contention(&error) {
+        "registry_busy".into()
+    } else {
+        error
+            .downcast_ref::<JobError>()
+            .map(|code| format!("{code:?}"))
+            .or_else(|| {
+                error
+                    .downcast_ref::<airk_core::service_events::EventError>()
+                    .map(ToString::to_string)
+            })
+            .or_else(|| {
+                error
+                    .downcast_ref::<airk_core::service_maintenance::PlanError>()
+                    .map(ToString::to_string)
+            })
+            .or_else(|| {
+                (error.is::<airk_store::service::data_scope::ForeignDataRoot>()
+                    || error.is::<airk_store::service::data_scope::UnboundDataRoot>())
+                .then(|| "data_root_scope_conflict".into())
+            })
+            .unwrap_or_else(|| "invalid_registry_request".into())
+    };
+    ControlResponse::Failure { code }
+}
+
+fn catalog_request(
+    registry: &mut ServiceRegistry,
+    control: &std::path::Path,
+    method: &ControlMethod,
+    catalog: Option<&mut CatalogRuntime>,
+) -> Result<Option<ControlResponse>> {
+    match method {
+        ControlMethod::CatalogIndexRetirementEvidence { index_id } => {
+            Ok(Some(ControlResponse::CatalogIndexRetirementEvidence {
+                index_id: *index_id,
+                evidence: registry.catalog_index_retirement_evidence(*index_id)?,
+            }))
+        }
+        ControlMethod::CatalogPendingSourceChange { index_id } => {
+            Ok(Some(ControlResponse::CatalogPendingSourceChange {
+                index_id: *index_id,
+                observation: registry.catalog_pending_source_change(*index_id)?,
+            }))
+        }
+        ControlMethod::CatalogSourceChangeObservation { begin_operation } => {
+            Ok(Some(ControlResponse::CatalogSourceChangeObservation {
+                observation: registry.catalog_source_change_observation(*begin_operation)?,
+            }))
+        }
+        ControlMethod::CatalogSourceChangeResolve { begin_operation } => {
+            let known = registry
+                .catalog_source_change_observation(*begin_operation)
+                .ok();
+            let gate = catalog.as_ref().map(|native| native.gate.clone());
+            let result = (|| -> Result<_> {
+                let observed = known.clone().ok_or_else(|| {
+                    anyhow::anyhow!("native source begin observation unavailable")
+                })?;
+                if observed.completion.is_some() {
+                    return Ok(observed);
+                }
+                let native =
+                    catalog.ok_or_else(|| anyhow::anyhow!("native source owner unavailable"))?;
+                native.reconcile(registry)?;
+                let airk_core::catalog_management::CatalogOperation::BeginIndexSourceChange {
+                    plan,
+                    ..
+                } = &observed.begin.request.operation
+                else {
+                    anyhow::bail!("native source begin required");
+                };
+                native
+                    .control
+                    .resolve_source_change(plan.registration.binding, *begin_operation)
+            })();
+            let fresh = registry
+                .catalog_source_change_observation(*begin_operation)
+                .ok();
+            if let Some(gate) = gate
+                && let Ok(Some(state)) = registry.catalog_state()
+            {
+                let _ = gate.reconcile_catalog_snapshot(state.namespace, state.revision);
+            }
+            Ok(Some(match result {
+                Ok(observation) => ControlResponse::CatalogSourceChangeResolved { observation },
+                Err(_) => ControlResponse::SourceChangeResolutionOutcomeUnknown {
+                    code: "source_change_resolution_outcome_unknown".into(),
+                    begin_operation: *begin_operation,
+                    observation: fresh.or(known),
+                },
+            }))
+        }
+        ControlMethod::CatalogSourceMutationDraft { selection } => {
+            Ok(Some(ControlResponse::CatalogSourceMutationDraft {
+                draft: crate::catalog_source_change_control::draft(registry, control, selection)?,
+            }))
+        }
+        ControlMethod::CatalogPreview { request }
+            if matches!(
+                request.operation,
+                airk_core::catalog_management::CatalogOperation::BeginIndexSourceChange { .. }
+                    | airk_core::catalog_management::CatalogOperation::CompleteIndexSourceChange { .. }
+                    | airk_core::catalog_management::CatalogOperation::RetireIndex { .. }
+            ) =>
+        {
+            let draft = crate::catalog_source_change_control::review_request(
+                registry, control, request, None,
+            )?;
+            Ok(Some(ControlResponse::CatalogPreview {
+                preview: draft.preview,
+                preview_digest: draft.preview_digest,
+            }))
+        }
+        ControlMethod::CatalogApply {
+            request,
+            preview_digest,
+        } => {
+            if matches!(
+                request.operation,
+                airk_core::catalog_management::CatalogOperation::BeginIndexSourceChange { .. }
+                    | airk_core::catalog_management::CatalogOperation::CompleteIndexSourceChange { .. }
+                    | airk_core::catalog_management::CatalogOperation::RetireIndex { .. }
+            ) && matches!(
+                registry.catalog_fence_observation(request.caller, &request.key),
+                Ok(None)
+            ) && registry
+                .catalog_receipt(request.caller, &request.key)?
+                .is_none()
+            {
+                // Only first public admission is rebuilt from native state.
+                // Exact saved event/completion replays remain authoritative.
+                crate::catalog_source_change_control::review_request(
+                    registry,
+                    control,
+                    request,
+                    Some(*preview_digest),
+                )
+                .map_err(|error| {
+                    if error
+                        .downcast_ref::<airk_core::catalog_source_change::SourceChangeBusy>()
+                        .is_some()
+                    {
+                        error.context(crate::catalog_coordinator::CatalogApplyRejectedNoEffects)
+                    } else {
+                        error
+                    }
+                })?;
+            }
+            if request.operation.requires_authority_fence() {
+                let Some(native) = catalog else {
+                    return Ok(Some(ControlResponse::Failure {
+                        code: "catalog_authority_fence_unavailable".into(),
+                    }));
+                };
+                let receipt =
+                    native
+                        .coordinator
+                        .apply_fenced(registry, request, *preview_digest)?;
+                return Ok(Some(ControlResponse::CatalogApplied {
+                    receipt: receipt.metadata.clone(),
+                    fenced_receipt: Some(receipt),
+                }));
+            }
+            if let Some(native) = catalog {
+                // Complete saved replays precede stale input checks. New writes
+                // may not advance around an unresolved native authority fence.
+                if let Some(receipt) = registry.catalog_receipt(request.caller, &request.key)? {
+                    anyhow::ensure!(
+                        receipt.request_digest == request.identity()?
+                            && !receipt.authority_fence_required,
+                        "catalog request key conflict"
+                    );
+                    return Ok(Some(ControlResponse::CatalogApplied {
+                        receipt,
+                        fenced_receipt: None,
+                    }));
+                }
+                native.reconcile(registry)?;
+                let state = registry
+                    .catalog_state()?
+                    .ok_or_else(|| anyhow::anyhow!("catalog unavailable"))?;
+                native.gate.begin_issue(state.namespace, state.revision)?;
+            }
+            Ok(Some(ControlResponse::CatalogApplied {
+                receipt: registry.catalog_apply(request, *preview_digest)?,
+                fenced_receipt: None,
+            }))
+        }
+        ControlMethod::CatalogReceipt { caller, key } => Ok(Some(
+            crate::catalog_coordinator::NativeCatalogCoordinator::observe_receipt(
+                registry,
+                catalog.map(|native| &mut native.coordinator),
+                *caller,
+                key,
+            )?,
+        )),
+        ControlMethod::ConnectScoped { .. } => Ok(Some(ControlResponse::Failure {
+            code: "scoped_connection_requires_direct_delivery".into(),
+        })),
+        _ => Ok(None),
+    }
 }
 
 fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<ControlResponse> {
@@ -88,6 +553,99 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         .as_millis()
         .try_into()?;
     Ok(match method {
+        ControlMethod::CatalogPage { request } => ControlResponse::CatalogPage {
+            page: registry.catalog_page(&request)?,
+        },
+        ControlMethod::CatalogDetail {
+            entity,
+            expected_catalog_revision,
+        } => ControlResponse::CatalogDetail {
+            detail: registry.catalog_detail(&entity, expected_catalog_revision)?,
+        },
+        ControlMethod::CatalogContext {
+            host,
+            key,
+            expected_catalog_revision,
+        } => ControlResponse::CatalogDetail {
+            detail: registry.catalog_detail(
+                &airk_core::catalog_management::CatalogEntity::ContextKey { host, key },
+                expected_catalog_revision,
+            )?,
+        },
+        ControlMethod::CatalogLegacyBinding {
+            project,
+            expected_catalog_revision,
+        } => ControlResponse::CatalogLegacyBinding {
+            observation: crate::catalog_host_context::legacy_binding(
+                registry,
+                project,
+                expected_catalog_revision,
+            )?,
+        },
+        ControlMethod::CatalogHostContext {
+            key,
+            expected_catalog_revision,
+        } => ControlResponse::CatalogHostContext {
+            descriptor: crate::catalog_host_context::NativeHostContext::load(
+                registry,
+                key,
+                expected_catalog_revision,
+            )?
+            .descriptor()
+            .clone(),
+        },
+        ControlMethod::CatalogGrantDraft {
+            context_key,
+            selection,
+        } => {
+            selection.validate()?;
+            let context = crate::catalog_host_context::NativeHostContext::load(
+                registry,
+                context_key,
+                Some(selection.expected_catalog_revision),
+            )?
+            .for_review(&selection)?;
+            ControlResponse::CatalogGrantDraft {
+                draft: crate::catalog_grant_draft::build_reviewed_grant_draft(
+                    registry, &context, &selection,
+                )?,
+            }
+        }
+        ControlMethod::CatalogPreview { request } => {
+            let preview = registry.catalog_preview(&request)?;
+            let preview_digest = preview.identity()?;
+            ControlResponse::CatalogPreview {
+                preview,
+                preview_digest,
+            }
+        }
+        ControlMethod::CatalogReceipt { caller, key } => ControlResponse::CatalogReceipt {
+            receipt: registry.catalog_receipt(caller, &key)?,
+            fence: None,
+        },
+        ControlMethod::CatalogApply {
+            request,
+            preview_digest,
+        } => {
+            // A durable replay is checked before stale revision/epoch guards.
+            // Until native admission AND delivery fences are wired, metadata
+            // commits requiring those fences must never be reported as complete.
+            let saved = registry.catalog_receipt(request.caller, &request.key)?;
+            let requires_fence = match saved {
+                Some(ref receipt) => receipt.authority_fence_required,
+                None => registry.catalog_preview(&request)?.authority_fence_required,
+            };
+            if requires_fence {
+                ControlResponse::Failure {
+                    code: "catalog_authority_fence_unavailable".into(),
+                }
+            } else {
+                ControlResponse::CatalogApplied {
+                    receipt: registry.catalog_apply(&request, preview_digest)?,
+                    fenced_receipt: None,
+                }
+            }
+        }
         ControlMethod::PlanCreate {
             caller,
             key,
@@ -294,6 +852,16 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::Health
         | ControlMethod::Shutdown
         | ControlMethod::Connect { .. }
+        | ControlMethod::ConnectScoped { .. }
+        | ControlMethod::NativeRead { .. }
+        | ControlMethod::CatalogIndexSetupDraft { .. }
+        | ControlMethod::CatalogSourceMutationDraft { .. }
+        | ControlMethod::CatalogSourceChangeObservation { .. }
+        | ControlMethod::CatalogPendingSourceChange { .. }
+        | ControlMethod::CatalogIndexRetirementEvidence { .. }
+        | ControlMethod::CatalogSourceChangeResolve { .. }
+        | ControlMethod::CatalogIndexSetupApply { .. }
+        | ControlMethod::CatalogIndexSetupReceipt { .. }
         | ControlMethod::EmbeddingStatus
         | ControlMethod::SourceStatus
         | ControlMethod::Resources
@@ -473,19 +1041,23 @@ fn console_page_role(
 }
 
 impl Management {
-    pub fn start(
+    pub(crate) fn start_with_catalog(
         root: PathBuf,
         instance: Incarnation,
         source: crate::source_supervisor::SourceWake,
         log: crate::service_logs::Log,
         ownership: Arc<airk_store::service::ServiceLease>,
+        catalog_binding: Option<CatalogBinding>,
     ) -> Result<Self> {
+        let strict_catalog = catalog_binding.is_some();
         let (sender, receiver) = sync_channel::<Envelope>(32);
         let pending = Arc::new(AtomicUsize::new(0));
+        let missing = Arc::new(AtomicUsize::new(0));
+        let accepted_missing = missing.clone();
         let active = pending.clone();
         let plans = Arc::new(AtomicBool::new(true));
         let runnable_plans = plans.clone();
-        let (ready, initialized) = sync_channel(1);
+        let (ready, initialized) = sync_channel::<std::result::Result<(), String>>(1);
         let thread = std::thread::Builder::new()
             .name("airk-registry".into())
             .spawn(move || {
@@ -499,10 +1071,22 @@ impl Management {
                         )?;
                         Ok(registry)
                     });
-                let _ = ready.send(());
+                let (mut catalog, bootstrap) = match catalog_binding {
+                    None => (None, Ok(())),
+                    Some(binding) => match registry.as_ref() {
+                        Ok(registry) => match CatalogRuntime::initialize(binding, registry) {
+                            Ok(native) => (Some(native), Ok(())),
+                            Err(_) => (None, Err("catalog_bootstrap_unavailable".into())),
+                        },
+                        Err(_) => (None, Err("catalog_registry_unavailable".into())),
+                    },
+                };
+                let _ = ready.send(bootstrap);
                 source.changed();
                 let mut next_tick = std::time::Instant::now();
                 let mut metadata_failed = false;
+                let mut missing_work = std::collections::VecDeque::<MissingWork>::new();
+                let mut next_catalog_resume=std::time::Instant::now();
                 loop {
                     if std::time::Instant::now() >= next_tick {
                         let running = registry.as_mut().ok().and_then(|registry| {
@@ -523,20 +1107,98 @@ impl Management {
                         metadata_failed = running.is_none();
                         // Unknown metadata state retains service ownership until a
                         // later bounded turn can establish whether work remains.
-                        runnable_plans.store(running.unwrap_or(true), Ordering::Release);
+                        let fence_pending=catalog.as_ref().is_some_and(|native|native.coordinator.has_pending_cleanup()||native.gate.pending_fence_key().map_or(true,|key|key.is_some()));
+                        runnable_plans.store(running.unwrap_or(true)||fence_pending, Ordering::Release);
                         next_tick = std::time::Instant::now()
                             + Duration::from_millis(if running.is_some() { 250 } else { 1000 });
+                        if std::time::Instant::now()>=next_catalog_resume {
+                            let progressed=match (registry.as_mut(),catalog.as_mut()) {
+                                (Ok(registry),Some(native))=>native.coordinator.resume_pending(registry),
+                                _=>Ok(None),
+                            };
+                            next_catalog_resume=std::time::Instant::now()+Duration::from_millis(if progressed.is_err(){1000}else{250});
+                            if matches!(progressed,Ok(Some(_))) {source.changed();}
+                        }
+                        if let Some(mut work) = missing_work.pop_front() {
+                            if std::time::Instant::now()<work.next_attempt {missing_work.push_back(work);continue;}
+                            let outcome = match (registry.as_mut(),catalog.as_mut()) {
+                                (Ok(registry),Some(native)) => work.advance(registry,&root,native),
+                                _ => Err(anyhow::anyhow!("native missing-source owner unavailable")),
+                            };
+                            let settled = outcome.is_ok() || (work.draft.is_none() && outcome.as_ref().is_err_and(|error| error.downcast_ref::<crate::catalog_source_change_control::NativeMissingSourceObsolete>().is_some()));
+                            if settled {
+                                active.fetch_sub(1,Ordering::AcqRel);
+                                accepted_missing.fetch_sub(1,Ordering::AcqRel);
+                                source.changed();
+                            } else {
+                                // Accepted intent, its key, and its resource
+                                // charge survive transport cancellation/errors.
+                                work.next_attempt=std::time::Instant::now()+Duration::from_secs(1);
+                                missing_work.push_back(work);
+                            }
+                        }
                     }
-                    let (method, reply) = match receiver.recv_timeout(
+                    let envelope = match receiver.recv_timeout(
                         next_tick.saturating_duration_since(std::time::Instant::now()),
                     ) {
                         Ok(envelope) => envelope,
                         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                            if missing_work.is_empty() {break;}
+                            std::thread::sleep(next_tick.saturating_duration_since(std::time::Instant::now()));
+                            continue;
+                        },
                     };
+                    let (method, reply) = match envelope {
+                        Envelope::AdministrativeRead(project,sender) => {
+                            let result = match (registry.as_ref(),catalog.as_ref()) {
+                                (Ok(registry),Some(native)) => native.reconcile(registry).and_then(|_| native.control.administrative_read(project)),
+                                _ => Err(anyhow::anyhow!("native administrative catalog unavailable")),
+                            };
+                            active.fetch_sub(1,Ordering::AcqRel);
+                            let _ = sender.send(result);
+                            continue;
+                        }
+                        Envelope::Request(method,reply) => (*method,reply),
+                        Envelope::Missing(event) => {
+                            if missing_work.iter().any(|work| work.event.binding() == event.binding()
+                                && work.event.registration_epoch() == event.registration_epoch()
+                                && work.event.configuration_epoch() == event.configuration_epoch()) {
+                                active.fetch_sub(1,Ordering::AcqRel);
+                                accepted_missing.fetch_sub(1,Ordering::AcqRel);
+                            } else {
+                                missing_work.push_back(MissingWork {event,nonce:None,draft:None,next_attempt:std::time::Instant::now()});
+                            }
+                            continue;
+                        }
+                    };
+                    if let ManagementReply::Scoped(sender) = reply {
+                        let result = match (registry.as_mut(), catalog.as_ref()) {
+                            (Ok(registry), Some(native)) => match method {
+                                ControlMethod::ConnectScoped { request } => {
+                                    native.connect(registry, &request)
+                                }
+                                ControlMethod::Connect { project } => {
+                                    native.connect_legacy(registry, project)
+                                }
+                                _ => Err(anyhow::anyhow!("invalid scoped connection route")),
+                            },
+                            _ => Err(anyhow::anyhow!("catalog_authority_unavailable")),
+                        };
+                        active.fetch_sub(1, Ordering::AcqRel);
+                        match result {
+                            Ok(delivery) => delivery.handoff_native(sender),
+                            Err(error) => {
+                                let _ = sender.send(Err(error));
+                            }
+                        }
+                        continue;
+                    }
                     let source_changed = matches!(
                         method,
                         ControlMethod::ConfigureWatch { .. }
+                            | ControlMethod::CatalogIndexSetupApply { .. }
+                            | ControlMethod::CatalogSourceChangeResolve { .. }
                             | ControlMethod::Register { .. }
                             | ControlMethod::ReserveProject { .. }
                     );
@@ -557,7 +1219,39 @@ impl Management {
                             }
                         }
                         method => match registry.as_mut() {
-                            Ok(registry) => execute_request(registry, method),
+                            Ok(registry) => {
+                                let routed = crate::catalog_index_setup_control::execute(
+                                    registry, &root, &method,
+                                )
+                                .and_then(|setup| match setup {
+                                    Some(response) => Ok(Some(response)),
+                                    None => {
+                                        catalog_request(registry, &root, &method, catalog.as_mut())
+                                    }
+                                });
+                                let mut response = match routed {
+                                    Ok(Some(response)) => response,
+                                    Ok(None) => execute_request(registry, method),
+                                    Err(error) => {
+                                        let error=match &method {ControlMethod::CatalogApply{request,..}=>crate::catalog_coordinator::CatalogApplyOutcomeUnknown::capture(registry,request,error),_=>error};
+                                        failure_response(error,matches!(&method,ControlMethod::CatalogSourceMutationDraft {..}|ControlMethod::CatalogSourceChangeObservation {..}|ControlMethod::CatalogPendingSourceChange {..}|ControlMethod::CatalogIndexRetirementEvidence {..}))
+                                    },
+                                };
+                                if !matches!(
+                                    response,
+                                    ControlResponse::Failure { .. }
+                                        | ControlResponse::CatalogOutcomeUnknown { .. }
+                                        | ControlResponse::SourceChangeBusy { .. }
+                                        | ControlResponse::SourceChangeResolutionOutcomeUnknown { .. }
+                                ) && let Some(native) = catalog.as_ref()
+                                    && native.reconcile(registry).is_err()
+                                {
+                                    response = ControlResponse::Failure {
+                                        code: "catalog_metadata_saved_outcome_unknown".into(),
+                                    };
+                                }
+                                response
+                            }
                             Err(_) => ControlResponse::Failure {
                                 code: "registry_unavailable".into(),
                             },
@@ -574,29 +1268,40 @@ impl Management {
                     }
                     // A timed-out/disconnected caller cannot release this charge
                     // while its accepted metadata operation can still commit.
+                    if catalog.as_ref().is_some_and(|native|native.coordinator.has_pending_cleanup()||native.gate.pending_fence_key().map_or(true,|key|key.is_some())) {runnable_plans.store(true,Ordering::Release);}
                     active.fetch_sub(1, Ordering::AcqRel);
                     let _ = reply.send(response);
                 }
             })?;
-        // Finish owned-ledger bootstrap before other service adapters open it.
-        // Failure remains a cached unavailable state so health can still run.
-        let _ = initialized.recv_timeout(Duration::from_secs(5));
-        Ok(Self {
-            sender: Some(sender),
+        let management = Self {
+            sender: Some(Arc::new(sender)),
             thread: Some(thread),
             pending,
             plans,
-        })
+            missing,
+        };
+        if strict_catalog {
+            initialized
+                .recv_timeout(Duration::from_secs(30))
+                .map_err(|_| anyhow::anyhow!("catalog_bootstrap_unknown"))?
+                .map_err(|code| anyhow::anyhow!(code))?;
+        } else {
+            let _ = initialized.recv_timeout(Duration::from_secs(5));
+        }
+        Ok(management)
     }
 
     pub async fn request(&self, method: ControlMethod) -> ControlResponse {
         let (sender, receiver) = oneshot::channel();
         self.pending.fetch_add(1, Ordering::AcqRel);
-        if self
-            .sender
-            .as_ref()
-            .is_none_or(|queue| queue.try_send((method, sender)).is_err())
-        {
+        if self.sender.as_ref().is_none_or(|queue| {
+            queue
+                .try_send(Envelope::Request(
+                    Box::new(method),
+                    ManagementReply::Control(sender),
+                ))
+                .is_err()
+        }) {
             self.pending.fetch_sub(1, Ordering::AcqRel);
             return ControlResponse::Failure {
                 code: "registry_busy".into(),
@@ -609,8 +1314,72 @@ impl Management {
             },
         }
     }
+    pub(crate) async fn request_scoped(
+        &self,
+        request: airk_core::service::ScopedConnectRequest,
+    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+        self.request_connection(ControlMethod::ConnectScoped { request })
+            .await
+    }
+    pub(crate) async fn request_administrative_read(
+        &self,
+        project: ProjectBinding,
+    ) -> Result<crate::project_supervisor::NativeAdministrativeRead> {
+        let (sender, receiver) = oneshot::channel();
+        self.pending.fetch_add(1, Ordering::AcqRel);
+        if self.sender.as_ref().is_none_or(|queue| {
+            queue
+                .try_send(Envelope::AdministrativeRead(project, sender))
+                .is_err()
+        }) {
+            self.pending.fetch_sub(1, Ordering::AcqRel);
+            anyhow::bail!("native administrative service busy");
+        }
+        tokio::time::timeout(Duration::from_secs(15), receiver)
+            .await
+            .map_err(|_| anyhow::anyhow!("native administrative admission outcome unknown"))?
+            .map_err(|_| anyhow::anyhow!("native administrative owner unavailable"))?
+    }
+    pub(crate) async fn request_legacy(
+        &self,
+        project: airk_core::service::ProjectBinding,
+    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+        self.request_connection(ControlMethod::Connect { project })
+            .await
+    }
+    async fn request_connection(
+        &self,
+        method: ControlMethod,
+    ) -> Result<crate::project_supervisor::ScopedConnectionDelivery> {
+        let (sender, receiver) = oneshot::channel();
+        self.pending.fetch_add(1, Ordering::AcqRel);
+        if self.sender.as_ref().is_none_or(|queue| {
+            queue
+                .try_send(Envelope::Request(
+                    Box::new(method),
+                    ManagementReply::Scoped(sender),
+                ))
+                .is_err()
+        }) {
+            self.pending.fetch_sub(1, Ordering::AcqRel);
+            anyhow::bail!("catalog_connection_busy");
+        }
+        tokio::time::timeout(Duration::from_secs(15), receiver)
+            .await
+            .map_err(|_| anyhow::anyhow!("catalog_connection_outcome_unknown"))?
+            .map_err(|_| anyhow::anyhow!("catalog_connection_owner_closed"))?
+    }
     pub fn can_idle_exit(&self) -> bool {
         self.pending.load(Ordering::Acquire) == 0 && !self.plans.load(Ordering::Acquire)
+    }
+    pub(crate) fn missing_reporter(
+        &self,
+    ) -> Arc<dyn crate::source_supervisor::MissingSourceReporter> {
+        Arc::new(MissingReporter {
+            sender: self.sender.as_ref().map(Arc::downgrade).unwrap_or_default(),
+            pending: self.pending.clone(),
+            missing: self.missing.clone(),
+        })
     }
 }
 
@@ -622,6 +1391,30 @@ mod tests {
         service::ProjectRegistration,
         service_console::{MAX_PAGE_BYTES, ObservationKind},
     };
+    #[test]
+    fn catalog_reads_do_not_activate_legacy_registry() -> Result<()> {
+        use airk_core::catalog_management::{CatalogKind, CatalogPageRequest, MAX_PAGE_BYTES};
+        let root = tempfile::tempdir()?;
+        let mut registry = ServiceRegistry::open(root.path(), Incarnation::from_bytes([18; 16]))?;
+        let response = execute_request(
+            &mut registry,
+            ControlMethod::CatalogPage {
+                request: CatalogPageRequest {
+                    kind: CatalogKind::Projects,
+                    index_id: None,
+                    project_id: None,
+                    after: None,
+                    expected_catalog_revision: None,
+                    limit: 1,
+                    max_bytes: MAX_PAGE_BYTES,
+                },
+            },
+        );
+        assert!(matches!(response, ControlResponse::Failure { .. }));
+        assert!(registry.catalog_state()?.is_none());
+        Ok(())
+    }
+
     #[test]
     fn registry_read_contention_preserves_receipts_and_other_failures() -> Result<()> {
         use airk_core::service::{JobKind, RequestKey};
@@ -734,11 +1527,15 @@ mod tests {
             // forces both ambiguous outcomes without relying on disk speed.
             let thread = std::thread::spawn(move || {
                 for attempt in 0..2 {
-                    let (method, reply) = receiver.recv_timeout(Duration::from_secs(15)).unwrap();
+                    let Envelope::Request(method, reply) =
+                        receiver.recv_timeout(Duration::from_secs(15)).unwrap()
+                    else {
+                        panic!("unexpected native event");
+                    };
                     if attempt == 0 && !commit_before_timeout {
                         gate.recv_timeout(Duration::from_secs(15)).unwrap();
                     }
-                    let response = execute(&mut registry, method).unwrap();
+                    let response = execute(&mut registry, *method).unwrap();
                     if attempt == 0 {
                         let ControlResponse::Job { job } = &response else {
                             panic!("missing committed job")
@@ -753,10 +1550,11 @@ mod tests {
                 }
             });
             let management = Management {
-                sender: Some(sender),
+                sender: Some(Arc::new(sender)),
                 thread: Some(thread),
                 pending,
                 plans: Arc::new(AtomicBool::new(false)),
+                missing: Arc::new(AtomicUsize::new(0)),
             };
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()

@@ -3,6 +3,12 @@
 use anyhow::Result;
 
 #[cfg(windows)]
+#[path = "child_job_named.rs"]
+mod named;
+#[cfg(windows)]
+pub use named::{AtomicJobChild, NamedJobOpen};
+
+#[cfg(windows)]
 pub struct ChildJob(
     std::os::windows::io::OwnedHandle,
     std::sync::Mutex<Option<Vec<std::os::windows::io::OwnedHandle>>>,

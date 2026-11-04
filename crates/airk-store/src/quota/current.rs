@@ -350,7 +350,20 @@ fn read_record(path: &Path) -> Result<DurableRecord> {
         path.parent()
             .context("current quota grant has no directory")?,
     )?;
-    let record: DurableRecord = json_read(path, RECORD_MAX)?;
+    unlinked(path)?;
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(RECORD_MAX + 1)
+        .read_to_end(&mut bytes)?;
+    decode_record(path.file_name(), &bytes)
+}
+
+fn decode_record(name: Option<&std::ffi::OsStr>, bytes: &[u8]) -> Result<DurableRecord> {
+    ensure!(
+        bytes.len() as u64 <= RECORD_MAX,
+        "quota metadata exceeds bounded size"
+    );
+    let record: DurableRecord = serde_json::from_slice(bytes)?;
     crate::validate_collection(&record.scope.collection)?;
     ensure!(
         ((record.version == 1 && record.allocation.is_none())
@@ -363,10 +376,21 @@ fn read_record(path: &Path) -> Result<DurableRecord> {
                             && allocation.incarnation == record.scope.incarnation
                     )))
             && record.bytes > 0
-            && path.file_name().and_then(|name| name.to_str()) == Some(record.filename().as_str()),
+            && name.and_then(|name| name.to_str()) == Some(record.filename().as_str()),
         "invalid durable current quota grant"
     );
     Ok(record)
+}
+
+#[cfg(any(unix, windows))]
+pub(super) fn decode_inventory_record(name: &std::ffi::OsStr, bytes: &[u8]) -> Result<LiveRecord> {
+    let record = decode_record(Some(name), bytes)?;
+    Ok(LiveRecord {
+        record: Record {
+            collection: record.scope.collection,
+            bytes: record.bytes,
+        },
+    })
 }
 
 fn read_records(

@@ -45,7 +45,7 @@ For an already registered project, run these separately, supplying the same root
 
 ```console
 airk status
-airk files --prefix crates/
+airk files crates/
 airk search "publication" --mode lexical
 airk parse "Find the definition of Owner"
 airk tools list --json
@@ -405,7 +405,7 @@ Usage: airk facts [OPTIONS] [PATH_PREFIX]
 
 ## airk files
 
-**Purpose:** List indexed files under --prefix, with continuation cursors
+**Purpose:** List indexed files under an optional path prefix, with continuation cursors
 
 **Behavior and developer use:** The public parser selects the native project and dispatches to its owning service/kernel adapter. Evidence responses retain indexed revision identity and bounded extraction coverage; they do not establish live-file freshness or complete language semantics.
 

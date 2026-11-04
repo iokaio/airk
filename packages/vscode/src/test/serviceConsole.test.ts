@@ -3,12 +3,247 @@ import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
 import { ConsoleHost, ServiceConsoleController } from '../serviceConsoleController';
 import { consoleAction, diagnosticPreview, ServiceConsoleState } from '../serviceConsoleView';
-import { managementView } from '../explorerManagement';
+import { managementView, panelDetails } from '../explorerManagement';
 
 /** What Explorer Management shows for a console state (the Service Console view was removed in 1.5.0). */
 const shown = (state: ServiceConsoleState): string => JSON.stringify(managementView(state));
-import { RecordValue, ServiceClient, ServiceError } from '../serviceClient';
+import { record, RecordValue, ServiceClient, ServiceError } from '../serviceClient';
+import { IntentJournal } from '../serviceIntents';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+test('actual lifecycle callback retains complete historical request/result and pre-health for explicit JSON exports only',async()=>{
+    const f=fixture(),opened:string[]=[],saved:string[]=[],responses:RecordValue[]=[];let lifecycleCalls=0;
+    f.host.openReport=async text=>{opened.push(text);};f.host.saveReport=async text=>{saved.push(text);};
+    f.host.lifecycle=async(binding,intent,force)=>{
+        lifecycleCalls++;assert.equal([...f.values.keys()].filter(key=>key.startsWith('airk.service.intent.')).length,1,'exact request is durable before native dispatch');assert.equal(force,false);
+        const response={status:'lifecycle',record:{id:'ab'.repeat(32),phase:'complete',request:{...structuredClone(intent.lifecycle),manager:false},future_native_record:{text:'private-native-lifecycle-field'}},future_native_response:{machine_path:'/private/native/path'}};responses.push(response);return response;
+    };
+    try{
+        await f.controller.refresh();const before=structuredClone(f.controller.state.health.value);await f.action('stop');
+        const capture=f.controller.state.capturedLifecycle;assert.ok(capture);assert.equal(capture.qualification,'historical_native_lifecycle_response');assert.equal(capture.force,false);assert.equal(capture.namespace,namespace);assert.deepEqual(capture.runtime,{installDir:'/install',controlDir:'/control',runtimeSha256:'90'.repeat(32)});assert.deepEqual(capture.before_health,before);assert.equal(record(record(capture.response.record).request).expected_instance,record(capture.before_health!.observation).instance);assert.deepEqual(capture.response,responses[0]);assert.equal(f.controller.state.pending.length,0);assert.equal(f.controller.state.connected,false);
+        record(responses[0].future_native_response).machine_path='changed-after-return';record(f.controller.state.health.value!.observation).user='changed-after-capture';assert.equal(record(capture.response.future_native_response).machine_path,'/private/native/path');assert.equal(record(capture.before_health!.observation).user,'secret-user');
+        const full=JSON.stringify(capture,null,2),calls=f.sent.length;await f.action('copyLifecycle');await f.action('openLifecycle');await f.action('saveLifecycle');assert.equal(f.copied.at(-1),full);assert.deepEqual(opened,[full]);assert.deepEqual(saved,[full]);assert.equal(f.sent.length,calls,'captured JSON actions issue no native RPC');assert.equal(lifecycleCalls,1);
+        assert.doesNotMatch(diagnosticPreview(f.controller.state,false),/private-native-lifecycle-field|\/private\/native\/path|secret-user/);assert.doesNotMatch(diagnosticPreview(f.controller.state,true),/private-native-lifecycle-field|\/private\/native\/path/);
+        const view=managementView(f.controller.state);assert.deepEqual(view.capturedLifecycle,capture);assert.match(panelDetails(view,'service','1.4.0'),/historical; not current health or authority/);assert.equal(consoleAction({type:'service',revision:f.controller.state.revision,action:'copyLifecycle',id:'ab'.repeat(16)},f.controller.state),undefined);
+        await f.action('connect');assert.deepEqual(f.controller.state.capturedLifecycle,capture,'own Stop reconnect preserves the original capture as historical');await f.action('connect');assert.equal(f.controller.state.capturedLifecycle,undefined,'unrelated later client replacement withdraws the old capture');
+        await f.action('restart');assert.equal(lifecycleCalls,2);
+        const restartedCapture=((state:ServiceConsoleState)=>state.capturedLifecycle)(f.controller.state);
+        assert.ok(restartedCapture,'the actual Restart callback captures a new result after the prior client withdrew it');assert.equal(record(record(restartedCapture.response.record).request).action,'restart');assert.equal(restartedCapture.qualification,'historical_native_lifecycle_response');
+        f.setTrusted(false);await f.controller.refresh();assert.equal(f.controller.state.capturedLifecycle,undefined);assert.equal(managementView(f.controller.state).capturedLifecycle,undefined);const copied=f.copied.length;await f.action('copyLifecycle');assert.equal(f.copied.length,copied);
+    }finally{f.controller.dispose();assert.equal(f.controller.state.capturedLifecycle,undefined);}
+});
+
+test('late or crossed lifecycle results never escape current runtime/trust fences; oversize capture retains the request',async()=>{
+    for(const change of ['trust','dispose','runtime','namespace','oversize'] as const){
+        const f=fixture();let entered!:()=>void,release!:()=>void;const started=new Promise<void>(resolve=>{entered=resolve;}),held=new Promise<void>(resolve=>{release=resolve;});
+        f.host.lifecycle=async(binding,intent)=>{entered();await held;if(change==='runtime')binding.runtimeSha256='ab'.repeat(32);return {status:'lifecycle',record:{id:'cd'.repeat(32),phase:'complete',request:{...intent.lifecycle,key:change==='namespace'?{...intent.lifecycle.key,namespace:'ee'.repeat(16)}:intent.lifecycle.key,manager:false}},...(change==='oversize'?{future_native_field:'x'.repeat(65536)}:{})};};
+        try{
+            await f.controller.refresh();const action=f.action('stop');await started;if(change==='trust')f.setTrusted(false);if(change==='dispose')f.controller.dispose();release();await action;
+            assert.equal(f.controller.state.capturedLifecycle,undefined,change);assert.equal([...f.values.keys()].filter(key=>key.startsWith('airk.service.intent.')).length,1,`${change}: original request stays tracked`);
+            if(change==='oversize'){assert.equal(f.controller.state.capturedLifecycleUnavailable,'native_lifecycle_capture_unavailable_budget');assert.match(f.controller.state.message!,/complete capture exceeds/);assert.equal(record(f.controller.state.bootstrap.value!.lifecycle).explicitly_stopped,true,'accepted native Stop remains accepted despite unavailable capture');}
+        }finally{release();f.controller.dispose();}
+    }
+});
+
+test('same-bound lifecycle reconnection cannot carry historical capture into another runtime or native namespace',async()=>{
+    for(const change of ['runtime','namespace'] as const){
+        const f=fixture();f.host.lifecycle=async(_binding,intent)=>({status:'lifecycle',record:{id:'ab'.repeat(32),phase:'complete',request:{...intent.lifecycle,manager:false}}});
+        try{
+            await f.controller.refresh();await f.action('stop');assert.ok(f.controller.state.capturedLifecycle,change);
+            if(change==='runtime'){const binding=f.host.runtime.binding;f.host.runtime.binding=(...args)=>({...binding(...args),runtimeSha256:'aa'.repeat(32)});}
+            else{const client=f.host.runtime.client({} as any);f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){const response=await client.transport.request(method);if(typeof method==='object'&&method!==null&&'events' in method)return {...response,page:{...record(response.page),namespace:'bb'.repeat(16)}};return response;}});}
+            await f.action('connect');assert.equal(f.controller.state.capturedLifecycle,undefined,change);assert.equal(managementView(f.controller.state).capturedLifecycle,undefined,change);
+        }finally{f.controller.dispose();}
+    }
+});
+
+test('explicit native lifecycle recovery captures actual force and current pre-health without rewriting its historical target',async()=>{
+    const f=fixture(),request={action:'stop' as const,caller:'ab'.repeat(16),expected_instance:'ac'.repeat(16),runtime:'90'.repeat(32),key:{namespace,epoch:7,nonce:'ad'.repeat(16)}},journal=new IntentJournal(f.host.storage,'/control',namespace);
+    await journal.prepare('Historical lifecycle',{lifecycle:request});const observation=await f.host.runtime.discover();observation.inspection={control_dir:'/control',lifecycle:{pending:{id:'ae'.repeat(32),phase:'draining',request:{...request,manager:true}}}};f.host.runtime.discover=async()=>observation;
+    f.host.lifecycle=async(_binding,intent,force)=>{assert.equal(force,true);assert.deepEqual(intent.lifecycle,request);return {status:'lifecycle',record:{id:'ae'.repeat(32),phase:'complete',request:{...intent.lifecycle,manager:true,future_request_field:'retained'}}};};
+    try{await f.controller.refresh();await f.action('forceIntent',{id:request.key.nonce});const captured=f.controller.state.capturedLifecycle;assert.ok(captured);assert.equal(captured.force,true);assert.equal(record(captured.before_health!.observation).instance,instance);assert.equal(record(record(captured.response.record).request).expected_instance,request.expected_instance);assert.notEqual(request.expected_instance,instance);assert.equal(record(record(captured.response.record).request).future_request_field,'retained');assert.equal(captured.qualification,'historical_native_lifecycle_response');assert.deepEqual(f.controller.state.pending,[]);}finally{f.controller.dispose();}
+});
+
+test('oversize own Restart keeps its unavailable notice only after exact runtime/namespace reconnect with its original journal',async()=>{
+    for(const change of ['same','runtime','namespace'] as const){
+        const f=fixture(),baseClient=f.host.runtime.client({} as any),binding=f.host.runtime.binding;let reconnect=false,request:RecordValue|undefined;
+        f.host.runtime.binding=(...args)=>({...binding(...args),...(reconnect&&change==='runtime'?{runtimeSha256:'aa'.repeat(32)}:{})});
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){const response=await baseClient.transport.request(method);if(reconnect&&change==='namespace'&&typeof method==='object'&&method!==null&&'events' in method)return {...response,page:{...record(response.page),namespace:'bb'.repeat(16)}};return response;}});
+        f.host.lifecycle=async(_binding,intent)=>{request=structuredClone(intent.lifecycle);reconnect=true;return {status:'lifecycle',record:{id:'cd'.repeat(32),phase:'complete',request:{...intent.lifecycle,manager:false}},future_native_field:'x'.repeat(65536)};};
+        try{
+            await f.controller.refresh();await f.action('restart');assert.ok(request);assert.equal(f.controller.state.capturedLifecycle,undefined,change);
+            assert.equal(f.controller.state.capturedLifecycleUnavailable,change==='same'?'native_lifecycle_capture_unavailable_budget':undefined,change);
+            const retained=new IntentJournal(f.host.storage,'/control',namespace).list();assert.equal(retained.length,1,`${change}: accepted native work keeps the original exact request`);assert.deepEqual(record(retained[0].value.intent).lifecycle,request);
+            if(change==='same'){assert.equal(f.controller.state.connected,true);await f.action('connect');assert.equal(f.controller.state.capturedLifecycleUnavailable,undefined,'later unrelated replacement cannot retain the one-shot notice');}
+        }finally{f.controller.dispose();}
+    }
+});
+test('restart retirement recovery pins full proof and stops only matching local tracking without a native mutation',async()=>{
+    for(const kind of ['setup','source'] as const){
+        const f=fixture(),base=f.host.runtime.client({} as any),journal=new IntentJournal(f.host.storage,'/control',namespace),index='idx_'+'31'.repeat(16),source='src_'+'41'.repeat(16),digest='43'.repeat(32),key={namespace,epoch:1,nonce:'44'.repeat(16)},nativeCaller='9a'.repeat(16),calls:unknown[]=[];
+        const registration={binding:project,root:'/native/source',data_root:'/native/data',collection:'fixture'},setupRequest={caller:nativeCaller,key,expected_catalog_revision:1,name:'Partial',registration,sources:[{canonical_path:registration.root,aliases:[],owner:true}],setup_watch:false};
+        const sourceRequest={caller:nativeCaller,key,expected_catalog_revision:1,operation:{operation:'begin_index_source_change',id:index,expected_source_revision:1,plan:{registration,engine_identity:digest,job,configuration:{incarnation:'6a'.repeat(16),settings:digest,configuration:{operation:'add_root',alias:'extra',path:'/extra'}},before:{primary_root:registration.root,aliases:{}},after:{primary_root:registration.root,aliases:{extra:'/extra'}},sources:[{id:source,canonical_path:registration.root,aliases:[],owner:true},{id:'src_'+'42'.repeat(16),canonical_path:'/extra',aliases:['extra'],owner:false}]}}};
+        const begin={request:sourceRequest,metadata:{schema:1,operation_id:'90'.repeat(16),caller:nativeCaller,key,request_digest:digest,catalog_revision:2,authority_fence_required:true},preview_digest:digest,prepared_digest:digest,proof:{plan_digest:digest,service:instance,gate_generation:1,confirmations:[]}};
+        const originalSource={status:'catalog_source_change_observation',observation:{begin,job:{id:job,project,kind:'configure',state:'failed',fencing_generation:1,attempts:2,outcome:{state:'failed'}},configuration_result:{prior_native_result:'retained'},completion:null,future_begin_result:'retained'}};
+        if(kind==='source'){
+            assert.doesNotThrow(()=>base.validateSourceObservation(originalSource,begin.metadata.operation_id,namespace),'source fixture must contain a complete valid native Begin before eligibility is tested');
+            assert.notEqual(sourceRequest.operation.plan.configuration.incarnation,namespace);assert.notEqual(sourceRequest.operation.plan.configuration.settings,registration.binding);
+            const crossed=structuredClone(originalSource);crossed.observation.begin.request.operation.plan.configuration.settings='45'.repeat(32);assert.throws(()=>base.validateSourceObservation(crossed,begin.metadata.operation_id,namespace,originalSource),/crossed_source_observation_continuity/);
+        }
+        const id=kind==='setup'?await journal.prepare('Partial setup',{catalog_index_setup_apply:{draft:{schema:1,request:setupRequest,storage_action:'create_missing_leaf',review_digest:digest}},request_digest:digest}):await journal.prepare('Uncertain resolve',{catalog_source_change_resolve:{begin_operation:begin.metadata.operation_id},namespace},originalSource);
+        if(kind==='setup')await journal.observeCatalog(id,{status:'catalog_index_setup_receipt',receipt:{schema:1,operation_id:'91'.repeat(16),request:setupRequest,request_digest:digest,index_id:index,source_ids:[source],stage:'reserved',catalog_revision:2,source_revision:1,preparation:null,completion:null}});
+        // Begin advances the source revision before its configuration job runs. Partial Setup remains at revision one.
+        const retireSourceRevision=kind==='source'?2:1;
+        const request={caller:'aa'.repeat(16),key:{namespace,epoch:2,nonce:'bb'.repeat(16)},expected_catalog_revision:2,operation:{operation:'retire_index',id:index,expected_definition_revision:1,expected_source_revision:retireSourceRevision,reason:{reason:'confirmed_missing_source',registration_epoch:0,configuration_epoch:1}}};
+        const retirement={request,metadata:{schema:1,operation_id:'cc'.repeat(16),caller:request.caller,key:request.key,request_digest:digest,catalog_revision:3,authority_fence_required:true},preview_digest:digest,prepared_digest:digest,proof:{plan_digest:digest,service:instance,gate_generation:2,confirmations:[],worker_obligation:{index_id:index,backing:project,workers:[],providers:[]},worker_confirmations:[]},future_full_proof:'retained'};
+        const full:RecordValue={status:'catalog_index_retirement_evidence',index_id:index,evidence:{catalog_clock:{namespace,revision:4},index:{id:index,name:'Retired',definition_revision:2,source_revision:retireSourceRevision+1,backing:registration,tombstone:true,source_import:'pending_metadata'},retirement,future_native_evidence:'retained'}};let response:RecordValue={...full,evidence:null};
+        let drafts=0,delayEvidence=false,releaseEvidence:((value:RecordValue)=>void)|undefined;
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            if(typeof method==='object'&&method!==null&&'catalog_index_retirement_evidence' in method){calls.push(structuredClone(method));if(delayEvidence)return new Promise<RecordValue>(resolve=>{releaseEvidence=resolve;});return structuredClone(response);}
+            if(typeof method==='object'&&method!==null&&'catalog_source_mutation_draft' in method){drafts++;const selection=record(record(method).catalog_source_mutation_draft).selection,input=record(selection),nativeRequest={...request,caller:nativeCaller,key:input.key,expected_catalog_revision:input.expected_catalog_revision,operation:{...request.operation,reason:{reason:'explicit'}}};return {status:'catalog_source_mutation_draft',draft:{request:nativeRequest,preview:{request_digest:digest,catalog_revision:input.expected_catalog_revision,next_revision:Number(input.expected_catalog_revision)+1,operation:nativeRequest.operation,before:[],after:[],authority_fence_required:true,file_data_changes:false},preview_digest:digest}};}
+            return base.transport.request(method);
+        }});
+        const reopened=new ServiceConsoleController(f.host);
+        try{
+            await reopened.refresh();assert.equal(reopened.catalogPending().length,1,`${kind}: original request survives restart`);assert.equal(reopened.catalogCanRetire(index,project,namespace),true,`${kind}: complete native original qualifies only this index`);assert.equal(reopened.catalogCanRetire('idx_'+'99'.repeat(16),project,namespace),false,`${kind}: another index cannot supersede tracking`);
+            await assert.rejects(reopened.catalogSourceDraft(index,{operation:'add_root',alias:'extra',path:'/extra'},2),/unconfirmed/);await reopened.catalogSourceDraft(index,{operation:'retire_index'},2);assert.equal(drafts,1);assert.equal(reopened.catalogPending().length,1,'distinct retirement review never drops the original');
+            delayEvidence=true;const late=reopened.catalogRetirementReview(id);assert.ok(releaseEvidence);f.setTrusted(false);releaseEvidence(structuredClone(full));await assert.rejects(late,/no_longer_authorized/);f.setTrusted(true);delayEvidence=false;assert.equal(reopened.catalogPending().length,1,'late read after trust loss cannot settle tracking');
+            let review=await reopened.catalogRetirementReview(id);await assert.rejects(reopened.catalogStopTracking(review,()=>true),/evidence_unavailable/);assert.equal(reopened.catalogPending().length,1);
+            response=structuredClone(full);record(record(response.evidence).retirement).proof={...retirement.proof,worker_obligation:undefined};await assert.rejects(reopened.catalogRetirementReview(id));assert.equal(reopened.catalogPending().length,1);
+            response=structuredClone(full);record(record(response.evidence).index).backing={...registration,root:'/crossed/source'};await assert.rejects(reopened.catalogRetirementReview(id),/crossed_retirement_backing/);assert.equal(reopened.catalogPending().length,1);
+            response={...full,evidence:{...record(full.evidence),oversized_native_field:'x'.repeat(32768)}};await assert.rejects(reopened.catalogRetirementReview(id),/oversize/);assert.equal(reopened.catalogPending().length,1);
+            response=full;review=await reopened.catalogRetirementReview(id);assert.equal(record(record(review.response.evidence).retirement).future_full_proof,'retained');
+            review.response.future='changed';await assert.rejects(reopened.catalogStopTracking(review,()=>true),/read_current/);assert.equal(reopened.catalogPending().length,1);
+            review=await reopened.catalogRetirementReview(id);await assert.rejects(reopened.catalogStopTracking(review,()=>false),/read_current/);assert.equal(reopened.catalogPending().length,1);
+            await journal.observeCatalog(id,{status:'failure',code:'retained_new_native_observation'});await assert.rejects(reopened.catalogStopTracking(review,()=>true),/read_current/);assert.equal(reopened.catalogPending().length,1);review=await reopened.catalogRetirementReview(id);
+            const replacement=new ServiceConsoleController(f.host);try{await replacement.refresh();await assert.rejects(replacement.catalogStopTracking(review,()=>true),/read_current/);assert.equal(replacement.catalogPending().length,1);}finally{replacement.dispose();}
+            f.setTrusted(false);await assert.rejects(reopened.catalogStopTracking(review,()=>true),/no_longer_authorized/);f.setTrusted(true);await assert.rejects(reopened.catalogStopTracking(review,()=>true),/read_current/);review=await reopened.catalogRetirementReview(id);
+            const outcome=await reopened.catalogStopTracking(review,()=>true);assert.equal(outcome.local_tracking,'stopped_after_native_retirement');assert.equal(record(outcome.native_retirement_evidence).status,'catalog_index_retirement_evidence');assert.deepEqual(reopened.catalogPending(),[]);
+            assert.equal(calls.length,9);assert.ok(calls.every(value=>Object.keys(record(value)).join()==='catalog_index_retirement_evidence'));assert.equal(f.sent.some(value=>typeof value==='object'&&value!==null&&['catalog_apply','catalog_source_change_resolve','catalog_index_setup_apply'].some(name=>name in value)),false);
+            const again=new ServiceConsoleController(f.host);try{await again.refresh();assert.deepEqual(again.catalogPending(),[]);}finally{again.dispose();}
+            await journal.prepare('Uncertain retirement',{catalog_apply:{request:{...request,operation:{...request.operation,reason:{reason:'explicit'}}},preview_digest:digest},request_digest:digest});assert.equal(reopened.catalogCanRetire(index,project,namespace),false);await assert.rejects(reopened.catalogSourceDraft(index,{operation:'retire_index'},3),/unconfirmed/);assert.equal(drafts,1,'an unknown Retire cannot obtain a replacement key or review');
+        }finally{reopened.dispose();f.controller.dispose();}
+    }
+});
+test('only exact native unprepared reconciliation retires a local unknown without replay or a new key',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),digest='43'.repeat(32),operation={operation:'rename_project',id:'prj_'+'21'.repeat(16),expected_definition_revision:1,name:'Reviewed'};let request:RecordValue|undefined,phase='missing',applies=0,keys=0;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='request_epoch')keys++;
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,next_revision:2,operation,before:[],after:[],authority_fence_required:false,file_data_changes:false}};
+        if(name==='catalog_apply'){applies++;request=structuredClone(record(record(method).catalog_apply).request as RecordValue);throw new ServiceError('console_transport_closed',true);}
+        if(name==='catalog_receipt'){
+            assert.deepEqual(record(method).catalog_receipt,{caller:request!.caller,key:request!.key});if(phase==='missing')return {status:'catalog_receipt',receipt:null};
+            return {status:'catalog_receipt_unprepared',request:phase==='caller'?{...request,caller:'9a'.repeat(16)}:phase==='body'?{...request,operation:{...operation,name:'Crossed'}}:request,request_digest:phase==='digest'?'44'.repeat(32):digest,catalog_clock:{namespace:phase==='namespace'?'45'.repeat(16):namespace,revision:phase==='revision'?0:2},future_native_absence:{retained:true}};
+        }return base.transport.request(method);
+    }});
+    let reopened:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const review=await f.controller.catalogPrepare(operation,1);await assert.rejects(f.controller.catalogApply(review,()=>true),/transport_closed/);assert.equal(f.controller.catalogPending().length,1);await f.controller.catalogReconcile();assert.equal(f.controller.catalogPending().length,1,'null is not native absence proof');f.controller.dispose();
+        reopened=new ServiceConsoleController(f.host);await reopened.refresh();for(const bad of ['caller','body','digest','namespace','revision']){phase=bad;await assert.rejects(reopened.catalogReconcile());assert.equal(reopened.catalogPending().length,1,bad);}
+        phase='unprepared';const results=await reopened.catalogReconcile();assert.equal(results[0].status,'catalog_receipt_unprepared');assert.equal(results[0].receipt,undefined);assert.deepEqual(results[0].future_native_absence,{retained:true});assert.deepEqual(results[0].request,request);assert.deepEqual(reopened.catalogPending(),[]);assert.equal(applies,1);assert.equal(keys,1,'known non-preparation cannot create or dispatch a replacement intent');
+    }finally{f.controller.dispose();reopened?.dispose();}
+});
+test('source draft/apply and failed-resolution use one journal; unknown restart reads never replay and preserve failed history',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),index='idx_'+'31'.repeat(16),source='src_'+'41'.repeat(16),requestDigest='44'.repeat(32),previewDigest='43'.repeat(32),beginId='90'.repeat(16);
+    let applies=0,resolves=0,busy=true,complete=false,crossed=false,savedRequest:RecordValue|undefined,begin:RecordValue|undefined;
+    const observe=()=>({status:'catalog_source_change_observation',observation:{begin,job:{id:job,project,kind:'configure',state:'failed',fencing_generation:1,attempts:2,outcome:{state:'failed',code:'native_source_failed'},future_native_job:'retained'},configuration_result:{prior_result:'retained',...(complete?{catalog_native_desired_resolution:{native_proof:'retained'}}:{})},completion:complete?{schema:1,operation_id:'91'.repeat(16),caller:savedRequest!.caller,key:{...record(savedRequest!.key),nonce:'92'.repeat(16)},request_digest:'93'.repeat(32),catalog_revision:3,authority_fence_required:false}:null,future_native_source:'retained'}});
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_source_mutation_draft'){
+            const selection=record(record(method).catalog_source_mutation_draft).selection,input=record(selection);
+            const operation={operation:'begin_index_source_change',id:index,expected_source_revision:1,plan:{registration:{binding:project,root:'/source',data_root:'/data',collection:'fixture'},engine_identity:'51'.repeat(32),job,configuration:{incarnation:'6b'.repeat(16),settings:'6c'.repeat(32),configuration:{operation:'add_root',alias:'extra',path:'/extra'}},before:{primary_root:'/source',aliases:{}},after:{primary_root:'/source',aliases:{extra:'/extra'}},sources:[{id:source,canonical_path:'/source',aliases:[],owner:true},{id:'src_'+'42'.repeat(16),canonical_path:'/extra',aliases:['extra'],owner:false}]}};
+            return {status:'catalog_source_mutation_draft',draft:{request:{caller:'9a'.repeat(16),key:input.key,expected_catalog_revision:1,operation},preview:{catalog_revision:1,next_revision:2,operation,request_digest:requestDigest,authority_fence_required:true,file_data_changes:false,before:[],after:[],future_preview:'retained'},preview_digest:previewDigest},future_native_draft:'retained'};
+        }
+        if(name==='catalog_apply'){
+            applies++;const request=record(record(method).catalog_apply).request as RecordValue;
+            if(busy)return {status:'source_change_busy',code:'source_change_jobs_pending',busy:{index_id:index,pending_jobs:2,running_jobs:1},future_busy:'retained'};
+            savedRequest=structuredClone(request);const metadata={schema:1,operation_id:beginId,caller:request.caller,key:request.key,request_digest:requestDigest,catalog_revision:2,authority_fence_required:true};
+            begin={request:savedRequest,metadata,preview_digest:previewDigest,prepared_digest:'52'.repeat(32),proof:{plan_digest:'53'.repeat(32),service:instance,gate_generation:1,confirmations:[]},future_begin:'retained'};
+            return {status:'catalog_applied',receipt:metadata,fenced_receipt:begin};
+        }
+        if(name==='catalog_source_change_observation'){
+            assert.deepEqual(record(method).catalog_source_change_observation,{begin_operation:beginId});const response=structuredClone(observe());if(crossed)record(response.observation.begin!.request).caller='8a'.repeat(16);return response;
+        }
+        if(name==='catalog_pending_source_change'){
+            assert.deepEqual(method,{catalog_pending_source_change:{index_id:index}});return {status:'catalog_pending_source_change',index_id:index,observation:structuredClone(observe().observation),future_lookup:'retained'};
+        }
+        if(name==='catalog_source_change_resolve'){
+            resolves++;assert.deepEqual(method,{catalog_source_change_resolve:{begin_operation:beginId}});assert.ok([...f.values.values()].some(value=>value&&typeof value==='object'&&'intent' in value&&'catalog_source_change_resolve' in record(record(value).intent)),'full native begin proof is durable before Resolve');
+            return {status:'source_change_resolution_outcome_unknown',code:'source_change_resolution_outcome_unknown',begin_operation:beginId,observation:null,future_unknown:'retained'};
+        }
+        return base.transport.request(method);
+    }});
+    let restarted:ServiceConsoleController|undefined,afterBegin:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const change={operation:'add_root',alias:'extra',path:'/user/extra'};
+        for(const field of ['incarnation','settings'] as const){const changedReview=await f.controller.catalogSourceDraft(index,change,1),configuration=record(record(changedReview.request.operation.plan).configuration);configuration[field]=field==='incarnation'?'6d'.repeat(16):'6e'.repeat(32);await assert.rejects(f.controller.catalogApply(changedReview,()=>true),/stale_or_changed_native_source_review/);assert.equal(applies,0,'frontend modification cannot replace the reviewed concrete native collection identity');}
+        const busyReview=await f.controller.catalogSourceDraft(index,change,1);await assert.rejects(f.controller.catalogApply(busyReview,()=>true),(error:unknown)=>{assert.ok(error instanceof ServiceError);assert.equal(error.code,'source_change_jobs_pending');assert.equal(error.outcomeUnknown,false);assert.equal(error.nativeResponse!.future_busy,'retained');return true;});assert.deepEqual(f.controller.catalogPending(),[]);busy=false;
+        const localReview=await f.controller.catalogSourceDraft(index,change,1),update=f.host.storage.update;let valid=true;f.host.storage.update=async(key,value)=>{await update(key,value);if(value!==undefined&&key.startsWith('airk.service.intent.'))valid=false;};
+        await assert.rejects(f.controller.catalogApply(localReview,()=>valid),/stale_catalog_review/);assert.equal(applies,1);assert.deepEqual(f.controller.catalogPending(),[]);f.host.storage.update=update;
+        const review=await f.controller.catalogSourceDraft(index,change,1);assert.equal(review.request.caller,'9a'.repeat(16));assert.equal(resolves,0);const concrete=record(record(review.request.operation.plan).configuration);assert.notEqual(concrete.incarnation,namespace);assert.notEqual(concrete.settings,project);await f.controller.catalogApply(review,()=>true);assert.equal(applies,2);assert.deepEqual(record(record(savedRequest!.operation).plan).configuration,concrete,'canonical Apply retains the exact concrete native configuration rather than registry templates');
+        assert.deepEqual(f.controller.catalogPending(),[]);f.controller.dispose();afterBegin=new ServiceConsoleController(f.host);await afterBegin.refresh();
+        const read=await afterBegin.catalogPendingSource(index,namespace);assert.equal(read.future_lookup,'retained');assert.equal(resolves,0);record(record(read.observation).job).future_native_job='changed';await assert.rejects(afterBegin.catalogSourceResolve(read,()=>true),/read_current_native_source_observation/);assert.equal(resolves,0);
+        const current=await afterBegin.catalogPendingSource(index,namespace);await assert.rejects(afterBegin.catalogSourceResolve(current,()=>true),/source_change_resolution_outcome_unknown/);assert.equal(resolves,1);assert.deepEqual(afterBegin.catalogPending(),[beginId]);
+        await afterBegin.action({type:'service',revision:afterBegin.state.revision,action:'forgetIntent',id:beginId});assert.deepEqual(afterBegin.catalogPending(),[beginId],'generic console forgetting cannot discard an accepted uncertain catalog resolution');
+        const pending=afterBegin.catalogPendingDetails()[0];assert.equal(record(pending.native_observation).future_unknown,'retained');assert.equal(record(record(pending.native_source_observation).observation).future_native_source,'retained');afterBegin.dispose();
+        restarted=new ServiceConsoleController(f.host);await restarted.refresh();assert.equal(resolves,1);await restarted.catalogReconcile();assert.equal(restarted.catalogPending().length,1);
+        crossed=true;await assert.rejects(restarted.catalogReconcile(),/crossed/);assert.equal(restarted.catalogPending().length,1);crossed=false;
+        const reread=await restarted.catalogSourceObservation(beginId,namespace);await assert.rejects(restarted.catalogSourceResolve(reread,()=>true),/source_resolution_requires_observation/);assert.equal(resolves,1);
+        complete=true;const results=await restarted.catalogReconcile(),observed=record(results[0].observation);assert.equal(record(observed.job).state,'failed');assert.equal(record(record(observed.job).outcome).code,'native_source_failed');assert.ok(record(observed.configuration_result).catalog_native_desired_resolution);assert.deepEqual(restarted.catalogPending(),[]);assert.equal(resolves,1);assert.equal(applies,2);
+    }finally{f.controller.dispose();afterBegin?.dispose();restarted?.dispose();}
+});
+
+test('setup Resume requires a fresh matching receipt and reuses the exact original draft after each explicit recovery',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),digest='43'.repeat(32),requests:unknown[]=[];let nativeRequest:RecordValue|undefined,phase='reserved',lose=true;
+    const receipt=()=>({schema:1,operation_id:'90'.repeat(16),request:nativeRequest,request_digest:digest,index_id:'idx_'+'31'.repeat(16),source_ids:['src_'+'41'.repeat(16)],stage:phase,catalog_revision:phase==='ready'?3:2,source_revision:phase==='ready'?2:1,preparation:phase==='reserved'?null:{digest:'51'.repeat(32),storage_identity:'52'.repeat(32),source_configuration_digest:'53'.repeat(32),review:{expected_catalog_revision:2,expected_source_revision:1}},completion:phase==='ready'?{prepared_digest:'51'.repeat(32),expected_catalog_revision:2,expected_source_revision:1}:null});
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_index_setup_draft'){const selection=record(record(method).catalog_index_setup_draft).selection,input=record(selection);return {status:'catalog_index_setup_draft',request_digest:digest,draft:{schema:1,request:{caller:'9a'.repeat(16),key:input.key,expected_catalog_revision:1,name:input.name,registration:{binding:project,root:'/native/source',data_root:'/native/data',collection:'fixture'},sources:[{canonical_path:'/native/source',aliases:[],owner:true}],setup_watch:false},storage_action:'create_missing_leaf',review_digest:digest}};}
+        if(name==='catalog_index_setup_apply'){requests.push(structuredClone(method));nativeRequest=record(record(record(method).catalog_index_setup_apply).draft).request as RecordValue;if(requests.length>1&&lose)throw new ServiceError('console_transport_closed',true);if(requests.length>1){phase='ready';return {status:'catalog_index_setup_applied',receipt:receipt()};}return {status:'catalog_outcome_unknown',code:'catalog_index_setup_outcome_unknown',caller:nativeRequest.caller,key:nativeRequest.key,request_digest:digest,observation:{kind:'index_setup',receipt:receipt()}};}
+        if(name==='catalog_index_setup_receipt')return {status:'catalog_index_setup_receipt',receipt:phase==='missing'?null:receipt()};return base.transport.request(method);
+    }});
+    let restarted:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const review=await f.controller.catalogIndexSetupDraft({name:'Explicit setup',primary_root:'/chosen/source',data_root:'/chosen/data',collection:'fixture',additional_roots:[],setup_watch:false},1);await assert.rejects(f.controller.catalogIndexSetupApply(review,()=>true),/outcome_unknown/);const id=f.controller.catalogPending()[0];
+        await assert.rejects(f.controller.catalogSetupResume(id,()=>true),/read_matching/);assert.equal(requests.length,1);f.controller.dispose();restarted=new ServiceConsoleController(f.host);await restarted.refresh();await assert.rejects(restarted.catalogSetupResume(id,()=>true),/read_matching/);
+        await restarted.catalogReconcile();assert.equal(restarted.catalogPendingDetails()[0].can_resume_setup,true);await assert.rejects(restarted.catalogSetupResume(id,()=>true),/console_transport_closed/);assert.equal(requests.length,2);assert.equal(restarted.catalogPendingDetails()[0].can_resume_setup,false);await assert.rejects(restarted.catalogSetupResume(id,()=>true),/read_matching/);assert.equal(requests.length,2);
+        phase='missing';await restarted.catalogReconcile();assert.equal(restarted.catalogPendingDetails()[0].can_resume_setup,false);phase='prepared';await restarted.catalogReconcile();lose=false;await restarted.catalogSetupResume(id,()=>true);assert.equal(requests.length,3);assert.deepEqual(requests[0],requests[1]);assert.deepEqual(requests[1],requests[2]);assert.deepEqual(restarted.catalogPending(),[]);
+    }finally{f.controller.dispose();restarted?.dispose();}
+});
+test('explicit setup journals native caller/draft and reconciles reserved then ready after restart without another apply',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),nativeCaller='9a'.repeat(16),digest='43'.repeat(32);let applies=0,phase='reserved',savedRequest:RecordValue|undefined;
+    const lookups:unknown[]=[];
+    const receipt=()=>({schema:1,operation_id:'90'.repeat(16),request:savedRequest,request_digest:digest,index_id:'idx_'+'31'.repeat(16),source_ids:['src_'+'41'.repeat(16)],stage:phase,catalog_revision:phase==='ready'?3:2,source_revision:phase==='ready'?2:1,
+        preparation:phase==='reserved'?null:{digest:'51'.repeat(32),storage_identity:'52'.repeat(32),source_configuration_digest:'53'.repeat(32),review:{expected_catalog_revision:2,expected_source_revision:1}},
+        completion:phase==='ready'?{prepared_digest:'51'.repeat(32),expected_catalog_revision:2,expected_source_revision:1}:null,future_setup_receipt:'retained'});
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_index_setup_draft'){
+            const selection=record(record(method).catalog_index_setup_draft).selection,input=record(selection);
+            const request={caller:nativeCaller,key:input.key,expected_catalog_revision:input.expected_catalog_revision,name:input.name,registration:{binding:project,root:'/native/source',data_root:'/native/storage',collection:input.collection},sources:[{canonical_path:'/native/source',aliases:[],owner:true}],setup_watch:input.setup_watch};
+            return {status:'catalog_index_setup_draft',draft:{schema:1,request,review_digest:digest,storage_action:'create_missing_leaf',future_native_draft:'retained'},request_digest:digest,future_setup_response:'retained'};
+        }
+        if(name==='catalog_index_setup_apply'){
+            applies++;savedRequest=record(record(record(method).catalog_index_setup_apply).draft).request as RecordValue;
+            return {status:'catalog_outcome_unknown',code:'catalog_index_setup_outcome_unknown',caller:nativeCaller,key:savedRequest.key,request_digest:digest,observation:{kind:'index_setup',receipt:receipt()},future_unknown:'retained'};
+        }
+        if(name==='catalog_index_setup_receipt'){lookups.push(method);return {status:'catalog_index_setup_receipt',receipt:phase==='missing'?null:receipt(),future_receipt_response:'retained'};}
+        return base.transport.request(method);
+    }});
+    const selection={name:'Explicit setup',primary_root:'/chosen/source',data_root:'/chosen/storage',collection:'fixture',additional_roots:[],setup_watch:false};let restarted:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const changed=await f.controller.catalogIndexSetupDraft(selection,1);record(changed.draft.request).name='Changed';
+        await assert.rejects(f.controller.catalogIndexSetupApply(changed,()=>true),/stale_or_changed/);assert.equal(applies,0);
+        const beforeDispatch=await f.controller.catalogIndexSetupDraft(selection,1),originalUpdate=f.host.storage.update;let valid=true;
+        f.host.storage.update=async(key,value)=>{await originalUpdate(key,value);if(value!==undefined&&key.startsWith('airk.service.intent.'))valid=false;};
+        await assert.rejects(f.controller.catalogIndexSetupApply(beforeDispatch,()=>valid),/stale_setup_review/);assert.equal(applies,0);assert.deepEqual(f.controller.catalogPending(),[],'a proven local predispatch cancellation does not strand an unknown native request');f.host.storage.update=originalUpdate;
+        const reviewed=await f.controller.catalogIndexSetupDraft(selection,1);assert.equal(record(reviewed.draft.request).caller,nativeCaller);assert.equal(applies,0);
+        await assert.rejects(f.controller.catalogIndexSetupApply(reviewed,()=>true),/outcome_unknown/);assert.equal(applies,1);assert.equal(f.controller.catalogPending().length,1);assert.equal(record(f.controller.catalogPendingDetails()[0].native_observation).future_unknown,'retained');
+        f.controller.dispose();restarted=new ServiceConsoleController(f.host);await restarted.refresh();
+        await restarted.catalogReconcile();assert.equal(restarted.catalogPending().length,1);
+        phase='missing';await restarted.catalogReconcile();assert.equal(restarted.catalogPending().length,1);
+        phase='ready';const results=await restarted.catalogReconcile();assert.equal(record(results[0].receipt).future_setup_receipt,'retained');assert.deepEqual(restarted.catalogPending(),[]);assert.equal(applies,1);
+        for(const lookup of lookups)assert.deepEqual(lookup,{catalog_index_setup_receipt:{caller:nativeCaller,key:savedRequest!.key}});
+    }finally{f.controller.dispose();restarted?.dispose();}
+});
 test('automatic polls reuse only recent successful optional observations with their original dates',async context=>{
     context.mock.timers.enable({apis:['Date']});
     const f=fixture(),base=f.host.runtime.client({} as any),calls:string[]=[];
@@ -166,6 +401,209 @@ test('observation polling refreshes repair rows through queued running and finis
         assert.equal(f.sent.some(value=>typeof value==='object'&&value!==null&&('enqueue' in value||'plan_execute' in value)),false);
     }finally{f.controller.dispose();}
 });
+test('native host context adapter retains complete replies on the persistent control client and fences host/namespace/revision',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),key='33'.repeat(32);let host='22'.repeat(32),observedNamespace=namespace,revision=3,connections=0;
+    const calls:unknown[]=[];
+    f.host.runtime.client=()=>{connections++;return new ServiceClient({dispose(){},async request(method){
+        if(typeof method==='object'&&method!==null&&'catalog_host_context' in method){calls.push(method);return {status:'catalog_host_context',descriptor:{schema:1,namespace:observedNamespace,host,key,catalog_revision:revision,context:null,future_native_field:{preserved:true}},extra_response_field:'complete'};}
+        return base.transport.request(method);
+    }});};
+    try{
+        await f.controller.refresh();const before=connections;
+        const full=await f.controller.catalogHostContext(key,3);
+        assert.equal((full.descriptor as RecordValue).future_native_field!==undefined,true);assert.equal(full.extra_response_field,'complete');assert.equal(connections,before);
+        assert.deepEqual(calls,[{catalog_host_context:{key,expected_catalog_revision:3}}]);
+        host='44'.repeat(32);await assert.rejects(f.controller.catalogHostContext(key,3),/stale_native_host_context/);host='22'.repeat(32);
+        revision=4;await assert.rejects(f.controller.catalogHostContext(key,3),/crossed_native_host_context/);revision=3;
+        observedNamespace='99'.repeat(16);await assert.rejects(f.controller.catalogHostContext(key,3),/namespace_changed/);observedNamespace=namespace;
+        await assert.rejects(f.controller.catalogRead({catalog_host_context:{key,host:'claimed-wire-host'}}),/invalid_catalog_host_context_request/);
+    }finally{f.controller.dispose();}
+});
+
+test('native host context replies cannot survive trust revocation or service identity replacement',async()=>{
+    for(const cancel of ['trust','replacement'] as const){
+        const f=fixture(),base=f.host.runtime.client({} as any),key='33'.repeat(32);let currentInstance=instance,release!:(value:RecordValue)=>void;
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            if(method==='health')return {status:'health',observation:{instance:currentInstance,version:'1.4.0'}};
+            if(typeof method==='object'&&method!==null&&'catalog_host_context' in method)return new Promise<RecordValue>(resolve=>{release=resolve;});
+            return base.transport.request(method);
+        }});
+        try{
+            await f.controller.refresh();const pending=f.controller.catalogHostContext(key,3);
+            if(cancel==='trust')f.setTrusted(false);else{currentInstance='88'.repeat(16);await f.controller.refresh();}
+            release({status:'catalog_host_context',descriptor:{schema:1,namespace,host:'22'.repeat(32),key,catalog_revision:3,context:null}});
+            await assert.rejects(pending,cancel==='trust'?/no_longer_authorized/:/stale_catalog_client/);
+        }finally{f.controller.dispose();}
+    }
+});
+
+test('catalog context lookup accepts its canonical catalog_detail response without another connection',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),host='22'.repeat(32),key='33'.repeat(32),calls:unknown[]=[];
+    const response={status:'catalog_detail',detail:{namespace,revision:1,item:null,native_field:{preserved:true}}};
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        if(typeof method==='object'&&method!==null&&'catalog_context' in method){calls.push(method);return response;}
+        return base.transport.request(method);
+    }});
+    try{await f.controller.refresh();assert.deepEqual(await f.controller.catalogRead({catalog_context:{host,key,expected_catalog_revision:null}}),response);assert.deepEqual(calls,[{catalog_context:{host,key,expected_catalog_revision:null}}]);}
+    finally{f.controller.dispose();}
+});
+
+test('native grant drafts are immutable and restart receipts retain their original native caller instead of frontend identity',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),contextKey='33'.repeat(32),host='22'.repeat(32),projectId='prj_'+'21'.repeat(16),indexId='idx_'+'31'.repeat(16),sourceId='src_'+'41'.repeat(16),previewDigest='43'.repeat(32),requestDigest='44'.repeat(32);
+    let client:ServiceClient|undefined,nativeCaller='9a'.repeat(16),applies=0,crossReceipt=true,appliedRequest:RecordValue|undefined;const lookups:unknown[]=[];
+    f.host.runtime.client=()=>{client=new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_host_context')return {status:'catalog_host_context',descriptor:{schema:1,namespace,host,key:contextKey,catalog_revision:1,context:null}};
+        if(name==='catalog_grant_draft'){
+            const input=(method as {catalog_grant_draft:{context_key:string;selection:RecordValue}}).catalog_grant_draft;assert.equal(input.context_key,contextKey);assert.deepEqual(Object.keys(input).sort(),['context_key','selection']);
+            const operation={operation:'create_grant',grant:{id:'grt_'+'11'.repeat(16),host,revision:1,revoked:false,memberships:[{membership:{project_id:projectId,index_id:indexId,revision:1,scope:[{source_root_id:sourceId,kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]}};
+            const request={caller:nativeCaller,key:input.selection.key,expected_catalog_revision:1,operation};
+            return {status:'catalog_grant_draft',draft:{request,preview:{request_digest:requestDigest,catalog_revision:1,next_revision:2,operation,before:[],after:[],authority_fence_required:false,file_data_changes:false,extra_native_field:'retained'},preview_digest:previewDigest},future_response_field:'retained'};
+        }
+        if(name==='catalog_apply'){applies++;appliedRequest=(method as {catalog_apply:{request:RecordValue}}).catalog_apply.request;return {status:'catalog_outcome_unknown',code:'catalog_apply_outcome_unknown',caller:appliedRequest.caller,key:appliedRequest.key,request_digest:requestDigest,future_unknown_field:'retained'};}
+        if(name==='catalog_receipt'){
+            lookups.push(method);return {status:'catalog_receipt',receipt:{schema:1,operation_id:'90'.repeat(16),caller:crossReceipt?'8a'.repeat(16):appliedRequest!.caller,key:appliedRequest!.key,request_digest:requestDigest,catalog_revision:2,authority_fence_required:false,future_receipt_field:'retained'}};
+        }
+        return base.transport.request(method);
+    }});return client;};
+    let restarted:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();await f.controller.catalogHostContext(contextKey,1);
+        const frontend=await client!.prepareCatalog({operation:'rename_project',id:projectId,expected_definition_revision:1,name:'Metadata'},1);
+        const chosen={project_ids:[projectId],index_ids:[indexId]};const initial=await f.controller.catalogGrantDraft(contextKey,chosen,1);
+        assert.equal(initial.request.caller,nativeCaller);assert.notEqual(frontend.caller,nativeCaller);assert.equal(initial.response.future_response_field,'retained');assert.equal(applies,0);
+        nativeCaller='8a'.repeat(16);await assert.rejects(f.controller.catalogGrantDraft(contextKey,chosen,1),/crossed_native_grant_caller/);nativeCaller='9a'.repeat(16);
+        for(const changed of ['request','requestDigest','previewDigest','preview','contextKey'] as const){
+            const reviewed=await f.controller.catalogGrantDraft(contextKey,chosen,1);
+            if(changed==='request')(reviewed.request.operation.grant as RecordValue).host='55'.repeat(32);
+            else if(changed==='preview')(record(record(reviewed.response.draft).preview)).extra_native_field='changed';
+            else reviewed[changed]='99'.repeat(32);
+            await assert.rejects(f.controller.catalogApply(reviewed,()=>true),/stale_or_changed_native_grant_review/);
+        }
+        assert.equal(applies,0);assert.deepEqual(f.controller.catalogPending(),[]);
+        const reviewed=await f.controller.catalogGrantDraft(contextKey,chosen,1);await assert.rejects(f.controller.catalogApply(reviewed,()=>true),/outcome_unknown/);
+        assert.equal(f.controller.catalogPending().length,1);assert.equal(applies,1);assert.equal(record(f.controller.catalogPendingDetails()[0].native_observation).future_unknown_field,'retained');f.controller.dispose();
+        restarted=new ServiceConsoleController(f.host);await restarted.refresh();
+        const newFrontend=await client!.prepareCatalog({operation:'rename_project',id:projectId,expected_definition_revision:1,name:'Metadata'},1);assert.notEqual(newFrontend.caller,nativeCaller);
+        await assert.rejects(restarted.catalogReconcile(),/crossed_catalog_receipt/);assert.equal(restarted.catalogPending().length,1);
+        crossReceipt=false;const settled=await restarted.catalogReconcile();assert.equal(record(settled[0].receipt).future_receipt_field,'retained');assert.deepEqual(restarted.catalogPending(),[]);
+        for(const lookup of lookups)assert.deepEqual(lookup,{catalog_receipt:{caller:'9a'.repeat(16),key:appliedRequest!.key}});
+        assert.equal(applies,1,'restoring a native caller never replays its apply');
+    }finally{f.controller.dispose();restarted?.dispose();}
+});
+
+test('pending native fences survive restart and cannot settle with crossed request or delivery targets',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),previewDigest='43'.repeat(32),requestDigest='44'.repeat(32),preparedDigest='45'.repeat(32);
+    const operation={operation:'remove_membership',project_id:'prj_'+'21'.repeat(16),index_id:'idx_'+'31'.repeat(16),expected_scope_revision:1,expected_membership_revision:1};
+    const target={worker:{service:instance,worker:'51'.repeat(16),project,fencing_generation:2},scope:{schema:1,lease_generation:3,index_id:operation.index_id,grant_id:'grt_'+'11'.repeat(16),grant_revision:1,fingerprint:'52'.repeat(32)},future_target_field:'retained'};
+    let request:RecordValue|undefined,phase='pending',applies=0;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:previewDigest,preview:{request_digest:requestDigest,catalog_revision:1,next_revision:2,operation,before:[],after:[],authority_fence_required:true,file_data_changes:false}};
+        if(name==='catalog_apply'){applies++;request=(method as {catalog_apply:{request:RecordValue}}).catalog_apply.request;return {status:'failure',code:'invalid_registry_request'};}
+        if(name==='catalog_receipt'){
+            const metadata={schema:1,operation_id:'90'.repeat(16),caller:request!.caller,key:request!.key,request_digest:requestDigest,catalog_revision:2,authority_fence_required:true};
+            if(phase==='unprepared')return {status:'catalog_receipt_unprepared',request,request_digest:requestDigest,catalog_clock:{namespace,revision:2}};
+            if(phase==='pending')return {status:'catalog_receipt',receipt:null,fence:{state:'pending',value:{schema:1,operation_id:metadata.operation_id,request,preview_digest:previewDigest,prepared_digest:preparedDigest,plan:{service:instance,gate_generation:7,targets:[target]},stage:'prepared',confirmations:[],future_pending_field:'retained'}}};
+            const full={request:phase==='request'?{...request,caller:'91'.repeat(16)}:request,metadata,preview_digest:previewDigest,prepared_digest:preparedDigest,proof:{plan_digest:'53'.repeat(32),service:instance,gate_generation:7,confirmations:[{target:phase==='target'?{...target,scope:{...target.scope,fingerprint:'99'.repeat(32)}}:target,method:'native_scope_ack'}],future_proof_field:'retained'},future_fenced_field:'retained'};
+            return {status:'catalog_receipt',receipt:metadata,fence:{state:'applied',value:full},future_response_field:'retained'};
+        }
+        return base.transport.request(method);
+    }});
+    let restarted:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const reviewed=await f.controller.catalogPrepare(operation,1);await assert.rejects(f.controller.catalogApply(reviewed,()=>true),(error:unknown)=>error instanceof ServiceError&&error.outcomeUnknown&&error.code==='invalid_registry_request');
+        const pending=await f.controller.catalogReconcile();assert.equal(pending[0].receipt,null);assert.equal(f.controller.catalogPending().length,1);
+        assert.equal(record(record(f.controller.catalogPendingDetails()[0].native_fence_observation).fence).state,'pending');
+        f.controller.dispose();restarted=new ServiceConsoleController(f.host);await restarted.refresh();
+        phase='unprepared';await assert.rejects(restarted.catalogReconcile(),/catalog_unprepared_conflicts_with_saved_proof/);assert.equal(restarted.catalogPending().length,1);
+        for(const crossed of ['request','target']){phase=crossed;await assert.rejects(restarted.catalogReconcile(),/crossed_catalog_fenced_receipt|crossed_catalog_fence_plan/);assert.equal(restarted.catalogPending().length,1);}
+        phase='complete';const settled=await restarted.catalogReconcile();assert.equal(settled[0].future_response_field,'retained');
+        const proof=record(record(record(settled[0].fence).value).proof);assert.equal(proof.future_proof_field,'retained');assert.deepEqual(restarted.catalogPending(),[]);assert.equal(applies,1);
+    }finally{f.controller.dispose();restarted?.dispose();}
+});
+
+test('catalog UI uses the established native client and persists exact reviewed apply before dispatch',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),id='prj_'+'21'.repeat(16),digest='43'.repeat(32),calls:string[]=[];
+    const operation={operation:'rename_project',id,expected_definition_revision:1,name:'Renamed'};
+    let applyCount=0;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];calls.push(name);
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,next_revision:2,operation,before:[],after:[],authority_fence_required:false,file_data_changes:false,extra_native_field:'retained'}};
+        if(name==='catalog_apply'){
+            applyCount++;const saved=[...f.values.values()].find(value=>value&&typeof value==='object'&&'intent' in value) as {intent:unknown};
+            assert.deepEqual(saved.intent,{...(method as RecordValue),request_digest:digest},'exact request and native digests are durable before transport dispatch');
+            const request=(method as {catalog_apply:{request:{caller:string;key:unknown}}}).catalog_apply.request;
+            return {status:'catalog_applied',receipt:{schema:1,operation_id:instance,caller:request.caller,key:request.key,request_digest:digest,catalog_revision:2,authority_fence_required:false,additional_native_field:'kept'}};
+        }
+        return base.transport.request(method);
+    }});
+    try{
+        await assert.rejects(f.controller.catalogPrepare(operation,1),/connection_unavailable/);
+        await f.controller.refresh();const connectionCalls=calls.filter(name=>name==='health').length;
+        const preview=await f.controller.catalogPrepare(operation,1);
+        assert.equal((preview.response.preview as RecordValue).extra_native_field,'retained');
+        const result=await f.controller.catalogApply(preview,()=>true);
+        assert.equal((result.receipt as RecordValue).additional_native_field,'kept');assert.equal(applyCount,1);
+        assert.equal(calls.filter(name=>name==='health').length,connectionCalls,'catalog actions reuse the control connection without extra status probes');
+        assert.deepEqual(f.controller.catalogPending(),[]);
+    }finally{f.controller.dispose();}
+});
+
+test('catalog uncertain outcomes reconcile only their native caller/key without apply replay',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),id='prj_'+'21'.repeat(16),digest='43'.repeat(32),operation={operation:'rename_project',id,expected_definition_revision:1,name:'Renamed'};
+    let applies=0,lookup:unknown,appliedRequest:{caller:string;key:unknown}|undefined;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,operation}};
+        if(name==='catalog_apply'){applies++;appliedRequest=(method as {catalog_apply:{request:{caller:string;key:unknown}}}).catalog_apply.request;throw new ServiceError('console_transport_closed',true);}
+        if(name==='catalog_receipt'){lookup=method;return {status:'catalog_receipt',receipt:null};}
+        return base.transport.request(method);
+    }});
+    try{
+        await f.controller.refresh();const preview=await f.controller.catalogPrepare(operation,1);
+        await assert.rejects(f.controller.catalogApply(preview,()=>true),/transport_closed/);assert.equal(f.controller.catalogPending().length,1);
+        await assert.rejects(f.controller.catalogApply(preview,()=>true),/requires_receipt_reconciliation/);
+        const outcomes=await f.controller.catalogReconcile();assert.deepEqual(outcomes,[{status:'catalog_receipt',receipt:null}]);
+        assert.deepEqual(lookup,{catalog_receipt:{caller:appliedRequest!.caller,key:appliedRequest!.key}});
+        assert.equal(applies,1);assert.equal(f.controller.catalogPending().length,1);
+        f.setTrusted(false);await assert.rejects(f.controller.catalogRead({catalog_detail:{}}),/no_longer_authorized/);
+    }finally{f.controller.dispose();}
+});
+
+test('catalog restart reconciliation validates the durably reviewed native request digest',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),id='prj_'+'21'.repeat(16),digest='43'.repeat(32),operation={operation:'rename_project',id,expected_definition_revision:1,name:'Renamed'};
+    let requestValue:RecordValue|undefined,matchDigest=false,applies=0;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,operation}};
+        if(name==='catalog_apply'){applies++;requestValue=(method as {catalog_apply:{request:RecordValue}}).catalog_apply.request;throw new ServiceError('console_transport_closed',true);}
+        if(name==='catalog_receipt')return {status:'catalog_receipt',receipt:{schema:1,operation_id:instance,caller:requestValue!.caller,key:requestValue!.key,request_digest:matchDigest?digest:'99'.repeat(32),catalog_revision:2,authority_fence_required:false,extra_native_field:'preserved'}};
+        return base.transport.request(method);
+    }});
+    let restarted:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const preview=await f.controller.catalogPrepare(operation,1);
+        await assert.rejects(f.controller.catalogApply(preview,()=>true),/transport_closed/);
+        f.controller.dispose();restarted=new ServiceConsoleController(f.host);await restarted.refresh();
+        await assert.rejects(restarted.catalogReconcile(),/crossed_catalog_receipt/);assert.equal(restarted.catalogPending().length,1);
+        matchDigest=true;const receipts=await restarted.catalogReconcile();assert.equal((receipts[0].receipt as RecordValue).extra_native_field,'preserved');
+        assert.deepEqual(restarted.catalogPending(),[]);assert.equal(applies,1,'restarting and checking receipts never replays apply');
+    }finally{f.controller.dispose();restarted?.dispose();}
+});
+
+test('catalog known authority-fence refusal remains truthful and does not strand a no-write intent',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),id='prj_'+'21'.repeat(16),digest='43'.repeat(32),operation={operation:'delete_project',id,expected_definition_revision:1,expected_scope_revision:1,expected_defaults_revision:1};
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(method as object)[0];
+        if(name==='catalog_preview')return {status:'catalog_preview',preview_digest:digest,preview:{request_digest:digest,catalog_revision:1,operation,authority_fence_required:true}};
+        if(name==='catalog_apply')return {status:'failure',code:'catalog_authority_fence_unavailable'};
+        return base.transport.request(method);
+    }});
+    try{await f.controller.refresh();const preview=await f.controller.catalogPrepare(operation,1);await assert.rejects(f.controller.catalogApply(preview,()=>true),/catalog_authority_fence_unavailable/);assert.deepEqual(f.controller.catalogPending(),[]);}
+    finally{f.controller.dispose();}
+});
+
 function fixture(){
     let trusted=true,fail=false,lastKind='inspect';const sent:unknown[]=[],values=new Map<string,unknown>(),copied:string[]=[];
     const row={project:{registration:{binding:project,root:'/sensitive/<source>',data_root:'/private/data',collection:'<script>name</script>'},paused:false,fencing_generation:1},progress:null,inspection:null};

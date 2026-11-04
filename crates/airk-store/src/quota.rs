@@ -70,6 +70,8 @@ fn inventory_limit_preserves_count_and_fixed_diagnostic_code() -> Result<()> {
 pub(crate) const PREPARED_PUBLICATION_MAX: u64 = 4096;
 const PREPARED_PUBLICATION: &str = "prepared-publication.json";
 mod current;
+#[cfg(any(unix, windows))]
+pub(crate) mod setup;
 pub use current::{CurrentGrant, CurrentGrantScope};
 mod admission;
 pub use admission::{QuotaContention, with_lock_admission};
@@ -341,8 +343,202 @@ fn json_read<T: serde::de::DeserializeOwned>(path: &Path, maximum: u64) -> Resul
     );
     Ok(serde_json::from_slice(&bytes)?)
 }
+
+pub(crate) fn initial_service_claim_entry(name: &std::ffi::OsStr) -> bool {
+    name == Namespace::Service.control() || name == Namespace::Service.lifecycle()
+}
+
+/// Read-only validation of the small quota prefix produced by an initial data
+/// ownership claim. It neither opens the ledger for recovery nor creates locks.
+/// A matching saved setup reservation is still required by the native caller.
+pub(crate) fn validate_existing_service_claim(root: &Path) -> Result<()> {
+    ensure_current_root(root)?;
+    ensure!(root.canonicalize()? == root, "setup quota root redirected");
+    let plain_file = |path: &Path| -> Result<std::fs::Metadata> {
+        let metadata = fs::symlink_metadata(path)?;
+        crate::managed_collection::reject_file_aliases(path, &metadata)?;
+        Ok(metadata)
+    };
+    // Quota controls are not ManagedPath collections. Validate their actual
+    // bounded ancestry without asking the collection-only namespace parser.
+    let plain_directory = |path: &Path| -> Result<()> {
+        let metadata = fs::symlink_metadata(path)?;
+        ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "redirected setup quota directory"
+        );
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt;
+            ensure!(
+                metadata.file_attributes() & 0x400 == 0,
+                "redirected setup quota directory"
+            );
+        }
+        ensure!(
+            path.canonicalize()? == path,
+            "redirected setup quota ancestry"
+        );
+        Ok(())
+    };
+    let lifecycle = root.join(Namespace::Service.lifecycle());
+    match fs::symlink_metadata(&lifecycle) {
+        Ok(_) => ensure!(
+            plain_file(&lifecycle)?.len() == 0,
+            "unknown setup lifecycle state"
+        ),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+        Err(error) => return Err(error.into()),
+    }
+    let control = root.join(Namespace::Service.control());
+    match fs::symlink_metadata(&control) {
+        Ok(_) => (),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
+    plain_directory(&control)?;
+    for (number, entry) in fs::read_dir(&control)?.enumerate() {
+        ensure!(number < 2, "unknown initial setup quota metadata");
+        let entry = entry?;
+        match entry.file_name().to_str() {
+            Some("ledger.lock") => {
+                ensure!(
+                    plain_file(&entry.path())?.len() == 0,
+                    "unknown setup ledger lock"
+                );
+            }
+            Some("reservations") => {
+                plain_directory(&entry.path())?;
+                for (number, record) in fs::read_dir(entry.path())?.enumerate() {
+                    ensure!(number < 2, "initial setup quota record capacity exceeded");
+                    let record = record?;
+                    let path = record.path();
+                    let name = record.file_name();
+                    let name = name.to_str().context("invalid setup quota record name")?;
+                    ensure!(
+                        name.starts_with("r-") && name.len() <= 128,
+                        "unknown setup quota record"
+                    );
+                    let metadata = plain_file(&path)?;
+                    if path.extension().is_some_and(|value| value == "lease") {
+                        ensure!(metadata.len() == 0, "unknown setup quota lease");
+                    } else {
+                        let record: Record = json_read(&path, RECORD_MAX)?;
+                        ensure!(
+                            record.collection.is_empty()
+                                && record.bytes > 0
+                                && record.bytes <= 16384,
+                            "setup quota record is not an initial root claim"
+                        );
+                    }
+                }
+            }
+            _ => anyhow::bail!("unknown initial setup quota metadata"),
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn initial_service_claim_inspection_is_read_only_and_rejects_non_root_records() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().canonicalize()?;
+    validate_existing_service_claim(&root)?;
+    assert!(fs::read_dir(&root)?.next().is_none());
+    let quota = Quota::open_service(&root)?;
+    let claim = quota.reserve_root(128)?;
+    claim.charge(128)?;
+    validate_existing_service_claim(&root)?;
+    let policy = quota.control_path().join("policy.json");
+    fs::write(&policy, serde_json::to_vec(&QuotaPolicy::default())?)?;
+    assert!(validate_existing_service_claim(&root).is_err());
+    assert!(policy.exists());
+    fs::remove_file(&policy)?;
+    drop(claim);
+    let other = quota.reserve("fixture", 128)?;
+    assert!(validate_existing_service_claim(&root).is_err());
+    drop(other);
+    validate_existing_service_claim(&root)?;
+    Ok(())
+}
+#[cfg(unix)]
+#[test]
+fn initial_service_claim_rejects_linked_quota_directories_without_effects() -> Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let root = temporary.path().canonicalize()?;
+    let foreign = tempfile::tempdir()?;
+    let foreign_path = foreign.path().canonicalize()?;
+    fs::write(foreign_path.join("source.txt"), b"original source")?;
+    let control = root.join(Namespace::Service.control());
+    std::os::unix::fs::symlink(&foreign_path, &control)?;
+    assert!(validate_existing_service_claim(&root).is_err());
+    assert_eq!(
+        fs::read(foreign_path.join("source.txt"))?,
+        b"original source"
+    );
+    assert!(fs::symlink_metadata(&control)?.file_type().is_symlink());
+    fs::remove_file(&control)?;
+    fs::create_dir(&control)?;
+    let reservations = control.join("reservations");
+    std::os::unix::fs::symlink(&foreign_path, &reservations)?;
+    assert!(validate_existing_service_claim(&root).is_err());
+    assert_eq!(
+        fs::read(foreign_path.join("source.txt"))?,
+        b"original source"
+    );
+    assert!(
+        fs::symlink_metadata(&reservations)?
+            .file_type()
+            .is_symlink()
+    );
+    assert_eq!(fs::read_dir(&foreign_path)?.count(), 1);
+    assert_eq!(fs::read_dir(&control)?.count(), 1);
+    Ok(())
+}
+
 fn checked_add(a: u64, b: u64) -> Result<u64> {
     a.checked_add(b).context("quota byte count overflow")
+}
+
+// Pure admission shared by ordinary writers and descriptor-anchored setup.
+fn admit_logical_bytes(
+    policy: &QuotaPolicy,
+    root_usage: (u64, u64),
+    collection_allocated: u64,
+    collection: &str,
+    requested: u64,
+    available: bool,
+) -> Result<u64> {
+    let root_available = policy
+        .root_bytes
+        .saturating_sub(checked_add(root_usage.0, root_usage.1)?);
+    let collection_available = policy
+        .limit(collection)
+        .saturating_sub(collection_allocated);
+    let bytes = if available {
+        requested.min(root_available).min(collection_available)
+    } else {
+        requested
+    };
+    if (bytes == 0 && root_available == 0) || bytes > root_available {
+        return Err(QuotaPressure {
+            scope: PressureScope::Root,
+            required_bytes: requested,
+            available_bytes: root_available,
+            protected_bytes: None,
+        }
+        .into());
+    }
+    if bytes == 0 || (!collection.is_empty() && bytes > collection_available) {
+        return Err(QuotaPressure {
+            scope: PressureScope::Collection,
+            required_bytes: requested,
+            available_bytes: collection_available,
+            protected_bytes: None,
+        }
+        .into());
+    }
+    Ok(bytes)
 }
 fn within_deadline(deadline: Option<Instant>) -> Result<()> {
     ensure!(
@@ -702,40 +898,14 @@ impl Quota {
         let allocated = existing.map_or(Ok(0), |item| {
             checked_add(item.used_bytes, item.reserved_bytes)
         })?;
-        let requested_bytes = bytes;
-        let bytes = if available {
-            bytes
-                .min(
-                    policy
-                        .root_bytes
-                        .saturating_sub(checked_add(report.used_bytes, report.reserved_bytes)?),
-                )
-                .min(policy.limit(collection).saturating_sub(allocated))
-        } else {
-            bytes
-        };
-        let root_available = policy
-            .root_bytes
-            .saturating_sub(checked_add(report.used_bytes, report.reserved_bytes)?);
-        let collection_available = policy.limit(collection).saturating_sub(allocated);
-        if (bytes == 0 && root_available == 0) || bytes > root_available {
-            return Err(QuotaPressure {
-                scope: PressureScope::Root,
-                required_bytes: requested_bytes,
-                available_bytes: root_available,
-                protected_bytes: None,
-            }
-            .into());
-        }
-        if bytes == 0 || (!collection.is_empty() && bytes > collection_available) {
-            return Err(QuotaPressure {
-                scope: PressureScope::Collection,
-                required_bytes: requested_bytes,
-                available_bytes: collection_available,
-                protected_bytes: None,
-            }
-            .into());
-        }
+        let bytes = admit_logical_bytes(
+            &policy,
+            (report.used_bytes, report.reserved_bytes),
+            allocated,
+            collection,
+            bytes,
+            available,
+        )?;
         within_deadline(deadline)?;
         if !collection.is_empty() {
             let target = self

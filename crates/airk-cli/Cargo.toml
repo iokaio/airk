@@ -25,6 +25,16 @@ name = "airk-embed"
 path = "src/embed_main.rs"
 required-features = ["embedding-worker"]
 
+# An explicit instrumented qualification image, never a default test run,
+# cargo-install executable, or release runtime payload.
+[[test]]
+name = "guarded_provider_fixture"
+path = "tests/fixtures/guarded_provider_fixture.rs"
+harness = false
+test = false
+bench = false
+required-features = ["embedding-worker"]
+
 [dependencies]
 airk-core.workspace = true
 airk-process.workspace = true
@@ -48,7 +58,7 @@ tokio = { workspace = true, features = ["process"] }
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_SystemServices", "Win32_System_SystemInformation", "Win32_UI_Shell", "Win32_System_Com"] }
+windows-sys = { workspace = true, features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_System_IO", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_Debug", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_RemoteDesktop", "Win32_System_Pipes", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_SystemServices", "Win32_System_SystemInformation", "Win32_UI_Shell", "Win32_System_Com"] }
 
 [build-dependencies]
 cc = "=1.2.67"

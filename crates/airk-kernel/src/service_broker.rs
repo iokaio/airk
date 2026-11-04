@@ -63,12 +63,22 @@ impl BrokerLimits {
 struct Pending {
     grant: ConnectionGrant,
     expires: Instant,
+    purpose: SessionPurpose,
 }
 
 struct Connection {
     caller: Incarnation,
     expires: Instant,
     active: usize,
+    purpose: SessionPurpose,
+}
+
+/// Native adapter purpose, retained only in the existing authenticated broker
+/// state. It is deliberately absent from ConnectionGrant and all wire inputs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SessionPurpose {
+    Evidence,
+    NativeAdministrativeRead,
 }
 
 struct Worker {
@@ -324,6 +334,7 @@ impl Broker {
             return Err(Error::Busy);
         }
         let grant = ConnectionGrant {
+            scope: None,
             protocol: PROTOCOL_VERSION,
             identity,
             caller,
@@ -336,8 +347,26 @@ impl Broker {
             Pending {
                 grant: grant.clone(),
                 expires: now.checked_add(ttl).ok_or(Error::InvalidRequest)?,
+                purpose: SessionPurpose::Evidence,
             },
         );
+        Ok(grant)
+    }
+
+    /// Private native-control adapter only. The runtime consumes this grant and
+    /// returns a NativeRead value; it must never export the credential publicly.
+    pub fn issue_native_admin(
+        &mut self,
+        identity: WorkerIdentity,
+        caller: Incarnation,
+        now: Instant,
+        ttl: Duration,
+    ) -> Result<ConnectionGrant> {
+        let grant = self.issue(identity, caller, now, ttl)?;
+        self.pending
+            .get_mut(&grant.token)
+            .ok_or(Error::InvalidGrant)?
+            .purpose = SessionPurpose::NativeAdministrativeRead;
         Ok(grant)
     }
 
@@ -350,6 +379,25 @@ impl Broker {
         now: Instant,
         authorization_lifetime: Duration,
     ) -> Result<Incarnation> {
+        self.redeem_with_purpose(
+            grant,
+            actual_worker,
+            actual_caller,
+            now,
+            authorization_lifetime,
+        )
+        .map(|(session, _)| session)
+    }
+    /// Return only the purpose sealed in the original private issuance, never a
+    /// caller-supplied role flag. Adapters still authorize each permitted operation.
+    pub fn redeem_with_purpose(
+        &mut self,
+        grant: &ConnectionGrant,
+        actual_worker: WorkerIdentity,
+        actual_caller: Incarnation,
+        now: Instant,
+        authorization_lifetime: Duration,
+    ) -> Result<(Incarnation, SessionPurpose)> {
         self.worker(actual_worker, now)?;
         if authorization_lifetime.is_zero() || authorization_lifetime > Duration::from_secs(300) {
             return Err(Error::InvalidRequest);
@@ -366,6 +414,10 @@ impl Broker {
             || pending.grant.caller != actual_caller
             || pending.grant.ttl_ms != grant.ttl_ms
         {
+            return Err(Error::InvalidGrant);
+        }
+        let purpose = pending.purpose;
+        if purpose == SessionPurpose::NativeAdministrativeRead && grant.scope.is_some() {
             return Err(Error::InvalidGrant);
         }
         let worker = self
@@ -391,10 +443,30 @@ impl Broker {
                 caller: actual_caller,
                 expires,
                 active: 0,
+                purpose,
             },
         );
         self.pending.remove(&grant.token);
-        Ok(session)
+        Ok((session, purpose))
+    }
+
+    pub fn session_purpose(
+        &self,
+        identity: WorkerIdentity,
+        session: Incarnation,
+    ) -> Result<SessionPurpose> {
+        let worker = self
+            .workers
+            .get(&identity.project)
+            .ok_or(Error::UnknownWorker)?;
+        if worker.identity != identity {
+            return Err(Error::StaleIdentity);
+        }
+        Ok(worker
+            .connections
+            .get(&session)
+            .ok_or(Error::InvalidGrant)?
+            .purpose)
     }
 
     /// Local worker admission policy: no query text, vectors or evidence cross this interface.
@@ -420,6 +492,9 @@ impl Broker {
             .connections
             .get(&session)
             .ok_or(Error::InvalidGrant)?;
+        if control && connection.purpose == SessionPurpose::NativeAdministrativeRead {
+            return Err(Error::InvalidRequest);
+        }
         if now >= connection.expires {
             return Err(Error::Expired);
         }
@@ -559,6 +634,100 @@ impl Broker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_admin_purpose_is_sealed_in_issuance_and_not_a_wire_role() {
+        let (mut broker, id, now) = setup();
+        let caller = Incarnation::from_bytes([7; 16]);
+        let ordinary = broker
+            .issue(id, caller, now, Duration::from_secs(5))
+            .unwrap();
+        let (session, purpose) = broker
+            .redeem_with_purpose(&ordinary, id, caller, now, Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(purpose, SessionPurpose::Evidence);
+        assert_eq!(
+            broker.session_purpose(id, session).unwrap(),
+            SessionPurpose::Evidence
+        );
+        let admin = broker
+            .issue_native_admin(id, caller, now, Duration::from_secs(5))
+            .unwrap();
+        let wire = serde_json::to_value(&admin).unwrap();
+        assert!(wire.get("purpose").is_none());
+        let (session, purpose) = broker
+            .redeem_with_purpose(&admin, id, caller, now, Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(purpose, SessionPurpose::NativeAdministrativeRead);
+        assert_eq!(broker.session_purpose(id, session).unwrap(), purpose);
+        assert_eq!(
+            broker.redeem_with_purpose(&admin, id, caller, now, Duration::from_secs(30)),
+            Err(Error::InvalidGrant)
+        );
+    }
+
+    #[test]
+    fn administrative_reads_share_all_sixteen_slots_and_cannot_steal_status_or_release_on_disconnect()
+     {
+        let id = identity(1, 1);
+        let now = Instant::now();
+        let caller = Incarnation::from_bytes([7; 16]);
+        let mut broker = Broker::new(id.service, BrokerLimits::service()).unwrap();
+        broker
+            .register(
+                id,
+                QueryAllowance {
+                    concurrent_queries: 17,
+                    response_bytes: 17 * MAX_FRAME_BYTES,
+                },
+                now,
+                Duration::from_secs(60),
+            )
+            .unwrap();
+        let mut running = Vec::new();
+        for _ in 0..16 {
+            let grant = broker
+                .issue_native_admin(id, caller, now, Duration::from_secs(5))
+                .unwrap();
+            let (session, purpose) = broker
+                .redeem_with_purpose(&grant, id, caller, now, Duration::from_secs(30))
+                .unwrap();
+            assert_eq!(purpose, SessionPurpose::NativeAdministrativeRead);
+            let request = broker.begin_query(id, session, 1024, now).unwrap();
+            running.push((session, request));
+        }
+        let grant = broker
+            .issue_native_admin(id, caller, now, Duration::from_secs(5))
+            .unwrap();
+        let (waiting, _) = broker
+            .redeem_with_purpose(&grant, id, caller, now, Duration::from_secs(30))
+            .unwrap();
+        assert_eq!(broker.begin_query(id, waiting, 1024, now), Err(Error::Busy));
+        assert_eq!(
+            broker.begin_query_with_control(id, waiting, 1024, now, true),
+            Err(Error::InvalidRequest)
+        );
+        let evidence = connect(&mut broker, id, now);
+        let status = broker
+            .begin_query_with_control(id, evidence, 1024, now, true)
+            .unwrap();
+        assert_eq!(broker.status(now).active_queries, 17);
+        broker.disconnect(id, running[0].0, now).unwrap();
+        assert_eq!(
+            broker.status(now).active_queries,
+            17,
+            "a dropped parent/peer does not finish native work"
+        );
+        assert_eq!(broker.begin_query(id, waiting, 1024, now), Err(Error::Busy));
+        broker.finish_query(id, running.remove(0).1).unwrap();
+        let accepted = broker.begin_query(id, waiting, 1024, now).unwrap();
+        for (_, request) in running {
+            broker.finish_query(id, request).unwrap();
+        }
+        broker.finish_query(id, status).unwrap();
+        broker.finish_query(id, accepted).unwrap();
+        assert_eq!(broker.status(now).active_queries, 0);
+    }
 
     fn identity(project: u8, generation: u64) -> WorkerIdentity {
         WorkerIdentity {

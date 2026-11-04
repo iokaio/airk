@@ -39,7 +39,14 @@ mod imports;
 
 #[path = "service_catalog_settlement.rs"]
 mod settlement;
-pub use settlement::{ReadinessEvidence, RuntimeRefusal};
+pub use settlement::{
+    NativeReadRefusalEntrypoint, NativeRefusalDiagnostic, NativeRefusalEntrypoints,
+    NativeRefusalProvenance, NativeWriteRefusalEntrypoint, ReadinessEvidence, RuntimeRefusal,
+};
+
+#[path = "service_catalog_compatibility.rs"]
+pub mod compatibility;
+pub use compatibility::activation as authority_v1;
 
 #[path = "service_catalog_exclusion.rs"]
 mod exclusion;
@@ -240,6 +247,10 @@ pub struct UpgradeReceipt {
     pub wal: Option<WalObservation>,
     pub backups: Vec<BackupAttempt>,
     pub readiness: Option<ReadinessEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_v1_host: Option<Sha256Digest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_v1: Option<super::genesis::activation::AuthorityV1ActivationRecord>,
 }
 impl UpgradeReceipt {
     fn validate(&self, root: &Path) -> Result<()> {
@@ -270,6 +281,66 @@ impl UpgradeReceipt {
         );
         if let Some(evidence) = &self.readiness {
             evidence.validate(self)?;
+        }
+        if let Some(record) = &self.authority_v1 {
+            record.validate()?;
+            use super::genesis::activation::AuthorityV1Phase;
+            ensure!(
+                matches!(
+                    (self.stage, record.phase),
+                    (
+                        UpgradeStage::Readiness,
+                        AuthorityV1Phase::Qualified | AuthorityV1Phase::Activating
+                    ) | (UpgradeStage::Settled, AuthorityV1Phase::Settled)
+                ),
+                "authority-1 durable settlement phase changed"
+            );
+            let candidate = &record.readiness.candidate;
+            ensure!(
+                candidate.catalog.namespace == self.plan.namespace
+                    && candidate.catalog.upgrade_id == self.plan.id
+                    && candidate.installer_identity == self.plan.installer_identity,
+                "authority-1 qualification crossed upgrade identity"
+            );
+            let super::genesis::activation::AuthorityV1Basis::LegacyUpgrade {
+                upgrade_id,
+                plan_digest,
+                native_host,
+                ..
+            } = &candidate.basis
+            else {
+                anyhow::bail!("legacy activation cannot use genesis evidence");
+            };
+            ensure!(
+                *upgrade_id == self.plan.id
+                    && *plan_digest == self.plan_digest
+                    && Some(*native_host) == self.authority_v1_host,
+                "authority-1 seal lineage changed"
+            );
+            let old = self
+                .readiness
+                .as_ref()
+                .context("authority-1 upgrade lacks P5 producer evidence")?;
+            let required = old
+                .predecessor_refusals
+                .iter()
+                .map(|r| r.payload_identity)
+                .collect::<BTreeSet<_>>();
+            ensure!(
+                !required.is_empty()
+                    && required
+                        == record
+                            .readiness
+                            .required_predecessors
+                            .iter()
+                            .copied()
+                            .collect()
+                    && candidate.catalog.revision == old.candidate.catalog.revision.next()?
+                    && candidate.catalog.backup_digest == old.candidate.catalog.backup_digest
+                    && candidate.catalog.legacy_schema_digest
+                        == old.candidate.catalog.legacy_schema_digest,
+                "authority-1 proof no longer matches saved P5 qualification"
+            );
         }
         ensure!(
             !matches!(self.stage, UpgradeStage::Readiness | UpgradeStage::Settled)
@@ -462,7 +533,11 @@ fn registry_read(root: &Path) -> Result<Connection> {
         application == super::super::APPLICATION && matches!(version, 11 | 12),
         "unsupported catalog upgrade source format"
     );
-    validate_shape(&connection, version)?;
+    if version == 12 {
+        super::validate_catalog_layout(&connection)?;
+    } else {
+        validate_shape(&connection, 11)?;
+    }
     Ok(connection)
 }
 
@@ -471,6 +546,48 @@ fn registry_read(root: &Path) -> Result<Connection> {
 /// SQLite validates/replays its journal; this adapter never copies pages or
 /// deletes sidecars. Unknown or unfenced input stays on the read-only path.
 fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> {
+    if receipt.stage == UpgradeStage::Readiness && receipt.authority_v1_host.is_some() {
+        let original = receipt
+            .legacy_data_digest
+            .context("authority-1 recovery source digest missing")?;
+        super::genesis::activation::recover_owned_v1(
+            root,
+            receipt.plan.id,
+            receipt.plan.namespace,
+            original,
+            &receipt.backups,
+        )?;
+        let current = registry_read(root)?;
+        if super::state(&current)?.authority_contract == 1 {
+            compatibility::verify_recovered_authority_v1(root, receipt)?;
+        } else {
+            CatalogUpgrade::validate_backfill(root, receipt.plan.namespace, &current, receipt)?;
+        }
+        return Ok(());
+    }
+    recover_owned_registry(
+        root,
+        receipt.plan.id,
+        receipt.plan.namespace,
+        receipt.legacy_data_digest,
+        &receipt.backups,
+        matches!(
+            receipt.stage,
+            UpgradeStage::Migration | UpgradeStage::Restoring
+        ),
+    )
+}
+
+/// Shared only by owned offline adapters after exact intent/fence and every
+/// service/helper/watcher/worker lease have been checked. This is not admission.
+pub(super) fn recover_owned_registry(
+    root: &Path,
+    operation: Incarnation,
+    expected_namespace: Incarnation,
+    expected_rows: Option<Sha256Digest>,
+    backups: &[BackupAttempt],
+    migration_admitted: bool,
+) -> Result<()> {
     let journal = root.join(format!("{DATABASE}-journal"));
     let metadata = match fs::symlink_metadata(&journal) {
         Ok(metadata) if metadata.len() > 0 => metadata,
@@ -479,10 +596,7 @@ fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> 
         Err(error) => return Err(error.into()),
     };
     ensure!(
-        matches!(
-            receipt.stage,
-            UpgradeStage::Migration | UpgradeStage::Restoring
-        ),
+        migration_admitted,
         "rollback journal requires owned migration recovery"
     );
     crate::managed_collection::reject_file_aliases(&journal, &metadata)?;
@@ -491,12 +605,11 @@ fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> 
         !root.join(format!("{DATABASE}-wal")).try_exists()?,
         "conflicting migration journal and WAL"
     );
-    let attempt = receipt
-        .backups
+    let attempt = backups
         .iter()
         .find(|attempt| attempt.complete)
         .context("migration recovery requires a qualified snapshot")?;
-    let snapshot = super::backup::validate(root, receipt.plan.id, attempt)?;
+    let snapshot = super::backup::validate(root, operation, attempt)?;
     let backup = Connection::open_with_flags(snapshot, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let namespace: String = backup.query_row(
         "SELECT incarnation FROM service_meta WHERE id=1",
@@ -504,8 +617,8 @@ fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> 
         |row| row.get(0),
     )?;
     ensure!(
-        namespace == receipt.plan.namespace.to_string()
-            && Some(super::backup::legacy_data_digest(&backup)?) == receipt.legacy_data_digest,
+        namespace == expected_namespace.to_string()
+            && Some(super::backup::legacy_data_digest(&backup)?) == expected_rows,
         "migration recovery snapshot identity changed"
     );
     let mut header = [0; 100];
@@ -529,10 +642,16 @@ fn recover_owned_migration(root: &Path, receipt: &UpgradeReceipt) -> Result<()> 
     validate_shape(&connection, version)?;
     super::backup::integrity(&connection)?;
     ensure!(
-        Some(super::backup::legacy_data_digest(&connection)?) == receipt.legacy_data_digest,
+        Some(super::backup::legacy_data_digest(&connection)?) == expected_rows,
         "migration recovery changed legacy rows; snapshot retained for explicit repair"
     );
     Ok(())
+}
+
+/// Fresh genesis has no registered projects, but still fences orphan worker
+/// lock entries through the same bounded native ownership census as upgrades.
+pub(super) fn genesis_worker_leases(root: &Path) -> Result<Vec<ProjectLease>> {
+    exclusion::worker_leases(root, std::iter::empty())
 }
 
 fn registrations(connection: &Connection) -> Result<Vec<ProjectRegistration>> {
@@ -609,6 +728,10 @@ impl CatalogUpgrade {
         super::validate_existing(connection)?;
         super::backup::integrity(connection)?;
         let state = super::state(connection)?;
+        ensure!(
+            state.authority_contract == 0,
+            "P5 backfill/readiness requires authority contract 0"
+        );
         let backup = receipt
             .backups
             .iter()
@@ -968,6 +1091,11 @@ impl CatalogUpgrade {
         ensure!(
             previous.plan_digest == receipt.plan_digest && previous.plan == receipt.plan,
             "catalog upgrade intent changed"
+        );
+        ensure!(
+            previous.authority_v1_host.is_none()
+                || previous.authority_v1_host == receipt.authority_v1_host,
+            "catalog upgrade native host intent changed"
         );
         airk_core::index_catalog::encoded_size(receipt, MAX_INTENT_BYTES)?;
         persist(&self.root.join(INTENT), &serde_json::to_vec(receipt)?)
@@ -1366,6 +1494,8 @@ impl CatalogUpgrade {
             wal: None,
             backups: vec![],
             readiness: None,
+            authority_v1_host: None,
+            authority_v1: None,
         };
         persist(&self.root.join(INTENT), &serde_json::to_vec(&receipt)?)?;
         self.arm(&receipt)?;

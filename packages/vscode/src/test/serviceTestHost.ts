@@ -48,9 +48,14 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         for(const folder of folders)await workspace.register(binding,folder.uri.fsPath,data,folder.name.replaceAll(' ','-'),async()=>true);
     }
     const state={down:false,stopped:false,ackLost:false,confirm:true,discovered:0,ensured:0,picks:0,installedVersion:options.installedVersion??bundledVersion,
+        hostContextKeys:[] as string[],hostContextReply:undefined as undefined|((key:string)=>unknown|Promise<unknown>),
+        catalogDetailReply:undefined as undefined|((entity:Record<string,unknown>)=>unknown|Promise<unknown>),
+        legacyBindingReply:undefined as undefined|((project:string)=>unknown|Promise<unknown>),legacyBindingProjects:[] as string[],
         pick:undefined as undefined|((items:any[])=>any),selectedFolders:undefined as undefined|any[],noticeAction:undefined as string|undefined};
     const disposable={dispose(){}},event=()=>disposable;
     let foldersChanged:()=>Promise<void>;
+    let trustGranted:()=>void;
+    const commandContexts=new Map<string,unknown>();
     let extensionsChanged:()=>void,windowFocused:(state:{focused:boolean})=>void;
     const views=new Map<string,any>();
     const statusBar={text:'',tooltip:'',command:'',show(){},dispose(){}};
@@ -58,7 +63,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         getWorkspaceFolder:(uri:any)=>folders.find(folder=>uri.fsPath===folder.uri.fsPath||uri.fsPath.startsWith(folder.uri.fsPath+path.sep)),
         getConfiguration:()=>({get:(key:string,fallback?:unknown)=>settings.has(key)?settings.get(key):fallback,inspect:(key:string)=>({globalValue:settings.get(key),workspaceValue:key==='storage.path'?path.join(root,'untrusted-storage'):'/workspace/untrusted'}),
             update:async(key:string,value:unknown)=>{settings.set(key,value);}}),
-        onDidChangeWorkspaceFolders:(callback:()=>Promise<void>)=>{foldersChanged=callback;return disposable;},onDidGrantWorkspaceTrust:event,onDidChangeConfiguration:event,
+        onDidChangeWorkspaceFolders:(callback:()=>Promise<void>)=>{foldersChanged=callback;return disposable;},onDidGrantWorkspaceTrust:(callback:()=>void)=>{trustGranted=callback;return disposable;},onDidChangeConfiguration:event,
         openTextDocument:async(value:any)=>{if(typeof value?.content!=='string')throw new Error('Fixture file editor not configured');openedDocuments.push(value);return value;},
         createFileSystemWatcher:()=>{throw new Error('Editor-owned source watcher is forbidden');}},
     window:{activeTextEditor:{document:{uri:folders[0]?.uri}},createOutputChannel:()=>({appendLine:(text:string)=>calls.push(text),show(){calls.push('output-shown');},dispose(){}}),
@@ -80,7 +85,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         showTextDocument:async()=>{},
     },
     commands:{registerCommand:(name:string,action:(...args:unknown[])=>Promise<unknown>)=>{commands.set(name,action);return disposable;},
-        executeCommand:async(name:string)=>calls.push(name),getCommands:async()=>['workbench.mcp.listServer']},
+        executeCommand:async(name:string,...args:unknown[])=>{calls.push(name);if(name==='setContext')commandContexts.set(String(args[0]),args[1]);},getCommands:async()=>['workbench.mcp.listServer']},
     lm:{registerMcpServerDefinitionProvider:(name:string,provider:unknown)=>{if(name==='airk.collections')events.push(provider);else assistance.set(name,provider);return disposable;}},
     env:{clipboard:{writeText:async(text:string)=>{clipboard.push(text);}}},StatusBarAlignment:{Left:1},ConfigurationTarget:{Global:1},ViewColumn:{Active:1,Beside:2},ProgressLocation:{Notification:15},EndOfLine:{LF:1,CRLF:2},
     EventEmitter:class{listeners:any[]=[];event=(listener:any)=>{this.listeners.push(listener);return disposable;};fire(){for(const listener of this.listeners)listener();}dispose(){}},
@@ -93,6 +98,16 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         if(state.down)throw new ServiceError('service_unavailable');
         if(['enqueue','configure_watch','pause','plan_create','plan_execute'].includes(name))writes.push(structuredClone(method));
         switch(name){
+            case 'catalog_legacy_binding':{
+                const project=String(record(record(method).catalog_legacy_binding).project);state.legacyBindingProjects.push(project);
+                if(state.legacyBindingReply)return await state.legacyBindingReply(project);
+                const registration=registrations.get(project);return {status:'catalog_legacy_binding',observation:{schema:1,namespace:'34'.repeat(16),catalog_revision:null,project,eligibility:registration?{kind:'authority_zero',registration}:{kind:'unavailable'}}};
+            }
+            case 'catalog_detail':if(state.catalogDetailReply)return await state.catalogDetailReply(record(record(method).catalog_detail));throw new ServiceError('fixture_catalog_detail_unavailable');
+            case 'catalog_host_context':{
+                const key=String(record(record(method).catalog_host_context).key);state.hostContextKeys.push(key);
+                return state.hostContextReply?await state.hostContextReply(key):{status:'catalog_host_context',descriptor:{schema:1,namespace:'34'.repeat(16),host:'56'.repeat(32),key,catalog_revision:1,context:null}};
+            }
             case 'health':return {status:'health',observation:{instance:'12'.repeat(16),version:binding.version,runtime_sha256:binding.runtimeSha256,policy:{accepting:true}}};
             case 'request_epoch':return {status:'request_epoch',namespace:'34'.repeat(16),epoch:1};
             case 'resources':return {status:'resources',observation:{configuration:{preset:'balanced'}}};
@@ -150,7 +165,7 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
     test.mock.method(native,'prepareHelper',async()=>{throw new Error('Legacy helper preparation is forbidden');});
     test.mock.method(native,'runJson',async()=>{throw new Error('Direct collection command is forbidden');});
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;
-    const modules=['../extension','../serviceExtension','../serviceConsole','../agentSetup','../explorerController','../explorerPanel','../workbenchView'];
+    const modules=['../extension','../serviceExtension','../serviceConsole','../agentSetup','../explorerController','../explorerPanel','../workbenchView','../usagePanel'];
     const clear=()=>{for(const name of modules)delete require.cache[require.resolve(name)];};clear();
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
     let extension:any;
@@ -160,9 +175,10 @@ export async function serviceTestHost(test:TestContext,options:{trusted?:boolean
         globalStorageUri:{fsPath:path.join(root,'editor-storage')},subscriptions:[],environmentVariableCollection:{persistent:false,prepend(){}}};
         const api=await extension.activate(context);
         if(!options.deferStartup)await api.whenReady();
-        return {views,root,folders,binding,registrations,inactiveRegistrations,values,settings,commands,writes,calls,warnings,clipboard,panels,openedDocuments,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
+        return {views,root,folders,binding,registrations,inactiveRegistrations,values,settings,commands,commandContexts,writes,calls,warnings,clipboard,panels,openedDocuments,state,stub,api,context,providers:events,assistance,notices,progressRuns,statusBar,
             extensionsChanged(){extensionsChanged!();},focus(){windowFocused!({focused:true});},
             async refreshFolders(){await foldersChanged!();},
+            grantTrust(){stub.workspace.isTrusted=true;trustGranted!();},
             async close(){extension.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});}};
     }catch(error){extension?.deactivate();loader._load=original;clear();await fs.rm(root,{recursive:true,force:true});throw error;}
 }

@@ -7,6 +7,8 @@ import { UNIFIED_TOOLS } from '../model';
 import { RuntimeHost } from '../serviceBootstrap';
 import * as bootstrap from '../serviceBootstrap';
 import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import { EvidenceClient } from '../explorerEvidence';
 
 test('opening an empty raw log opens an editor and releases Working without waiting for a notification',async context=>{
     const f=await serviceTestHost(context);let dismiss!:()=>void;
@@ -142,6 +144,18 @@ test('successful automatic setup opens Workbench once and a saved marker preserv
     }finally{await f.close();}
 });
 
+test('a saved ready index cannot open Workbench until native sealed legacy eligibility is positive',async context=>{
+    const f=await serviceTestHost(context),controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function');
+    try{
+        f.state.legacyBindingReply=project=>({status:'catalog_legacy_binding',observation:{schema:1,namespace:'34'.repeat(16),catalog_revision:1,project,eligibility:{kind:'unavailable'}}});
+        f.settings.set('cli.autoInstall',true);await f.refreshFolders();
+        assert.ok(controller.specs.length,'the native registration is adopted before compatibility is checked');assert.ok(f.state.legacyBindingProjects.length,'initial opening checks actual native compatibility instead of raw registration count');
+        assert.equal(f.calls.filter(line=>line==='workbench.view.extension.airk-workbench').length,0);assert.equal(f.values.has('airk.workbench.welcome.1'),false);assert.equal(f.writes.length,0);
+        f.state.legacyBindingReply=undefined;await f.refreshFolders();
+        assert.equal(f.calls.filter(line=>line==='workbench.view.extension.airk-workbench').length,1,'native-positive existing legacy compatibility preserves its first opening');assert.equal(f.values.get('airk.workbench.welcome.1'),true);assert.equal(f.writes.length,0);
+    }finally{await f.close();}
+});
+
 test('untrusted setup and pending extension replacement cannot open Workbench',async context=>{
     for(const options of [{automatic:true,trusted:false},{automatic:true,installedVersion:'1.7.1'}]){
         const f=await serviceTestHost(context,options);
@@ -175,16 +189,27 @@ test('Explorer Workbench link follows actual visibility and toggles without touc
 });
 
 
-test('failed project setup leaves first Workbench opening available for a later successful setup',async context=>{
+test('missing index setup stays inert and failed first Workbench opening retries after reviewed Use Grant',async context=>{
     const f=await serviceTestHost(context,{registered:false});
-    const review=RuntimeHost.prototype.reviewProject;
+    const controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function'),namespace='34'.repeat(16),host='56'.repeat(32),indexId='idx_'+'22'.repeat(16),grantId='grt_'+'11'.repeat(16),projectId='prj_'+'33'.repeat(16),sourceId='src_'+'44'.repeat(16);let implicitReviews=0,focusAttempts=0;
+    context.mock.method(EvidenceClient.prototype,'call',async function(this:EvidenceClient,tool:Parameters<EvidenceClient['call']>[0]){assert.equal(tool,'airk_status');assert.equal(this.spec.catalogSession?.grant_id,grantId);throw new Error('Native evidence is unavailable in this startup UI fixture.');});
     try{
-        context.mock.method(RuntimeHost.prototype,'reviewProject',async()=>{throw new Error('fixture source unavailable');});
+        context.mock.method(RuntimeHost.prototype,'reviewProject',async()=>{implicitReviews++;throw new Error('implicit source review is forbidden');});
         f.settings.set('cli.autoInstall',true);await f.refreshFolders();
         assert.equal(f.calls.includes('workbench.view.extension.airk-workbench'),false);
         assert.equal(f.values.has('airk.workbench.welcome.1'),false);
-        context.mock.method(RuntimeHost.prototype,'reviewProject',review);await f.refreshFolders();
+        await controller.registerWorkspace();await f.refreshFolders();const panel=f.panels.find(panel=>panel.viewType==='airk.explorer');assert.ok(panel);await panel.send({v:1,type:'ready',requestId:'setup-retry-ready'});
+        assert.equal(panel.posted.filter((message:any)=>message.type==='navigate').at(-1).route,'#indexing/library');assert.equal(implicitReviews,0);assert.equal(f.registrations.size,0);assert.equal(f.writes.length,0);assert.equal(f.values.has('airk.workbench.welcome.1'),false);
+        await controller.console.controller.whenIdle();await controller.console.controller.refresh();await controller.prepareWindowContext();
+        const backing={binding:'77'.repeat(32),root:path.join(f.root,'native-outside-window'),data_root:path.join(f.root,'native-storage'),collection:'explicit-index'};
+        const grant={grant:{id:grantId,host,revision:1,revoked:false,memberships:[{membership:{project_id:projectId,index_id:indexId,revision:1,scope:[{source_root_id:sourceId,kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'user_reviewed_project_grant'}};
+        f.state.catalogDetailReply=args=>{const entity=args.entity as {kind:string};return {status:'catalog_detail',detail:{namespace,revision:1,item:{kind:entity.kind,value:entity.kind==='grant'?grant:{id:indexId,name:'Explicit native index',backing,definition_revision:1,source_revision:1,tombstone:false,source_import:'complete',policy:null}}}};};
+        const execute=f.stub.commands.executeCommand;f.stub.commands.executeCommand=async(name:string,...args:unknown[])=>{if(name==='workbench.view.extension.airk-workbench'&&++focusAttempts===1)throw new Error('fixture first Workbench opening unavailable');return execute(name,...args);};
+        const choice={grant_id:grantId,expected_grant_revision:1,index_id:indexId,project_ids:[projectId]};
+        await controller.useGrant(choice,namespace,1,()=>true);assert.equal(focusAttempts,1);assert.equal(f.values.has('airk.workbench.welcome.1'),false,'failed focus cannot consume the first-opening marker');assert.equal(controller.explorerHost().specs()[0].catalogSession.grant_id,grantId);assert.ok(f.calls.some(line=>line.includes('Workbench could not open after setup')));
+        await controller.useGrant(choice,namespace,1,()=>true);assert.equal(focusAttempts,2);
         assert.equal(f.calls.filter(line=>line==='workbench.view.extension.airk-workbench').length,1);
         assert.equal(f.values.get('airk.workbench.welcome.1'),true);
+        await controller.useGrant(choice,namespace,1,()=>true);await f.refreshFolders();assert.equal(focusAttempts,2,'a successful first opening preserves a subsequently hidden Workbench');assert.equal(implicitReviews,0);assert.equal(f.writes.length,0,'scope selection and focus never register or configure an index');
     }finally{await f.close();}
 });

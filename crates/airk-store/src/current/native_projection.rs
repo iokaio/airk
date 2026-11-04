@@ -765,7 +765,7 @@ impl NativeFactRead<'_> {
             .get(number)
             .context("native projection page unavailable")?;
         let bytes = self.store.read_current_resource(&reference.resource)?;
-        (|| -> Result<NativeFactPage> {
+        let value = (|| -> Result<NativeFactPage> {
             let value: NativeFactPage = serde_json::from_slice(&bytes)?;
             ensure!(
                 value.version == 1
@@ -785,7 +785,11 @@ impl NativeFactRead<'_> {
             }
             Ok(value)
         })()
-        .map_err(|error| error.context(super::PrivateIntegrityFailure))
+        .map_err(|error| error.context(super::PrivateIntegrityFailure))?;
+        if self.read.read_scope_fingerprint().is_some() {
+            self.read.token()?;
+        }
+        Ok(value)
     }
 }
 /// Existing off-query upper bound, not the normal 64 MiB admitted turn.

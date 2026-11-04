@@ -28,11 +28,30 @@ use tokio::sync::oneshot;
 #[path = "helper_recovery.rs"]
 mod helper_recovery;
 use helper_recovery::PoolRecovery;
+#[path = "worker_resource_drains.rs"]
+mod worker_resource_drains;
+use worker_resource_drains::{DrainProgress, WorkerResourceDrains};
+#[path = "catalog_control.rs"]
+mod catalog;
+#[cfg(all(test, feature = "embedding-worker"))]
+#[path = "project_supervisor_guarded_qualification_tests.rs"]
+mod guarded_qualification_tests;
 #[cfg(test)]
 #[path = "project_supervisor_pool_tests.rs"]
 mod pool_tests;
+#[cfg(test)]
+#[path = "worker_exit_capacity_tests.rs"]
+mod worker_exit_capacity_tests;
+pub(crate) use catalog::{
+    AdministrativeKey, CatalogControlHandle, NativeAdministrativeConnection,
+    NativeAdministrativeRead, NativeLegacyAuthoritySelection, ScopedConnectionDelivery,
+};
 
 struct ChildWorker {
+    exiting: bool,
+    catalog_gate: Option<crate::catalog_admission::NativeCatalogAdmission>,
+    catalog_pending: Option<catalog::Pending>,
+    catalog_quarantined: bool,
     derived: bool,
     _containment: crate::child_job::ChildJob,
     child: Child,
@@ -45,6 +64,7 @@ struct ChildWorker {
     runtime: PathBuf,
     last_renewal: Instant,
     pool_binding: Option<Incarnation>,
+    provider_helpers: Vec<Incarnation>,
     pool_pending: bool,
     last_status: Instant,
     waiting: Option<(
@@ -78,6 +98,30 @@ fn clean_disconnected_exit(child: &mut Child, error: &anyhow::Error) -> bool {
         }
     }
 }
+fn retire_helper(
+    pool: &mut Option<Pool>,
+    gate: Option<&crate::catalog_admission::NativeCatalogAdmission>,
+    recovery: &mut PoolRecovery,
+) {
+    if let Some(mut old) = pool.take() {
+        while old.terminate().is_err() {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if let Some(witness) = old.reap_witness() {
+            let retained = match gate {
+                Some(gate) => gate.observe_provider_reaped(witness),
+                None => recovery.record_reaped(witness),
+            };
+            if retained.is_err() {
+                // Preserve the actual native witness in its owning object on
+                // explicit bounded-history refusal; never silently truncate it.
+                *pool = Some(old);
+                return;
+            }
+        }
+        drop(old);
+    }
+}
 
 impl Drop for ChildWorker {
     fn drop(&mut self) {
@@ -94,8 +138,12 @@ impl Drop for ChildWorker {
                 Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
                 Ok(None) => {
                     let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    break;
+                    if self.child.wait().is_ok() {
+                        break;
+                    }
+                    // Failed native wait is uncertainty, never a reap receipt
+                    // or permission to release accepted resource ownership.
+                    std::thread::sleep(Duration::from_millis(25));
                 }
             }
         }
@@ -111,10 +159,29 @@ impl Drop for ChildWorker {
         if let Some(stderr) = self.stderr.take() {
             stderr.finish(&mut self.child);
         }
+        if let (Some(gate), Some(identity)) = (&self.catalog_gate, self.identity) {
+            let _ = gate.observe_worker_reaped(identity);
+            let _ = gate.observe_worker_provider_history(identity, self.provider_helpers.clone());
+        }
     }
 }
 
 impl ChildWorker {
+    fn record_provider_delivery(&mut self, helper: Option<Incarnation>) -> Result<()> {
+        ensure!(!self.exiting, "native worker resources are draining");
+        if let Some(helper) = helper
+            && !self.provider_helpers.contains(&helper)
+        {
+            ensure!(
+                self.provider_helpers.len() < 32,
+                "native provider history capacity exceeded"
+            );
+            // Set BEFORE the credential can enter a worker stdin; a late or
+            // missing reply never turns uncertain authorization into NEVER.
+            self.provider_helpers.push(helper);
+        }
+        Ok(())
+    }
     fn spawn(
         root: &Path,
         project: ProjectBinding,
@@ -172,6 +239,10 @@ impl ChildWorker {
         let mut output = child.stdout.take().context("project output missing")?;
         let (sender, receiver) = mpsc::sync_channel(1);
         let mut process = Self {
+            exiting: false,
+            catalog_gate: None,
+            catalog_pending: None,
+            catalog_quarantined: false,
             derived,
             child,
             _containment: containment,
@@ -184,6 +255,7 @@ impl ChildWorker {
             runtime: root.into(),
             last_renewal: Instant::now(),
             pool_binding: None,
+            provider_helpers: Vec::new(),
             pool_pending: false,
             last_status: Instant::now(),
             waiting: None,
@@ -238,6 +310,7 @@ impl ChildWorker {
     }
 
     fn grant(&mut self) -> Result<ControlResponse> {
+        self.require_catalog_ready()?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
             &WorkerCommand::Grant {
@@ -270,7 +343,9 @@ impl ChildWorker {
         pool: Option<crate::embedding_pool_protocol::Access>,
         helper_pending: bool,
     ) -> Result<()> {
+        self.require_catalog_ready()?;
         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
+        self.record_provider_delivery(pool_binding)?;
         let pool_pending = helper_pending && !self.derived && pool_binding.is_none();
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -298,7 +373,9 @@ impl ChildWorker {
         pool: Option<crate::embedding_pool_protocol::Access>,
         pool_pending: bool,
     ) -> Result<()> {
+        self.require_catalog_ready()?;
         let pool_binding = pool.as_ref().map(|access| access.grant.pool);
+        self.record_provider_delivery(pool_binding)?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
             &WorkerCommand::ConfigurePool {
@@ -320,11 +397,21 @@ impl ChildWorker {
     }
 
     fn prepare_pool_binding(
-        &self,
+        &mut self,
         pool: Option<&mut Pool>,
         registry: &ServiceRegistry,
         helper_pending: bool,
     ) -> Result<Option<(Option<crate::embedding_pool_protocol::Access>, bool)>> {
+        ensure!(!self.exiting, "native worker resources are draining");
+        if let Some(gate) = &self.catalog_gate
+            && gate
+                .require_worker_start(self.identity.context("project identity missing")?.project)
+                .is_err()
+        {
+            // Capture is immutable: no new helper credential generation may be
+            // delivered to a retiring worker after its admission/census closes.
+            return Ok(None);
+        }
         let pool = pool.filter(|_| !self.derived);
         let desired = pool.as_ref().map(|pool| pool.identity());
         let pending = desired.is_none() && !self.derived && helper_pending;
@@ -334,10 +421,11 @@ impl ChildWorker {
         let access = match pool {
             Some(pool) => {
                 let identity = self.identity.context("project identity missing")?;
-                Some(pool.access(
-                    identity.worker,
-                    registry.get(identity.project)?.registration,
-                )?)
+                // Register itself may have reached the native helper even if
+                // its reply/access construction later fails. Retain that exact
+                // generation before any wire effect, not merely on success.
+                self.record_provider_delivery(Some(pool.identity()))?;
+                Some(pool.access_worker(identity, registry.get(identity.project)?.registration)?)
             }
             None => None,
         };
@@ -360,6 +448,7 @@ impl ChildWorker {
         Ok(result)
     }
     fn run_job(&mut self, allowance: airk_core::service_resources::WorkAllowance) -> Result<()> {
+        self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -383,6 +472,7 @@ impl ChildWorker {
         keep_for_maintenance: bool,
         freshness: Option<airk_core::changes::FreshnessObservation>,
     ) -> Result<protocol::WorkObservation> {
+        self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -409,6 +499,7 @@ impl ChildWorker {
     }
 
     fn renew(&mut self) -> Result<()> {
+        self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -425,6 +516,7 @@ impl ChildWorker {
         Ok(())
     }
     fn configure_queries(&mut self, concurrency: usize) -> Result<()> {
+        self.require_catalog_ready()?;
         let identity = self.identity.context("project identity missing")?;
         service_ipc::write_frame(
             self.input.as_mut().context("project input missing")?,
@@ -500,6 +592,11 @@ impl ResourceCache {
     }
 }
 enum Envelope {
+    Catalog {
+        gate: crate::catalog_admission::NativeCatalogAdmission,
+        operation: Box<catalog::Operation>,
+        reply: SyncSender<Result<catalog::Response>>,
+    },
     ConfigureResources {
         configuration: airk_core::service_resources::ResourceConfiguration,
         reply: oneshot::Sender<ControlResponse>,
@@ -527,7 +624,7 @@ enum Envelope {
 }
 pub struct Supervisor {
     resources: Arc<Mutex<ResourceCache>>,
-    sender: Option<SyncSender<Envelope>>,
+    sender: Option<Arc<SyncSender<Envelope>>>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Drop for Supervisor {
@@ -609,6 +706,131 @@ struct WorkerAdmission<'a> {
     pool: &'a mut Option<Pool>,
     resources: &'a mut airk_kernel::service_resources::Resources,
     recovery: &'a mut PoolRecovery,
+    drains: &'a mut WorkerResourceDrains,
+}
+
+fn begin_worker_exit(
+    workers: &mut BTreeMap<ProjectBinding, ChildWorker>,
+    project: ProjectBinding,
+    pool: &mut Option<Pool>,
+    drains: &mut WorkerResourceDrains,
+) -> Result<()> {
+    let Some(worker) = workers.get_mut(&project) else {
+        return Ok(());
+    };
+    worker.exiting = true;
+    let identity = drains.reserve(worker)?;
+    // On any refusal the original ChildWorker, charges and reserved history
+    // remain owned; the existing Supervisor turn retries this same exit.
+    drains.begin(identity, pool.as_mut())?;
+    let child = workers
+        .remove(&project)
+        .context("native exit child changed")?;
+    drop(child);
+    drains.child_reaped(identity)?;
+    Ok(())
+}
+
+/// Borrowed identity and gate from the existing Supervisor resource owner.
+struct WorkerOwnerContext<'a> {
+    root: &'a Path,
+    instance: Incarnation,
+    gate: Option<&'a crate::catalog_admission::NativeCatalogAdmission>,
+}
+
+fn poll_worker_exits(
+    drains: &mut WorkerResourceDrains,
+    pool: &mut Option<Pool>,
+    recovery: &mut PoolRecovery,
+    resources: &mut airk_kernel::service_resources::Resources,
+    policy: &Mutex<Broker>,
+    owner: WorkerOwnerContext<'_>,
+) -> Result<()> {
+    let WorkerOwnerContext {
+        root,
+        instance,
+        gate,
+    } = owner;
+    let mut first_error = None;
+    for identity in drains.identities() {
+        let result = (|| -> Result<()> {
+            let progress = drains.poll(identity, pool.as_mut(), |service, helper| {
+                if recovery
+                    .reap_witnesses()
+                    .iter()
+                    .any(|proof| proof.matches(service, helper))
+                {
+                    return Ok(true);
+                }
+                recover_retired_helper(root, instance, service, helper, gate, recovery)
+            })?;
+            if progress != DrainProgress::Ready {
+                return Ok(());
+            }
+            if !drains.released(identity)? {
+                if identity.service == instance {
+                    policy
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("service policy unavailable"))?
+                        .process_exited(identity)?;
+                    resources.process_exited(identity)?;
+                }
+                drains.mark_released(identity)?;
+            }
+            let removed = match gate {
+                Some(gate) => gate
+                    .with_unclaimed_resource_owner(identity, || drains.remove_completed(identity))?
+                    .is_some(),
+                None => {
+                    drains.remove_completed(identity)?;
+                    true
+                }
+            };
+            if removed
+                && let Some(helper) = pool.as_mut()
+                && let Some(ticket) = helper.retirement_ticket(identity)?
+            {
+                helper.finish_retirement(&ticket)?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            first_error.get_or_insert(error);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
+fn recover_retired_helper(
+    root: &Path,
+    current: Incarnation,
+    service: Incarnation,
+    helper: Incarnation,
+    gate: Option<&crate::catalog_admission::NativeCatalogAdmission>,
+    recovery: &mut PoolRecovery,
+) -> Result<bool> {
+    if let Some(gate) = gate
+        && gate.provider_was_reaped(service, helper)?
+    {
+        return Ok(true);
+    }
+    if service == current {
+        return Ok(false);
+    }
+    let Some(witness) = crate::embedding_pool_process::recover_shared_helper(
+        root,
+        airk_store::service::registry::SharedHelperIdentity { service, helper },
+    )?
+    else {
+        return Ok(false);
+    };
+    // Missing rows, EOF and elapsed time never produce this opaque witness.
+    if let Some(gate) = gate {
+        gate.observe_provider_reaped(witness)?;
+    } else {
+        recovery.record_reaped(witness)?;
+    }
+    Ok(true)
 }
 
 fn settle_failed_start(root: &Path, instance: Incarnation, project: ProjectBinding) {
@@ -621,25 +843,38 @@ fn settle_failed_start(root: &Path, instance: Incarnation, project: ProjectBindi
 
 fn start_worker(
     workers: &mut BTreeMap<ProjectBinding, ChildWorker>,
-    root: &Path,
+    owner: WorkerOwnerContext<'_>,
     registration: airk_core::service::ProjectRegistration,
-    instance: Incarnation,
     derived: bool,
     backoff: &mut BTreeMap<ProjectBinding, (Instant, u32)>,
     admission: WorkerAdmission<'_>,
 ) -> Result<()> {
+    let WorkerOwnerContext {
+        root,
+        instance,
+        gate: catalog_gate,
+    } = owner;
     let WorkerAdmission {
         log,
         policy,
         pool,
         resources,
         recovery,
+        drains,
     } = admission;
     let project = registration.binding;
+    if let Some(gate) = catalog_gate {
+        gate.require_worker_start(project)?;
+    }
     if let Some(worker) = workers.get(&project) {
+        ensure!(!worker.exiting, "project owner resources are draining");
         ensure!(worker.derived == derived, "project owner role is draining");
         return Ok(());
     }
+    ensure!(
+        drains.for_project(project).is_empty(),
+        "project owner resources are draining"
+    );
     let saved = ServiceRegistry::open_saved(root)?.recovery_budget(
         &project.to_string(),
         crate::runtime_pair::engine_identity()?,
@@ -714,8 +949,11 @@ fn start_worker(
             Duration::from_secs(300),
         )?;
     resources.resident_started(identity)?;
+    // Native Register can create membership before its ACK is observed. The
+    // monotonic history covers uncertainty as well as delivered credentials.
+    worker.record_provider_delivery(pool.as_ref().filter(|_| !derived).map(Pool::identity))?;
     let access = match pool.as_mut().filter(|_| !derived) {
-        Some(helper) => match helper.access(identity.worker, registration) {
+        Some(helper) => match helper.access_worker(identity, registration) {
             Ok(access) => Some(access),
             Err(error) => {
                 // A failed exchange leaves its reply stream ambiguous. Retire the
@@ -725,7 +963,7 @@ fn start_worker(
                     &error,
                     "helper_grant_registration_failed",
                 );
-                drop(pool.take());
+                retire_helper(pool, catalog_gate, recovery);
                 recovery.failed(Instant::now());
                 let saved = (|| -> Result<_> {
                     ServiceRegistry::open(root, instance)?.recovery_failed(
@@ -749,16 +987,19 @@ fn start_worker(
         None => None,
     };
     let helper_pending = recovery.admission_pending();
-    if let Err(error) = worker.activate(identity, allowance, access, helper_pending) {
-        drop(worker);
-        resources.process_exited(identity)?;
-        if let Some(pool) = pool.as_mut() {
-            let _ = pool.revoke(identity.worker);
-        }
-        policy
-            .lock()
-            .map_err(|_| anyhow::anyhow!("service policy unavailable"))?
-            .process_exited(identity)?;
+    let activated = worker
+        .activate(identity, allowance, access, helper_pending)
+        .and_then(|_| {
+            if let Some(gate) = catalog_gate {
+                gate.register_worker(identity)?;
+                worker.catalog_gate = Some(gate.clone());
+            }
+            Ok(())
+        });
+    if let Err(error) = activated {
+        worker.exiting = true;
+        workers.insert(project, worker);
+        let _ = begin_worker_exit(workers, project, pool, drains);
         worker_failed(root, backoff, project, Instant::now());
         log.record(
             airk_core::service_logs::LogKind::WorkerFailed,
@@ -774,6 +1015,13 @@ fn start_worker(
         return Err(error);
     }
     workers.insert(project, worker);
+    if let Some(gate) = catalog_gate {
+        let registry = ServiceRegistry::open_saved(root)
+            .map_err(|error| error.context(crate::catalog_coordinator::CatalogClockPending))?;
+        if crate::catalog_coordinator::refresh_catalog_clock(gate, &registry)? {
+            return Err(crate::catalog_coordinator::CatalogRevisionChanged.into());
+        }
+    }
     Ok(())
 }
 
@@ -785,7 +1033,12 @@ impl Supervisor {
         source_pid: Arc<std::sync::atomic::AtomicU32>,
         source_telemetry: Arc<std::sync::atomic::AtomicBool>,
         log: crate::service_logs::Log,
+        ownership: Arc<airk_store::service::ServiceLease>,
     ) -> Result<Self> {
+        ensure!(
+            ownership.root() == root.as_path(),
+            "foreign native supervisor owner"
+        );
         let (sender, receiver) = mpsc::sync_channel::<Envelope>(32);
         let loaded = crate::service_resource_policy::load(&root);
         let configuration_error = loaded.is_err();
@@ -810,6 +1063,7 @@ impl Supervisor {
             .name("airk-project-supervisor".into())
             .spawn(move || {
                 let mut workers = BTreeMap::<ProjectBinding, ChildWorker>::new();
+                let mut catalog_gate = None;
                 let mut pool: Option<Pool> = None;
                 let mut pool_recovery = PoolRecovery::new(Instant::now());
                 let mut registry: Option<ServiceRegistry> = None;
@@ -818,7 +1072,14 @@ impl Supervisor {
                 let mut restarting = BTreeMap::<ProjectBinding, Option<WorkerIdentity>>::new();
                 let mut predecessors: Option<Vec<ProjectBinding>> = None;
                 let mut predecessor_pool = None;
+                let mut shared_mode = None;
+                let mut shared_predecessors: Option<crate::embedding_pool_process::SharedHelperPredecessorProof> = None;
+                let mut shared_recovery_failed = false;
+                let mut shared_gc_complete = false;
+                let mut next_shared_gc = Instant::now();
+                let mut next_shared_recovery = Instant::now();
                 let mut resources = initial;
+                let mut resource_drains = WorkerResourceDrains::default();
                 let mut configuration_error = configuration_error;
                 let mut pending_after = None;
                 let mut source_after = None;
@@ -827,8 +1088,49 @@ impl Supervisor {
                 let mut endpoints_ready = false;
                 let mut next_recovery_check=Instant::now();
                 loop {
+                    let exiting: Vec<_> = workers.iter().filter(|(_, worker)| worker.exiting).map(|(project, _)| *project).collect();
+                    for project in exiting {
+                        let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
+                    }
+                    let _ = poll_worker_exits(&mut resource_drains,
+&mut pool,
+&mut pool_recovery,
+&mut resources,
+&policy,
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
+                    if let Some(gate) = &catalog_gate {
+                        let mut referenced = resource_drains.referenced_helpers();
+                        referenced.extend(workers.values().flat_map(|worker| worker.provider_helpers.iter().copied()));
+                        let _ = gate.prune_provider_reaps(&referenced);
+                    }
                     if registry.is_none() {
                         registry = ServiceRegistry::open(&root, instance).ok();
+                    }
+                    if Instant::now() >= next_shared_recovery {
+                        shared_recovery_failed = false;
+                        if shared_mode.is_none() {
+                            match crate::embedding_pool_bootstrap::shared_mode(&root) {
+                                Ok(mode) => shared_mode=Some(mode),
+                                Err(_) => shared_recovery_failed=true,
+                            }
+                        }
+                        if shared_mode==Some(true) && shared_predecessors.is_none() {
+                            match crate::embedding_pool_process::recover_predecessor_shared_helpers(&root,instance) {
+                                Ok(Some(proof)) => {
+                                    let accepted=(|| -> Result<()> {
+                                        ensure!(proof.matches(registry.as_ref().context("native registry unavailable")?.incarnation()?,instance),"foreign shared predecessor proof");
+                                        for witness in proof.witnesses() {
+                                            match &catalog_gate {Some(gate)=>gate.observe_provider_reaped(*witness)?,None=>pool_recovery.record_reaped(*witness)?,}
+                                        }
+                                        Ok(())
+                                    })();
+                                    if accepted.is_ok() {shared_predecessors=Some(proof);} else {shared_recovery_failed=true;}
+                                },
+                                Ok(None)=>{},
+                                Err(_)=>shared_recovery_failed=true,
+                            }
+                        }
+                        next_shared_recovery=Instant::now()+Duration::from_secs(1);
                     }
                     if Instant::now()>=next_recovery_check {
                         if let Some(registry)=registry.as_mut(){let _=check_recovery_conditions(registry,pool.is_some());}
@@ -879,18 +1181,7 @@ impl Supervisor {
                         .map(|(project, _)| *project)
                         .collect::<Vec<_>>();
                     for project in unregistered {
-                        if let Some(worker) = workers.remove(&project) {
-                            let identity = worker.identity;
-                            drop(worker);
-                            if let Some(identity) = identity {
-                                let _ = resources.process_exited(identity);
-                                if let Ok(mut policy) = policy.lock() {
-                                    let _ = policy.process_exited(identity);
-                                }
-                                if let Some(pool) = pool.as_mut() {
-                                    let _ = pool.revoke(identity.worker);
-                                }
-                            }
+                        if begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains).is_ok() {
                             log.record(
                                 airk_core::service_logs::LogKind::WorkerStopped,
                                 Some(project),
@@ -905,19 +1196,9 @@ impl Supervisor {
                     for (project, expected) in &mut restarting {
                         if let Some(worker) = workers.get(project)
                             && worker.identity == *expected
+                            && begin_worker_exit(&mut workers, *project, &mut pool, &mut resource_drains).is_err()
                         {
-                            let worker = workers.remove(project).expect("observed restart worker");
-                            let identity = worker.identity;
-                            drop(worker);
-                            if let Some(identity) = identity {
-                                let _ = resources.process_exited(identity);
-                                if let Ok(mut policy) = policy.lock() {
-                                    let _ = policy.process_exited(identity);
-                                }
-                                if let Some(pool) = pool.as_mut() {
-                                    let _ = pool.revoke(identity.worker);
-                                }
-                            }
+                            continue;
                         }
                         *expected = None;
                     }
@@ -940,13 +1221,16 @@ impl Supervisor {
                     };
                     #[cfg(not(unix))]
                     let (pending_providers, provider_error) = (0, false);
+                    let shared_pending=usize::from(shared_mode==Some(true) && shared_predecessors.is_none());
+                    let pending_providers=pending_providers+shared_pending;
+                    let provider_error=provider_error || shared_mode.is_none() || shared_recovery_failed;
                     resources.observe_provider_drains(pending_providers, provider_error);
                     #[cfg(unix)]
                     let provider_rss = registry
                         .as_ref()
-                        .and_then(|registry| crate::unix_guardian::rss(registry).ok());
-                    #[cfg(not(unix))]
-                    let provider_rss = Some(Vec::new());
+                        .and_then(|registry| crate::unix_guardian::rss(registry,pool.as_ref().map(Pool::process_id)).ok());
+                    #[cfg(windows)]
+                    let provider_rss = pool.as_ref().map(Pool::descendant_rss).transpose().ok().map(Option::unwrap_or_default);
                     let observations = std::iter::once(std::process::id())
                         .chain(workers.values().map(|worker| worker.child.id()))
                         .chain(pool.as_ref().map(Pool::process_id))
@@ -960,10 +1244,15 @@ impl Supervisor {
                     let complete = observations.iter().all(Option::is_some)
                         && source_telemetry.load(std::sync::atomic::Ordering::Acquire)
                         && provider_rss.is_some();
-                    let rss = observations
-                        .into_iter()
-                        .flatten()
-                        .reduce(u64::saturating_add);
+                    let mut rss = None::<u64>;
+                    let mut rss_overflow=false;
+                    for sample in observations.into_iter().flatten() {
+                        match rss.unwrap_or(0).checked_add(sample) {
+                            Some(total)=>rss=Some(total),
+                            None=>{rss=None;rss_overflow=true;break;},
+                        }
+                    }
+                    let complete=complete && !rss_overflow && !provider_error && pending_providers==0;
                     let available = airk_kernel::service_resource_observations::available_memory();
                     resources.block_admission(
                         configuration_error || provider_error || pending_providers > 0,
@@ -971,7 +1260,7 @@ impl Supervisor {
                     resources.observe(rss, available, complete && available.is_some());
                     // Registry I/O must never occur while cached observations
                     // are locked by health/console readers.
-                    let idle_safe = workers.is_empty() && restarting.is_empty()
+                    let idle_safe = workers.is_empty() && resource_drains.is_empty() && restarting.is_empty()
                         && !provider_error && pending_providers == 0
                         && registry.as_ref().is_some_and(|registry| {
                             registry.pending_projects(1).is_ok_and(|page| page.is_empty())
@@ -1013,9 +1302,18 @@ impl Supervisor {
                         Some(Ok(Some(status))) => {
                             let code = crate::embedding_pool_process::exit_code(status);
                             log.record_code(airk_core::service_logs::LogKind::ModelFailed, None, None, Some(&code));
-                            drop(pool.take());
+                            retire_helper(&mut pool,catalog_gate.as_ref(),&mut pool_recovery);
                             pool_recovery.failed(Instant::now());
                             if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
+                        },
+                        Some(Err(error)) if pool.as_ref().is_some_and(|pool|pool.containment_failed(&error)) => {
+                            // Only the exact owned guardian's actual native
+                            // reap tags this failure. Generic wait errors are
+                            // uncertainty and keep the original owner below.
+                            retire_helper(&mut pool,catalog_gate.as_ref(),&mut pool_recovery);
+                            pool_recovery.failed(Instant::now());
+                            if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
+                            log.record_code(airk_core::service_logs::LogKind::ModelFailed,None,None,Some("helper_containment_failed"));
                         },
                         Some(Err(_)) => {
                             if !pool_recovery.suppressed {
@@ -1028,7 +1326,7 @@ impl Supervisor {
                                 // A timed-out mutation has no correlation-safe reply left.
                                 // This also handles errors ignored during worker cleanup or
                                 // resource rollback; no later control can reuse that stream.
-                                drop(pool.take());
+                                retire_helper(&mut pool,catalog_gate.as_ref(),&mut pool_recovery);
                                 pool_recovery.failed(Instant::now());
                                 if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
                                 log.record_code(airk_core::service_logs::LogKind::ModelFailed, None, None, Some(&code));
@@ -1075,6 +1373,15 @@ impl Supervisor {
                         && endpoints_ready
                         && !provider_error
                         && pending_providers == 0;
+                    if may_allocate && !shared_gc_complete && Instant::now()>=next_shared_gc && resource_drains.is_empty()
+                        && catalog_gate.as_ref().is_some_and(|gate| gate.pending_fence_key().is_ok_and(|pending|pending.is_none()))
+                        && let Some(proof)=&shared_predecessors {
+                        // The same native lease and complete predecessor proof
+                        // protect GC; Store rechecks durable pending fences in
+                        // the deletion transaction. Current-service rows remain.
+                        if crate::embedding_pool_process::prune_predecessor_shared_helpers(&root,instance,&ownership,proof).is_ok() {shared_gc_complete=true;}
+                        next_shared_gc=Instant::now()+Duration::from_secs(1);
+                    }
                     if may_allocate
                         && pool.is_none()
                         && pool_recovery.due(Instant::now())
@@ -1134,25 +1441,17 @@ impl Supervisor {
                         } else {
                             worker_failed(&root, &mut backoff, project, Instant::now());
                         }
-                        if let Some(worker) = workers.remove(&project) {
-                            let identity = worker.identity;
-                            // ChildJob drop also proves Windows descendant exit.
-                            // Never return admission while an owned extractor lives.
-                            drop(worker);
-                            if let (Some(identity), Ok(mut policy)) = (identity, policy.lock()) {
-                                let _ = policy.process_exited(identity);
-                                let _ = resources.process_exited(identity);
-                                drop(policy);
-                                if let Some(pool) = pool.as_mut() {
-                                    let _ = pool.revoke(identity.worker);
-                                }
-                            }
-                        }
+                        let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
                     }
                     let mut failed_renewals = Vec::new();
                     let mut clean_renewals = std::collections::BTreeSet::new();
                     let mut pool_control_failure = None;
                     for (project, worker) in &mut workers {
+                        match worker.catalog_poll_ready() {
+                            Ok(true) => {},
+                            Ok(false) => continue,
+                            Err(_) => { failed_renewals.push(*project); continue; },
+                        }
                         if pool_control_failure.is_some() {
                             continue;
                         }
@@ -1219,7 +1518,7 @@ impl Supervisor {
                         }
                     }
                     if let Some(code) = pool_control_failure {
-                        drop(pool.take());
+                        retire_helper(&mut pool,catalog_gate.as_ref(),&mut pool_recovery);
                         pool_recovery.failed(Instant::now());
                         if registry.as_mut().is_none_or(|r|crate::runtime_pair::engine_identity().and_then(|engine|r.recovery_failed("helper",engine,unix_ms()?)).is_err()){pool_recovery.suppressed=true;}
                         log.record_code(airk_core::service_logs::LogKind::ModelFailed, None, None, Some(&code));
@@ -1240,17 +1539,15 @@ impl Supervisor {
                             Some(project),
                             None,
                         );
-                        if let Some(worker) = workers.remove(&project) {
-                            let identity = worker.identity;
-                            // An ambiguous acknowledgement never releases live capacity.
-                            drop(worker);
-                            if let (Some(identity), Ok(mut policy)) = (identity, policy.lock()) {
-                                let _ = policy.process_exited(identity);
-                                let _ = resources.process_exited(identity);
-                            }
-                        }
+                        let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
                     }
                     match receiver.recv_timeout(Duration::from_millis(250)) {
+                        Ok(Envelope::Catalog { gate, operation, reply }) => {
+                            let result = catalog::execute(&mut catalog_gate, gate, *operation, &mut workers,
+                                &mut registry, &root, instance, may_allocate, &mut backoff,
+                                WorkerAdmission { log: &log, policy: &policy, pool: &mut pool, resources: &mut resources, recovery: &mut pool_recovery, drains: &mut resource_drains });
+                            catalog::send_reply(&reply, result);
+                        },
                         Ok(Envelope::ConfigureResources {
                             configuration,
                             reply,
@@ -1311,21 +1608,19 @@ impl Supervisor {
                                     .context("service registry unavailable")?
                                     .get(project)?
                                     .registration;
-                                start_worker(
-                                    &mut workers,
-                                    &root,
-                                    registration,
-                                    instance,
-                                    false,
-                                    &mut backoff,
-                                    WorkerAdmission {
+                                start_worker(&mut workers,
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() },
+registration,
+false,
+&mut backoff,
+WorkerAdmission {
                                         log: &log,
                                         policy: &policy,
                                         pool: &mut pool,
                                         resources: &mut resources,
                                     recovery: &mut pool_recovery,
-                                    },
-                                )?;
+                                    drains: &mut resource_drains,
+                                    })?;
                                 workers
                                     .get_mut(&project)
                                     .context("project worker missing")?
@@ -1454,7 +1749,7 @@ impl Supervisor {
                                 pool_recovery.suppressed = true;
                                 let failed = force
                                     && pool.as_mut().is_some_and(|pool| pool.terminate().is_err());
-                                drop(pool.take());
+                                retire_helper(&mut pool,catalog_gate.as_ref(),&mut pool_recovery);
                                 log.record_code(
                                     airk_core::service_logs::LogKind::ModelStopped,
                                     None,
@@ -1540,21 +1835,19 @@ impl Supervisor {
                         && let Some(registry) = registry.as_ref()
                     {
                         if let Ok(record) = registry.get(project) {
-                            let _ = start_worker(
-                                &mut workers,
-                                &root,
-                                record.registration,
-                                instance,
-                                false,
-                                &mut backoff,
-                                WorkerAdmission {
+                            let _ = start_worker(&mut workers,
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() },
+record.registration,
+false,
+&mut backoff,
+WorkerAdmission {
                                     log: &log,
                                     policy: &policy,
                                     pool: &mut pool,
                                     resources: &mut resources,
                                 recovery: &mut pool_recovery,
-                                },
-                            );
+                                drains: &mut resource_drains,
+                                });
                         }
                         if workers.contains_key(&project)
                             || backoff
@@ -1592,26 +1885,32 @@ impl Supervisor {
                             .map(|record| record.registration) else {
                                 continue;
                             };
-                            let _ = start_worker(
-                                &mut workers,
-                                &root,
-                                registration,
-                                instance,
-                                derived,
-                                &mut backoff,
-                                WorkerAdmission {
+                            let _ = start_worker(&mut workers,
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() },
+registration,
+derived,
+&mut backoff,
+WorkerAdmission {
                                     log: &log,
                                     policy: &policy,
                                     pool: &mut pool,
                                     resources: &mut resources,
                                 recovery: &mut pool_recovery,
-                                },
-                            );
+                                drains: &mut resource_drains,
+                                });
                         }
                     }
                     // Read only bounded metadata candidates. Direct query payloads never enter this loop.
                     if let Some(registry) = registry.as_ref() {
                         for project in workers.keys().copied() {
+                            if catalog_gate.as_ref().is_some_and(|gate| gate.require_worker_start(project).is_err()) {
+                                resources.forget_pending(project);
+                                continue;
+                            }
+                            if workers.get(&project).is_some_and(|worker| worker.catalog_pending.is_some() || worker.catalog_quarantined) {
+                                resources.forget_pending(project);
+                                continue;
+                            }
                             if restarting.contains_key(&project) {
                                 resources.forget_pending(project);
                                 continue;
@@ -1680,6 +1979,11 @@ impl Supervisor {
                     let mut failed = Vec::new();
                     let mut clean_exits = std::collections::BTreeSet::new();
                     for (project, worker) in &mut workers {
+                        match worker.catalog_poll_ready() {
+                            Ok(true) => {},
+                            Ok(false) => continue,
+                            Err(_) => { failed.push(*project); continue; },
+                        }
                         if worker.last_status.elapsed() < Duration::from_secs(1) {
                             continue;
                         }
@@ -1779,7 +2083,11 @@ impl Supervisor {
                                         );
                                         }
                                     }
+                                    let configuration_finished = resources.running(*project).is_some_and(|grant| registry.as_ref().is_some_and(|registry| registry.configuration_work(grant.job).ok().flatten().is_some()));
                                     let _ = resources.finished(identity, finished);
+                                    if configuration_finished && let (Some(gate),Some(registry)) = (catalog_gate.as_ref(),registry.as_ref()) {
+                                        let _ = crate::catalog_coordinator::refresh_catalog_clock(gate,registry);
+                                    }
                                 }
                             }
                             Err(error) => {
@@ -1823,30 +2131,30 @@ impl Supervisor {
                             Some(project),
                             None,
                         );
-                        if let Some(worker) = workers.remove(&project) {
-                            let identity = worker.identity;
-                            drop(worker); // Drop drains/kills and reaps before capacity returns.
-                            if let Some(identity) = identity {
-                                let _ = resources.process_exited(identity);
-                                if let Ok(mut policy) = policy.lock() {
-                                    let _ = policy.process_exited(identity);
-                                }
-                                if let Some(pool) = pool.as_mut() {
-                                    let _ = pool.revoke(identity.worker);
-                                }
-                            }
-                        }
+                        let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
                     }
                 }
                 // Children stop before the service lock is released. Interrupted jobs retain receipts.
-                if let Ok(mut policy) = policy.lock() {
-                    policy.ownership_lost();
+                // Shutdown retains both owning children and accepted grants
+                // until the same native child+provider barriers complete.
+                loop {
+                    for project in workers.keys().copied().collect::<Vec<_>>() {
+                        let _ = begin_worker_exit(&mut workers, project, &mut pool, &mut resource_drains);
+                    }
+                    let _ = poll_worker_exits(&mut resource_drains,
+&mut pool,
+&mut pool_recovery,
+&mut resources,
+&policy,
+WorkerOwnerContext { root: &root, instance, gate: catalog_gate.as_ref() });
+                    if workers.is_empty() && resource_drains.identities().iter().all(|identity| resource_drains.released(*identity).unwrap_or(false)) { break; }
+                    std::thread::sleep(Duration::from_millis(100));
                 }
-                drop(workers);
+                if let Ok(mut policy) = policy.lock() { policy.ownership_lost(); }
             })?;
         Ok(Self {
             resources,
-            sender: Some(sender),
+            sender: Some(Arc::new(sender)),
             thread: Some(thread),
         })
     }

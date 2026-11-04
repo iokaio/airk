@@ -29,6 +29,8 @@ pub mod unified;
 mod optimization_tests;
 
 #[cfg(test)]
+mod scoped_observation_tests;
+#[cfg(test)]
 mod verification_tests;
 
 #[cfg(test)]
@@ -594,6 +596,9 @@ impl AirkServer {
 
     pub fn new(kernel: Kernel) -> Self {
         let admission = execution::Admission::for_kernel(&kernel);
+        let responses = std::sync::Arc::new(response::Session::for_scope(
+            kernel.scoped_read_fingerprint().ok().flatten(),
+        ));
         Self {
             work: Default::default(),
             runtime: Default::default(),
@@ -601,7 +606,7 @@ impl AirkServer {
             tool_router: Self::shared_tool_router(),
             client: ClientFamily::Unknown,
             admission,
-            responses: Default::default(),
+            responses,
             response_mode: response::ResponseMode::from_environment(),
             plan_read: false,
         }
@@ -617,7 +622,7 @@ impl AirkServer {
         )
     )]
     async fn help(&self, Parameters(args): Parameters<help::HelpArgs>) -> CallToolResult {
-        help::reply(args)
+        response::with_scope(&self.kernel, help::reply(args))
     }
 
     #[tool(
@@ -896,6 +901,9 @@ impl AirkServer {
     async fn status(&self, Parameters(args): Parameters<StatusArgs>) -> CallToolResult {
         self.execute_response_policy(UsageOperation::Status,args.response,false,move|kernel|{
             let mut status = kernel.status_summary().or_else(|error| {
+                if error.downcast_ref::<airk_core::scoped_reads::ScopeReadRefused>().is_some() {
+                    return Err(error);
+                }
                 if airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() {
                     return Err(error);
                 }
@@ -930,7 +938,12 @@ impl AirkServer {
                     status["index_state"] = "available".into();
                     status
                 }
-                Err(error) if airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() => {
+                Err(error)
+                    if error
+                        .downcast_ref::<airk_core::scoped_reads::ScopeReadRefused>()
+                        .is_some()
+                        || airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() =>
+                {
                     return Err(error);
                 }
                 Err(error) if runtime.is_some() || work.is_some() => {
@@ -1316,6 +1329,9 @@ fn render<T: Serialize>(
     operation: UsageOperation,
 ) -> CallToolResult {
     let (span, record_usage) = usage;
+    if let Err(error) = kernel.scoped_read_fingerprint() {
+        return response::scoped_error_result(kernel, &error);
+    }
     let (mode, reply_detail, verification) = projection;
     let mut logical = result
         .as_ref()
@@ -1365,9 +1381,16 @@ fn render<T: Serialize>(
     {
         object.insert("request_id".into(), id.into());
     }
-    let mut display = logical.clone();
+    let scope_error = logical
+        .as_mut()
+        .and_then(|logical| kernel.annotate_scoped_read(logical).err());
+    let mut display = if scope_error.is_none() {
+        logical.clone()
+    } else {
+        None
+    };
     let mut verification_failed = false;
-    let mut verification_error = None;
+    let mut verification_error = scope_error;
     if let Some(display) = display.as_mut() {
         airk_core::reply::ReplyDetail::annotate(display, reply_detail);
         response::fact_items(display, operation);
@@ -1385,10 +1408,13 @@ fn render<T: Serialize>(
         // A verification fence may refuse this otherwise materialized read.
         // Do not acknowledge observations that the client never receives.
         if verification_error.is_none() {
-            responses.display(display, mode, include_status);
+            match kernel.scoped_read_fingerprint() {
+                Ok(_) => responses.display(display, mode, include_status),
+                Err(error) => verification_error = Some(error),
+            }
         }
     }
-    let rendered = match verification_error.map_or(result, Err) {
+    let mut rendered = match verification_error.map_or(result, Err) {
         Ok(value) => match display
             .as_ref()
             .map_or_else(|| serde_json::to_string(&value), serde_json::to_string)
@@ -1402,9 +1428,22 @@ fn render<T: Serialize>(
             }
             Err(error) => CallToolResult::error(vec![ContentBlock::text(error.to_string())]),
         },
-        Err(error) => response::error_result(&error),
+        Err(error) => response::scoped_error_result(kernel, &error),
     };
-    let bytes = serde_json::to_vec(&rendered).map_or(0, |v| v.len());
+    let mut bytes = serde_json::to_vec(&rendered).map_or(0, |v| v.len());
+    if kernel.scope_observation().is_some()
+        && bytes.saturating_add(2048) > airk_core::MAX_RESPONSE_BYTES
+    {
+        rendered = response::scoped_error_result(
+            kernel,
+            &airk_core::scoped_reads::ScopeReplyBudget {
+                required_bytes: bytes.saturating_add(2048),
+                maximum_bytes: airk_core::MAX_RESPONSE_BYTES,
+            }
+            .into(),
+        );
+        bytes = serde_json::to_vec(&rendered).map_or(0, |value| value.len());
+    }
     if record_usage {
         kernel.finish_usage(
             span,
@@ -1414,7 +1453,10 @@ fn render<T: Serialize>(
             ResponseRepresentation::McpToolResultJson,
         );
     }
-    rendered
+    match kernel.scoped_read_fingerprint() {
+        Ok(_) => rendered,
+        Err(error) => response::scoped_error_result(kernel, &error),
+    }
 }
 
 #[tool_handler(router = self.tool_router)]

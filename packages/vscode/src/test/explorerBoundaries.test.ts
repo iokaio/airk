@@ -9,7 +9,7 @@ import * as ts from 'typescript';
 // test reads the TypeScript sources directly (out/test → ../../src).
 const source = path.resolve(__dirname, '..', '..', 'src');
 const compiled = path.resolve(__dirname, '..');
-const CONTRACTS = new Set(['explorerContracts', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerDrafts']);
+const CONTRACTS = new Set(['explorerContracts', 'explorerRoutes', 'explorerFeatures', 'explorerErrors', 'explorerStatus', 'explorerStrategies', 'explorerDrafts', 'indexingCatalog', 'catalogSession']);
 const WEBVIEW_PACKAGES = new Set(['preact', 'preact/hooks', 'preact/jsx-runtime', 'airk-explorer-help']);
 const ASSISTANCE_BUILTINS = new Set(['node:crypto', 'node:fs', 'node:fs/promises', 'node:net', 'node:os', 'node:path', 'node:process', 'node:readline']);
 const HOST_MARKERS = ['class ServiceClient', 'class NativeControlTransport', 'class IntentJournal', 'function probeMcp', 'class ServiceConsoleController', 'class RuntimeHost'];
@@ -40,6 +40,62 @@ test('Explorer contract modules depend only on other contract modules', () => {
             assert.ok(contract(file, specifier), `${name} imports ${specifier}; contracts must stay free of Node, vscode and host modules`);
         }
     }
+});
+
+test('bundle and source audits retain the same exact pure contracts including the error registry',()=>{
+    const build=fs.readFileSync(path.resolve(source,'..','scripts','build-explorer.cjs'),'utf8');
+    const declaration=/const CONTRACTS = \[([^\]]+)\];/.exec(build)?.[1];
+    assert.ok(declaration,'bundle has an explicit contract list');
+    const bundled=[...declaration.matchAll(/'src\/([A-Za-z]+)\.ts'/g)].map(match=>match[1]).sort();
+    assert.deepEqual(bundled,[...CONTRACTS].sort());
+    const file=path.join(source,'explorerErrors.ts');
+    assert.deepEqual(imports(file),[],'the error registry has no host, browser or Node imports');
+    const tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
+    for(const statement of tree.statements){
+        assert.ok(ts.isTypeAliasDeclaration(statement)||ts.isInterfaceDeclaration(statement)||ts.isFunctionDeclaration(statement)||ts.isVariableStatement(statement),
+            'the error registry contains only types, constants and inert function bodies');
+        if(ts.isVariableStatement(statement))for(const declaration of statement.declarationList.declarations){
+            const initializer=declaration.initializer;
+            assert.ok(initializer&&ts.isSatisfiesExpression(initializer)&&ts.isAsExpression(initializer.expression)
+                &&ts.isObjectLiteralExpression(initializer.expression.expression),'the top-level error registry is a literal constant');
+        }
+    }
+});
+
+test('the shared Indexing contract adds no host/browser dependencies to the uninstall worker',()=>{
+    const file=path.join(source,'indexingCatalog.ts');
+    assert.deepEqual(imports(file),[],'inert validators must not acquire Node, editor, controller or browser imports');
+    const tree=ts.createSourceFile(file,fs.readFileSync(file,'utf8'),ts.ScriptTarget.Latest,true);
+    for(const statement of tree.statements){
+        assert.ok(ts.isInterfaceDeclaration(statement)||ts.isTypeAliasDeclaration(statement)||ts.isFunctionDeclaration(statement)||ts.isVariableStatement(statement),
+            'shared contract contains only declarations, constants and inert function bodies');
+        if(ts.isVariableStatement(statement))for(const declaration of statement.declarationList.declarations){
+            const initializer=declaration.initializer;
+            assert.ok(!initializer||ts.isNumericLiteral(initializer)||ts.isStringLiteral(initializer)||ts.isBinaryExpression(initializer)||ts.isAsExpression(initializer),
+                'contract constants cannot perform startup work');
+        }
+    }
+});
+
+test('the standalone uninstall bundle retains no Indexing controller, Preact or browser implementation', {skip:!fs.existsSync(path.join(compiled,'uninstallHook.js'))},()=>{
+    const text=fs.readFileSync(path.join(compiled,'uninstallHook.js'),'utf8');
+    assert.doesNotMatch(text,/\bclass\s+IndexingCatalogController\b|src\/explorerWebview\//);
+    assert.doesNotMatch(text,/\bclass\s+WindowScopeSelection\b|src\/scopeSelection\.ts/);
+    assert.doesNotMatch(text,/\brequire\s*\(\s*["'](?:preact(?:\/[^"']*)?|vscode)["']/);
+    assert.doesNotMatch(text,/\b(?:window|document)\.(?:addEventListener|createElement|querySelector|body)\b/);
+});
+
+test('catalog launch model imports only the pure selector contract and keeps host selection out of uninstall',()=>{
+    const model=path.join(source,'model.ts'),selector=path.join(source,'catalogSession.ts');
+    assert.ok(imports(model).includes('./catalogSession'));
+    assert.ok(!imports(model).includes('./scopeSelection'));
+    assert.deepEqual(imports(selector),['./indexingCatalog']);
+    const tree=ts.createSourceFile(selector,fs.readFileSync(selector,'utf8'),ts.ScriptTarget.Latest,true);
+    for(const statement of tree.statements)assert.ok(ts.isImportDeclaration(statement)||ts.isInterfaceDeclaration(statement)||ts.isFunctionDeclaration(statement),
+        'selector contract contains only imports, DTO declarations and inert validator functions');
+    const build=fs.readFileSync(path.resolve(source,'..','scripts','build-explorer.cjs'),'utf8');
+    assert.ok(build.includes("'src/catalogSession.ts'"));
+    assert.ok(!build.includes("'src/scopeSelection.ts'"),'host selection controller must never be allowlisted in bundles');
 });
 
 test('Explorer webview sources import only Preact, their own files and contracts', () => {

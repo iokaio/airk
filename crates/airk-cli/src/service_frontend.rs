@@ -277,6 +277,76 @@ pub struct Project {
     pub control: PathBuf,
     pub registration: ProjectRegistration,
 }
+pub struct ScopedProject {
+    pub project: Project,
+    pub selection: airk_core::service::ScopedConnectRequest,
+}
+
+/// Resolve one explicitly selected catalog index through native metadata. No
+/// workspace path, default collection or local folder supplies authorization.
+pub async fn resolve_scoped(
+    install: Option<&Path>,
+    control: Option<&Path>,
+    selection: &airk_core::service::ScopedConnectRequest,
+) -> Result<ScopedProject> {
+    use airk_core::{
+        catalog_management::{CatalogEntity, CatalogItem},
+        index_catalog::SourceImportState,
+        service::{ControlMethod, ControlResponse},
+    };
+    selection.validate()?;
+    let (install, control) = if let Some(control) = control {
+        let control = control.canonicalize()?;
+        crate::runtime_install::validate_control_root(&control)?;
+        (None, control)
+    } else {
+        let install = install
+            .map(Path::to_path_buf)
+            .map(Ok)
+            .unwrap_or_else(crate::runtime_install::caller_install_root)?;
+        let control = crate::runtime_install::installed_control(&install).await?;
+        (Some(install), control)
+    };
+    let response = crate::service_runtime::request(
+        &control,
+        ControlMethod::CatalogDetail {
+            entity: CatalogEntity::Index {
+                id: selection.index_id,
+            },
+            expected_catalog_revision: None,
+        },
+    )
+    .await?;
+    let ControlResponse::CatalogDetail { detail } = response else {
+        anyhow::bail!("selected catalog index is unavailable; review Indexing before reconnecting");
+    };
+    anyhow::ensure!(
+        detail.namespace == selection.namespace
+            && detail.revision >= selection.expected_catalog_revision,
+        "catalog session namespace changed or its metadata clock moved backwards"
+    );
+    let mut selection = selection.clone();
+    // Only the metadata clock refreshes. Grant/revision/index/projects/context
+    // remain the exact reviewed selection and are revalidated at native admission.
+    selection.expected_catalog_revision = detail.revision;
+    let Some(CatalogItem::Index(index)) = detail.item else {
+        anyhow::bail!("selected catalog index is unknown");
+    };
+    index.validate()?;
+    anyhow::ensure!(
+        !index.tombstone && index.source_import == SourceImportState::Complete,
+        "selected catalog index metadata is not ready"
+    );
+    let registration = index.backing;
+    Ok(ScopedProject {
+        project: Project {
+            install,
+            control,
+            registration,
+        },
+        selection,
+    })
+}
 
 /// MCP initialization/help uses saved bindings only; native reads elect lazily.
 pub fn resolve_mcp(

@@ -10,6 +10,10 @@ use rmcp::{
 };
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
+#[cfg(test)]
+#[path = "remote_scoped_tests.rs"]
+mod scoped_tests;
+
 pub type RemoteFuture<'a> =
     Pin<Box<dyn Future<Output = anyhow::Result<serde_json::Value>> + Send + 'a>>;
 pub type ReadyFuture<'a> = Pin<Box<dyn Future<Output = anyhow::Result<()>> + Send + 'a>>;
@@ -22,6 +26,10 @@ impl std::fmt::Display for PreparationExpired {
 }
 impl std::error::Error for PreparationExpired {}
 pub trait RemoteTools: Send + Sync + 'static {
+    /// Requested native selector only; this is not installed read authority.
+    fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
+        None
+    }
     fn query_concurrency(&self) -> usize {
         airk_core::service_resources::DEFAULT_QUERY_CONCURRENCY
     }
@@ -51,6 +59,38 @@ pub trait RemoteTools: Send + Sync + 'static {
         tool: String,
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> RemoteFuture<'_>;
+}
+
+/// A known pre-query setup refusal. The requested selector is explicitly
+/// unconfirmed; neither authorization observation nor publication is invented.
+pub fn scoped_setup_failure(
+    selection: &airk_core::service::ScopedConnectRequest,
+    code: &str,
+    retryable: bool,
+    native_control_response: Option<serde_json::Value>,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({"error":{"code":code,"retryable":retryable,"query_submitted":false},
+        "requested_scope":{"confirmed":false,"selection":selection}});
+    if let Some(response) = native_control_response {
+        body["error"]["native_control_response"] = response;
+    }
+    scoped_failure_envelope(body)
+}
+/// Transport loss or a deadline after dispatch cannot prove whether a query
+/// was submitted. Preserve that uncertainty without replaying the read.
+pub fn scoped_observation_failure(
+    selection: &airk_core::service::ScopedConnectRequest,
+    code: &str,
+    retryable: bool,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({"error":{"code":code,"retryable":retryable,"query_submitted":null},
+        "requested_scope":{"confirmed":false,"selection":selection}});
+    body["error"]["fresh_brokerage_required"] = true.into();
+    body["error"]["query_replay_safe"] = false.into();
+    scoped_failure_envelope(body)
+}
+fn scoped_failure_envelope(body: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({"content":[{"type":"text","text":body.to_string()}],"structuredContent":body,"isError":true})
 }
 
 #[derive(Clone)]
@@ -219,7 +259,10 @@ impl ServerHandler for Bridge {
             Err(error) => return Ok(admission_failure(error).into()),
         };
         let mut arguments = request.arguments.unwrap_or_default();
-        if request.name == "airk_help" && self.backend.local_help() {
+        if request.name == "airk_help"
+            && self.backend.local_help()
+            && self.backend.scoped_selection().is_none()
+        {
             return Ok(crate::help::call(serde_json::Value::Object(arguments)).into());
         }
         let client = context
@@ -273,7 +316,15 @@ async fn call_at_capacity(
     arguments: serde_json::Map<String, serde_json::Value>,
     limit: usize,
 ) -> anyhow::Result<CallToolResult> {
-    let value = backend.call(tool.clone(), arguments).await?;
+    let value = match backend.call(tool.clone(), arguments).await {
+        Ok(value) => value,
+        Err(_) if backend.scoped_selection().is_some() => scoped_observation_failure(
+            backend.scoped_selection().expect("checked scoped selector"),
+            "scoped_observation_unavailable",
+            true,
+        ),
+        Err(error) => return Err(error),
+    };
     let mut result = serde_json::from_value::<CallToolResult>(value)?;
     report_query_concurrency(&mut result, &tool, limit);
     Ok(result)

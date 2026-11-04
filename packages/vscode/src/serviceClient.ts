@@ -3,6 +3,8 @@ import { ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import { requireNativeExecution } from './nativeGate';
+import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, IndexSetupApplyIntent, IndexSetupReview, catalogBound, catalogFenceObservation, catalogHex, catalogObject, catalogRevision, sameCatalogValue, CATALOG_RECEIPT_BYTES, validateCatalogApply, validateGrantSelection, validateNativeGrantDraft, validateNativeHostContext, validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, indexSetupObservation, validateNativeLegacyBinding } from './indexingCatalog';
+import { SourceResolveIntent, validateNativeSourceDraft, validateSourceMutationSelection, validateSourceResolveIntent, sourceChangeObservation, validateNativeRetirementRequest } from './indexingCatalog';
 
 export type RecordValue = Record<string, unknown>;
 export function record(value: unknown): RecordValue {
@@ -20,7 +22,7 @@ export function count(value: unknown): number {
     return value;
 }
 export class ServiceError extends Error {
-    constructor(readonly code: string, readonly outcomeUnknown = false) { super(`AIRK service: ${code}`); }
+    constructor(readonly code: string, readonly outcomeUnknown = false,readonly nativeResponse?:RecordValue) { super(`AIRK service: ${code}`); }
 }
 export interface ControlTransport { request(method: unknown): Promise<RecordValue>; dispose(): void }
 interface Pending {
@@ -195,15 +197,17 @@ export class ServiceClient {
     constructor(readonly transport: ControlTransport) {}
     async rpc(method: unknown, expected?: string): Promise<RecordValue> {
         const name=typeof method==='string'?method:method&&typeof method==='object'?Object.keys(method)[0]:undefined;
-        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance'].includes(String(name));
+        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change'].includes(String(name));
         let response = await this.transport.request(method);
-        for(let attempt=0;readOnly&&response.status==='failure'&&response.code==='registry_busy'&&attempt<2;attempt++){
+        for(let attempt=0;(readOnly||name==='catalog_index_retirement_evidence')&&response.status==='failure'&&response.code==='registry_busy'&&attempt<2;attempt++){
             await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
             response=await this.transport.request(method);
         }
         if (response.status === 'failure') {
             const code = typeof response.code === 'string' && /^[a-z0-9_]{1,128}$/.test(response.code) ? response.code : 'invalid_service_failure';
-            const error = new ServiceError(code, code.endsWith('_outcome_unknown') || code === 'registry_response_unknown_retry_with_key');
+            // Older catalog handlers can collapse a post-prepare failure into this generic code.
+            // Its absence of a receipt does not establish that an accepted apply had no effect.
+            const error = new ServiceError(code, code.endsWith('_outcome_unknown') || code === 'registry_response_unknown_retry_with_key'||['catalog_apply','catalog_index_setup_apply','catalog_source_change_resolve'].includes(String(name))&&code==='invalid_registry_request',response);
             if(code==='invalid_service_failure')error.cause=new Error(`Invalid native failure code: ${String(JSON.stringify(response.code)).slice(0,2048)}`);
             throw error;
         }
@@ -235,6 +239,259 @@ export class ServiceClient {
     async key(): Promise<RequestKey> {
         const response = await this.rpc('request_epoch','request_epoch');
         return { namespace: identifier(response.namespace,16), epoch: count(response.epoch), nonce: randomUUID().replaceAll('-','') };
+    }
+    async prepareCatalog(operation: RecordValue, revision: number): Promise<CatalogRequest> {
+        return { caller: this.caller, key: await this.key(), expected_catalog_revision: revision, operation: structuredClone(operation) };
+    }
+    async catalogHostContext(key: string, expectedCatalogRevision: number | null = null): Promise<RecordValue> {
+        catalogHex(key,64);if(expectedCatalogRevision!==null)catalogRevision(expectedCatalogRevision);
+        const response=await this.rpc({catalog_host_context:{key,expected_catalog_revision:expectedCatalogRevision}},'catalog_host_context');
+        const descriptor=validateNativeHostContext(response.descriptor);
+        if(descriptor.key!==key||expectedCatalogRevision!==null&&descriptor.catalog_revision!==expectedCatalogRevision)throw new ServiceError('crossed_native_host_context');
+        return response;
+    }
+    async catalogLegacyBinding(project:string,expectedCatalogRevision:number|null=null):Promise<RecordValue>{
+        catalogHex(project,64);if(expectedCatalogRevision!==null)catalogRevision(expectedCatalogRevision);
+        return validateNativeLegacyBinding(await this.rpc({catalog_legacy_binding:{project,expected_catalog_revision:expectedCatalogRevision}},'catalog_legacy_binding'),project,expectedCatalogRevision);
+    }
+    async catalogGrantDraft(contextKey:string,selection:CatalogObject):Promise<CatalogReview>{
+        selection=structuredClone(selection);
+        catalogHex(contextKey,64);catalogRevision(selection.expected_catalog_revision);validateGrantSelection({project_ids:selection.project_ids,index_ids:selection.index_ids});
+        const key=record(selection.key);identifier(key.namespace,16);identifier(key.nonce,16);count(key.epoch);
+        if(Object.keys(selection).sort().join(',')!=='expected_catalog_revision,index_ids,key,project_ids'||Object.keys(key).sort().join(',')!=='epoch,namespace,nonce')throw new ServiceError('invalid_grant_draft_selection');
+        const response=await this.rpc({catalog_grant_draft:{context_key:contextKey,selection}},'catalog_grant_draft');
+        return {...validateNativeGrantDraft(response,selection),contextKey};
+    }
+    async submitCatalog(intent: CatalogApplyIntent): Promise<RecordValue> {
+        validateCatalogApply(intent);
+        const response = await this.rpc({catalog_apply:intent.catalog_apply});
+        if(response.status==='source_change_busy'){
+            const busy=record(response.busy);if(intent.catalog_apply.request.operation.operation!=='begin_index_source_change'||response.code!=='source_change_jobs_pending'||busy.index_id!==intent.catalog_apply.request.operation.id||count(busy.pending_jobs)>4294967295||count(busy.running_jobs)>4294967295)throw new ServiceError('crossed_source_change_busy',true,response);
+            throw new ServiceError('source_change_jobs_pending',false,response);
+        }
+        if(response.status==='catalog_outcome_unknown'){
+            this.validateCatalogUnknown(response,intent.catalog_apply.request,intent.request_digest,intent.catalog_apply.preview_digest);
+            throw new ServiceError(String(response.code),true,response);
+        }
+        if(response.status!=='catalog_applied')throw new ServiceError('unexpected_service_response',true);
+        this.validateCatalogReceipt(response, intent.catalog_apply.request, intent.request_digest,intent.catalog_apply.preview_digest);
+        return response;
+    }
+    async catalogSourceDraft(selection:CatalogObject):Promise<CatalogReview>{
+        selection=structuredClone(selection);const key=record(selection.key);identifier(key.namespace,16);identifier(key.nonce,16);count(key.epoch);catalogRevision(selection.expected_catalog_revision);
+        if(Object.keys(selection).sort().join(',')!=='change,expected_catalog_revision,index_id,key'||Object.keys(key).sort().join(',')!=='epoch,namespace,nonce'||typeof selection.index_id!=='string'||!/^idx_[0-9a-f]{32}$/.test(selection.index_id))throw new ServiceError('invalid_source_draft_selection');validateSourceMutationSelection(selection.change);
+        return validateNativeSourceDraft(await this.rpc({catalog_source_mutation_draft:{selection}},'catalog_source_mutation_draft'),selection);
+    }
+    async catalogPendingSource(index:string,namespace:string):Promise<RecordValue>{
+        if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_source_index');catalogHex(namespace);
+        const response=await this.rpc({catalog_pending_source_change:{index_id:index}},'catalog_pending_source_change');catalogBound(response,65536);
+        if(response.index_id!==index)throw new ServiceError('crossed_pending_source_index',true,response);
+        const observed=sourceChangeObservation(response);
+        if(observed){const begin=record(observed.begin),id=identifier(record(begin.metadata).operation_id,16);this.validateSourceObservation(response,id,namespace);if(record(begin.request).operation&&record(record(begin.request).operation).id!==index)throw new ServiceError('crossed_pending_source_begin',true,response);}
+        else if(response.observation!==null)throw new ServiceError('invalid_pending_source_observation',true,response);
+        return response;
+    }
+    async catalogRetirementEvidence(index:string,namespace:string,backing:string,minimumRevision:number,registration?:CatalogObject):Promise<RecordValue>{
+        if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_retirement_index');catalogHex(namespace);catalogHex(backing,64);catalogRevision(minimumRevision);
+        const response=await this.rpc({catalog_index_retirement_evidence:{index_id:index}},'catalog_index_retirement_evidence');
+        this.validateRetirementEvidence(response,index,namespace,backing,minimumRevision,registration);return response;
+    }
+    validateRetirementEvidence(response:RecordValue,index:string,namespace:string,backing:string,minimumRevision:number,registration?:CatalogObject):boolean{
+        if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_retirement_index');catalogHex(namespace);catalogHex(backing,64);catalogRevision(minimumRevision);catalogBound(response,65536);
+        if(response.status!=='catalog_index_retirement_evidence'||response.index_id!==index)throw new ServiceError('crossed_retirement_evidence',true,response);
+        if(response.evidence===null)return false;
+        catalogBound(response.evidence,32768);
+        const evidence=record(response.evidence),clock=record(evidence.catalog_clock),definition=record(evidence.index),full=record(evidence.retirement),request=validateNativeRetirementRequest(full.request),key=request.key,operation=request.operation,metadata=record(full.metadata);
+        catalogRevision(definition.definition_revision);catalogRevision(definition.source_revision);
+        if(registration&&!sameCatalogValue(definition.backing,registration))throw new ServiceError('crossed_retirement_backing',true,response);
+        if(operation.operation!=='retire_index'||operation.id!==index||key.namespace!==namespace||definition.id!==index||definition.tombstone!==true||record(definition.backing).binding!==backing
+            ||definition.definition_revision!==Number(operation.expected_definition_revision)+1||definition.source_revision!==Number(operation.expected_source_revision)+1
+            ||clock.namespace!==namespace||catalogRevision(clock.revision)<minimumRevision||catalogRevision(metadata.catalog_revision)<=minimumRevision||Number(clock.revision)<Number(metadata.catalog_revision))throw new ServiceError('crossed_retirement_lineage',true,response);
+        catalogBound(full,CATALOG_RECEIPT_BYTES);catalogHex(full.preview_digest,64);catalogHex(metadata.request_digest,64);
+        this.validateCatalogReceipt({receipt:metadata,fenced_receipt:full},request,String(metadata.request_digest),String(full.preview_digest));
+        const obligation=record(record(full.proof).worker_obligation);
+        if(obligation.index_id!==index||obligation.backing!==backing)throw new ServiceError('crossed_retirement_workers',true,response);
+        return true;
+    }
+    validateSourceObservation(response:RecordValue,beginOperation:string,namespace:string,prior?:RecordValue):boolean{
+        catalogHex(beginOperation);catalogHex(namespace);catalogBound(response,65536);
+        if(!['catalog_source_change_observation','catalog_source_change_resolved','source_change_resolution_outcome_unknown','catalog_pending_source_change'].includes(String(response.status)))throw new ServiceError('invalid_source_observation_status',true,response);
+        if(response.status==='source_change_resolution_outcome_unknown'&&(response.begin_operation!==beginOperation||response.code!=='source_change_resolution_outcome_unknown'))throw new ServiceError('crossed_source_resolution_unknown',true,response);
+        const observed=sourceChangeObservation(response),before=prior?sourceChangeObservation(prior):undefined;
+        if(!observed){if(response.status!=='source_change_resolution_outcome_unknown')throw new ServiceError('source_observation_unavailable',true,response);return false;}
+        catalogBound(observed);const begin=record(observed.begin),metadata=record(begin.metadata);
+        const intent=validateCatalogApply({catalog_apply:{request:begin.request,preview_digest:begin.preview_digest},request_digest:metadata.request_digest}),request=intent.catalog_apply.request;
+        if(request.key.namespace!==namespace||request.operation.operation!=='begin_index_source_change'||metadata.operation_id!==beginOperation)throw new ServiceError('crossed_native_source_begin',true,response);
+        this.validateCatalogReceipt({receipt:metadata,fenced_receipt:begin},request,intent.request_digest,intent.catalog_apply.preview_digest);
+        if(before&&(!sameCatalogValue(before.begin,begin)||before.completion!=null&&!sameCatalogValue(before.completion,observed.completion)))throw new ServiceError('crossed_source_observation_continuity',true,response);
+        const plan=record(request.operation.plan),registration=record(plan.registration);
+        if(observed.job!==null){const job=record(observed.job);if(job.id!==plan.job||job.project!==registration.binding||job.kind!=='configure'||!['pending','running','succeeded','failed','canceled'].includes(String(job.state)))throw new ServiceError('crossed_source_job',true,response);count(job.fencing_generation);count(job.attempts);}
+        if(observed.completion!==null){
+            const completion=record(observed.completion),key=record(completion.key);catalogBound(completion,CATALOG_RECEIPT_BYTES);identifier(completion.operation_id,16);catalogHex(completion.request_digest,64);identifier(key.nonce,16);count(key.epoch);
+            if(completion.schema!==1||completion.caller!==request.caller||key.namespace!==namespace||completion.authority_fence_required!==false||catalogRevision(completion.catalog_revision)<=Number(metadata.catalog_revision))throw new ServiceError('crossed_source_completion',true,response);
+        }
+        return observed.completion!==null;
+    }
+    async submitSourceResolve(intent:SourceResolveIntent,prior:RecordValue):Promise<RecordValue>{
+        intent=validateSourceResolveIntent(structuredClone(intent));const response=await this.rpc({catalog_source_change_resolve:intent.catalog_source_change_resolve});
+        this.validateSourceObservation(response,intent.catalog_source_change_resolve.begin_operation,intent.namespace,prior);
+        if(response.status==='source_change_resolution_outcome_unknown')throw new ServiceError('source_change_resolution_outcome_unknown',true,response);
+        if(response.status!=='catalog_source_change_resolved')throw new ServiceError('unexpected_source_resolution_response',true,response);
+        return response;
+    }
+    async catalogIndexSetupDraft(selection:CatalogObject):Promise<IndexSetupReview>{
+        selection=structuredClone(selection);const {key,expected_catalog_revision,...choices}=selection;
+        validateIndexSetupSelection(choices);const requestKey=record(key);identifier(requestKey.namespace,16);identifier(requestKey.nonce,16);count(requestKey.epoch);catalogRevision(expected_catalog_revision);
+        const response=await this.rpc({catalog_index_setup_draft:{selection}},'catalog_index_setup_draft');
+        return validateNativeIndexSetupDraft(response,selection);
+    }
+    async submitIndexSetup(intent:IndexSetupApplyIntent):Promise<RecordValue>{
+        intent=validateIndexSetupApply(structuredClone(intent));const draft=intent.catalog_index_setup_apply.draft;
+        const response=await this.rpc({catalog_index_setup_apply:{draft}});
+        this.validateIndexSetupObservation(response,draft,intent.request_digest);
+        if(response.status==='catalog_outcome_unknown')throw new ServiceError(String(response.code),true,response);
+        if(response.status!=='catalog_index_setup_applied')throw new ServiceError('unexpected_setup_response',true,response);
+        return response;
+    }
+    validateIndexSetupObservation(response:RecordValue,draft:CatalogObject,requestDigest:string,prior?:RecordValue):boolean{
+        catalogHex(requestDigest,64);
+        catalogBound(response,65536);const request=record(draft.request),receipt=indexSetupObservation(response),previous=prior?indexSetupObservation(prior):undefined;
+        if(response.status==='catalog_outcome_unknown'){
+            if(typeof response.code!=='string'||!/^[a-z0-9_]{1,128}$/.test(response.code)||response.caller!==request.caller||!sameCatalogValue(response.key,request.key)||response.request_digest!==requestDigest)throw new ServiceError('crossed_setup_outcome_unknown',true,response);
+            catalogHex(response.request_digest,64);
+            if(response.observation!=null&&record(response.observation).kind!=='index_setup')throw new ServiceError('crossed_setup_outcome_observation',true,response);
+        }else if(!['catalog_index_setup_applied','catalog_index_setup_receipt'].includes(String(response.status)))throw new ServiceError('unexpected_setup_response',true,response);
+        if(!receipt){if(response.status==='catalog_index_setup_applied'||response.status==='catalog_index_setup_receipt'&&response.receipt!==null)throw new ServiceError('incomplete_setup_receipt',true,response);return false;}
+        const validated=validateIndexSetupReceipt(receipt,draft,previous);
+        if(validated.request_digest!==requestDigest)throw new ServiceError('crossed_setup_receipt_digest',true,response);
+        if(response.status==='catalog_outcome_unknown'&&response.request_digest!==validated.request_digest)throw new ServiceError('crossed_setup_outcome_digest',true,response);
+        return validated.stage==='ready'&&response.status!=='catalog_outcome_unknown';
+    }
+    validateCatalogReceipt(response: RecordValue, request: CatalogRequest, requestDigest: string,previewDigest:string): void {
+        catalogBound(response,65536);const receipt=this.validateCatalogMetadata(response.receipt,request,requestDigest);
+        const observation=catalogFenceObservation(response);
+        const full=response.fenced_receipt??(observation?.state==='applied'?observation.value:undefined);
+        if(observation&&observation.state!=='applied')throw new ServiceError('incomplete_catalog_fence',true);
+        if(receipt.authority_fence_required===true||full!==undefined){
+            if(!full)throw new ServiceError('complete_catalog_fence_required',true);
+            this.validateFencedReceipt(full,receipt,request,previewDigest);
+        }
+    }
+    private validateCatalogMetadata(input:unknown,request:CatalogRequest,requestDigest:string):RecordValue{
+        catalogBound(input,CATALOG_RECEIPT_BYTES);const receipt=catalogObject(input),key=catalogObject(receipt.key);
+        catalogHex(receipt.operation_id); catalogHex(receipt.request_digest, 64);catalogHex(requestDigest,64);
+        if (receipt.caller !== request.caller || key.namespace !== request.key.namespace || key.epoch !== request.key.epoch || key.nonce !== request.key.nonce
+            || receipt.schema !== 1 || !Number.isSafeInteger(receipt.catalog_revision) || receipt.catalog_revision !== request.expected_catalog_revision+1 || receipt.request_digest!==requestDigest||typeof receipt.authority_fence_required!=='boolean') {
+            throw new ServiceError('crossed_catalog_receipt', true);
+        }
+        if(['delete_project','set_membership','remove_membership','revoke_grant','begin_index_source_change','retire_index'].includes(String(request.operation.operation))&&receipt.authority_fence_required!==true)throw new ServiceError('complete_catalog_fence_required',true);
+        return receipt;
+    }
+    private validateFencedReceipt(input:unknown,receipt:RecordValue,request:CatalogRequest,previewDigest:string):void{
+        const fenced=record(input);catalogBound(fenced,CATALOG_RECEIPT_BYTES);
+        if(receipt.authority_fence_required!==true||!sameCatalogValue(fenced.request,request)||!sameCatalogValue(fenced.metadata,receipt)||fenced.preview_digest!==previewDigest)throw new ServiceError('crossed_catalog_fenced_receipt',true);
+        catalogHex(fenced.prepared_digest,64);this.validateFenceProof(fenced.proof,request);
+    }
+    private validateCatalogUnknown(response:RecordValue,request:CatalogRequest,requestDigest:string,previewDigest:string):void{
+        catalogBound(response,65536);const key=record(response.key);
+        if(typeof response.code!=='string'||!/^[a-z0-9_]{1,128}$/.test(response.code)||response.caller!==request.caller||!sameCatalogValue(key,request.key)||response.request_digest!==requestDigest)throw new ServiceError('crossed_catalog_outcome_unknown',true);
+        if(response.observation==null)return;
+        const observation=record(response.observation);if(observation.kind!=='authority_fence')throw new ServiceError('crossed_catalog_outcome_observation',true);
+        const fence=catalogFenceObservation(response);if(!fence)throw new ServiceError('invalid_catalog_outcome_observation',true);
+        if(fence.state==='pending')this.validatePendingFence(fence.value,request,previewDigest);
+        else if(fence.state==='applied'){
+            const full=record(fence.value),metadata=this.validateCatalogMetadata(full.metadata,request,requestDigest);this.validateFencedReceipt(full,metadata,request,previewDigest);
+        }else throw new ServiceError('invalid_catalog_outcome_observation',true);
+    }
+    validateCatalogObservation(response:RecordValue,request:CatalogRequest,requestDigest:string,previewDigest:string):boolean{
+        if(response.receipt!==null){this.validateCatalogReceipt(response,request,requestDigest,previewDigest);return true;}
+        catalogBound(response,65536);
+        const observation=catalogFenceObservation(response);if(!observation)return false;
+        if(observation.state!=='pending')throw new ServiceError('crossed_pending_catalog_fence',true);
+        this.validatePendingFence(observation.value,request,previewDigest);return false;
+    }
+    validateCatalogUnprepared(response:RecordValue,request:CatalogRequest,requestDigest:string):void{
+        catalogBound(response,65536);catalogBound(response.request);catalogHex(response.request_digest,64);const clock=record(response.catalog_clock);
+        if(response.status!=='catalog_receipt_unprepared'||!sameCatalogValue(response.request,request)||response.request_digest!==requestDigest||clock.namespace!==request.key.namespace||catalogRevision(clock.revision)<request.expected_catalog_revision)throw new ServiceError('crossed_catalog_unprepared',true,response);
+    }
+    private validatePendingFence(input:unknown,request:CatalogRequest,previewDigest:string):void{
+        const intent=record(input);catalogBound(intent,CATALOG_RECEIPT_BYTES);
+        if(intent.schema!==1||!sameCatalogValue(intent.request,request)||intent.preview_digest!==previewDigest||!['prepared','fence_unknown','fenced'].includes(String(intent.stage)))throw new ServiceError('crossed_pending_catalog_fence',true);
+        identifier(intent.operation_id,16);catalogHex(intent.prepared_digest,64);
+        const plan=record(intent.plan);identifier(plan.service,16);if(count(plan.gate_generation)<1||!Array.isArray(plan.targets)||plan.targets.length>128)throw new ServiceError('invalid_catalog_fence_plan',true);
+        const targets=plan.targets;
+        targets.forEach((target,index)=>{this.validateFenceTarget(target,String(plan.service));if(targets.slice(0,index).some((prior:unknown)=>sameCatalogValue(prior,target)))throw new ServiceError('invalid_catalog_fence_plan',true);});
+        this.validateFenceConfirmations(intent.confirmations,String(plan.service),targets);
+        const workers=this.validateWorkerObligation(plan.worker_obligation,String(plan.service),request),workerConfirmed=this.validateWorkerConfirmations(intent.worker_confirmations??[],workers,String(plan.service));
+        const complete=(intent.confirmations as unknown[]).length===targets.length&&workerConfirmed===workers.length;
+        if(intent.stage==='prepared'&&((intent.confirmations as unknown[]).length!==0||workerConfirmed!==0)||intent.stage==='fenced'&&!complete||intent.stage==='fence_unknown'&&complete)throw new ServiceError('incomplete_catalog_fence',true);
+    }
+    validateCatalogFenceContinuity(previous:RecordValue,next:RecordValue):void{
+        const oldFence=catalogFenceObservation(previous),nextFence=catalogFenceObservation(next);
+        const old=previous.fenced_receipt??oldFence?.value,current=next.fenced_receipt??nextFence?.value;
+        if(!old||!current)return;
+        const before=record(old),after=record(current);
+        if(!sameCatalogValue(before.request,after.request)||before.preview_digest!==after.preview_digest||before.prepared_digest!==after.prepared_digest)throw new ServiceError('crossed_catalog_fence_identity',true);
+        const oldOperation=before.operation_id??record(before.metadata??{}).operation_id,newOperation=after.operation_id??record(after.metadata??{}).operation_id;
+        if(oldOperation!==newOperation)throw new ServiceError('crossed_catalog_fence_identity',true);
+        const wasApplied=previous.fenced_receipt!=null||oldFence?.state==='applied',applied=next.fenced_receipt!=null||nextFence?.state==='applied';
+        if(wasApplied&&!applied)throw new ServiceError('catalog_fence_observation_regressed',true);
+        if(wasApplied){if(!sameCatalogValue(before.metadata,after.metadata)||!sameCatalogValue(before.proof,after.proof))throw new ServiceError('crossed_catalog_fenced_receipt',true);}
+        else if(applied){
+            const plan=record(before.plan),proof=record(after.proof),confirmations=proof.confirmations;
+            if(!Array.isArray(confirmations)||proof.service!==plan.service||proof.gate_generation!==plan.gate_generation||!sameCatalogValue(confirmations.map(value=>record(value).target),plan.targets)||!sameCatalogValue(proof.worker_obligation??null,plan.worker_obligation??null))throw new ServiceError('crossed_catalog_fence_plan',true);
+        }else if(!sameCatalogValue(before.plan,after.plan))throw new ServiceError('crossed_catalog_fence_plan',true);
+    }
+    private validateFenceTarget(input:unknown,service:string):void{
+        const target=record(input),worker=record(target.worker),scope=record(target.scope);
+        if(identifier(worker.service,16)!==service||count(worker.fencing_generation)<1||scope.schema!==1||count(scope.lease_generation)<1)throw new ServiceError('invalid_catalog_fence_target',true);
+        identifier(worker.worker,16);identifier(worker.project,32);catalogHex(scope.fingerprint,64);catalogRevision(scope.grant_revision);
+        if(typeof scope.index_id!=='string'||!/^idx_[0-9a-f]{32}$/.test(scope.index_id)||typeof scope.grant_id!=='string'||!/^grt_[0-9a-f]{32}$/.test(scope.grant_id))throw new ServiceError('invalid_catalog_fence_target',true);
+    }
+    private validateFenceConfirmations(input:unknown,service:string,targets?:unknown[]):void{
+        if(!Array.isArray(input)||input.length>128||targets&&input.length>targets.length)throw new ServiceError('invalid_catalog_fence_confirmations',true);
+        const seen:unknown[]=[];
+        for(const item of input){const confirmation=record(item);if(!['native_scope_ack','native_worker_reap'].includes(String(confirmation.method)))throw new ServiceError('invalid_catalog_fence_method',true);
+            this.validateFenceTarget(confirmation.target,service);
+            if(seen.some(target=>sameCatalogValue(target,confirmation.target))||targets&&!targets.some(target=>sameCatalogValue(target,confirmation.target)))throw new ServiceError('crossed_catalog_fence_target',true);
+            seen.push(confirmation.target);
+        }
+    }
+    private validateWorkerIdentity(input:unknown,service:string,backing?:string):RecordValue{
+        const worker=record(input);if(identifier(worker.service,16)!==service||count(worker.fencing_generation)<1||backing!==undefined&&worker.project!==backing)throw new ServiceError('invalid_catalog_worker_identity',true);
+        identifier(worker.worker,16);identifier(worker.project,32);return worker;
+    }
+    private validateWorkerObligation(input:unknown,service:string,request:CatalogRequest):RecordValue[]{
+        if(input==null){if(request.operation.operation==='retire_index')throw new ServiceError('native_retirement_worker_obligation_required',true);return [];}
+        if(request.operation.operation!=='retire_index')throw new ServiceError('unexpected_catalog_worker_obligation',true);
+        const obligation=record(input),backing=identifier(obligation.backing,32);
+        if(obligation.index_id!==request.operation.id||!Array.isArray(obligation.workers)||obligation.workers.length>128)throw new ServiceError('crossed_catalog_worker_obligation',true);
+        const workers=obligation.workers.map(input=>this.validateWorkerIdentity(input,service,backing));
+        for(let i=0;i<workers.length;i++)if(i&&JSON.stringify(workers[i-1])>=JSON.stringify(workers[i]))throw new ServiceError('invalid_catalog_worker_census',true);
+        const providers=obligation.providers??[];
+        if(!Array.isArray(providers)||providers.length!==workers.length)throw new ServiceError('incomplete_catalog_provider_census',true);
+        providers.forEach((input,index)=>{const provider=record(input),history=record(provider.history);
+            if(!sameCatalogValue(provider.worker,workers[index]))throw new ServiceError('crossed_catalog_provider_identity',true);
+            if(history.kind==='helpers'){
+                if(!Array.isArray(history.generations)||!history.generations.length||history.generations.length>32)throw new ServiceError('invalid_catalog_provider_generations',true);
+                history.generations.forEach((generation,index,all)=>{identifier(generation,16);if(index&&String(all[index-1])>=String(generation))throw new ServiceError('invalid_catalog_provider_generations',true);});
+            }else if(history.kind!=='native_never_authorized')throw new ServiceError('invalid_catalog_provider_history',true);
+        });return workers;
+    }
+    private validateWorkerConfirmations(input:unknown,workers:RecordValue[],service:string):number{
+        if(!Array.isArray(input)||input.length>workers.length)throw new ServiceError('invalid_catalog_worker_confirmations',true);
+        const confirmed:RecordValue[]=[];
+        for(const item of input){const confirmation=record(item),worker=this.validateWorkerIdentity(confirmation.worker,service);
+            if(confirmation.method!=='native_worker_reap'||!workers.some(expected=>sameCatalogValue(expected,worker))||confirmed.some(prior=>sameCatalogValue(prior,worker))||confirmed.length&&JSON.stringify(confirmed[confirmed.length-1])>=JSON.stringify(worker))throw new ServiceError('crossed_catalog_worker_confirmation',true);
+            confirmed.push(worker);
+        }return confirmed.length;
+    }
+    private validateFenceProof(input:unknown,request:CatalogRequest):void{
+        const proof=record(input);catalogHex(proof.plan_digest,64);const service=identifier(proof.service,16);
+        if(count(proof.gate_generation)<1)throw new ServiceError('invalid_catalog_fence_generation',true);
+        this.validateFenceConfirmations(proof.confirmations,service);
+        const workers=this.validateWorkerObligation(proof.worker_obligation,service,request);
+        if(this.validateWorkerConfirmations(proof.worker_confirmations??[],workers,service)!==workers.length)throw new ServiceError('incomplete_catalog_worker_fence',true);
     }
     async prepareJob(project: string, kind: JobKind): Promise<JobIntent> {
         return { project: identifier(project,32), caller: this.caller, key: await this.key(), kind };

@@ -9,6 +9,54 @@ use airk_core::{
 use anyhow::{Context, Result, ensure};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 
+// Shared canonical insertion primitives. Callers retain the same IMMEDIATE
+// transaction and establish key, registration, queue and source admission first.
+pub(super) fn insert_new_job(
+    connection: &Connection,
+    project: ProjectBinding,
+    caller: Incarnation,
+    key: &RequestKey,
+    kind: JobKind,
+    configuration: Option<&airk_core::service_configuration::ConfigurationWork>,
+) -> Result<Sha256Digest> {
+    let jobs: i64 =
+        connection.query_row("SELECT count(*) FROM service_jobs", [], |row| row.get(0))?;
+    ensure!(jobs < MAX_JOBS, JobError::Capacity);
+    let id = airk_core::catalog_source_change::source_job_id(project, caller, key)?;
+    connection.execute("INSERT INTO service_jobs(id,project,kind,state,epoch,attempts) VALUES(?1,?2,?3,'pending',0,0)",params![id.to_string(),project.to_string(),kind.code()])?;
+    if let Some(work) = configuration {
+        super::configuration::insert(connection, id, work)?;
+    }
+    Ok(id)
+}
+pub(super) fn insert_request_receipt(
+    connection: &Connection,
+    caller: Incarnation,
+    key: &RequestKey,
+    id: Sha256Digest,
+) -> Result<()> {
+    connection.execute(
+        "INSERT INTO service_requests VALUES(?1,?2,?3,?4,?5)",
+        params![
+            key.namespace.to_string(),
+            i64::try_from(key.epoch)?,
+            key.nonce.to_string(),
+            caller.to_string(),
+            id.to_string()
+        ],
+    )?;
+    Ok(())
+}
+pub(super) fn require_request_capacity(connection: &Connection) -> Result<()> {
+    let requests: i64 =
+        connection.query_row("SELECT count(*) FROM service_requests", [], |row| {
+            row.get(0)
+        })?;
+    ensure!(requests < MAX_REQUESTS, JobError::Capacity);
+    ensure!(!metadata_pressure(connection)?, JobError::Capacity);
+    Ok(())
+}
+
 // Unregister changes registration metadata only. It must not require resuming
 // source work to remove a paused project. No other configuration bypasses pause.
 const RUN_WHILE_PAUSED: &str = "(j.kind IN('inspect','plan_inspect') OR (j.kind='configure' AND EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('unregister','prepare_derived_cleanup','delete_derived'))))";
@@ -315,8 +363,12 @@ impl ServiceRegistry {
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
         let (count_full, pressure) = receipt_pressure(&transaction, needs_job)?;
         if pressure {
+            let pinned = super::catalog::source_change::pinned_jobs(&transaction)?;
+            let pins =
+                serde_json::to_string(&pinned.iter().map(ToString::to_string).collect::<Vec<_>>())?;
             let deleted = transaction.execute("DELETE FROM service_jobs WHERE seq IN(
-                SELECT seq FROM service_jobs WHERE state IN('succeeded','failed','canceled') AND (?1 IS NULL OR id<>?1) ORDER BY seq LIMIT 64)", [protected.map(|id|id.to_string())])?;
+                SELECT seq FROM service_jobs WHERE state IN('succeeded','failed','canceled') AND (?1 IS NULL OR id<>?1)
+                AND id NOT IN(SELECT value FROM json_each(?2)) ORDER BY seq LIMIT 64)", params![protected.map(|id|id.to_string()),pins])?;
             ensure!(deleted > 0 || !count_full, JobError::Capacity);
             if deleted > 0 {
                 let epoch: i64 = transaction.query_row(
@@ -505,6 +557,12 @@ impl ServiceRegistry {
             );
             return Ok(existing);
         }
+        if let Some(work) = configuration.as_deref() {
+            super::catalog::source_change::require_configuration_admission(
+                &self.connection,
+                &work.request,
+            )?;
+        }
         let pending: bool = self.connection.query_row(
             "SELECT EXISTS(SELECT 1 FROM service_jobs WHERE project=?1 AND kind=?2 AND state='pending')",
             params![project.to_string(),kind.code()], |row| row.get(0),
@@ -542,6 +600,12 @@ impl ServiceRegistry {
                 JobError::KeyConflict
             );
             return Ok(existing);
+        }
+        if let Some(work) = configuration.as_deref() {
+            super::catalog::source_change::require_configuration_admission(
+                &transaction,
+                &work.request,
+            )?;
         }
         let (namespace, current): (String, i64) = transaction.query_row(
             "SELECT incarnation,request_epoch FROM service_meta WHERE id=1",
@@ -584,6 +648,11 @@ impl ServiceRegistry {
                 "service project is not registered"
             }
         );
+        if derived {
+            super::catalog::source_change::require_retired(&transaction, project)?;
+        } else {
+            super::catalog::source_change::require_ready_registration(&transaction, project)?;
+        }
         ensure!(!metadata_pressure(&transaction)?, JobError::Capacity);
         let planned_source = plan
             .map(|link| super::maintenance::prepare_job(&transaction, link, project, kind))
@@ -650,25 +719,14 @@ impl ServiceRegistry {
         let id = if let Some(id) = pending.filter(|_| plan.is_none()) {
             id.parse()?
         } else {
-            let jobs: i64 =
-                transaction.query_row("SELECT count(*) FROM service_jobs", [], |row| row.get(0))?;
-            ensure!(jobs < MAX_JOBS, JobError::Capacity);
-            let id = framed_digest(
-                b"airk-service-job/1",
-                &[
-                    project.as_bytes(),
-                    caller.as_bytes(),
-                    key.namespace.as_bytes(),
-                    &key.epoch.to_le_bytes(),
-                    key.nonce.as_bytes(),
-                ],
-            );
-            transaction.execute("INSERT INTO service_jobs(id,project,kind,state,epoch,attempts) VALUES(?1,?2,?3,'pending',0,0)",
-                params![id.to_string(),project.to_string(),kind.code()])?;
-            if let Some(configuration) = &configuration {
-                super::configuration::insert(&transaction, id, configuration)?;
-            }
-            id
+            insert_new_job(
+                &transaction,
+                project,
+                caller,
+                key,
+                kind,
+                configuration.as_deref(),
+            )?
         };
         if let Some((revision, now)) = audit_revision {
             ensure!(kind == JobKind::Verify, "invalid automatic audit kind");
@@ -677,16 +735,7 @@ impl ServiceRegistry {
             super::background::audit::automatic::resume(&transaction, project)?;
             super::background::audit::automatic::promote(&transaction, id)?;
         }
-        transaction.execute(
-            "INSERT INTO service_requests VALUES(?1,?2,?3,?4,?5)",
-            params![
-                key.namespace.to_string(),
-                epoch,
-                key.nonce.to_string(),
-                caller.to_string(),
-                id.to_string()
-            ],
-        )?;
+        insert_request_receipt(&transaction, caller, key, id)?;
         if let Some(source) = manual_retry {
             transaction.execute(
                 "INSERT INTO service_retry_requests VALUES(?1,?2,?3,?4,?5)",
@@ -1066,6 +1115,7 @@ impl ServiceRegistry {
             transaction.execute("INSERT INTO service_recovery_budget VALUES(?1,'work',1,0,?2,0) ON CONFLICT(scope) DO UPDATE SET failures=min(failures+1,3)",params![scope,i64::try_from(now)?])?;
         }
         transaction.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND state='running' AND epoch<>?3 AND attempts>=2 AND id IN(SELECT job FROM service_progress WHERE json_extract(CAST(observation AS TEXT),'$.progress.stalled')=1) AND NOT EXISTS(SELECT 1 FROM service_job_cancellation WHERE job=service_jobs.id)",params![stalled,lease.binding.to_string(),i64::try_from(epoch)?])?;
+        super::catalog::source_change::recover_pending_jobs(&transaction, lease, epoch)?;
         transaction.execute("UPDATE service_jobs SET state='pending' WHERE project=?1 AND kind='configure' AND state='running' AND epoch<>?2 AND attempts<3 AND id IN(SELECT job FROM service_configuration WHERE json_extract(CAST(payload AS TEXT),'$.request.prepare')=1 OR json_extract(CAST(payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
             params![lease.binding.to_string(),i64::try_from(epoch)?])?;
         transaction.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND kind='configure' AND state='running' AND epoch<>?3",
@@ -1173,6 +1223,7 @@ impl ServiceRegistry {
             // Vector request; the worker releases only this unclaimed grant.
             return Ok(None);
         }
+        super::catalog::source_change::require_claim(&transaction, id.parse()?)?;
         let derived = super::configuration::work(&transaction, id.parse()?)?
             .is_some_and(|work| work.request.configuration.is_derived_cleanup());
         let registered: bool = transaction.query_row(
@@ -1353,6 +1404,9 @@ impl ServiceRegistry {
                 && current.state == JobState::Running,
             JobError::StaleWorker
         );
+        if matches!(outcome, JobOutcome::Succeeded { .. }) {
+            super::catalog::source_change::require_success_result(&transaction, id)?;
+        }
         if let Some(proof) = query {
             ensure!(
                 matches!(outcome, JobOutcome::Succeeded { .. })

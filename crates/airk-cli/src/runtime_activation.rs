@@ -8,6 +8,15 @@ mod catalog_upgrade;
 const INTENT: &str = "activation.json";
 const MAX_INTENT: u64 = 16384;
 
+pub(super) fn activate_managed_genesis(
+    authority: &InstallerAuthority<'_>,
+    policy: &managed::Managed,
+    origin: &airk_store::service::registry::catalog::genesis::ManagedGenesisOrigin,
+    owner: &mut airk_store::service::registry::catalog::genesis::CatalogGenesis,
+) -> Result<()> {
+    catalog_upgrade::activate_managed_genesis(authority, policy, origin, owner)
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum Outcome {

@@ -16,7 +16,13 @@ export type EvidenceTool = typeof WORKBENCH_TOOLS[number];
 export const EXPLORER_CLIENT_NAME = 'airk-explorer';
 
 export class EvidenceFailure extends Error {
-    constructor(readonly error: ExplorerError) { super(error.message); }
+    /** An actual native error reply, retained separately from friendly guidance.
+     * Transport failures have no native response and never synthesize one. */
+    readonly nativeResponse?: Record<string,unknown>;
+    constructor(readonly error: ExplorerError, nativeResponse?:Record<string,unknown>) {
+        super(error.message);
+        if(nativeResponse)this.nativeResponse=structuredClone(nativeResponse);
+    }
 }
 export interface ToolResult { readonly payload: Record<string, unknown>; readonly publication?: string }
 /** A changed, present identity is retryable at report scope; missing identity is not. */
@@ -76,19 +82,19 @@ function publicationOf(payload: Record<string, unknown>): string | undefined {
     return tokens[0];
 }
 
-function toolFailure(text: string): EvidenceFailure {
-    if (/current revision expired|known_hash does not match/.test(text)) { return new EvidenceFailure(explorerError('EVIDENCE_MISMATCH')); }
-    if (/workspace is not indexed|index_unavailable|no readable publication/i.test(text)) { return new EvidenceFailure(explorerError('INDEX_UNAVAILABLE')); }
-    let detail = text;
+function toolFailure(text: string, nativeResponse:Record<string,unknown>): EvidenceFailure {
+    if (/current revision expired|known_hash does not match/.test(text)) { return new EvidenceFailure(explorerError('EVIDENCE_MISMATCH'),nativeResponse); }
+    if (/workspace is not indexed|index_unavailable|no readable publication/i.test(text)) { return new EvidenceFailure(explorerError('INDEX_UNAVAILABLE'),nativeResponse); }
     try {
         const parsed = JSON.parse(text);
         const error = parsed?.error ?? parsed;
-        if (error && typeof error === 'object' && typeof error.message === 'string') {
-            detail = error.message;
-            if (typeof error.code === 'string') { return new EvidenceFailure(explorerError(error.code, detail)); }
+        if (error && typeof error === 'object' && typeof error.code === 'string') {
+            // Native messages may contain source excerpts or paths. Preserve
+            // them only in the original result, never in persistable guidance.
+            return new EvidenceFailure(explorerError(error.code),nativeResponse);
         }
-    } catch { /* Plain-text tool errors are reported as written. */ }
-    return new EvidenceFailure(explorerError('TOOL_ERROR', detail));
+    } catch { /* Plain native error text belongs only to nativeResponse. */ }
+    return new EvidenceFailure(explorerError('TOOL_ERROR'),nativeResponse);
 }
 
 interface Task { tool: EvidenceTool; args: Record<string, unknown>; options: CallOptions; generation?: number; resolve(value: ToolResult): void; reject(error: Error): void }
@@ -181,7 +187,7 @@ export class EvidenceClient {
                 await new Promise(resolve => setTimeout(resolve, delay)); continue;
             }
             const text = Array.isArray(envelope?.content) ? envelope.content.find((part: any) => part?.type === 'text')?.text : undefined;
-            if (envelope?.isError === true) { throw toolFailure(typeof text === 'string' ? text : 'AIRK returned an error without text.'); }
+            if (envelope?.isError === true) { throw toolFailure(typeof text === 'string' ? text : 'AIRK returned an error without text.',envelope); }
             if (typeof text !== 'string') { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'AIRK returned no text content.')); }
             let payload: unknown;
             try { payload = JSON.parse(text); } catch { throw new EvidenceFailure(explorerError('TOOL_ERROR', 'AIRK returned content that is not JSON.')); }

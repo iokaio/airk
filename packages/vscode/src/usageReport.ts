@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Presentation only: native reports remain the accounting authority. */
 type Data = Record<string, unknown>;
+export const ADMINISTRATIVE_USAGE_LABEL='Entire Index history and shared data-root totals' as const;
+export const OPEN_INDEX_ADMINISTRATION='Open Index administration (entire Index history and shared data-root totals)' as const;
 const obj = (v: unknown): Data => v && typeof v === 'object' && !Array.isArray(v) ? v as Data : {};
 const array = (v: unknown): unknown[] => Array.isArray(v) ? v.slice(0, 512) : [];
 const integer = (v: unknown): bigint | undefined => typeof v === 'string' && /^-?\d{1,40}$/.test(v) ? BigInt(v)
@@ -52,12 +54,15 @@ export function usageAction(value: unknown): UsageAction | undefined {
     if (v.action === 'days' && Object.keys(v).length === 3 && [7, 30].includes(v.days as number)) {
         return { type: 'usage', action: 'days', days: v.days as number };
     }
-    if (Object.keys(v).length === 2 && ['refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback'].includes(v.action)) {
+    if (Object.keys(v).length === 2 && ['refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback', 'openIndexAdministration'].includes(v.action)) {
         return { type: 'usage', action: v.action };
     }
 }
 
 export function renderUsage(value: unknown): string {
+    const scoped=obj(value);
+    if(scoped.scoped_unavailable===true)return section('Usage requires Index administration',
+        `<p>Usage history and shared data-root totals are unavailable within the selected evidence scope. No scoped usage totals have been inferred.</p>${scoped.can_open_index_administration===true?button('openIndexAdministration',OPEN_INDEX_ADMINISTRATION):'<p>Open Index administration from Management to review the complete Index history.</p>'}`);
     const v = obj(value), report = obj(v.report), health = obj(v.health), c = comparison(report), estimate = obj(c.token_estimate);
     const hasComparison = (integer(c.compared_calls) ?? 0n) > 0n;
     const compared = integer(c.compared_calls) ?? 0n, eligible = integer(report.eligible_evidence_calls);
@@ -165,7 +170,9 @@ export function renderUsage(value: unknown): string {
         <h3>Recording health</h3><p>History completeness: not certified. Missing observations across processes: ${esc(report.dropped_observations)}. Drops in this report process: ${esc(v.process_dropped_observations)}. Ledger size: ${esc(health.database_bytes)} bytes. Duplicate requests ignored: ${esc(health.duplicate_observations)}.</p>
         ${table(['Client', 'Recorded calls'], Object.entries(obj(report.clients)).map(([client, calls]) => [clientName(client), calls]))}${table(['Content type', 'Recorded calls'], Object.entries(obj(report.content_kinds)))}
         <p>Explicit feedback: ${esc(health.useful_feedback)} useful, ${esc(health.partly_useful_feedback)} partly useful, ${esc(health.not_useful_feedback)} not useful. Unrated results have unknown usefulness.</p></details>`;
-    return controls + headline + cards + coverage + section('What do these numbers mean?', explain) + section('Daily activity', table(['UTC date', 'Recorded calls', 'Compared requests', 'Estimated context reduction (tokens)'], history))
+    const administration=obj(v.administrative_scope);
+    const purpose=administration.purpose==='index_administration'?section('Index administration',`<p>${esc(ADMINISTRATIVE_USAGE_LABEL)}. These controls apply to the complete native Index, independently of evidence-grant selection.</p>`):'';
+    return purpose + controls + headline + cards + coverage + section('What do these numbers mean?', explain) + section('Daily activity', table(['UTC date', 'Recorded calls', 'Compared requests', 'Estimated context reduction (tokens)'], history))
         + section('Longer-term progress', longer) + section('Agent sessions and task results', supplied) + section('What might this be worth?', costs) + technical
         + section('Your local usage history', `<p>Recording: ${esc(recordingName(obj(v.policy).mode))}. Details are retained for ${esc(obj(v.policy).aggregate_retention_days)} days. Queries, file contents and prompts are not stored in the usage ledger.</p>${button('recording', 'Change recording…')} ${button('clear', 'Clear usage history…')}`);
 }

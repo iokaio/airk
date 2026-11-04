@@ -348,7 +348,10 @@ impl RealHelper {
             })
     }
     fn register(&mut self, grant: pool::Grant) -> Result<()> {
-        self.control(&pool::Control::Register { grant })?;
+        self.control(&pool::Control::Register {
+            grant,
+            worker_identity: None,
+        })?;
         ensure!(
             matches!(
                 self.receive("helper Register reply")?,

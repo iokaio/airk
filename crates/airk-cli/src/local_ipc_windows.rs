@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Explicit user-only pipe/file ACLs and native token checks on both connection ends.
+#[path = "local_ipc_windows_job.rs"]
+mod job;
 use anyhow::{Context, Result, ensure};
+pub(crate) use job::{require_job_user, with_current_user_job_security};
 use std::{
     ffi::c_void,
     io, mem,

@@ -240,11 +240,12 @@ fn prepare_and_start(
     runtime: tokio::runtime::Handle,
 ) -> Result<PathBuf> {
     cancel.checkpoint()?;
-    let check = || cancel.checkpoint();
     if let Some(policy) = managed::read(&root)? {
         // Managed pins keep their existing full preflight and legacy settlement.
         // Both verification and synchronous manager work run on this owned thread.
-        let approval = policy.verify_inventory_checked(&check)?.1;
+        // The common held-lock path authenticates pending STOP from saved
+        // identities before it requires a runnable approved payload.
+        let approval = policy.approval.clone();
         ensure!(
             approval.version == env!("CARGO_PKG_VERSION"),
             "matching runtime version required"
@@ -256,6 +257,14 @@ fn prepare_and_start(
         require_matching_health(&approval, &health)?;
         return layout::control(&owned.root);
     }
+    if layout::managed_origin(&root)?.is_some() {
+        let owned = OwnedInstallerAuthority::acquire(root, &cancel)?;
+        // Authenticate any saved STOP first, then return the explicit
+        // same-configure recovery reason; never use copied selection fallback.
+        runtime.block_on(ensure_running_locked_checked(&owned.view(), Some(&cancel)))?;
+        anyhow::bail!("repeat_same_approved_managed_configure_to_resume");
+    }
+    let check = || cancel.checkpoint();
     let preflight = selected_preflight(&root)?;
     cancel.checkpoint()?;
     let owned = OwnedInstallerAuthority::acquire(root, &cancel)?;

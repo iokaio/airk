@@ -234,6 +234,14 @@ pub fn inspect(action: &ToolsCommand) -> Result<bool> {
     Ok(true)
 }
 
+/// Calls on an explicit catalog session must reach its native authority.
+pub fn inspect_selected(action: &ToolsCommand, selected: bool) -> Result<bool> {
+    if selected && matches!(action, ToolsCommand::Call { .. }) {
+        return Ok(false);
+    }
+    inspect(action)
+}
+
 fn arguments(text: Option<&str>, file: Option<&Path>) -> Result<Map<String, Value>> {
     let bytes = if let Some(file) = file {
         ensure!(
@@ -303,18 +311,22 @@ async fn call(
     Ok(())
 }
 
-pub async fn run_remote(
+pub async fn run_remote_selected(
     action: ToolsCommand,
     control: PathBuf,
     project: airk_core::service::ProjectBinding,
     root: &Path,
     data: &Path,
     collection: &str,
+    selection: Option<airk_core::service::ScopedConnectRequest>,
 ) -> Result<()> {
-    if inspect(&action)? {
+    if inspect_selected(&action, selection.is_some())? {
         return Ok(());
     }
-    let session = RemoteSession(airk_cli::project_client::tools(control, project));
+    let session = RemoteSession(match selection {
+        Some(selection) => airk_cli::project_client::scoped_tools(control, project, selection)?,
+        None => airk_cli::project_client::tools(control, project),
+    });
     match action {
         ToolsCommand::Call {
             tool,

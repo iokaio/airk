@@ -108,11 +108,14 @@ struct Cli {
     collection: String,
     #[arg(long, global = true)]
     service_install_dir: Option<PathBuf>,
+    /// Explicit reviewed single-index session JSON; preferences alone grant no access.
+    #[arg(long, global = true, value_parser = parse_catalog_session,
+        conflicts_with_all = ["service_project", "root", "data_dir", "collection"])]
+    catalog_session: Option<airk_core::service::ScopedConnectRequest>,
     #[arg(
         long,
         global = true,
         hide = true,
-        requires = "service_project",
         conflicts_with = "service_install_dir"
     )]
     service_runtime_dir: Option<PathBuf>,
@@ -120,6 +123,19 @@ struct Cli {
     service_project: Option<airk_core::service::ProjectBinding>,
     #[command(subcommand)]
     command: Command,
+}
+fn parse_catalog_session(
+    value: &str,
+) -> std::result::Result<airk_core::service::ScopedConnectRequest, String> {
+    if value.len() > 4096 {
+        return Err("catalog session exceeds its byte allowance".into());
+    }
+    let selection: airk_core::service::ScopedConnectRequest =
+        serde_json::from_str(value).map_err(|_| "invalid catalog session JSON".to_owned())?;
+    selection
+        .validate()
+        .map_err(|_| "invalid reviewed catalog session".to_owned())?;
+    Ok(selection)
 }
 #[derive(Subcommand)]
 enum Command {
@@ -346,7 +362,7 @@ enum Command {
         #[arg(long, default_value_t = 8192)]
         max_bytes: usize,
     },
-    /// List indexed files under --prefix, with continuation cursors.
+    /// List indexed files under an optional path prefix, with continuation cursors.
     Files {
         #[command(flatten)]
         verification: VerificationOptions,
@@ -1027,6 +1043,19 @@ fn main() -> std::process::ExitCode {
 fn run_cli() -> Result<()> {
     if std::env::args_os()
         .nth(1)
+        .is_some_and(|arg| arg == "shared-process-guardian")
+    {
+        ensure!(
+            std::env::args_os().count() == 2,
+            "invalid shared guardian invocation"
+        );
+        #[cfg(unix)]
+        return airk_cli::unix_guardian::serve_shared();
+        #[cfg(not(unix))]
+        anyhow::bail!("shared provider guardians require Unix");
+    }
+    if std::env::args_os()
+        .nth(1)
         .is_some_and(|arg| arg == "process-guardian")
     {
         ensure!(
@@ -1041,12 +1070,18 @@ fn run_cli() -> Result<()> {
     if airk_kernel::dispatch_pdf_worker()? {
         return Ok(());
     }
-    std::thread::Builder::new()
+    let result = std::thread::Builder::new()
         .name("airk-cli".into())
         .stack_size(8 << 20)
         .spawn(run)?
         .join()
-        .map_err(|_| anyhow::anyhow!("AIRK CLI thread panicked"))?
+        .map_err(|_| anyhow::anyhow!("AIRK CLI thread panicked"))?;
+    if let Err(error) = &result
+        && let Some(native) = error.downcast_ref::<airk_cli::usage_client::NativeReadFailure>()
+    {
+        print_json(native.body())?;
+    }
+    result
 }
 #[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn run() -> Result<()> {
@@ -1061,6 +1096,41 @@ async fn run() -> Result<()> {
         );
     }
     let mut cli = Cli::parse();
+    ensure!(
+        cli.service_runtime_dir.is_none()
+            || cli.service_project.is_some()
+            || cli.catalog_session.is_some(),
+        "native control selection requires a project binding or catalog session"
+    );
+    if cli.catalog_session.is_some() {
+        ensure!(
+            matches!(
+                &cli.command,
+                Command::Parse { project: None, .. }
+                    | Command::Settings { .. }
+                    | Command::Usage {
+                        action: UsageCommand::Report { .. } | UsageCommand::Policy
+                    }
+                    | Command::Tools { .. }
+                    | Command::Changes { .. }
+                    | Command::CodeFacts { .. }
+                    | Command::Relationships { .. }
+                    | Command::Status { .. }
+                    | Command::Search { .. }
+                    | Command::Files { .. }
+                    | Command::Read { .. }
+                    | Command::Mcp { .. }
+                    | Command::Info { .. }
+                    | Command::Outline { .. }
+                    | Command::Symbol { .. }
+                    | Command::Imports { .. }
+                    | Command::Facts { .. }
+                    | Command::Refs { .. }
+                    | Command::Context { .. }
+            ),
+            "catalog sessions are read-only; administrative commands require an explicit administrative invocation"
+        );
+    }
     if let Command::Parse {
         project: Some(project),
         ..
@@ -1132,7 +1202,11 @@ async fn run() -> Result<()> {
             report["bundled_model"] = json!({"manifest":airk_cli::bundled_assets::manifest()?});
             return print_json(&report);
         }
-        Command::Tools { action } if tools::inspect(action)? => return Ok(()),
+        Command::Tools { action }
+            if tools::inspect_selected(action, cli.catalog_session.is_some())? =>
+        {
+            return Ok(());
+        }
         Command::Mcp {
             explorer_descriptor,
             additional_project,
@@ -1140,6 +1214,30 @@ async fn run() -> Result<()> {
             index_collection,
             no_default_project,
         } => {
+            if let Some(selection) = &cli.catalog_session {
+                ensure!(
+                    additional_project.is_empty()
+                        && additional_root.is_empty()
+                        && index_collection.is_none()
+                        && !no_default_project,
+                    "a catalog session cannot be combined with legacy or multi-index selectors"
+                );
+                let selected = airk_cli::service_frontend::resolve_scoped(
+                    cli.service_install_dir.as_deref(),
+                    cli.service_runtime_dir.as_deref(),
+                    selection,
+                )
+                .await?;
+                let project = selected.project;
+                return airk_cli::unified_mcp::serve_scoped(
+                    project.control,
+                    project.install,
+                    project.registration,
+                    selected.selection,
+                    explorer_descriptor.clone(),
+                )
+                .await;
+            }
             if cli.service_project.is_none()
                 && cli.data_dir.is_none()
                 && cli.service_runtime_dir.is_none()
@@ -1207,7 +1305,16 @@ async fn run() -> Result<()> {
         ),
         _ => (),
     }
-    let project = if let Some(control) = &cli.service_runtime_dir {
+    let project = if let Some(selection) = &cli.catalog_session {
+        let selected = airk_cli::service_frontend::resolve_scoped(
+            cli.service_install_dir.as_deref(),
+            cli.service_runtime_dir.as_deref(),
+            selection,
+        )
+        .await?;
+        cli.catalog_session = Some(selected.selection);
+        selected.project
+    } else if let Some(control) = &cli.service_runtime_dir {
         airk_cli::service_frontend::resolve_control(
             control,
             cli.service_project.context("project binding required")?,
@@ -1232,17 +1339,23 @@ async fn run() -> Result<()> {
             let view = serde_json::from_value(json!(view))?;
             let value = match validate_file {
                 Some(file) => {
-                    airk_cli::usage_client::validate_settings(
+                    airk_cli::usage_client::validate_settings_file_selected(
                         &project.control,
                         registration.binding,
                         view,
-                        airk_cli::service_configuration::input(&file, 131_072)?,
+                        &file,
+                        cli.catalog_session.as_ref(),
                     )
                     .await?
                 }
                 None => {
-                    airk_cli::usage_client::settings(&project.control, registration.binding, view)
-                        .await?
+                    airk_cli::usage_client::settings_selected(
+                        &project.control,
+                        registration.binding,
+                        view,
+                        cli.catalog_session.as_ref(),
+                    )
+                    .await?
                 }
             };
             print_json(&value)
@@ -1271,22 +1384,28 @@ async fn run() -> Result<()> {
                 format,
                 price_scenario,
             } => {
-                let price = price_scenario
-                    .map(|file| -> Result<airk_core::usage::PriceScenario> {
-                        let price: airk_core::usage::PriceScenario =
-                            serde_json::from_slice(&bounded(std::fs::File::open(file)?, 16_384)?)?;
-                        price.validate()?;
-                        Ok(price)
-                    })
-                    .transpose()?;
-                let value = airk_cli::usage_client::render(
-                    &project.control,
-                    registration.binding,
-                    days,
-                    serde_json::from_value(json!(format))?,
-                    price,
-                )
-                .await?;
+                let format = serde_json::from_value(json!(format))?;
+                let value = if let Some(file) = price_scenario {
+                    airk_cli::usage_client::render_file_selected(
+                        &project.control,
+                        registration.binding,
+                        days,
+                        format,
+                        &file,
+                        cli.catalog_session.as_ref(),
+                    )
+                    .await?
+                } else {
+                    airk_cli::usage_client::render_selected(
+                        &project.control,
+                        registration.binding,
+                        days,
+                        format,
+                        None,
+                        cli.catalog_session.as_ref(),
+                    )
+                    .await?
+                };
                 if let Some(text) = value.as_str() {
                     print!("{text}");
                     Ok(())
@@ -1295,16 +1414,27 @@ async fn run() -> Result<()> {
                 }
             }
             UsageCommand::Policy => {
-                let mut connection = airk_cli::project_client::Connection::connect(
-                    &project.control,
-                    registration.binding,
-                )
-                .await?;
-                print_json(
-                    &connection
+                let value = if let Some(selection) = &cli.catalog_session {
+                    let mut connection = airk_cli::project_client::Connection::connect_scoped(
+                        &project.control,
+                        registration.binding,
+                        selection,
+                        airk_core::usage::ClientFamily::Cli,
+                    )
+                    .await?;
+                    connection
                         .read_native(airk_mcp::local::NativeRead::UsagePolicy)
-                        .await?,
-                )
+                        .await?
+                } else {
+                    airk_cli::service_runtime::administrative_read(
+                        &project.control,
+                        registration.binding,
+                        airk_mcp::local::NativeRead::UsagePolicy,
+                        airk_core::usage::ClientFamily::Cli,
+                    )
+                    .await?
+                };
+                print_json(&airk_cli::usage_client::require_native_success(value)?)
             }
             UsageCommand::Import {
                 file,
@@ -1368,13 +1498,14 @@ async fn run() -> Result<()> {
         },
         Command::Mcp { .. } => unreachable!("MCP resolves saved bindings before service election"),
         Command::Tools { action } => {
-            tools::run_remote(
+            tools::run_remote_selected(
                 action,
                 project.control,
                 registration.binding,
                 Path::new(&registration.root),
                 Path::new(&registration.data_root),
                 &registration.collection,
+                cli.catalog_session.clone(),
             )
             .await
         }
@@ -1417,7 +1548,7 @@ async fn run() -> Result<()> {
         ),
         command => {
             let (name, arguments) = query(command)?;
-            tools::run_remote(
+            tools::run_remote_selected(
                 tools::ToolsCommand::Call {
                     tool: name.into(),
                     args: Some(serde_json::to_string(&arguments)?),
@@ -1428,6 +1559,7 @@ async fn run() -> Result<()> {
                 Path::new(&registration.root),
                 Path::new(&registration.data_root),
                 &registration.collection,
+                cli.catalog_session.clone(),
             )
             .await
         }
@@ -1534,8 +1666,24 @@ async fn configure(
 }
 fn print_control(response: ControlResponse) -> Result<()> {
     print_json(&response)?;
-    if let ControlResponse::Failure { code } = response {
-        anyhow::bail!("native request refused: {code}");
+    match response {
+        ControlResponse::Failure { code }
+            if airk_cli::client_requests::refusal_guidance(&code).is_some() =>
+        {
+            anyhow::bail!(
+                "native request refused: {code}; {}",
+                airk_cli::client_requests::refusal_guidance(&code).unwrap()
+            )
+        }
+        ControlResponse::Failure { code }
+        | ControlResponse::CatalogOutcomeUnknown { code, .. }
+        | ControlResponse::SourceChangeBusy { code, .. } => {
+            anyhow::bail!("native request refused: {code}")
+        }
+        ControlResponse::Incompatible { .. } => {
+            anyhow::bail!("native request protocol is incompatible")
+        }
+        _ => (),
     }
     Ok(())
 }
@@ -1699,7 +1847,10 @@ async fn service(cli: &Cli, action: &ServiceCommand) -> Result<()> {
             };
             let method: ControlMethod = serde_json::from_slice(&bytes)?;
             ensure!(
-                !matches!(method, ControlMethod::Connect { .. }),
+                !matches!(
+                    method,
+                    ControlMethod::Connect { .. } | ControlMethod::ConnectScoped { .. }
+                ),
                 "metadata RPC cannot expose evidence credentials; use mcp or tools"
             );
             // Transport success and native application status are distinct in this raw metadata API.

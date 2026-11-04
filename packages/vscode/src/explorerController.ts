@@ -25,10 +25,20 @@ import { openAgentInstructions } from './explorerWorkspaceIO';
 import { validateStudio } from './explorerStrategies';
 import { usageAction } from './usageReport';
 import { HandoffStore } from './explorerHandoffs';
+import { IndexingCatalogController } from './indexingCatalogController';
+import { catalogExport, CatalogObject, WindowContextDescriptor } from './indexingCatalog';
+import { MANAGE_WORKSPACE_TRUST_COMMAND } from './explorerCommands';
+import { NativeExecutionDisabled } from './nativeGate';
 import type { AssistanceWindowStatus } from './explorerContracts';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
+    /** Trusted owning adapter supplies canonical identity; absence keeps window association controls gated. */
+    windowContext?(): WindowContextDescriptor | undefined;
+    windowContextObservation?(): CatalogObject | undefined;
+    prepareWindowContext?(): Promise<void>;
+    useGrant?(choice:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>;
+    readonly onDidChangeWindowContext?: vscode.Event<void>;
     usage?(spec: LaunchSpec, valid: () => boolean): Promise<EmbeddedUsage>;
     readonly extensionUri: vscode.Uri;
     readonly version: string;
@@ -40,6 +50,8 @@ export interface ExplorerHost {
     startup?(): ExplorerViewState['startup'];
     reloadUpdatedExtension?(): Promise<void>;
     trusted(): boolean;
+    workspaceTrusted?(): boolean;
+    nativeExecutionEnabled?(): boolean;
     specs(): readonly LaunchSpec[];
     /** Registered project for the active editor's workspace folder, if any. */
     activeProject(): string | undefined;
@@ -71,6 +83,8 @@ export interface ExplorerSnapshotListener { (state: ExplorerViewState): void }
  */
 export class ExplorerController implements vscode.Disposable {
     private readonly control: ExplorerControl;
+    private readonly indexing: IndexingCatalogController;
+    private indexingDelivery?: { panel: number; tag: string };
     private readonly panel: ExplorerPanel;
     private readonly listeners: vscode.Disposable[] = [];
     private readonly snapshotListeners = new Set<ExplorerSnapshotListener>();
@@ -78,6 +92,7 @@ export class ExplorerController implements vscode.Disposable {
     private readonly facts = new FactHandles(this.refs);
     private evidence?: EvidenceClient;
     private selected?: string;
+    private selectedSpecIdentity?:string;
     private readonly sourceFiles = new Map<string, string>();
     private selectionEpoch = 0;
     private searchState?: SearchSessionView;
@@ -100,6 +115,8 @@ export class ExplorerController implements vscode.Disposable {
 
     constructor(private readonly host: ExplorerHost) {
         this.control = new ExplorerControl(host.control, host.version);
+        this.indexing = new IndexingCatalogController({ control: this.control.catalog, identity: () => `${this.control.observationIdentity}:${this.selectionEpoch}`,
+            authorized: () => !this.disposed && this.host.trusted() && !this.host.extensionUpdate?.(), windowContext:()=>this.host.windowContext?.(),windowContextObservation:()=>this.host.windowContextObservation?.(),canReadWindowContext:()=>!!this.host.prepareWindowContext&&this.host.nativeExecutionEnabled?.()!==false,...(host.useGrant?{useGrant:host.useGrant.bind(host)}:{}),changed: () => this.publish() });
         this.panel = new ExplorerPanel(host.extensionUri, {
             message: message => { void this.handle(message); },
             visible: visible => this.visibility(visible),
@@ -107,6 +124,7 @@ export class ExplorerController implements vscode.Disposable {
         });
         this.listeners.push(this.control.onDidChange(() => this.observedControl()), host.onDidChangeSpecs(() => this.specsChanged()), host.suggestions.onDidChange(() => this.publish()));
         if(host.onDidChangeWorkbenchVisibility)this.listeners.push(host.onDidChangeWorkbenchVisibility(()=>this.publish()));
+        if(host.onDidChangeWindowContext)this.listeners.push(host.onDidChangeWindowContext(()=>this.publish()));
         this.selectDefault();
         this.rememberSource(vscode.window.activeTextEditor);
         const editorChanges = vscode.window.onDidChangeActiveTextEditor?.(editor => { if (this.rememberSource(editor)) { this.publish(); } });
@@ -167,7 +185,9 @@ export class ExplorerController implements vscode.Disposable {
             connectionCheck: this.host.connectionCheck?.(),
             startup: this.host.startup?.(),
             trusted: this.host.trusted(),
-            connection: this.control.connection(),
+            workspaceTrusted: this.host.workspaceTrusted?.(),
+            nativeExecutionEnabled: this.host.nativeExecutionEnabled?.(),
+            connection: this.host.trusted()?this.control.connection():this.host.workspaceTrusted?.()===false?'untrusted':'disconnected',
             projects,
             ...(this.control.observedAt() !== undefined ? { projectsObservedAt: this.control.observedAt() } : {}),
             ...(this.selected ? { selectedProject: this.selected } : {}),
@@ -175,6 +195,7 @@ export class ExplorerController implements vscode.Disposable {
             selectionEpoch: this.selectionEpoch,
             ...(this.host.trusted() && this.status && this.statusFor === this.selected && this.statusIdentity === this.control.observationIdentity ? { status: this.status } : {}),
             features: FEATURES,
+            indexing: this.indexing.snapshot(),
             ...(this.notice ? { notice: this.notice } : {}),
             ...(this.control.message() ? { controlMessage: this.control.message()!.slice(0, 600) } : {}),
             ...(this.control.morePages() ? { moreProjects: true } : {}),
@@ -187,7 +208,16 @@ export class ExplorerController implements vscode.Disposable {
         if (this.disposed) { return; }
         this.revision++;
         const state = this.snapshot();
-        this.panel.post({ v: MESSAGE_VERSION, type: 'state', state });
+        // Routine scalar console updates do not resend retained catalog pages or previews.
+        const {indexing,...scalarState}=state;
+        this.panel.post({ v: MESSAGE_VERSION, type: 'state', state: scalarState });
+        if(indexing){
+            const tag=JSON.stringify([indexing.generation,indexing.busy,indexing.error,indexing.pending,indexing.review?.previewDigest]);
+            if(this.indexingDelivery?.panel!==this.panel.generation||this.indexingDelivery.tag!==tag){
+                this.indexingDelivery={panel:this.panel.generation,tag};
+                this.panel.post({v:MESSAGE_VERSION,type:'indexing.session',session:indexing});
+            }
+        }
         for (const listener of this.snapshotListeners) { listener(state); }
         const { word } = headline(state.connection, state.status, state.projects.length);
         const project = state.projects.find(entry => entry.project === state.selectedProject);
@@ -210,6 +240,7 @@ export class ExplorerController implements vscode.Disposable {
     private select(project: string | undefined): void {
         if (project === this.selected) { return; }
         this.selected = project;
+        this.selectedSpecIdentity=JSON.stringify(this.host.specs().find(spec=>spec.service?.project===project));
         this.selectionEpoch++;
         this.searchState = undefined;
         this.evidence?.dispose(); this.evidence = undefined;
@@ -220,9 +251,12 @@ export class ExplorerController implements vscode.Disposable {
     private specsChanged(): void {
         const spec = this.selected ? this.host.specs().find(entry => entry.service?.project === this.selected) : undefined;
         // A changed launcher binding (runtime upgrade, storage change) invalidates the session.
-        if (this.evidence && (!spec || spec.command !== this.evidence.spec.command || JSON.stringify(spec) !== JSON.stringify(this.evidence.spec))) {
-            this.evidence.dispose(); this.evidence = undefined;
+        const identity=JSON.stringify(spec);
+        if (identity!==this.selectedSpecIdentity) {
+            this.selectedSpecIdentity=identity;
+            this.evidence?.dispose(); this.evidence = undefined;
             this.selectionEpoch++; this.status = undefined; this.statusFor = undefined;
+            this.retainedDetails=undefined;this.statusIdentity=undefined;this.usageSession?.value.then(value=>value.dispose(),()=>{});this.usageSession=undefined;
             this.searchState = undefined;
             this.refs.clear(); this.facts.clear();
         }
@@ -276,10 +310,15 @@ export class ExplorerController implements vscode.Disposable {
         if (!this.selected) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
         return this.selected;
     }
+    private requireAuthorization(native=false): void {
+        if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
+        if(!this.host.trusted())throw new EvidenceFailure(explorerError(this.host.workspaceTrusted?.()===false?'WORKSPACE_UNTRUSTED':'CLIENT_NOT_AUTHORIZED'));
+        if(native&&this.host.nativeExecutionEnabled?.()===false)throw new NativeExecutionDisabled();
+    }
 
     /** The evidence session for the selected project, created lazily. */
     protected session(): EvidenceClient {
-        if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+        this.requireAuthorization(true);
         const spec = this.host.specs().find(entry => entry.service?.project === this.selected);
         if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
         if (!this.evidence) { this.evidence = new EvidenceClient(spec, this.host.version); }
@@ -368,7 +407,7 @@ export class ExplorerController implements vscode.Disposable {
         const panelGeneration = this.panel.generation;
         try {
             const data = await this.dispatch(message);
-            if (epoch !== this.selectionEpoch && !['project.select', 'status.refresh', 'source.choose'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
+            if (epoch !== this.selectionEpoch && !['project.select', 'status.refresh', 'source.choose','indexing.grant.use'].includes(message.type)) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
             if (message.type !== 'ready' && panelGeneration === this.panel.generation) { this.respond(message.requestId, { data: data ?? null }); }
         } catch (error) {
             if (panelGeneration === this.panel.generation) { this.respond(message.requestId, { error: failure(error) }); }
@@ -376,16 +415,53 @@ export class ExplorerController implements vscode.Disposable {
     }
 
     protected async dispatch(message: WebviewMessage): Promise<unknown> {
+        if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
+        if(message.type.startsWith('indexing.'))this.requireAuthorization(message.type!=='indexing.export');
         switch (message.type) {
+            case 'workspace.manageTrust':
+                if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
+                if(this.host.workspaceTrusted?.()!==false&&!this.host.trusted())throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
+                await vscode.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND);return;
+            case 'indexing.page': return this.indexing.page(message.kind,message.next,message.index,message.project);
+            case 'indexing.detail': return this.indexing.detail(message.kind,message.id);
+            case 'indexing.preview': return this.indexing.preview(message.operation,message.generation);
+            case 'indexing.create': return this.indexing.create(message.name,message.generation);
+            case 'indexing.apply': return this.indexing.apply(message.generation);
+            case 'indexing.reconcile': return this.indexing.reconcile();
+            case 'indexing.context.read':
+                this.requireAuthorization();
+                if(this.host.prepareWindowContext){this.indexing.invalidate();this.publish();await this.host.prepareWindowContext();this.requireAuthorization();return this.indexing.adoptHostContext();}
+                return this.indexing.readContext();
+            case 'indexing.context.preview': return this.indexing.previewContext(message.selection,message.generation);
+            case 'indexing.context.delete': return this.indexing.previewContext({project_ids:[],index_ids:[]},message.generation,true);
+            case 'indexing.grant.draft': return this.indexing.grantDraft(message.selection,message.generation);
+            case 'indexing.grant.use': return this.indexing.useGrant(message.choice,message.generation);
+            case 'indexing.grant.revoke': return this.indexing.revokeGrant(message.generation);
+            case 'indexing.setup.draft': return this.indexing.setupDraft(message.selection,message.generation);
+            case 'indexing.setup.apply': return this.indexing.setupApply(message.generation);
+            case 'indexing.setup.resume':return this.indexing.setupResume(message.id,message.generation);
+            case 'indexing.source.draft':return this.indexing.sourceDraft(message.change,message.generation);
+            case 'indexing.source.read':return this.indexing.sourceRead(message.begin,message.generation);
+            case 'indexing.source.pending':return this.indexing.sourcePending(message.generation);
+            case 'indexing.retirement.read':return this.indexing.retirementRead(message.id,message.generation);
+            case 'indexing.retirement.stopTracking':return this.indexing.stopTracking(message.generation);
+            case 'indexing.source.resolve':return this.indexing.sourceResolve(message.generation);
+            case 'indexing.export': {
+                this.requireAuthorization();
+                const text=catalogExport(this.indexing.snapshot());
+                if(message.format==='copy'){await vscode.env.clipboard.writeText(text);return {copied:true};}
+                const uri=await vscode.window.showSaveDialog({defaultUri:vscode.Uri.file('airk-indexing.json'),filters:{JSON:['json']}});
+                if(uri){await vscode.workspace.fs.writeFile(uri,new TextEncoder().encode(text));return {saved:true};}return {saved:false};
+            }
             case 'instructions.open': {
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 if (message.project !== this.requireProject()) { throw new EvidenceFailure(explorerError('REQUEST_SUPERSEDED')); }
                 const spec = this.host.specs().find(entry => entry.service?.project === message.project), epoch = this.selectionEpoch;
                 if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
                 return openAgentInstructions(spec.root, message.agent, () => !this.disposed && this.host.trusted() && epoch === this.selectionEpoch);
             }
             case 'details.copy': {
-                if(!this.host.trusted())throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED'));
+                this.requireAuthorization();
                 const status=message.project===this.selected&&this.statusFor===this.selected&&this.statusIdentity===this.control.observationIdentity?this.status:undefined;
                 const text=panelDetails(managementView(this.control.state),message.section,this.host.version,message.project,status);
                 await vscode.env.clipboard.writeText(text);return {copied:true};
@@ -408,7 +484,7 @@ export class ExplorerController implements vscode.Disposable {
                 return choice?.destination ?? null;
             }
             case 'source.choose': {
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 const project = this.requireProject(), epoch = this.selectionEpoch;
                 const spec = this.host.specs().find(entry => entry.service?.project === project);
                 if (!spec) { throw new EvidenceFailure(explorerError('NO_PROJECT')); }
@@ -440,6 +516,7 @@ export class ExplorerController implements vscode.Disposable {
                 return { opened: await vscode.env.openExternal(vscode.Uri.parse(ABOUT_LINKS[key].url)) };
             }
             case 'ready':
+                this.indexingDelivery=undefined;
                 this.publish(); this.panel.post({ v: MESSAGE_VERSION, type: 'navigate', route: this.route });
                 if (this.searchState) { this.panel.post({ v: MESSAGE_VERSION, type: 'search.session', session: this.searchState }); }
                 return;
@@ -461,7 +538,7 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'manage.action': {
                 const { action, expectedPlan, expectedPreview, v: _v, type: _type, requestId: _id, ...rest } = message as WebviewMessageOf<'manage.action'>;
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 if(action==='approvePlan'&&(!expectedPlan||!expectedPreview||this.control.state.plan?.value.id!==expectedPlan||this.control.state.plan?.value.preview_digest!==expectedPreview)){
                     return {message:'Repair preview changed. Review the current proposed actions before starting repair.'};
                 }
@@ -476,7 +553,7 @@ export class ExplorerController implements vscode.Disposable {
                 return { message: this.control.message() ?? null };
             }
             case 'manage.command': {
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 const command=(message as WebviewMessageOf<'manage.command'>).command;
                 await vscode.commands.executeCommand(command, ...(command==='airk.verifyMcp'?[this.selected]:[]));
                 return;
@@ -657,7 +734,7 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'suggestions.resolve': {
                 const typed = message as WebviewMessageOf<'suggestions.resolve'>;
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 const item = this.host.suggestions.get(typed.id);
                 const current = item?.kind === 'strategy' ? this.draftRevisions.studio : item?.kind === 'plan' ? this.draftRevisions.planner : undefined;
                 if (typed.status === 'applied' && current !== undefined && typed.targetRevision !== current) { throw new EvidenceFailure(explorerError('PROPOSAL_CONFLICT')); }
@@ -709,22 +786,22 @@ export class ExplorerController implements vscode.Disposable {
             case 'planner.openDraft': return openPlanDraft(this.planMarkdown((message as WebviewMessageOf<'planner.openDraft'>).plan));
             case 'planner.import': return (await importPlan()) ?? null;
             case 'files.list': {
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 const typed = message as WebviewMessageOf<'files.list'>;
                 return listWorkspaceFiles(typed.kind, typed.directory, typed.workspace, typed.offset,
                     this.host.specs().find(spec => spec.service?.project === this.selected)?.root);
             }
             case 'files.load': {
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 const typed = message as WebviewMessageOf<'files.load'>;
                 return loadWorkspaceFile(typed.kind, typed.workspace, typed.path);
             }
             case 'recipes.import': {
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 return (await importRecipe()) ?? null;
             }
             case 'recipes.export': {
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 const recipe = validateRecipe(message.recipe), epoch = this.selectionEpoch;
                 if (!recipe) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA')); }
                 const name = recipe.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 80) || 'search';
@@ -742,7 +819,7 @@ export class ExplorerController implements vscode.Disposable {
             }
             case 'planner.saveInWorkspace': {
                 const typed = message as WebviewMessageOf<'planner.saveInWorkspace'>;
-                if (!this.host.trusted()) { throw new EvidenceFailure(explorerError('WORKSPACE_UNTRUSTED')); }
+                this.requireAuthorization();
                 if (typed.plan.project && typed.plan.project !== this.selected) { throw new EvidenceFailure(explorerError('STALE_BINDING')); }
                 const epoch = this.selectionEpoch;
                 // The revision comes back unchanged so the webview can ignore a result for an older draft.

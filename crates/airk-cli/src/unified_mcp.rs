@@ -672,6 +672,12 @@ struct Native {
     backend: Arc<dyn RemoteTools>,
 }
 impl RemoteTools for Native {
+    fn local_help(&self) -> bool {
+        self.backend.local_help()
+    }
+    fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
+        self.backend.scoped_selection()
+    }
     fn query_concurrency(&self) -> usize {
         crate::service_resource_policy::query_concurrency(&self.control)
     }
@@ -810,6 +816,47 @@ pub async fn serve(
     no_default: bool,
     descriptor: Option<PathBuf>,
 ) -> Result<()> {
+    serve_selected(
+        control,
+        install,
+        registration,
+        additional,
+        no_default,
+        descriptor,
+        None,
+    )
+    .await
+}
+
+pub async fn serve_scoped(
+    control: PathBuf,
+    install: Option<PathBuf>,
+    registration: ProjectRegistration,
+    selection: airk_core::service::ScopedConnectRequest,
+    descriptor: Option<PathBuf>,
+) -> Result<()> {
+    selection.validate()?;
+    serve_selected(
+        control,
+        install,
+        registration,
+        vec![],
+        false,
+        descriptor,
+        Some(selection),
+    )
+    .await
+}
+
+async fn serve_selected(
+    control: PathBuf,
+    install: Option<PathBuf>,
+    registration: ProjectRegistration,
+    additional: Vec<ProjectBinding>,
+    no_default: bool,
+    descriptor: Option<PathBuf>,
+    selection: Option<airk_core::service::ScopedConnectRequest>,
+) -> Result<()> {
     ensure!(additional.len() < 32, "too many configured projects");
     let primary = registration.binding.to_string();
     let mut registrations = vec![registration];
@@ -827,21 +874,30 @@ pub async fn serve(
     let ready = Arc::new(RuntimeReadiness::default());
     let projects = registrations
         .into_iter()
-        .map(|p| Project {
-            binding: p.binding.to_string(),
-            name: PathBuf::from(&p.root)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| p.collection.clone()),
-            collection: p.collection,
-            backend: Arc::new(Native {
-                install: install.clone(),
-                control: control.clone(),
-                ready: ready.clone(),
-                backend: crate::project_client::tools(control.clone(), p.binding),
-            }),
+        .map(|p| -> Result<Project> {
+            Ok(Project {
+                binding: p.binding.to_string(),
+                name: PathBuf::from(&p.root)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.collection.clone()),
+                collection: p.collection,
+                backend: Arc::new(Native {
+                    install: install.clone(),
+                    control: control.clone(),
+                    ready: ready.clone(),
+                    backend: match &selection {
+                        Some(selection) => crate::project_client::scoped_tools(
+                            control.clone(),
+                            p.binding,
+                            selection.clone(),
+                        )?,
+                        None => crate::project_client::tools(control.clone(), p.binding),
+                    },
+                }),
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     let explorer = descriptor.map(|descriptor| {
         Arc::new(Explorer {
             descriptor,

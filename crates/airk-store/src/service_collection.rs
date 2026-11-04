@@ -21,6 +21,10 @@ use std::{
 const MAX_METADATA: usize = 16384;
 const MAX_RETIRED: usize = 8;
 
+#[path = "service_collection_setup.rs"]
+mod setup;
+pub(crate) use setup::initial_metadata as initial_setup_metadata;
+
 #[path = "service_collection_cleanup.rs"]
 mod cleanup;
 #[path = "service_collection_integrity.rs"]
@@ -523,13 +527,7 @@ impl Collection {
                 "invalid service collection directory"
             );
         }
-        let owner = Owner {
-            version: 140,
-            root: root.into(),
-            data_root: data_root.to_str().context("non-UTF-8 data root")?.into(),
-            collection: collection.into(),
-            identity_data_root: None,
-        };
+        let owner = setup::initial_owner(&data_root, root, collection)?;
         let mut selected = Self {
             binding: owner_digest(&owner)?,
             directory,
@@ -998,6 +996,16 @@ fn settings_id(settings: &[(&str, Vec<u8>)]) -> Sha256Digest {
 }
 pub fn settings_digest(source: &FileStore, root: &str) -> Result<Sha256Digest> {
     let _writer = source.lock()?;
+    Ok(settings_id(&settings(source, root)?))
+}
+/// Read the canonical saved-settings digest while retaining the native writer
+/// across review and mutation. Never reacquire the same writer lock.
+pub fn settings_digest_with_writer(
+    source: &FileStore,
+    root: &str,
+    writer: &crate::WriterLock,
+) -> Result<Sha256Digest> {
+    crate::current::gate::check_writer(source, writer)?;
     Ok(settings_id(&settings(source, root)?))
 }
 pub fn copy_settings(

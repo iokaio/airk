@@ -44,6 +44,7 @@ export function panelDetails(view: ManagementView, section: string, version: str
         facts('Requests',entry.requests);
     }
     if(section==='service'){
+        if(view.capturedLifecycle)lines.push('',`Captured native lifecycle response: ${new Date(view.capturedLifecycle.capturedAt).toISOString()} (historical; not current health or authority).`,'Use the explicit lifecycle JSON actions for the complete native request, result and pre-operation health.');
         facts('Service',view.service);facts('Runtime',view.runtime);facts('Running versions',view.runtimeVersions);facts('Resources',view.resources);facts('Inference',view.inference);
         lines.push('',...view.processEvents);
     }
@@ -313,6 +314,8 @@ export function managementView(state: ServiceConsoleState): ManagementView {
     const legacyReview = state.legacyReview, legacyValue = obj(legacyReview?.value), preview = obj(legacyValue.preview), spec = obj(preview.spec), target = obj(spec.target);
     return {
         busy: state.busy, connected: state.connected, checkedAt:state.health?.state==='unavailable'?undefined:state.health?.checkedAt, trusted: state.trusted, authority: state.authority,
+        ...(state.trusted&&state.capturedLifecycle?{capturedLifecycle:structuredClone(state.capturedLifecycle)}:{}),
+        ...(state.trusted&&state.capturedLifecycleUnavailable?{capturedLifecycleUnavailable:state.capturedLifecycleUnavailable}:{}),
         ...(state.lifecycle ? { lifecycle: state.lifecycle } : {}), responseMode: state.responseMode ?? 'terse', ...(state.message ? { message: state.message } : {}),
         service: [observed('Service', state.health), ...rows([['Service instance', health.instance], ['Native version', health.version], ['Index format', obj(health.storage_formats).index === 1 ? 'Index format 1 (index-v1)' : undefined], ['Service-state format', obj(health.storage_formats).service_state], ['Protocol', health.protocol],
             ['Service process', health.process_id], ['Uptime (ms)', health.uptime_ms], ['Accepting work', obj(health.policy).accepting],

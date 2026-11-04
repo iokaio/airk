@@ -71,7 +71,7 @@ test('only explicit native retry hints repeat the same read; tool errors are cla
     assert.deepEqual((await client.call('airk_search', { query: 'x' })).payload, { hits: [1] });
     assert.equal(attempts, 2);
     await assert.rejects(client.call('airk_outline', { path: 'a' }), failure('INDEX_UNAVAILABLE'));
-    await assert.rejects(client.call('airk_read_file', { path: '/abs' }), (error: unknown) => failure('invalid_argument')(error) && /path must be relative/.test((error as Error).message));
+    await assert.rejects(client.call('airk_read_file', { path: '/abs' }), (error: unknown) => failure('invalid_argument')(error) && !/path must be relative/.test((error as Error).message));
     await assert.rejects(client.call('shell_exec' as NativeTool, {}), failure('INVALID_MESSAGE'));
 });
 
@@ -120,4 +120,20 @@ test('timeouts and closed sessions map to Explorer errors, and a closed session 
 
 test('a project without a native service binding cannot open an evidence session', () => {
     assert.throws(() => new EvidenceClient({ ...spec, service: undefined }, 'x'), failure('NO_PROJECT'));
+});
+
+
+test('native refusals retain the exact original MCP envelope and transport failures invent none', async () => {
+    const native = {isError:true, content:[{type:'text',text:JSON.stringify({error:{code:'scope_revoked',message:'Reviewed access changed'},scope_observation:{schema:1,fingerprint:'captured'},retry:{allowed:false}})}], structuredContent:{original:['all','fields']}};
+    const {client}=harness(async()=>native);
+    try {
+        await assert.rejects(client.call('airk_status',{}),(error:unknown)=>{
+            assert.ok(error instanceof EvidenceFailure);assert.deepEqual(error.nativeResponse,native);
+            assert.notEqual(error.nativeResponse,native,'capture is detached from transport-owned values');return true;
+        });
+    } finally {client.dispose();}
+    const offline=harness(async()=>{throw new Error('transport closed');});
+    try {await assert.rejects(offline.client.call('airk_status',{}),(error:unknown)=>{
+        assert.ok(error instanceof EvidenceFailure);assert.equal(error.nativeResponse,undefined);return true;
+    });}finally{offline.client.dispose();}
 });

@@ -36,7 +36,7 @@ pub(super) fn identity(root: &Path) -> Result<SavedRuntime> {
         return Ok(saved);
     }
     let selection = selection_record(root)?;
-    if let Some(policy) = managed::read(root)? {
+    if let Some(policy) = managed::saved_policy_for_lifecycle(root)? {
         ensure!(
             selection.active == policy.approval.manifest_sha256,
             "managed selection differs from its saved approval"

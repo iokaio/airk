@@ -7,6 +7,31 @@ import * as path from 'node:path';
 import { readWorkspaceRegistrations, renamedDefaultDataRoot, ServiceWorkspace } from '../serviceWorkspace';
 import { RuntimeHost, ProjectRegistrationReview, RuntimeBinding } from '../serviceBootstrap';
 
+test('startup adopts existing native bindings and preserves missing or removed state without registration work',async()=>{
+    const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-existing-startup-'))),values=new Map<string,unknown>();
+    const source=path.join(root,'source');await fs.mkdir(source);
+    const binding:RuntimeBinding={installDir:root,controlDir:path.join(root,'control'),executable:path.join(root,'main'),launcher:path.join(root,'launcher'),
+        runtimeSha256:'ab'.repeat(32),version:'1.9.0',lifecycle:'on-demand',verificationBasis:'trusted_distribution'};
+    const registration:ProjectRegistrationReview={...binding,binding:'cd'.repeat(32),root:source,data_root:path.join(root,'data'),collection:'existing'};
+    let nativeMutations=0;
+    const workspace=new ServiceWorkspace({keys:()=>[...values.keys()],get:<T>(key:string)=>values.get(key) as T|undefined,
+        update:async(key,value)=>{if(value===undefined)values.delete(key);else values.set(key,value);}},
+        {reviewProject:async()=>{nativeMutations++;throw new Error('startup must not prepare registration');},
+            registerProject:async()=>{nativeMutations++;throw new Error('startup must not create or restore an Index');}},()=>true);
+    try{
+        assert.equal(await workspace.reconcileStartup(binding,source,{active:[],inactive:[]}),'missing');
+        assert.equal(values.size,0);assert.equal(await fs.stat(source).then(value=>value.isDirectory()),true);
+        assert.equal(await workspace.reconcileStartup(binding,source,{active:[registration],inactive:[]}),'registered');
+        assert.equal((await workspace.definitions(binding,[source]))[0].service?.project,registration.binding);
+        const saved=[...values.entries()];
+        assert.equal(await workspace.reconcileStartup(binding,source,{active:[],inactive:[]}),'missing');
+        assert.deepEqual([...values.entries()],saved,'a service reset does not manufacture another registration or erase saved connection preferences');
+        assert.equal(await workspace.reconcileStartup(binding,source,{active:[],inactive:[registration]}),'removed');
+        assert.deepEqual(await workspace.definitions(binding,[source]),[]);
+        assert.equal(nativeMutations,0);assert.equal(await fs.stat(path.join(root,'data')).then(()=>true,()=>false),false);
+    }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
 test('saved historical defaults follow the renamed native root while custom and existing locations stay selected',async()=>{
     const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-default-storage-'));
     try{

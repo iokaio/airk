@@ -108,6 +108,7 @@ impl ServiceRegistry {
         if providers {
             return Ok(false);
         }
+        super::catalog::source_change::require_retired(&self.connection, project)?;
         let registration = self.retained_project(project)?.registration;
         let directory = Path::new(&registration.data_root)
             .join("collections-1.4")

@@ -2537,3 +2537,386 @@ documentation index, working release notes and Marketplace copy agree with the
 implemented behavior. The next phase records the resulting DCO commit ID. No PR,
 CI run, marketplace publication or user runtime installation accompanies this
 checkpoint. Full neo public-repository qualification after all P6 remains pending.
+
+## P6f — catalog management and scoped native activation (in progress)
+
+P6e was committed and pushed as
+`df442dcfaf49d6dd5edb50feee7445513e4e64e3`. P6f is uncommitted implementation
+work; production catalog activation remains disabled and version **1.8.8** is
+unchanged. The explicit authority-1 physical format preserves the exact
+authority-0/P5 layout and readiness contract. Backend recognition of authority
+contract 1 was enabled only after all five physical-layout tests passed,
+including atomic rollback, immutable provenance, separate imported/reviewed
+capacity limits and the actual aggregate 32 MiB quota. This is format
+recognition, not native installer or transport qualification.
+
+Component checkpoints collected before the final integrated freeze:
+
+- Core library: **87/87** passed with no skips. Later source-change and setup
+  draft additions compiled through the Store campaign but their new Core tests
+  have not yet run.
+- Pinned Node 24.15.0 compile and affected trust/Indexing/native-console/client/
+  Workbench export tests: **184/184**, no skips. These precede the subsequent
+  grant/setup form additions and establish component coverage, not an installed
+  editor claim. Three extension packaging/import-closure checks also passed.
+- Store catalog lifecycle campaign: **97/102 passed, five failed, no skips** in
+  42.36 seconds. The complete log is
+  `artifacts/v190/p6f-catalog-lifecycle-check.log`. All source-change, setup,
+  durable fencing and P5 regression cases passed. Four new owned legacy
+  finalizer fixtures failed while obtaining their actual source configuration;
+  one fresh finalizer fixture reported a foreign registry owner. The causes were
+  incomplete native collection setup in the legacy fixtures and a noncanonical
+  temporary path in the fresh fixture. Actual collection selection/writer/config
+  setup and canonical paths fixed those fixtures without relaxing production
+  guards. The targeted finalizer rerun passed **12/12**, no skips, in **4.98 s**;
+  the original P5 private-source fixture also passed **1/1**. Logs:
+  `p6f-finalizer-correction-r2-check.log` and
+  `p6f-finalizer-known-source-check.log`. Subsequent source-reconciliation
+  additions compiled but their affected tests still require a targeted run.
+- The subsequent source-change run passed **14/14**, no skips, in **8.69 s**
+  (`p6f-source-change-check.log`). It covers actual failed-job resolution without
+  rewriting failure history, restart/requeue, authority-fence admission,
+  seventeen-source removal, inactive imported-index retirement and exact backing
+  lookup. The grant/full-fence UI checkpoint separately passed its pinned compile
+  and **156/156** affected tests; later setup/selection/error-export additions are
+  outside that checkpoint.
+- The first immutable neo component snapshot
+  `af7fbbceaad73f0c4c7cbd9227101bf301ad442d1928c5a6a100d4c91a732933`
+  (**841 native / 843 captured inputs**) compiled Core/Store and passed **90 Core,
+  seven Unix quota and five anchored-storage tests**, with no failures or skips.
+  Before/after input hashes and cleanup were verified. Evidence is under
+  `artifacts/v190/p6f-focused-setup-u1/evidence/`. This precedes later preflight,
+  wide-inventory and scratch-resume changes; no native CLI, complete suite,
+  release pair or signing was tested in that campaign.
+
+- The later immutable neo setup snapshot
+  `75da61bf820899e50f1ed3b2456fb08d8d77d1163cca8c9cf053ef06ed3fe010`
+  (**848 native / 850 captured inputs**) compiled successfully and passed all
+  **90 Core and ten quota tests**. Anchored storage had **six passes and two
+  failures**, with no skips. The failures reported `unknown initial collection
+  file preserved` during exact replay and `unsupported managed collection
+  namespace` during existing-empty-leaf owner-publication crash recovery.
+  Complete failed evidence remains in
+  `artifacts/v190/p6f-focused-setup-u2b/evidence/`; input hashes, owned-process
+  cleanup and retained P6e payloads were unchanged. No retry was run. The earlier
+  u2 capture was rejected for changing input bytes and supplied no test result.
+- The corrected setup component snapshot
+  `94a1af0b76ba2677de0509b2da5696a4bec1b3b1a3368316dc21f05875722379`
+  contains **267 consumed Core/Store/Cargo/configuration/fixture inputs**; copied
+  CLI files are uncompiled provenance only. After independent source review,
+  the affected neo run passed **nine storage and two initial-claim tests**, no
+  failures or skips. Core and Store were verified freshly compiled; source bytes
+  were unchanged. It recognizes only the exact native selected-slot gate and
+  validates quota directories with their owning format rather than the managed
+  collection-path parser. The failed u2b result remains historical evidence.
+  An intervening harness run selected zero cases because an mtime-zero archive
+  reused an old cached binary; minimum-count guards rejected it. A missing
+  Cargo cache marker also stopped a clean preflight before tests. The corrected
+  harness cleaned only its owned clone's Core/Store outputs and verified fresh
+  compiler artifacts plus the exact test catalog before accepting the eleven
+  passing cases. Prior Core/quota component results are not relabeled as new.
+- The integrated Windows native CLI all-target/all-feature typecheck passed
+  without warnings (`p6f-native-all-targets-check-r6.log`). Earlier complete
+  diagnostics exposed mechanical error conversions, missing fixture fields and
+  stale metadata-response patterns. Fixture updates preserve legacy no-scope
+  registration and explicitly require absent fence proof on authority-0 metadata
+  responses. This is compile coverage, not executed transport qualification.
+- The later pinned extension build passed all three TypeScript configurations
+  and bundle construction. **215/215** affected setup-journal, scope-selection,
+  trust/native adapter and Workbench error/privacy/export component tests passed
+  with no skips, followed by **nine/nine** bundle-boundary tests. An intermediate
+  bundle failure exposed an accidentally omitted existing pure error registry
+  in the exact allowlist; restoring that entry and an equality regression fixed
+  it. These checks precede subsequent Use Grant/revocation/source forms, and do
+  not exercise native transport or an installed editor.
+- Canonical scoped MCP tests passed **eight/eight**, no failures or skips, in
+  **7.31 s** after the test build. They exercise actual LocalTools settings and
+  file-intent refusals, complete reviewed/imported metadata pages, continuation
+  identity, the rmcp bridge and Unified help/status/error preservation. Setup
+  errors explicitly retain an unconfirmed requested selector; uncertainty after
+  dispatch does not claim no query was submitted. These are native-handler and
+  in-process transport tests, not the pending full CLI/MCP/Workbench campaign.
+- A subsequent integrated Windows check passed all native CLI targets/features
+  without warnings (`p6f-native-all-targets-check-r7.log`, **46.70 s**). The full
+  Core library then passed **90/90**, no skips, in **8.75 s**. The combined Store
+  catalog selector passed **119/119**, no skips, in **26.90 s**, including exact
+  provider-census persistence/budgets, preinsert-only busy classification,
+  source-change recovery and all catalog upgrade/finalization regressions.
+  Shared-helper crash-recovery ownership and normal worker-exit drain integration
+  are subsequent work and are not covered by these checkpoints.
+- The freshly compiled CLI library's focused selector collected **59 passes,
+  fourteen failures and one explicit installer ignore** out of 74 cases
+  (`p6f-cli-focused-tests.log`). Twelve failures came from Windows fixtures
+  precreating permissive runtime directories instead of using the native private
+  directory creator; one retained a now-stale authority-0 capability expectation.
+  Independently reviewed test-only corrections preserve the production privacy
+  guard and explicitly test an earlier same-version capability-0 payload.
+  The remaining failure exposed a production Windows pinning defect: an
+  attributes-only directory handle did not block renaming. A native owned-fixture
+  API probe confirmed that traverse access participates in sharing checks and
+  that writable directory handles support strict flushing on this host. The
+  complete setup fix is being implemented through the shared staged backend with
+  handle-relative Windows operations; this failed campaign is not qualified as
+  passing. No ignored installer case was run without its actual payload inputs.
+- The ignored scoped-parity campaign's four helper self-tests passed. This checks
+  normalization and complete-envelope parsing only; no native transport or
+  Workbench campaign has run from that fixture.
+- The native Windows named-job selector passed six cases, including three
+  meaningful kernel ownership/crash tests and three self-gated child fixtures.
+  This does not qualify the subsequent shared-helper guardian integration.
+- The later extension startup/legacy checkpoint built successfully and collected
+  **283 passes and three failures** out of 286 component cases. The failures
+  exposed a storage-preference mutation, a stale test-host module and Windows
+  canonical-path alias handling. Corrections are under integration; these results
+  do not qualify the unfinished source/recovery forms or installed-editor flow.
+  The later Source/Resume build also passed. Twenty affected component suites
+  collected **312 passes and five failures** out of 317 cases, no skips, in
+  **2.38 s**. The remaining failures concern legacy-provider fixtures, explicit
+  setup navigation, storage-preference expectations and guarded Codex setup;
+  the new Source/Resume and native-error privacy cases passed. Full installed
+  editor/native workflow qualification remains pending.
+- The first Windows staged-storage/quota run collected all 27 selected cases:
+  **ten passed and seventeen failed**, with no skips. All six shared-provider
+  metadata cases passed. The common storage/quota failure was a native relative
+  directory `.` reopen returning error 123 before the intended setup effects.
+  The correction reopens the retained directory handle directly and validates
+  its native identity. The affected rebuilt selector then collected **five
+  passes and seventeen failures** across thirteen storage and nine quota cases,
+  with no skips: the reopen returned access denied for both flushing and
+  inventory. This remains an unresolved native primitive failure; failed hook
+  and quota-pressure assertions remain intact rather than being weakened.
+  A subsequent owned-fixture native probe isolated the difference: all thirty
+  `ReOpenFile` attempts failed, while thirty empty-name native handle-relative
+  opens retained the original directory identity. Minimal writable opens
+  supported flushing and list-access opens supported enumeration. The staged
+  adapter now uses that separate same-object operation, with identity checks and
+  an interleaved independent-cursor regression. The rebuilt affected selector
+  passed **26/28** cases, no skips, in **5.21 s**: all nine quota and five native
+  saved-receipt/absence cases passed; twelve of fourteen Windows storage cases
+  passed. Remaining failures are staged-root publication access and a parent
+  replacement fixture encountering a rename-blocking handle. These are under
+  review. The API observations and partial results do not qualify complete
+  Windows setup or cross-platform behavior.
+- The guarded-provider/reconciliation integration subsequently passed the full
+  native CLI all-target/all-feature typecheck without warnings (**42.79 s**).
+  This includes both native executables, the ownership-first Windows setup path,
+  saved-request reconciliation and shared-helper consumers. An earlier complete
+  diagnostic pass found a missing test trait import and unused recovery APIs;
+  the latter were connected to their owning Supervisor paths. Execution remains
+  pending. A later read-only audit found a guardian-death containment gap, which
+  is being corrected before native crash/lifetime qualification.
+- A fresh Core/Store library-test build completed in **1 min 14 s**. Current
+  Core passed **90/90** in **9.07 s**. The focused Store catalog contained 49
+  cases and collected **48 passes and one failure**, no skips: all twenty
+  Windows storage, nine setup-quota, six allocation-settlement, seven shared
+  provider metadata and four source-discovery cases passed. The remaining
+  retirement-evidence fixture reused a key after retirement intentionally
+  advanced the global epoch. A test-only correction obtains the native current
+  key; the affected three evidence cases and actual P5 inactive-backfill case
+  then passed **four/four** in **1.92 s**. Other passing source was unchanged;
+  the original failed run remains recorded. These are component/native-filesystem
+  results, not installed-runtime or editor qualification.
+- The later extension recovery build passed and collected **316/319** component
+  cases, no skips. The three remaining service/trust failures were corrected
+  together: exact untrusted-versus-disposed reporting, waiting for the existing
+  Console observation, and a valid webview-ready test message. Rebuilding and
+  rerunning the affected service/trust suites passed **27/27** in **0.84 s**.
+  Full retirement-evidence local tracking controls are a subsequent leaf.
+
+- A later native all-target/all-feature integration check passed without
+  warnings in **51.85 s**. The complete Windows CLI library run collected
+  **433 passes, six failures and thirteen ignored cases** in **144.77 s**;
+  Process collected **seven passes and two failures**, while the embedding
+  executable tests passed **13/13**. All failures were collected before the
+  combined correction: strict physical-schema fixtures, request-key reuse,
+  native page-budget coverage, private runtime directory creation, and actual
+  process/resource readiness. Correction verification remains separate from
+  those original results.
+  The corrected Process suite subsequently passed **9/9** in **0.28 s**;
+  actual job member inspection identified console hosts alongside the two
+  fixture roles. The six affected CLI cases then collected **five passes and
+  one failure**: administrative paging still failed opening its fixture SQLite
+  database. No further correction was made until all six outcomes were collected.
+  That fixture was then initialized through the native empty-publication API
+  before configuring roots, retaining the real multi-page body, complete frame
+  checks and exact Roots reassembly. The affected case passed in **5.16 s**;
+  its rebuild completed without warnings. The original full run and both
+  affected-run results remain distinct evidence.
+- The frozen focused Neo provider snapshot (`caf16f99…44b95a`) passed its
+  all-target/all-feature check and built an unsealed standalone component
+  executable pair. All three actual helper lifecycle qualifiers passed:
+  startup/completion, abrupt service exit with predecessor recovery/GC, and
+  guardian termination while a real grouped descendant held a resource and
+  Pool input remained open. Across eight selected cases, **seven passed and
+  one private-directory fixture failed**. Three platform warning messages were
+  recorded. The failed receipt is preserved; this is not warning-free or full
+  macOS qualification, managed activation, or accepted model-work coverage.
+  A separate frozen corrective snapshot (`c721a854…377ac8f3`) then passed the
+  warning-free all-target/all-feature check (**43.97 s**), fresh CLI test
+  compilation (**99.53 s**) and only the previously failing normal recovery
+  case (**0.46 s**). The earlier three actual lifecycle passes remain attached
+  to their original snapshot; they were not repeated or relabeled.
+- Following the concrete Source configuration contract correction and first
+  Workbench opening/export fixes, the full compiled JavaScript suite passed
+  **640 tests with zero failures and nineteen explicit native/platform skips**
+  in **6.91 s**. The skipped native transports and installed editor behavior
+  remain unqualified by this component run.
+  The Source correction removes two false identity equalities: a concrete
+  collection incarnation and settings digest are independent of the registry
+  namespace and backing binding. Structural validation and complete native
+  request/preview/original-Begin continuity remain required. The older
+  `prepare: true` configuration template retains its separate contract.
+- A fresh offline Windows runtime pair built the helper and feature-minimal
+  main separately (**84 s** and **83 s**), verified the embedded inventory and
+  staged its native source receipt. Both explicitly selected real helper
+  lifecycle cases passed: startup/completion (**0.93 s**) and abrupt service
+  exit followed by predecessor recovery (**1.09 s**). They do not exercise
+  accepted model work or installed activation.
+  The first native CLI/MCP/Workbench parity campaign stopped after **29 calls**
+  (**7.68 s**) when the read-only SourceDraft probe correctly refused a pending
+  derived vectors job. Source bytes were preserved; parity was not qualified.
+  Fixture ordering is under review, without canceling accepted work or relaxing
+  native source-change admission.
+  After bounded native observation allowed the accepted vectors and verification
+  work to succeed before pausing, the second campaign passed the actual native
+  SourceDraft-to-compiled-validator bridge (six positive/crossed cases). It then
+  stopped at **74 calls / 19.24 s** on a CLI/MCP input-schema comparison. Full
+  catalog diagnostics are being prepared to distinguish intentional transport
+  selectors/public aliases from native input drift. The overall campaign remains
+  failed, and source bytes remained unchanged.
+  A smaller owned registration-only catalog capture then retained both complete
+  catalogs without indexing or activation. Its strict differences identified
+  public aliases, optional MCP project routing, bundled UI-help inputs and ten
+  UI-only tools. A declared projection checker preserves the raw values and
+  compares every remaining native input and tool-metadata field; its captured
+  baseline and twelve tamper cases passed offline. It rejects semantic/default
+  data masquerading as documentation instead of normalizing it.
+  The audit also found two real help-input inconsistencies: Unified rejected
+  valid topic qualifiers, and selected public tool aliases could return the
+  same native error on both sides of an insufficient test. Canonical qualifier
+  delegation and exact-first known alias lookup corrected these paths.
+  Unified's nineteen tests passed, followed by fourteen focused help tests
+  including positive actual scoped-handler schema/observation equality. A fresh
+  runtime pair incorporating the correction was used for the following native
+  transport campaign.
+- The third native campaign retained its failure after **76 calls / 19.60 s**:
+  the fixture copied an outer response-presentation control into a primitive
+  Parse step. The fourth retained a separate **79-call / 20.16 s** failure:
+  its one-call plan budget covered publication pinning but left no primitive
+  read. The corrected fixture keeps primitive and transport inputs distinct
+  and budgets exactly two calls; native budget enforcement is unchanged.
+  The fifth campaign passed **228 transport calls in 57.99 s**, preserving
+  source bytes. It retained 86 complete read comparisons across scoped search,
+  twelve evidence families and four selected native-help inputs. Thirteen
+  private probes exercised metadata scope, usage purpose, malformed purpose
+  and actual unredeemed credential expiry. The bounded child authenticated
+  native peers and kept credentials in memory; timeout or malformed framing
+  could not count as an observed refusal/EOF.
+  The actual native SourceDraft-to-compiled-validator bridge passed six cases.
+  Two actual Workbench receiver/copy/export cases retained full and selected
+  JSON/Markdown data, including a native refusal. Their VS Code host is a stub
+  and the process opener connects to the owned fixture; this is handler and
+  transport evidence, not installed-editor or managed-launcher qualification.
+  All owned Workbench MCP children exited without forced cleanup.
+- The subsequent required format check exposed three formatting differences,
+  which were corrected. Clippy exposed oversized Core enum variants; heap
+  indirection preserves their complete payloads and serialized wire contract,
+  with unboxed-reference byte/digest regressions. All **91 Core tests passed**
+  in **8.71 s**. Store lint corrections preserved full saved observations and
+  receipt precedence; the next Clippy run passed Store, Kernel and MCP but
+  exposed CLI lint failures. Private actor payload indirection and borrowed
+  owner context preserve complete responses, guarded delivery and resource
+  ownership. After correcting a missing test trait import, workspace Clippy
+  passed **all targets and all features with warnings denied** in **20.40 s**.
+  Complete earlier diagnostic sets remain retained. Formatting and complete-diff
+  whitespace checks passed. Repository checks passed for **1,678 public files**;
+  version checks agree on **1.8.8**, and design checks passed 43 wire fixtures
+  plus the 24 workspace outcomes and U0–U6 contract cases. The all-feature
+  workspace test run and its remaining-target collection reported **2,287
+  passed, 28 failed and 38 explicitly ignored**. These totals count only the
+  final summary of each Cargo target, excluding nested fixture summaries.
+  CLI library tests passed **439/439**; Kernel library tests passed **171/171**
+  with one explicit ignore, including the large-catalog regression (**409.11 s**).
+  The generated CLI reference was stale; canonical regeneration and its exact
+  verification test subsequently passed. The original failure remains retained.
+  Store reported two failures: a path-dependent boundary fixture and corrupt
+  configuration-result recovery. Twenty-five CLI integration failures were
+  collected across fourteen targets; the shared legacy Configure admission
+  regression and typed catalog-outcome assertion are under correction. The
+  full workspace test gate remains failed pending affected reruns.
+  The coherent admission/recovery correction then passed warning-denied
+  workspace Clippy (**38.69 s**), all **35 focused Store cases**, and the full
+  Store library (**665 passed, zero failed, three explicit ignores; 210.54 s**).
+  Thirteen of fourteen affected CLI targets passed, including actual model
+  setup, catalog upgrade, configuration, helper-outage, MCP, read-retry, PDF,
+  held-helper service responsiveness and vector-selection paths. Only two
+  Usage cases still failed. They invoked an engine-bound administrative client
+  from a foreign test executable, which native preflight correctly refused.
+  The tests now use the real CLI; complete native refusal preservation and the
+  targeted Usage/administrative check are under validation, without relaxing
+  engine/instance checks or introducing replay.
+  The pinned offline dependency gate passed its requested checks with the two
+  existing unmaintained-package exceptions. Its receipt remains **limited**:
+  cached advisory/import evidence was not refreshed, npm advisories were not
+  checked, and fresh/yanked-package coverage is unqualified.
+- A separate metadata-only native campaign stopped after **53 calls / 14.85 s**
+  on its incorrect expectation of positive partial-subtree status counts.
+  The captured native `scoped_read_unavailable` response retained the complete
+  selected ScopeObservation. The owning Kernel contract deliberately refuses
+  corpus aggregates for a path-restricted scope; its regression requires that
+  refusal. All owned children exited and source bytes were preserved. The
+  failed report remains evidence; metadata transport parity is not yet qualified.
+  After correcting only that fixture expectation, the metadata-only campaign
+  passed **80 calls / 18.20 s**. Partial status and diagnostics retained their
+  complete native refusals across CLI, MCP, shell and the status convenience
+  command. Capabilities succeeded for both scopes; full-source status positively
+  counted the two indexed documents and full diagnostics succeeded. Existing
+  MCP and new CLI connections both refused after revocation, preserving their
+  distinct submission-phase details. Source bytes remained unchanged and all
+  owned children exited. This does not qualify partial-subtree aggregate counts.
+- The remaining Usage failures now have passing affected reruns. The tests
+  exercise usage reports through the actual CLI engine rather than the foreign
+  integration-test executable; the native engine-binding guard remains intact.
+  A negative test retains the complete `service_rebind_required` response.
+  Two Usage cases and four administrative handler cases passed. The accounting
+  case then exposed an unsettled physical-audit fixture: it now awaits an actual
+  successful Verify job before holding the writer exclusion and passed its
+  exact rerun. All 28 failures from the original workspace run have passing
+  affected reruns; this is not a new complete workspace pass.
+- The lifecycle capture and installed-editor driver passed the combined host,
+  webview and assistance TypeScript build. The JavaScript suite passed
+  **645 tests**, with **19 explicit skips** and no failures. A shared lifecycle
+  DTO initially pulled host-only Node dependencies into the browser build;
+  moving that unchanged DTO to the existing browser-safe contract corrected
+  the dependency boundary. The full native lifecycle response is retained as
+  historical data, with explicit complete JSON copy/export and a redacted
+  default diagnostic summary. All four native-read source-contract tests also
+  passed. No installed-editor scenario has run.
+- The managed-provider audit found a real cutover gap: its normal ensure path
+  bypasses the copied installer's Genesis/Upgrade coordinator and the settlement
+  callback. A first owning adapter slice using the existing journals passed
+  independent source review and workspace all-target/all-feature Clippy with
+  warnings denied. All **19 new component cases** have passing results across
+  the initial passes and affected reruns. The first run exposed missing control
+  directory creation in the owning path; the correction preserves the strict
+  lease precondition and refuses to recreate lost initialized control state.
+  Existing Genesis **15**, installer **136** and helper-engine **14** tests
+  passed, with **7 explicit installer skips**. These are component contracts,
+  not executed managed activation or provider containment qualification.
+  The explicit instrumented-helper target and all three held-engine owner
+  scenarios have type-checked; their process fixtures have not run.
+  Installer quiescence also needs actual shared-provider
+  containment evidence after abrupt predecessor death; lease absence alone is
+  insufficient. Production activation remains disabled.
+  The installed-editor driver now uses actual setup/Project/grant/Use forms;
+  its compiled dispatch, refusal and cleanup assertions have been reviewed.
+  Native lifecycle completion must be retained in full for review rather than
+  inferred from a shutdown acknowledgement. No new installed-editor or managed
+  activation qualification is claimed.
+
+These checkpoints do not qualify managed activation, installed-editor behavior,
+single-index performance, the complete Windows suite or latest-source macOS.
+Actual installer predecessor probes, accepted engine work with sibling resource
+drainage, and the remaining qualification are still required. The
+full frozen public-repository build/test checkpoint on neo remains mandatory
+after P6f acceptance and before P7; no release, signing or publication is implied.

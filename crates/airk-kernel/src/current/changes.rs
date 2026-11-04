@@ -17,6 +17,7 @@ impl Kernel {
             if let RememberedSelector::Path { path } | RememberedSelector::Citation { path, .. } =
                 selector
             {
+                read.require_path(path)?;
                 airk_store::roots::source_location(&self.root_id(), &roots, path)?;
                 if let Some((alias, _)) = path.strip_prefix('@').and_then(|p| p.split_once('/')) {
                     anyhow::ensure!(
@@ -96,7 +97,7 @@ impl Kernel {
             cursor: None,
         };
         let binding = discovery::binding(
-            &token.to_string(),
+            &self.scope_bound_cursor_identity(&token.to_string())?,
             "current-changes/2",
             (
                 &request.selectors,

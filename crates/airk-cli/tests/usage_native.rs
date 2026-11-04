@@ -2,10 +2,10 @@
 //! Reports stay direct; a saved clear request cannot erase later observations on replay.
 mod common;
 use airk_core::{
-    service::{ControlMethod as Method, ControlResponse as Response, JobKind},
+    service::{ControlMethod as Method, ControlResponse as Response, JobKind, JobOutcome},
     usage::{ClientFamily, RecordingMode},
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 
 #[test]
@@ -21,16 +21,21 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
         mode: RecordingMode::AggregatesOnly,
     });
     service.job(JobKind::Index);
+    // Index acknowledgement does not settle the separate native audit cohort.
+    // Complete actual canonical verification before our measurement lock can
+    // prevent its physical work; the protected reads below still enforce it.
+    let verified = service.job(JobKind::Verify);
+    ensure!(
+        matches!(
+            verified.outcome,
+            Some(JobOutcome::Succeeded { revision: Some(_) })
+        ),
+        "canonical Verify did not finish its native publication audit: {verified:?}",
+    );
     let executor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;
-    let report = || {
-        executor.block_on(airk_cli::usage_client::report(
-            &service.control,
-            service.project.binding,
-            30,
-        ))
-    };
+    let report = || native_report(root.path(), data.path());
     // Count actual outer calls. A rejected read is another call, so this accounting
     // fixture excludes concurrent writers instead of silently retrying a query.
     let collection = airk_store::service::collection::Collection::existing(
@@ -39,8 +44,8 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
         "usage",
     )?;
     let store = collection.selected_store()?;
-    let writer = hold_writer(&store)?;
-    let before = report()?;
+    let writer = hold_writer(&store).context("initial measured-read writer exclusion")?;
+    let before = report().context("initial native CLI usage report")?;
     assert!(
         before["report"]["clients"]["native_scheduler"]
             .as_u64()
@@ -54,24 +59,37 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
         indexed, 1,
         "native work must be counted once across source turns and waiting clients"
     );
-    single_search(root.path(), data.path())?;
-    executor.block_on(async {
-        let mut connection = airk_cli::project_client::Connection::connect_as(
-            &service.control,
-            service.project.binding,
-            ClientFamily::Codex,
+    single_search(root.path(), data.path()).with_context(|| {
+        format!(
+            "initial measured CLI search; native observations: {}",
+            integrity_observation(&service)
         )
-        .await?;
-        let reply = connection
-            .call(
-                "airk_outline".into(),
-                json!({"path":"original.rs"}).as_object().unwrap().clone(),
-            )
-            .await?;
-        ensure!(reply["isError"] != true, "{reply}");
-        Ok::<_, anyhow::Error>(())
     })?;
-    let after = report()?;
+    executor
+        .block_on(async {
+            let mut connection = airk_cli::project_client::Connection::connect_as(
+                &service.control,
+                service.project.binding,
+                ClientFamily::Codex,
+            )
+            .await
+            .context("measured Codex outline brokerage")?;
+            let reply = connection
+                .call(
+                    "airk_outline".into(),
+                    json!({"path":"original.rs"}).as_object().unwrap().clone(),
+                )
+                .await?;
+            ensure!(reply["isError"] != true, "{reply}");
+            Ok::<_, anyhow::Error>(())
+        })
+        .with_context(|| {
+            format!(
+                "measured Codex outline; native observations: {}",
+                integrity_observation(&service)
+            )
+        })?;
+    let after = report().context("native CLI usage report after CLI and Codex reads")?;
     assert_eq!(
         after["report"]["calls"].as_u64(),
         before["report"]["calls"].as_u64().map(|calls| calls + 2)
@@ -97,7 +115,10 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
         anyhow::bail!("clear receipt missing")
     };
     assert_eq!(result["cleared"], true);
-    assert_eq!(report()?["report"]["calls"], 0);
+    assert_eq!(
+        report().context("native CLI usage report after clear")?["report"]["calls"],
+        0
+    );
     service.job(JobKind::Inspect);
     let draft_file = data.path().join("clear-draft.json");
     std::fs::write(&draft_file, br#"{"operation":"clear_usage"}"#)?;
@@ -132,8 +153,13 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
     };
     service.wait(first.id);
     // Simulate acceptance whose acknowledgement was lost before journal removal.
-    let writer = hold_writer(&store)?;
-    single_search(root.path(), data.path())?;
+    let writer = hold_writer(&store).context("clear-replay measured-read writer exclusion")?;
+    single_search(root.path(), data.path()).with_context(|| {
+        format!(
+            "clear-replay measured CLI search; native observations: {}",
+            integrity_observation(&service)
+        )
+    })?;
     drop(writer);
     let repeated = common::native_command()
         .args(["service", "requests", "--runtime-dir"])
@@ -147,7 +173,10 @@ fn direct_usage_counts_outer_clients_once_and_exact_clear_replay_preserves_later
     );
     let repeated: Value = serde_json::from_slice(&repeated.stdout)?;
     assert_eq!(repeated["job"]["id"], serde_json::to_value(first.id)?);
-    assert_eq!(report()?["report"]["calls"], 1);
+    assert_eq!(
+        report().context("native CLI usage report after exact clear replay")?["report"]["calls"],
+        1
+    );
     assert!(airk_cli::client_requests::list(&service.control)?.is_empty());
     assert_eq!(
         std::fs::read_to_string(root.path().join("original.rs"))?,
@@ -236,14 +265,8 @@ fn explorer_mcp_client_info_is_recorded_as_its_own_family() -> Result<()> {
     let _ = child.kill();
     let _ = child.wait();
     drop(writer);
-    let report = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?
-        .block_on(airk_cli::usage_client::report(
-            &service.control,
-            service.project.binding,
-            30,
-        ))?;
+    let report = native_report(root.path(), data.path())
+        .context("native CLI usage report after Explorer MCP read")?;
     let clients = &report["report"]["clients"];
     assert_eq!(clients["explorer"], 1, "{clients}");
     assert!(clients.get("vscode").is_none(), "{clients}");
@@ -288,4 +311,77 @@ fn hold_writer(store: &airk_store::FileStore) -> Result<airk_store::WriterLock> 
             Err(error) => return Err(error),
         }
     }
+}
+
+/// Exercise the real same-image native client, including administrative
+/// preflight and the sole positive legacy-zero direct transport handoff.
+fn native_report(root: &std::path::Path, data: &std::path::Path) -> Result<Value> {
+    let output = common::command(root, data, "usage")
+        .args(["usage", "report", "--days", "30", "--format", "json"])
+        .output()
+        .context("spawn native CLI usage report")?;
+    ensure!(
+        output.status.success(),
+        "native CLI usage report refused; complete native output: {}; stderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).context("decode complete native CLI usage report")
+}
+
+#[test]
+fn foreign_admin_client_preserves_full_preflight_refusal_then_native_cli_succeeds() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let data = tempfile::tempdir()?;
+    std::fs::write(
+        root.path().join("original.txt"),
+        "Retain source bytes across refused admin preflight.\n",
+    )?;
+    let before = std::fs::read(root.path().join("original.txt"))?;
+    let service = common::Service::start(root.path(), data.path(), "usage");
+    service.configure(airk_cli::service_configuration::Draft::Vectors { enabled: false });
+    service.job(JobKind::Index);
+    let Response::Health { observation } = service.request(Method::Health) else {
+        anyhow::bail!("native service health unavailable")
+    };
+    ensure!(
+        airk_cli::runtime_pair::digest_file(&std::env::current_exe()?)?
+            != observation.executable_sha256,
+        "regression requires a genuinely foreign test executable",
+    );
+    let error = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(airk_cli::usage_client::report(
+            &service.control,
+            service.project.binding,
+            30,
+        ))
+        .err()
+        .context("foreign executable unexpectedly passed admin preflight")?;
+    let refusal = error
+        .downcast_ref::<airk_cli::usage_client::NativeReadFailure>()
+        .context("native preflight refusal lost its complete typed response")?;
+    assert_eq!(
+        refusal.body(),
+        &serde_json::to_value(Response::Failure {
+            code: "service_rebind_required".into(),
+        })?
+    );
+    // Non-submission follows from console_client's engine check BEFORE
+    // request_for_instance. Usage-report counters cannot establish that fact.
+    native_report(root.path(), data.path())
+        .context("correct native executable after explicit foreign refusal")?;
+    assert_eq!(std::fs::read(root.path().join("original.txt"))?, before);
+    Ok(())
+}
+
+fn integrity_observation(service: &common::Service) -> Value {
+    // Failure-only bounded native metadata. Never retry a measured evidence read.
+    json!({
+        "console": service.request(Method::Console { after: None, revision: None, limit: 1 }),
+        "worker": service.request(Method::Worker { project: service.project.binding }),
+        "sources": service.request(Method::SourceStatus),
+        "resources": service.request(Method::Resources),
+    })
 }

@@ -8,6 +8,15 @@ export interface CommandRoute {
     readonly action?: string;
     readonly fields?: Readonly<Record<string, unknown>>;
 }
+export const MANAGE_WORKSPACE_TRUST_COMMAND = 'workbench.trust.manage';
+/** Commands that can start native work; navigation, help, local logs and trust review remain usable. */
+export const NATIVE_COMMANDS: readonly string[] = [
+    'installCli','setUp','showLastUninstallResult','reviewData','openTools','treeIndex','treeReindex','treePause',
+    'index','reindex','indexMode','pause','resume','chooseStorage','status','usage','setupAgent','verifyMcp','manageMcp','manageVscodeMcp',
+    'diagnose','currentMaintenance','serviceConnect','serviceStart','serviceRestart','serviceStop','serviceResources',
+    'workbench.searchSelection','explorer.search',
+];
+export const NATIVE_COMMAND_ENABLEMENT = 'isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable';
 
 export const COMMAND_ROUTES: Readonly<Record<string, CommandRoute>> = {
     menu: { route: '#overview' },

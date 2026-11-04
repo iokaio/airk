@@ -348,6 +348,7 @@ impl ServiceRegistry {
         let tx = self
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        super::catalog::source_change::require_ready_registration(&tx, project)?;
         let registered: bool = tx.query_row(
             "SELECT EXISTS(SELECT 1 FROM projects WHERE binding=?1 AND registered=1)",
             [project.to_string()],

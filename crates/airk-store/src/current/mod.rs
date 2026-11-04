@@ -20,11 +20,14 @@ pub mod postings;
 mod publication_spike_tests;
 pub mod query_projection;
 mod read;
+mod read_scope;
 mod rebuild;
 pub mod recent;
 mod recent_events;
 pub mod relationships;
 pub mod resources;
+#[cfg(test)]
+mod scoped_import_tests;
 pub mod text_range;
 pub mod vector_map;
 mod wal;

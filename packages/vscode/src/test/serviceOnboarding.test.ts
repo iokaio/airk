@@ -49,14 +49,14 @@ test('ordinary focus and extension-list changes keep a matching active version q
     }finally{await f.close();}
 });
 
-test('failed first project preparation preserves completed runtime installation and quiet reopen',async context=>{
+test('runtime installation never calls legacy project preparation for missing indexes and keeps reopen quiet',async context=>{
     const f=await serviceTestHost(context,{registered:false});
     try{
-        context.mock.method(RuntimeHost.prototype,'reviewProject',async()=>{throw new ServiceError('source_unavailable');});
+        let reviewed=0;context.mock.method(RuntimeHost.prototype,'reviewProject',async()=>{reviewed++;throw new ServiceError('source_unavailable');});
         f.settings.set('cli.autoInstall',true);
         await f.refreshFolders();
         assert.ok([...f.values.keys()].some(key=>key.startsWith('airk.installComplete.1.')));
-        assert.ok(f.warnings.some(message=>message.startsWith('AIRK is installed. Project preparation needs attention')));
+        assert.equal(reviewed,0);assert.equal(f.registrations.size,0);assert.equal(f.warnings.length,0);
         assert.equal(f.calls.some(message=>message.startsWith('Automatic installation failed:')),false);
         assert.equal(f.calls.some(message=>message.startsWith('Installation did not complete.')),false);
         const progress=f.progressRuns.length,notices=f.warnings.length,retirements=f.calls.filter(message=>message==='previous-runtime-retired').length;
@@ -68,10 +68,10 @@ test('failed first project preparation preserves completed runtime installation 
     }finally{await f.close();}
 });
 
-test('trusted activation installs and registers all folders once with model/index jobs and no setup prompts',async context=>{
+test('trusted activation installs the runtime once without registering or indexing open folders',async context=>{
     const f=await serviceTestHost(context,{automatic:true,registered:false,roots:2});
     try{
-        assert.equal(f.registrations.size,2);assert.equal(f.state.picks,0);assert.equal(f.warnings.length,0);
+        assert.equal(f.registrations.size,0);assert.equal(f.state.picks,0);assert.equal(f.warnings.length,0);
         assert.ok(f.calls.includes('previous-runtime-retired'));
         assert.equal(f.notices.length,0,'successful activation needs no notification decision');
         assert.ok(f.calls.some(message=>message.includes('This window is running the updated interface')));
@@ -80,10 +80,9 @@ test('trusted activation installs and registers all folders once with model/inde
         assert.match(f.progressRuns[0].title,/Checking AIRK .* installation/);
         assert.doesNotMatch(f.progressRuns[0].title,/setup/);
         assert.ok(f.progressRuns[0].messages.some(value=>value.includes('Checking selected runtime')));
-        assert.ok(f.progressRuns[0].messages.some(value=>value.includes('Runtime ready. Project indexing continues in Management.')));
-        assert.equal(f.writes.filter(value=>value.reserve_project?.setup_watch===true).length,2);
-        assert.equal(f.writes.filter(value=>value.enqueue).length,0,'initial setup is owned by the native registration transaction');
-        const servers=await f.api.getServerDefinitions();assert.equal(servers.length,1);assert.ok(servers[0].args.includes('--no-default-project'));assert.ok(servers[0].args.includes('--additional-root'));
+        assert.ok(f.progressRuns[0].messages.some(value=>value.includes('Runtime ready. Set up new indexes explicitly in Indexing')));
+        assert.equal(f.writes.filter(value=>value.reserve_project).length,0);assert.equal(f.writes.filter(value=>value.enqueue).length,0);
+        const servers=await f.api.getServerDefinitions();assert.deepEqual(servers,[],'missing indexes and grants cannot produce MCP definitions');
         const writes=f.writes.length,retirements=f.calls.filter(value=>value==='previous-runtime-retired').length,ensures=f.state.ensured;
         await f.refreshFolders();assert.equal(f.writes.length,writes);
         assert.equal(f.state.ensured,ensures,'healthy reopen uses authenticated health without another native start/ensure');
@@ -160,20 +159,15 @@ test('1.4 patch upgrade retains existing storage bindings and does not reset wat
 
 // Follow the shipped manifest so a release bump cannot silently leave its upgrade path disabled.
 const releaseVersion:string=require('../../package.json').version;
-test('fresh native registry recovers an open project despite surviving editor receipts',async context=>{
+test('fresh native registry does not recreate an index from surviving editor receipts',async context=>{
     const f=await serviceTestHost(context,{automatic:true,runtimeVersion:releaseVersion,bundledVersion:releaseVersion});
     try{
-        const old=[...f.registrations.keys()][0];
         f.registrations.clear(); // User deleted Local/Roaming AIRK state; VS Code's Memento survived.
         const writes=f.writes.length;
         await f.refreshFolders();
-        assert.equal(f.registrations.size,1);
-        assert.equal(f.writes.length,writes+1);
-        assert.equal(f.writes.at(-1).reserve_project.setup_watch,true);
-        assert.equal([...f.registrations.keys()][0],old,'unchanged root/storage restores the deterministic identity');
-        assert.equal((await f.api.getServerDefinitions()).length,1);
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.length,writes);assert.deepEqual(await f.api.getServerDefinitions(),[]);
         const again=f.writes.length;await f.refreshFolders();assert.equal(f.writes.length,again);
-        assert.ok(f.calls.some(value=>value.includes('Restoring workspace registration')));
+        assert.ok(f.calls.some(value=>value.includes('Indexing → Index library')));assert.ok(!f.calls.some(value=>value.includes('Restoring workspace registration')));
     }finally{await f.close();}
 });
 test('startup honors a native removed project instead of recreating it from editor receipts',async context=>{
@@ -185,7 +179,7 @@ test('startup honors a native removed project instead of recreating it from edit
         assert.equal(f.registrations.size,0);assert.equal(f.writes.length,writes);
         assert.equal((await f.api.getServerDefinitions()).length,0);
         await f.refreshFolders();assert.equal(f.writes.length,writes);
-        assert.ok(f.calls.some(value=>value.startsWith('Project remains removed:')));
+        assert.ok(f.calls.some(value=>value.startsWith('Index remains removed:')));
     }finally{await f.close();}
 });
 test('startup adopts an existing manually restored index for the same root without resetting it',async context=>{
@@ -268,39 +262,38 @@ for(const command of ['airk.installCli','airk.retryUpdate']){
     });
 }
 
-test('automatic reopen keeps a user-selected replacement index location and manual watching',async context=>{
+test('storage command opens explicit setup without changing the saved location or existing watching',async context=>{
     const f=await serviceTestHost(context,{automatic:true});
     try{
-        const moved=require('node:path').join(f.root,'moved-index');
+        const moved=require('node:path').join(f.root,'moved-index'),storage=f.settings.get('storage.path');
         f.state.selectedFolders=[{fsPath:moved}];await f.commands.get('airk.chooseStorage')!();
         f.state.pick=items=>items.find(item=>item.enabled===false)??items[0];
         await f.commands.get('airk.indexMode')!();
         const saved=[...f.values.entries()].filter(([key])=>key.startsWith('airk.service.workspace.'));
         const writes=f.writes.length;await f.refreshFolders();assert.equal(f.writes.length,writes);
         assert.deepEqual([...f.values.entries()].filter(([key])=>key.startsWith('airk.service.workspace.')),saved);
-        assert.equal(f.settings.get('storage.path'),moved);
+        assert.equal(f.settings.get('storage.path'),storage);assert.ok(f.calls.some(value=>value.includes('Set up an index in Indexing')));
         assert.ok(f.writes.some(value=>value.configure_watch?.enabled===false));
     }finally{await f.close();}
 });
 
 
-test('upgrade automatically registers trusted unregistered folders without Add Project or consent prompts',async context=>{
+test('upgrade preserves missing folders as unregistered until an explicit native index setup',async context=>{
     const f=await serviceTestHost(context,{automatic:true,registered:false,roots:2,runtimeVersion:'1.6.0',bundledVersion:releaseVersion});
     try{
         assert.equal(f.binding.version,releaseVersion);
-        assert.equal(f.registrations.size,2);
+        assert.equal(f.registrations.size,0);
         assert.equal(f.state.picks,0);
         assert.equal(f.notices.length,0);
         assert.equal(f.warnings.length,0);
         const reservations=f.writes.filter(value=>value.reserve_project);
-        assert.equal(reservations.length,2);
-        assert.ok(reservations.every(value=>value.reserve_project.setup_watch===true&&value.reserve_project.only_if_missing===true));
+        assert.equal(reservations.length,0);
         const writes=f.writes.length;await f.refreshFolders();assert.equal(f.writes.length,writes);
     }finally{await f.close();}
 });
 
 
-test('a deleted open folder does not block automatic setup of other trusted folders',async context=>{
+test('a deleted open folder does not trigger registration of the remaining folders',async context=>{
     const fs=await import('node:fs/promises');
     const f=await serviceTestHost(context,{registered:false,roots:2});
     try{
@@ -308,15 +301,15 @@ test('a deleted open folder does not block automatic setup of other trusted fold
         const held=path.join(f.root,'moved-folder');
         await fs.rename(missing,held);
         f.settings.set('cli.autoInstall',true);await f.refreshFolders();
-        assert.equal(f.registrations.size,1);
+        assert.equal(f.registrations.size,0);
         assert.equal(f.warnings.length,0);
         assert.equal(f.state.picks,0);
         assert.ok(f.calls.some(value=>value.startsWith('Source folder is missing:')));
-        assert.equal(f.writes.filter(value=>value.reserve_project?.setup_watch===true).length,1);
+        assert.equal(f.writes.filter(value=>value.reserve_project).length,0);
     }finally{await f.close();}
 });
 
-test('transient selected metadata failure does not block complete trusted project preparation',async context=>{
+test('transient selected metadata failure never authorizes creating missing indexes',async context=>{
     const f=await serviceTestHost(context,{registered:false,roots:2});
     try{
         context.mock.method(RuntimeHost.prototype as any,'invoke',async(_command:string,args:string[])=>{
@@ -324,11 +317,11 @@ test('transient selected metadata failure does not block complete trusted projec
             throw new ServiceError('selected_metadata_fixture_unavailable');
         });
         f.settings.set('cli.autoInstall',true);await f.refreshFolders();
-        assert.equal(f.registrations.size,2);
+        assert.equal(f.registrations.size,0);
         assert.equal(f.warnings.length,0);
         assert.ok(f.calls.some(line=>line.includes('Selected project availability is unconfirmed:')&&line.includes('selected_metadata_fixture_unavailable')));
         assert.ok(!f.calls.some(line=>line.includes('Project preparation needs attention:')));
-        assert.equal(f.writes.filter(value=>value.reserve_project?.setup_watch===true).length,2);
+        assert.equal(f.writes.filter(value=>value.reserve_project).length,0);
     }finally{await f.close();}
 });
 
@@ -347,7 +340,7 @@ test('first installation waits for review: dismiss and defer change nothing pers
         assert.equal(reviews(),2,'a saved deferral is honored without asking again');
         assert.equal(f.state.ensured,0);assert.equal(f.registrations.size,0);
         await f.commands.get('airk.setUp')!();
-        assert.ok(f.state.ensured>0);assert.equal(f.registrations.size,1);
+        assert.ok(f.state.ensured>0);assert.equal(f.registrations.size,0);assert.equal(f.writes.filter(value=>value.reserve_project).length,0);
     }finally{await f.close();}
 });
 
@@ -359,38 +352,35 @@ test('first installation review can disable automatic setup or accept it once',a
         assert.equal(f.settings.get('cli.autoInstall'),false);assert.equal(f.state.ensured,0);
         f.settings.set('cli.autoInstall',true);f.state.noticeAction='Set up';
         await f.refreshFolders();
-        assert.ok(f.state.ensured>0);assert.equal(f.registrations.size,1);
+        assert.ok(f.state.ensured>0);assert.equal(f.registrations.size,0);assert.equal(f.writes.filter(value=>value.reserve_project).length,0);
         const reviews=f.notices.length;await f.refreshFolders();
         assert.equal(f.notices.length,reviews,'accepted setup is not reviewed again');
     }finally{await f.close();}
 });
 
-test('customized first installation registers only selected folders and can skip shell integration',async context=>{
+test('customized first installation offers shell integration without folder registration choices',async context=>{
     const f=await serviceTestHost(context,{fresh:true,registered:false,roots:2});
     try{
         f.settings.set('cli.autoInstall',true);f.state.noticeAction='Customize…';
         let offered:any[]=[];
-        f.state.pick=items=>{offered=items;return items.filter(item=>item.folder===f.folders[1].uri.fsPath);};
+        f.state.pick=items=>{offered=items;return [];};
         await f.refreshFolders();
-        assert.equal(offered.length,3);assert.ok(offered.slice(0,2).every(item=>item.picked===true));
+        assert.equal(offered.length,1);assert.equal(offered[0].label,'Terminal command in external shells');assert.equal(offered.some(item=>item.folder),false);
         assert.equal(f.settings.get('cli.shellIntegration'),'off');
-        assert.equal(f.registrations.size,1);
-        assert.equal([...f.registrations.values()][0].root,f.folders[1].uri.fsPath);
-        assert.ok(f.calls.some(line=>line.includes('left out during setup review')));
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.filter(value=>value.reserve_project).length,0);
     }finally{await f.close();}
 });
 
-test('a home folder is never registered automatically without an explicit choice',async context=>{
+test('home folders and ordinary folders both remain unregistered after runtime setup',async context=>{
     const os=require('node:os') as typeof import('node:os');
     const f=await serviceTestHost(context,{fresh:true,registered:false,roots:2});
     try{
         context.mock.method(os,'homedir',()=>f.folders[0].uri.fsPath);
         f.settings.set('cli.autoInstall',true);f.state.noticeAction='Set up';
         await f.refreshFolders();
-        assert.ok(f.notices.some(notice=>notice.message==='Set up AIRK on this computer?'&&JSON.stringify(notice.actions).includes('Home folders and drive roots')));
-        assert.equal(f.registrations.size,1);
-        assert.equal([...f.registrations.values()][0].root,f.folders[1].uri.fsPath);
-        assert.ok(f.calls.some(line=>line.includes('is a home folder or drive root')));
+        assert.ok(f.notices.some(notice=>notice.message==='Set up AIRK on this computer?'));
+        assert.equal(f.registrations.size,0);assert.equal(f.writes.filter(value=>value.reserve_project).length,0);
+        assert.ok(f.calls.some(line=>line.includes('Opening folders does not create indexes')));
     }finally{await f.close();}
 });
 

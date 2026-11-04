@@ -6,7 +6,7 @@ use crate::{
     service_runtime,
 };
 use airk_core::service::{ControlMethod, ControlResponse, PROTOCOL_VERSION, ProjectBinding};
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use std::{
     future::Future,
     path::{Path, PathBuf},
@@ -27,8 +27,36 @@ impl std::fmt::Display for RetrySetup {
 }
 impl std::error::Error for RetrySetup {}
 
+#[derive(Debug)]
+struct ScopedConnectionRefused {
+    response: serde_json::Value,
+    retryable: bool,
+}
+impl std::fmt::Display for ScopedConnectionRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("native scoped connection was refused before query submission")
+    }
+}
+impl std::error::Error for ScopedConnectionRefused {}
+
+fn scoped_setup_rejection(
+    selection: &airk_core::service::ScopedConnectRequest,
+    error: &anyhow::Error,
+) -> serde_json::Value {
+    let native = error.downcast_ref::<ScopedConnectionRefused>();
+    airk_mcp::remote::scoped_setup_failure(
+        selection,
+        "scoped_connection_unavailable",
+        setup_retryable(error),
+        native.map(|failure| failure.response.clone()),
+    )
+}
+
 fn setup_retryable(error: &anyhow::Error) -> bool {
     error.is::<RetrySetup>()
+        || error
+            .downcast_ref::<ScopedConnectionRefused>()
+            .is_some_and(|error| error.retryable)
         || error.chain().any(|cause| {
             cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
                 matches!(
@@ -94,9 +122,31 @@ pub struct Connection {
     authorized_until: Instant,
     last_finished: Instant,
     healthy: bool,
+    scoped: bool,
     status_receipt: airk_mcp::response::StatusReceipt,
 }
 impl Connection {
+    pub async fn connect_scoped(
+        root: &Path,
+        project: ProjectBinding,
+        selection: &airk_core::service::ScopedConnectRequest,
+        client: airk_core::usage::ClientFamily,
+    ) -> Result<Self> {
+        selection.validate()?;
+        retry_setup(
+            || Self::connect_once_selected(root, project, client, None, Some(selection)),
+            Duration::from_secs(30),
+            8,
+            Duration::from_millis(100),
+        )
+        .await
+        .map_err(|error| {
+            crate::usage_client::NativeReadFailure::from_response(scoped_setup_rejection(
+                selection, &error,
+            ))
+            .into()
+        })
+    }
     pub async fn connect(root: &Path, project: ProjectBinding) -> Result<Self> {
         Self::connect_as(root, project, airk_core::usage::ClientFamily::Unknown).await
     }
@@ -123,11 +173,38 @@ impl Connection {
         ticket: RequestTicket,
         once: bool,
     ) -> Result<Self> {
+        Self::connect_frontend_selected(root, project, client, owner, ticket, once, None).await
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn connect_frontend_selected(
+        root: &Path,
+        project: ProjectBinding,
+        client: airk_core::usage::ClientFamily,
+        owner: &StatusOwner,
+        ticket: RequestTicket,
+        once: bool,
+        selection: Option<&airk_core::service::ScopedConnectRequest>,
+    ) -> Result<Self> {
         if once {
-            return Self::connect_once_checked(root, project, client, Some((owner, &ticket))).await;
+            return Self::connect_once_selected(
+                root,
+                project,
+                client,
+                Some((owner, &ticket)),
+                selection,
+            )
+            .await;
         }
         retry_setup(
-            || Self::connect_once_checked(root, project, client, Some((owner, &ticket))),
+            || {
+                Self::connect_once_selected(
+                    root,
+                    project,
+                    client,
+                    Some((owner, &ticket)),
+                    selection,
+                )
+            },
             Duration::from_secs(30),
             8,
             Duration::from_millis(100),
@@ -147,6 +224,15 @@ impl Connection {
         client: airk_core::usage::ClientFamily,
         owner: Option<(&StatusOwner, &RequestTicket)>,
     ) -> Result<Self> {
+        Self::connect_once_selected(root, project, client, owner, None).await
+    }
+    async fn connect_once_selected(
+        root: &Path,
+        project: ProjectBinding,
+        client: airk_core::usage::ClientFamily,
+        owner: Option<(&StatusOwner, &RequestTicket)>,
+        selection: Option<&airk_core::service::ScopedConnectRequest>,
+    ) -> Result<Self> {
         let response = {
             let _health_request = owner
                 .map(|(owner, ticket)| {
@@ -157,13 +243,46 @@ impl Connection {
                 .transpose()?;
             service_runtime::request(root, ControlMethod::Health).await?
         };
-        let ControlResponse::Health { observation } = response else {
-            anyhow::bail!("service health unavailable")
+        let observation = match response {
+            ControlResponse::Health { observation } => observation,
+            // A misplaced positive credential is a protocol error, never an
+            // error payload to retain in a journal or export.
+            ControlResponse::Connection { .. } => anyhow::bail!("service health protocol mismatch"),
+            response if selection.is_some() => {
+                let retryable = matches!(&response, ControlResponse::Failure { code } if matches!(code.as_str(),
+                    "broker_busy" | "project_starting_or_unavailable" | "project_unavailable_or_busy"
+                    | "previous_workers_draining" | "catalog_revision_changed" | "catalog_clock_pending"));
+                return Err(ScopedConnectionRefused {
+                    response: serde_json::to_value(response)?,
+                    retryable,
+                }
+                .into());
+            }
+            _ => anyhow::bail!("service health unavailable"),
         };
         ensure!(
             observation.version == env!("CARGO_PKG_VERSION"),
             "native service version differs from this client"
         );
+        let selected = selection
+            .map(|selection| -> Result<_> {
+                let clock = observation
+                    .catalog_clock
+                    .as_ref()
+                    .ok_or(RetrySetup("native catalog clock is not ready"))?;
+                ensure!(
+                    clock.namespace == selection.namespace,
+                    "catalog session namespace changed; select reviewed scope again"
+                );
+                if clock.revision < selection.expected_catalog_revision {
+                    return Err(RetrySetup("native catalog clock is stale").into());
+                }
+                let mut selected = selection.clone();
+                selected.expected_catalog_revision = clock.revision;
+                Ok(selected)
+            })
+            .transpose()?;
+        let selection = selected.as_ref();
         let _broker_request = owner
             .map(|(owner, ticket)| {
                 owner
@@ -171,27 +290,45 @@ impl Connection {
                     .and_then(|fresh| owner.admit_ticket(&fresh))
             })
             .transpose()?; // one request after health
-        let (role, mut grant) =
-            match service_runtime::request(root, ControlMethod::Connect { project }).await? {
-                ControlResponse::Connection { role, grant } => (role, grant),
-                ControlResponse::Failure { code } if code == "project_unregistered" => {
-                    anyhow::bail!(
-                        "project is unregistered; review native registration before connecting"
-                    )
-                }
-                ControlResponse::Failure { code }
-                    if matches!(
-                        code.as_str(),
-                        "broker_busy"
-                            | "project_starting_or_unavailable"
-                            | "project_unavailable_or_busy"
-                            | "previous_workers_draining"
-                    ) =>
-                {
-                    return Err(RetrySetup("direct worker setup temporarily unavailable").into());
-                }
-                _ => anyhow::bail!("project unavailable; no direct-store fallback"),
-            };
+        let method = match selection {
+            Some(selection) => ControlMethod::ConnectScoped {
+                request: selection.clone(),
+            },
+            None => ControlMethod::Connect { project },
+        };
+        let response = service_runtime::request(root, method).await?;
+        if selection.is_some() && !matches!(&response, ControlResponse::Connection { .. }) {
+            let retryable = matches!(&response, ControlResponse::Failure { code } if matches!(code.as_str(),
+                "broker_busy" | "project_starting_or_unavailable" | "project_unavailable_or_busy"
+                | "previous_workers_draining" | "catalog_revision_changed" | "catalog_clock_pending"));
+            return Err(ScopedConnectionRefused {
+                response: serde_json::to_value(response)?,
+                retryable,
+            }
+            .into());
+        }
+        let (role, mut grant) = match response {
+            ControlResponse::Connection { role, grant } => (role, grant),
+            ControlResponse::Failure { code } if code == "project_unregistered" => {
+                anyhow::bail!(
+                    "project is unregistered; review native registration before connecting"
+                )
+            }
+            ControlResponse::Failure { code }
+                if matches!(
+                    code.as_str(),
+                    "broker_busy"
+                        | "project_starting_or_unavailable"
+                        | "project_unavailable_or_busy"
+                        | "previous_workers_draining"
+                        | "catalog_revision_changed"
+                        | "catalog_clock_pending"
+                ) =>
+            {
+                return Err(RetrySetup("direct worker setup temporarily unavailable").into());
+            }
+            _ => anyhow::bail!("project unavailable; no direct-store fallback"),
+        };
         ensure!(
             grant.protocol == PROTOCOL_VERSION
                 && grant.identity.service == observation.instance
@@ -200,6 +337,18 @@ impl Connection {
                 && role == protocol::role(grant.identity.worker),
             "brokered worker identity mismatch"
         );
+        if let Some(selection) = selection {
+            let scope = grant
+                .scope
+                .context("scoped connection omitted its native authority")?;
+            scope.validate()?;
+            ensure!(
+                scope.index_id == selection.index_id
+                    && scope.grant_id == selection.grant_id
+                    && scope.grant_revision == selection.expected_grant_revision,
+                "scoped connection differs from the selected reviewed grant"
+            );
+        }
         let setup_started = Instant::now();
         let mut stream = tokio::time::timeout(
             Duration::from_secs(5),
@@ -221,6 +370,7 @@ impl Connection {
             authorized_until: setup_started + Duration::from_secs(55),
             last_finished: Instant::now(),
             healthy: true,
+            scoped: grant.scope.is_some(),
             status_receipt: Default::default(),
         })
     }
@@ -242,7 +392,7 @@ impl Connection {
         arguments: serde_json::Map<String, serde_json::Value>,
     ) -> Result<serde_json::Value> {
         self.exchange(Query {
-            frontend: if tool == "airk_diagnostics" {
+            frontend: if tool == "airk_diagnostics" && !self.scoped {
                 Some(crate::runtime_metadata::observe_process())
             } else {
                 None
@@ -383,6 +533,7 @@ pub(crate) struct Backend {
     latest_source: std::sync::Mutex<Option<SourceFence>>,
     status: Arc<StatusOwner>,
     client: std::sync::Mutex<airk_core::usage::ClientFamily>,
+    catalog_session: Option<airk_core::service::ScopedConnectRequest>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SourceFence {
@@ -396,6 +547,11 @@ enum CacheScope {
     Pinned(airk_core::identity::Incarnation),
     Registered(SourceFence),
     Source(SourceFence),
+    Scoped {
+        namespace: airk_core::identity::Incarnation,
+        project: ProjectBinding,
+        selection: airk_core::identity::Sha256Digest,
+    },
 }
 impl From<airk_core::identity::Incarnation> for CacheScope {
     fn from(value: airk_core::identity::Incarnation) -> Self {
@@ -507,6 +663,12 @@ fn status_scope(root: &Path, project: ProjectBinding) -> Result<Option<CacheScop
     })))
 }
 impl airk_mcp::remote::RemoteTools for Backend {
+    fn local_help(&self) -> bool {
+        self.catalog_session.is_none()
+    }
+    fn scoped_selection(&self) -> Option<&airk_core::service::ScopedConnectRequest> {
+        self.catalog_session.as_ref()
+    }
     fn query_concurrency(&self) -> usize {
         crate::service_resource_policy::query_concurrency(&self.root)
     }
@@ -553,7 +715,7 @@ impl Backend {
     }
     fn source_fence_current(&self, scope: CacheScope) -> bool {
         match scope {
-            CacheScope::Pinned(_) | CacheScope::Registered(_) => true,
+            CacheScope::Pinned(_) | CacheScope::Registered(_) | CacheScope::Scoped { .. } => true,
             CacheScope::Source(fence) => {
                 self.latest_source
                     .lock()
@@ -589,7 +751,7 @@ impl Backend {
         source_expires: Option<Instant>,
     ) -> airk_mcp::remote::RemoteFuture<'_> {
         Box::pin(async move {
-            if tool == "airk_help" {
+            if tool == "airk_help" && self.catalog_session.is_none() {
                 return Ok(serde_json::to_value(airk_mcp::help::call(
                     serde_json::Value::Object(arguments),
                 ))?);
@@ -613,7 +775,7 @@ impl Backend {
             if source_expires.is_some_and(|until| Instant::now() >= until) {
                 return Ok(source_scope_superseded());
             }
-            if tool == "airk_status" {
+            if tool == "airk_status" && self.catalog_session.is_none() {
                 let client = self
                     .client
                     .lock()
@@ -635,7 +797,7 @@ impl Backend {
                 self.status.invalidate();
                 crate::runtime_metadata::observe_process();
             }
-            if observed.is_none() {
+            if observed.is_none() && self.catalog_session.is_none() {
                 self.status
                     .bind_initial_pinned_scope(self.root.clone(), self.project)
                     .await?;
@@ -709,15 +871,28 @@ impl Backend {
                     .lock()
                     .map(|value| *value)
                     .unwrap_or(airk_core::usage::ClientFamily::Unknown);
-                let connected = Connection::connect_frontend(
-                    &self.root,
-                    self.project,
-                    client,
-                    &self.status,
-                    ticket,
-                    tool == "airk_diagnostics",
-                )
-                .await;
+                let connected = if let Some(selection) = &self.catalog_session {
+                    Connection::connect_frontend_selected(
+                        &self.root,
+                        self.project,
+                        client,
+                        &self.status,
+                        ticket,
+                        tool == "airk_diagnostics",
+                        Some(selection),
+                    )
+                    .await
+                } else {
+                    Connection::connect_frontend(
+                        &self.root,
+                        self.project,
+                        client,
+                        &self.status,
+                        ticket,
+                        tool == "airk_diagnostics",
+                    )
+                    .await
+                };
                 if source_expires.is_some_and(|until| Instant::now() >= until)
                     || observed
                         .is_some_and(|fence| !self.source_fence_current(CacheScope::Source(fence)))
@@ -730,12 +905,17 @@ impl Backend {
                     Err(error) if error.is::<RetiredRequest>() => {
                         return Ok(source_scope_superseded());
                     }
-                    Err(_) if tool == "airk_diagnostics" => {
+                    Err(_) if tool == "airk_diagnostics" && self.catalog_session.is_none() => {
                         return Ok(
                             crate::runtime_metadata::unavailable(&self.root, self.project).await,
                         );
                     }
-                    Err(error) => return setup_rejection(&error).ok_or(error),
+                    Err(error) => {
+                        if let Some(selection) = &self.catalog_session {
+                            return Ok(scoped_setup_rejection(selection, &error));
+                        }
+                        return setup_rejection(&error).ok_or(error);
+                    }
                 };
                 ticket = match self
                     .status
@@ -819,6 +999,7 @@ pub(crate) fn source_tools(root: PathBuf, project: ProjectBinding) -> Arc<Backen
         latest_source: std::sync::Mutex::new(None),
         status: Arc::new(StatusOwner::default()),
         client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
+        catalog_session: None,
     })
 }
 
@@ -839,7 +1020,44 @@ pub(crate) fn source_tools_owned(
         client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Unknown),
         latest_source: std::sync::Mutex::new(None),
         status,
+        catalog_session: None,
     })
+}
+
+pub fn scoped_tools(
+    root: PathBuf,
+    project: ProjectBinding,
+    selection: airk_core::service::ScopedConnectRequest,
+) -> Result<Arc<dyn airk_mcp::remote::RemoteTools>> {
+    selection.validate()?;
+    let status = Arc::new(StatusOwner::default());
+    let semantic = (
+        &selection.schema,
+        &selection.context_key,
+        &selection.namespace,
+        &selection.grant_id,
+        &selection.expected_grant_revision,
+        &selection.index_id,
+        &selection.project_ids,
+    );
+    status.scoped_scope(
+        selection.namespace,
+        project,
+        airk_core::identity::framed_digest(
+            b"airk/frontend-catalog-session/1",
+            &[&serde_json::to_vec(&semantic)?],
+        ),
+    );
+    Ok(Arc::new(Backend {
+        root,
+        project,
+        state: ChannelPool::default(),
+        state_waiters: Arc::new(tokio::sync::Semaphore::new(128)),
+        latest_source: Default::default(),
+        status,
+        client: std::sync::Mutex::new(airk_core::usage::ClientFamily::Cli),
+        catalog_session: Some(selection),
+    }))
 }
 
 #[cfg(test)]
@@ -1083,6 +1301,7 @@ mod tests {
             authorized_until: now + Duration::from_secs(55),
             last_finished: now,
             healthy: true,
+            scoped: false,
             status_receipt: Default::default(),
         };
         assert!(connection.reusable(now + Duration::from_secs(24)));
@@ -1371,6 +1590,7 @@ mod source_brokerage_ipc_tests {
         let role = protocol::role(identity.worker);
         let mut worker = local_ipc::Listener::bind(&local_ipc::endpoint(root, &role)?)?;
         let grant = ConnectionGrant {
+            scope: None,
             protocol: PROTOCOL_VERSION,
             identity,
             caller: local_ipc::caller_identity()?,
@@ -1379,6 +1599,7 @@ mod source_brokerage_ipc_tests {
             client: airk_core::usage::ClientFamily::Unknown,
         };
         let health = ServiceHealth {
+            catalog_clock: None,
             storage_formats: None,
             build: None,
             build_error: None,

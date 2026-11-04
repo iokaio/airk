@@ -145,6 +145,7 @@ fn interrupted_state_claim_never_falls_back_and_resumes_before_and_after_lock_cr
         state: state.clone(),
         channel: RuntimeChannel::Stable,
         ready: false,
+        managed_catalog_origin: None,
     };
     replace_json(&root, LAYOUT, &layout)?;
     assert!(control(&root).is_err());
@@ -249,6 +250,7 @@ fn process_death_during_owner_write_resumes_only_a_matching_owned_prefix() -> Re
         state: state.clone(),
         channel: RuntimeChannel::Stable,
         ready: false,
+        managed_catalog_origin: None,
     };
     replace_json(&root, LAYOUT, &layout)?;
     let mut command = Command::new(std::env::current_exe()?);
@@ -290,6 +292,7 @@ fn foreign_or_modified_owner_partials_are_preserved_and_exclusive_rename_never_r
         state: state.clone(),
         channel: RuntimeChannel::Stable,
         ready: false,
+        managed_catalog_origin: None,
     };
     replace_json(&root, LAYOUT, &layout)?;
     fs::write(&partial, b"Preserve user-modified metadata.")?;
@@ -357,6 +360,7 @@ fn pinned_external_logs_are_written_and_exported_without_control_fallback_or_sou
         logs: Some(logs.clone()),
         channel: RuntimeChannel::Stable,
         ready: false,
+        managed_catalog_origin: None,
     };
     replace_json(&root, LAYOUT, &layout)?;
     initialize(&root, None, RuntimeChannel::Stable)?;
@@ -452,6 +456,7 @@ fn new_custom_layout_pins_state_logs_and_old_development_bindings_do_not_move_si
         logs: None,
         channel: RuntimeChannel::Stable,
         ready: false,
+        managed_catalog_origin: None,
     };
     replace_json(&old_root, LAYOUT, &old)?;
     initialize(&old_root, None, RuntimeChannel::Stable)?;

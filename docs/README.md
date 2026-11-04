@@ -1,5 +1,7 @@
 # AIRK documentation
 
+P6f is an implementation checkpoint: reviewed Indexing/setup/grant forms and scoped native reads are present, with actual CLI/MCP parity evidence in the [ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation-in-progress). Production catalog activation remains disabled pending managed lifecycle, installed-editor and final qualification. Version remains **1.8.8**.
+
 P6e makes [oversized stdio input](mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
 
 P6d's [source admission changes](service-freshness.md) give eligible source work priority over pending Vector jobs and yield running Vector turns at safe boundaries. Saved semantic work resumes afterward. Actual Windows and Mac ARM backlog scenarios passed; the implementation ledger records final qualification and remaining platform limits.

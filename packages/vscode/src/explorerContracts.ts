@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
+/** Complete host-captured native data; browser-safe DTO with no native client dependency. */
+export interface CapturedLifecycleResponse {
+    capturedAt:number; qualification:'historical_native_lifecycle_response';
+    runtime:{installDir:string;controlDir:string;runtimeSha256:string}; namespace:string;
+    before_health:Record<string,unknown>|null; force:boolean; response:Record<string,unknown>;
+}
 /** Optional repository guidance, shared by the UI and its copy action. */
 export const AGENT_INSTRUCTION_FILES = {
     claude: { name: 'Claude Code', file: 'CLAUDE.md' },
@@ -17,6 +23,7 @@ import type { Availability } from './explorerFeatures';
 import type { DraftKind, ProposalOutcome, ProposalReceipt } from './explorerDrafts';
 import type { ExplorerError, ExplorerErrorCode } from './explorerErrors';
 import { ROUTE_KEYS } from './explorerRoutes';
+import type { CatalogView } from './indexingCatalog';
 
 export const MESSAGE_VERSION = 1;
 /** Fixed public destinations for user-clicked About links; never agent-supplied URLs. */
@@ -104,6 +111,9 @@ export interface ExplorerViewState {
     readonly connectionCheck?: ConnectionCheck;
     readonly startup?: { readonly message: string; readonly startedAt: number; readonly failed?: boolean };
     readonly trusted: boolean;
+    /** Actual editor trust, separate from disposed/revoked client authority. Absent is unknown. */
+    readonly workspaceTrusted?: boolean;
+    readonly nativeExecutionEnabled?: boolean;
     readonly connection: ConnectionState;
     readonly projects: readonly ProjectSummary[];
     readonly projectsObservedAt?: number;
@@ -121,6 +131,7 @@ export interface ExplorerViewState {
     readonly moreProjects?: boolean;
     /** Present while a Management tab is open; built from the shared console state. */
     readonly management?: ManagementView;
+    readonly indexing?: CatalogView;
     /** Agent drafts waiting in this window's Suggestions Inbox (summaries only; bodies are fetched on review). */
     readonly suggestions?: SuggestionsView;
 }
@@ -366,6 +377,8 @@ export interface PlanView {
 }
 export interface PendingIntentView { readonly id: string; readonly title: string; readonly unknown: boolean; readonly lifecycle: boolean; readonly forceAvailable: boolean }
 export interface ManagementView {
+    readonly capturedLifecycle?:CapturedLifecycleResponse;
+    readonly capturedLifecycleUnavailable?:string;
     readonly busy: boolean;
     readonly connected: boolean;
     readonly checkedAt?: number;
@@ -401,6 +414,7 @@ export interface ManagementView {
 
 /** Console action names the Explorer may send; identical to the console's own allowlist (tested). */
 export const MANAGE_ACTIONS = [
+    'copyLifecycle', 'openLifecycle', 'saveLifecycle',
     'reviewLegacyStartup', 'legacyStartupReceipts', 'removeLegacyStartup', 'copyLegacyStartup', 'registeredProjects', 'inactiveProjects', 'registerWorkspace',
     'refresh', 'connect', 'start', 'stop', 'restart', 'repairRuntime', 'upgradeRuntime', 'rollbackRuntime', 'resumeActivation', 'logs', 'resources', 'queryConcurrency',
     'responseMode', 'recoverLifecycle', 'abandonLifecycle', 'startEmbedding', 'stopEmbedding', 'forceEmbedding', 'firstPage', 'nextPage', 'morePlan',
@@ -559,6 +573,7 @@ export const WEBVIEW_MESSAGES = {
     'project.select': { project: PROJECT },
     'status.refresh': {},
     'extension.reload': {},
+    'workspace.manageTrust': {},
     'workbench.toggle': {},
     'details.copy': { section: { kind: 'enum', values: ['index', 'health', 'progress', 'activity', 'semantic', 'service', 'storage', 'recovery'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
     'search.page': { project: PROJECT, selectionEpoch: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER }, page: { kind: 'int', min: 0, max: 4 } },
@@ -597,6 +612,30 @@ export const WEBVIEW_MESSAGES = {
         name: { kind: 'string', max: 256, optional: true }, pathPrefix: { kind: 'string', max: 1024, optional: true }, limit: { kind: 'int', min: 1, max: 100 },
     },
     'manage.refresh': {},
+    'indexing.page': { kind: { kind: 'enum', values: ['projects', 'indexes', 'memberships', 'sources', 'grants'] }, next: { kind: 'bool' },
+        index: { kind: 'string', min: 36, max: 36, pattern: /^idx_[0-9a-f]{32}$/, optional: true },
+        project: { kind: 'string', min: 36, max: 36, pattern: /^prj_[0-9a-f]{32}$/, optional: true } },
+    'indexing.detail': { kind: { kind: 'enum', values: ['project', 'index', 'grant'] }, id: { kind: 'string', min: 36, max: 36, pattern: /^(?:idx_|prj_|grt_)[0-9a-f]{32}$/ } },
+    'indexing.preview': { operation: { kind: 'json', max: 49152 }, generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
+    'indexing.create': { name: { kind: 'string', min: 1, max: 256 }, generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
+    'indexing.apply': { generation: { kind: 'int', min: 0, max: Number.MAX_SAFE_INTEGER } },
+    'indexing.reconcile': {},
+    'indexing.context.read': {},
+    'indexing.context.preview': { selection: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.context.delete': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.grant.draft': { selection: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.grant.use': { choice: { kind:'json', max:4096 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.grant.revoke': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.setup.draft': { selection: { kind:'json', max:16384 }, generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.setup.apply': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.setup.resume': { id:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.source.draft': { change:{kind:'json',max:16384},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.source.read': { begin:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.source.pending': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.retirement.read': { id:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
+    'indexing.retirement.stopTracking': { generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
+    'indexing.source.resolve': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.export': { format: { kind: 'enum', values: ['copy', 'json'] } },
     'manage.action': {
         action: { kind: 'enum', values: MANAGE_ACTIONS },
         project: { ...PROJECT, optional: true },
@@ -617,7 +656,7 @@ export const WEBVIEW_MESSAGES = {
         revision: { kind: 'int', min: 0, max: 1_000_000_000 }, expectedHash: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },
     'strategy.import': {},
     'usage.read': {},
-    'usage.action': { action: { kind: 'enum', values: ['days', 'refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback'] },
+    'usage.action': { action: { kind: 'enum', values: ['days', 'refresh', 'json', 'csv', 'markdown', 'recording', 'clear', 'import', 'prices', 'removePrices', 'template', 'feedback','openIndexAdministration'] },
         days: { kind: 'int', min: 7, max: 30, optional: true } },
     'clipboard.write': { text: { kind: 'string', min: 1, max: 262144 } },
     'instructions.open': { agent: { kind: 'enum', values: ['claude', 'codex', 'copilot'] }, project: { kind: 'string', min: 64, max: 64, pattern: /^[0-9a-f]{64}$/ } },
@@ -699,6 +738,7 @@ export function parseWebviewMessage(input: unknown): WebviewMessage | undefined 
 // ---- Host → webview messages.
 export type HostMessage =
     | { v: 1; type: 'state'; state: ExplorerViewState }
+    | { v: 1; type: 'indexing.session'; session: CatalogView }
     | { v: 1; type: 'search.session'; session: SearchSessionView }
     | { v: 1; type: 'navigate'; route: string }
     /** A query entered outside the panel (sidebar quick search or a command); the webview runs it. */

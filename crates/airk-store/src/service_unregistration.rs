@@ -39,11 +39,12 @@ pub(super) fn finish_if_requested(
 }
 
 /// Shared retirement transaction: never opens or deletes source/index files.
-fn retire(
+pub(super) fn retire(
     connection: &Connection,
     project: ProjectBinding,
     except: Option<Sha256Digest>,
 ) -> Result<()> {
+    super::catalog::source_change::require_retired(connection, project)?;
     ensure!(
         connection.execute(
             "UPDATE projects SET registered=0,paused=1 WHERE binding=?1 AND registered=1",

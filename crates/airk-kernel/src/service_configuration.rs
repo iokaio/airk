@@ -5,9 +5,80 @@ use airk_core::{
     service::ProjectBinding,
     service_configuration::{ConfigurationRequest, ProjectConfiguration},
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::path::Path;
+
+/// Canonical preparation shared with explicit administrative configuration.
+/// File-intent native reads must pass their installed-scope guard before calling.
+pub fn prepare_input(
+    path: &Path,
+    limit: u64,
+) -> Result<airk_core::service_configuration::InputFile> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let text = path.to_str().context("configuration input must be UTF-8")?;
+    ensure!(
+        path.is_absolute() && text.len() <= 4096 && !text.chars().any(char::is_control),
+        "configuration input requires a bounded absolute path"
+    );
+    let path = path.canonicalize()?;
+    let metadata = std::fs::symlink_metadata(&path)?;
+    ensure!(
+        metadata.is_file() && !metadata.file_type().is_symlink(),
+        "runtime file is not a regular unlinked file"
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        ensure!(metadata.nlink() == 1, "aliased runtime file");
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::{fs::MetadataExt, io::AsRawHandle};
+        use windows_sys::Win32::Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+        };
+        ensure!(
+            metadata.file_attributes() & 0x400 == 0,
+            "redirected runtime file"
+        );
+        let file = std::fs::File::open(&path)?;
+        // SAFETY: this Win32 metadata output struct admits all-zero initialization.
+        let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: the owned read-only file handle and initialized output remain
+        // alive through this fixed native metadata call.
+        ensure!(
+            unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut information) }
+                != 0,
+            "cannot inspect runtime file aliases"
+        );
+        ensure!(information.nNumberOfLinks == 1, "aliased runtime file");
+    }
+    let mut file = std::fs::File::open(&path)?;
+    let before = file.metadata()?;
+    ensure!(
+        before.is_file() && before.len() <= limit,
+        "configuration input exceeds budget"
+    );
+    let mut bytes = Vec::new();
+    (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() as u64 <= limit
+            && bytes.len() as u64 == before.len()
+            && file.metadata()?.len() == before.len(),
+        "configuration input changed during preparation"
+    );
+    let reference = airk_core::service_configuration::InputFile {
+        path: path
+            .to_str()
+            .context("configuration input must be UTF-8")?
+            .into(),
+        sha256: airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(bytes).into()),
+    };
+    reference.validate()?;
+    Ok(reference)
+}
 pub fn verified_input(
     input: &airk_core::service_configuration::InputFile,
     limit: usize,
@@ -42,6 +113,68 @@ fn input_path(value: &str) -> Result<&Path> {
     Ok(value)
 }
 impl Kernel {
+    /// Normalize explicit file intents only after refusing installed read scopes.
+    /// Existing pinned requests and their canonical validation/report bodies are
+    /// unchanged; no frontend opens an input merely to obtain a scoped refusal.
+    pub fn prepare_native_read(
+        &self,
+        request: airk_core::native_reads::NativeRead,
+    ) -> Result<airk_core::native_reads::NativeRead> {
+        use airk_core::native_reads::{NativeRead, SettingsView};
+        match request {
+            NativeRead::ValidateSettingsFile {
+                view,
+                path,
+                cursor,
+                max_bytes,
+            } => {
+                self.require_unrestricted_read()?;
+                ensure!(
+                    matches!(
+                        view,
+                        SettingsView::ExtractionPolicy
+                            | SettingsView::VectorSelection
+                            | SettingsView::ScanLimits
+                            | SettingsView::QuotaPolicy
+                    ),
+                    "settings view does not accept validation input"
+                );
+                Ok(NativeRead::ValidateSettings {
+                    view,
+                    input: prepare_input(Path::new(&path), 131_072)?,
+                    cursor,
+                    max_bytes,
+                })
+            }
+            NativeRead::UsageReportFile {
+                days,
+                price_scenario_path,
+                cursor,
+                max_bytes,
+                format,
+            } => {
+                self.require_unrestricted_read()?;
+                ensure!((1..=30).contains(&days), "usage report days must be 1..30");
+                ensure!(
+                    price_scenario_path.len() <= 4096
+                        && !price_scenario_path.chars().any(char::is_control),
+                    "invalid usage price scenario input path"
+                );
+                let price: airk_core::usage::PriceScenario = serde_json::from_slice(
+                    &crate::usage::read_usage_input(input_path(&price_scenario_path)?, 16_384)?,
+                )?;
+                price.validate()?;
+                Ok(NativeRead::UsageReport {
+                    days,
+                    cursor,
+                    max_bytes,
+                    format,
+                    price: Some(price),
+                })
+            }
+            request => Ok(request),
+        }
+    }
     pub fn validate_service_configuration(
         &self,
         project: ProjectBinding,

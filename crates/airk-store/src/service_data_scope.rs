@@ -13,6 +13,12 @@ pub(crate) const OWNER: &str = "service-data-1.4.owner.json";
 pub(crate) const PART: &str = "service-data-1.4.owner.part";
 pub(crate) const LOCK: &str = "service-data-1.4.lock";
 const MAX_BYTES: u64 = 16384;
+
+#[path = "service_data_scope_setup.rs"]
+mod setup;
+#[cfg(any(unix, windows))]
+pub(crate) use setup::bound_from_existing_setup;
+pub(crate) use setup::initial_owner_bytes;
 #[derive(Debug, Clone, Copy)]
 pub struct ForeignDataRoot;
 impl std::fmt::Display for ForeignDataRoot {
@@ -217,6 +223,60 @@ pub fn check(data: &Path, control: &Path, namespace: Incarnation) -> Result<()> 
     Ok(())
 }
 
+/// Read-only distinction between an actual saved binding and a fresh location.
+/// Successful `check` alone deliberately also permits an unbound empty root.
+pub fn has_saved_binding(data: &Path, control: &Path, namespace: Incarnation) -> Result<bool> {
+    check(data, control, namespace)?;
+    exists(&data.join(OWNER))
+}
+
+/// Recognize only the bounded native shape of an interrupted initial claim.
+/// This is not ownership or admission: callers must already retain the exact
+/// saved setup reservation and its project lease before attempting `bind`.
+pub fn recoverable_setup_binding(
+    data: &Path,
+    control: &Path,
+    namespace: Incarnation,
+) -> Result<bool> {
+    ensure!(!exists(&data.join(OWNER))?, "binding is already complete");
+    let scope = expected(data, control, namespace)?;
+    let bytes = serde_json::to_vec(&scope)?;
+    let scratch = super::registry::catalog::setup::native_setup_scratch_name(OWNER, &bytes);
+    let mut seen = false;
+    for (number, entry) in fs::read_dir(data)?.enumerate() {
+        ensure!(number < 5, "unowned setup storage contains unknown entries");
+        let entry = entry?;
+        match entry.file_name().to_str() {
+            Some(PART) => {
+                ensure!(
+                    bytes.starts_with(&read(&entry.path())?),
+                    "foreign setup ownership partial preserved"
+                );
+                seen = true;
+            }
+            Some(LOCK) => {
+                let metadata = fs::symlink_metadata(entry.path())?;
+                crate::managed_collection::reject_file_aliases(&entry.path(), &metadata)?;
+                ensure!(metadata.len() == 0, "unexpected setup claim lock contents");
+                seen = true;
+            }
+            Some(name) if name == scratch => {
+                ensure!(
+                    bytes.starts_with(&read(&entry.path())?),
+                    "foreign setup ownership scratch preserved"
+                );
+                seen = true;
+            }
+            _ if crate::quota::initial_service_claim_entry(&entry.file_name()) => {
+                crate::quota::validate_existing_service_claim(data)?;
+                seen = true;
+            }
+            _ => anyhow::bail!("unowned setup storage contains unknown entries"),
+        }
+    }
+    Ok(seen)
+}
+
 pub(crate) fn relocated_owner(
     data: &Path,
     destination: &Path,
@@ -331,6 +391,82 @@ mod tests {
             fs::create_dir(path)?;
         }
         Ok((root, data, first, second))
+    }
+    #[test]
+    fn saved_binding_probe_is_read_only_and_never_calls_freshness_ownership_proof() -> Result<()> {
+        let (_root, data, first, second) = fixture()?;
+        let namespace = Incarnation::from_bytes([1; 16]);
+        assert!(!has_saved_binding(&data, &first, namespace)?);
+        assert!(fs::read_dir(&data)?.next().is_none());
+        bind(&data, &first, namespace)?;
+        let before = fs::read(data.join(OWNER))?;
+        assert!(has_saved_binding(&data, &first, namespace)?);
+        assert!(has_saved_binding(&data, &second, namespace).is_err());
+        assert!(has_saved_binding(&data, &first, Incarnation::from_bytes([2; 16])).is_err());
+        assert_eq!(fs::read(data.join(OWNER))?, before);
+        fs::write(data.join(OWNER), b"invalid native receipt")?;
+        assert!(has_saved_binding(&data, &first, namespace).is_err());
+        assert_eq!(fs::read(data.join(OWNER))?, b"invalid native receipt");
+        Ok(())
+    }
+    #[test]
+    fn setup_partial_probe_checks_native_quota_prefix_and_preserves_unknown_contents() -> Result<()>
+    {
+        let (_root, data, control, _second) = fixture()?;
+        let namespace = Incarnation::from_bytes([1; 16]);
+        bind(&data, &control, namespace)?;
+        let owner = fs::read(data.join(OWNER))?;
+        fs::remove_file(data.join(OWNER))?;
+        fs::write(data.join(PART), &owner[..8])?;
+        assert!(recoverable_setup_binding(&data, &control, namespace)?);
+        assert!(!data.join(OWNER).exists());
+        assert_eq!(fs::read(data.join(PART))?, &owner[..8]);
+        let unknown = data.join("user-original.txt");
+        fs::write(&unknown, b"original bytes")?;
+        assert!(recoverable_setup_binding(&data, &control, namespace).is_err());
+        assert_eq!(fs::read(&unknown)?, b"original bytes");
+        assert_eq!(fs::read(data.join(PART))?, &owner[..8]);
+        fs::remove_file(&unknown)?;
+        bind(&data, &control, namespace)?.check()?;
+        assert_eq!(fs::read(data.join(OWNER))?, owner);
+        Ok(())
+    }
+    #[test]
+    fn setup_partial_probe_rejects_foreign_prefix_without_claiming_or_rewriting() -> Result<()> {
+        let (_root, data, control, _second) = fixture()?;
+        let namespace = Incarnation::from_bytes([1; 16]);
+        fs::write(data.join(PART), b"foreign claim")?;
+        assert!(recoverable_setup_binding(&data, &control, namespace).is_err());
+        assert_eq!(fs::read(data.join(PART))?, b"foreign claim");
+        assert!(!data.join(OWNER).exists());
+        assert!(!data.join(LOCK).exists());
+        assert!(!data.join(".quota-1.4").exists());
+        Ok(())
+    }
+    #[test]
+    fn native_owner_scratch_probe_matches_full_native_name_and_prefix_without_effects() -> Result<()>
+    {
+        let (_root, data, control, _second) = fixture()?;
+        let namespace = Incarnation::from_bytes([1; 16]);
+        let bytes = serde_json::to_vec(&expected(&data, &control, namespace)?)?;
+        let scratch =
+            super::super::registry::catalog::setup::native_setup_scratch_name(OWNER, &bytes);
+        let file = data.join(&scratch);
+        fs::write(&file, &bytes[..8])?;
+        assert!(recoverable_setup_binding(&data, &control, namespace)?);
+        assert_eq!(fs::read(&file)?, bytes[..8]);
+        assert!(!data.join(OWNER).exists());
+        fs::write(&file, b"foreign native partial")?;
+        assert!(recoverable_setup_binding(&data, &control, namespace).is_err());
+        assert_eq!(fs::read(&file)?, b"foreign native partial");
+        fs::write(&file, &bytes[..8])?;
+        let unknown = data.join(".setup-write-00000000000000000000000000000000");
+        fs::write(&unknown, b"unknown source bytes")?;
+        assert!(recoverable_setup_binding(&data, &control, namespace).is_err());
+        assert_eq!(fs::read(&unknown)?, b"unknown source bytes");
+        assert_eq!(fs::read(&file)?, bytes[..8]);
+        assert!(!data.join(OWNER).exists());
+        Ok(())
     }
     #[test]
     fn scope_survives_restart_and_rejects_other_control_or_recreated_registry() -> Result<()> {

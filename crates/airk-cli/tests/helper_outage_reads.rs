@@ -242,10 +242,12 @@ impl Fixture {
             let response = self.rpc(Method::Job { id })?;
             match response {
                 Response::Job { job } if job.outcome.is_some() => {
-                    ensure!(
-                        matches!(job.outcome, Some(JobOutcome::Succeeded { .. })),
-                        "{job:?}"
-                    );
+                    if !matches!(job.outcome, Some(JobOutcome::Succeeded { .. })) {
+                        anyhow::bail!(
+                            "{job:?}; native evidence: {}",
+                            common::job_failure_diagnostics(&self.control, &job)
+                        );
+                    }
                     return Ok(());
                 }
                 Response::Job { .. } => {}

@@ -16,6 +16,57 @@ use tokio::{
     task::JoinSet,
 };
 
+fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a str {
+    if error
+        .downcast_ref::<crate::catalog_coordinator::CatalogRevisionChanged>()
+        .is_some()
+    {
+        "catalog_revision_changed"
+    } else if error
+        .downcast_ref::<crate::catalog_coordinator::CatalogClockPending>()
+        .is_some()
+    {
+        "catalog_clock_pending"
+    } else {
+        fallback
+    }
+}
+
+/// Administrative metadata transport. Credentials remain inside Runtime and
+/// the complete canonical native value/error is preserved for native clients.
+pub async fn administrative_read(
+    control: &Path,
+    project: airk_core::service::ProjectBinding,
+    request: airk_core::native_reads::NativeRead,
+    client: airk_core::usage::ClientFamily,
+) -> Result<serde_json::Value> {
+    let response = crate::console_client::request(
+        control,
+        ControlMethod::NativeRead {
+            project,
+            request: request.clone(),
+            usage_client: client,
+        },
+    )
+    .await?;
+    match response {
+        ControlResponse::NativeRead { result } => {
+            crate::usage_client::require_native_success(result)
+        }
+        ControlResponse::Failure { code } if code == "native_administrative_legacy" => {
+            let mut connection =
+                crate::project_client::Connection::connect_as(control, project, client).await?;
+            crate::usage_client::require_native_success(connection.read_native(request).await?)
+        }
+        response @ ControlResponse::Failure { .. } => Err(
+            crate::usage_client::NativeReadFailure::from_response(serde_json::to_value(response)?)
+                .into(),
+        ),
+        // Never retain an unexpected credential-plane response as error data.
+        _ => anyhow::bail!("unexpected native administrative response"),
+    }
+}
+
 struct State {
     instance: airk_core::identity::Incarnation,
     policy: Arc<Mutex<Broker>>,
@@ -29,6 +80,10 @@ struct State {
     supervisor: crate::project_supervisor::Supervisor,
     sources: crate::source_supervisor::SourceSupervisor,
     log: crate::service_logs::Log,
+    catalog_gate: Option<crate::catalog_admission::NativeCatalogAdmission>,
+    legacy_connections: bool,
+    native_administrative: crate::native_admin_connections::NativeAdministrativePool,
+    native_caller: airk_core::identity::Incarnation,
 }
 
 async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
@@ -69,6 +124,10 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                     .status(now);
                 ControlResponse::Health {
                     observation: Box::new(ServiceHealth {
+                        catalog_clock: state
+                            .catalog_gate
+                            .as_ref()
+                            .and_then(|gate| gate.catalog_clock()),
                         storage_formats: Some(airk_core::storage_format::CURRENT),
                         build: crate::runtime_metadata::process().build,
                         build_error: crate::runtime_metadata::process().metadata_error,
@@ -86,7 +145,69 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 }
             }
             ControlMethod::Shutdown => ControlResponse::Stopping,
-            ControlMethod::Connect { project } => state.supervisor.connect(project).await,
+            ControlMethod::ConnectScoped { request } => {
+                match state.management.request_scoped(request).await {
+                    Ok(delivery) => {
+                        return delivery.deliver(&mut stream, Duration::from_secs(5)).await;
+                    }
+                    Err(error) => ControlResponse::Failure {
+                        code: connection_failure_code(&error, "scoped_connection_unavailable")
+                            .into(),
+                    },
+                }
+            }
+            ControlMethod::NativeRead { .. }
+                if state.catalog_gate.is_none() && state.legacy_connections =>
+            {
+                ControlResponse::Failure {
+                    code: "native_administrative_legacy".into(),
+                }
+            }
+            ControlMethod::NativeRead {
+                project,
+                request,
+                usage_client,
+            } => match state.catalog_gate.as_ref() {
+                Some(gate) => match state
+                    .native_administrative
+                    .read(
+                        &state.management,
+                        gate,
+                        state.native_caller,
+                        project,
+                        request,
+                        usage_client,
+                    )
+                    .await
+                {
+                    Ok(result) => ControlResponse::NativeRead { result },
+                    Err(_) => ControlResponse::Failure {
+                        code: "native_administrative_connection_rebind".into(),
+                    },
+                },
+                None => ControlResponse::Failure {
+                    code: "native_administrative_admission_unavailable".into(),
+                },
+            },
+            ControlMethod::Connect { project } => {
+                if state.catalog_gate.is_some() {
+                    match state.management.request_legacy(project).await {
+                        Ok(delivery) => {
+                            return delivery.deliver(&mut stream, Duration::from_secs(5)).await;
+                        }
+                        Err(error) => ControlResponse::Failure {
+                            code: connection_failure_code(&error, "project_unavailable_or_busy")
+                                .into(),
+                        },
+                    }
+                } else if state.legacy_connections {
+                    state.supervisor.connect(project).await
+                } else {
+                    ControlResponse::Failure {
+                        code: "catalog_admission_unavailable".into(),
+                    }
+                }
+            }
             ControlMethod::Workers { projects } => state.supervisor.workers_status(&projects),
             ControlMethod::Worker { project } => state.supervisor.worker_status(project),
             ControlMethod::RestartProject { project, expected } => {
@@ -105,7 +226,11 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
             method => state.management.request(method).await,
         }
     };
-    if let ControlResponse::Failure { code, .. } = &response {
+    if let ControlResponse::Failure { code, .. }
+    | ControlResponse::CatalogOutcomeUnknown { code, .. }
+    | ControlResponse::SourceChangeBusy { code, .. }
+    | ControlResponse::SourceChangeResolutionOutcomeUnknown { code, .. } = &response
+    {
         state.log.record_code(
             airk_core::service_logs::LogKind::ControlFailed,
             None,
@@ -154,8 +279,6 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
     }
     _ownership.prepare_control_endpoint()?;
     local_ipc::prepare_control_endpoint(&_ownership)?;
-    let address = local_ipc::endpoint(root, "control")?;
-    let mut listener = Listener::bind(&address)?;
     let instance = new_instance_id()?;
     let (log, log_guard) = crate::service_logs::Log::start(root.canonicalize()?, instance);
     log.record(airk_core::service_logs::LogKind::ServiceStarted, None, None);
@@ -165,6 +288,85 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         instance,
         log.clone(),
     )?;
+    let supervisor = crate::project_supervisor::Supervisor::start(
+        root.canonicalize()?,
+        instance,
+        policy.clone(),
+        sources.process_id.clone(),
+        sources.telemetry_complete.clone(),
+        log.clone(),
+        _ownership.clone(),
+    )?;
+    let mut legacy_connections = false;
+    let catalog_gate = match airk_store::service::registry::ServiceRegistry::open(root, instance) {
+        Ok(registry) => match registry.catalog_state()? {
+            None => {
+                legacy_connections = true;
+                None
+            }
+            Some(catalog) => {
+                let supported = airk_store::service::registry::catalog::capabilities();
+                ensure!(
+                    supported.supports(
+                        catalog.schema,
+                        catalog.authority_contract,
+                        catalog.policy_contract
+                    ),
+                    "catalog_authority_contract_unsupported"
+                );
+                match catalog.authority_contract {
+                    0 => {
+                        legacy_connections = true;
+                        None
+                    }
+                    1 => {
+                        ensure!(
+                            catalog.activated && catalog.policy_contract == 0,
+                            "catalog_authority_not_ready"
+                        );
+                        Some(crate::catalog_admission::NativeCatalogAdmission::new(
+                            instance,
+                            catalog.namespace,
+                            catalog.revision,
+                            1,
+                        )?)
+                    }
+                    _ => anyhow::bail!("catalog_authority_contract_unsupported"),
+                }
+            }
+        },
+        Err(error) if error.is::<airk_store::service::registry::catalog::AdmissionPending>() => {
+            return Err(error);
+        }
+        Err(_) => None,
+    };
+    let catalog_binding = match catalog_gate.as_ref() {
+        Some(gate) => {
+            // This records the actual native owner before synchronous Attach.
+            // It is not a predecessor-drain proof: Ready/listener still await
+            // all exact worker/helper recovery and durable fence restoration.
+            airk_store::service::registry::ServiceRegistry::open(root, instance)?
+                .record_service_instance(&_ownership, instance)?;
+            Some(crate::service_management::CatalogBinding {
+                gate: gate.clone(),
+                control: supervisor.catalog_control(gate.clone())?,
+            })
+        }
+        None => None,
+    };
+    let management = crate::service_management::Management::start_with_catalog(
+        root.canonicalize()?,
+        instance,
+        sources.wake_handle(),
+        log.clone(),
+        _ownership.clone(),
+        catalog_binding,
+    )?;
+    // Publish no control listener until native pending fences have been restored
+    // by the accepted metadata owner and its strict Ready handshake completed.
+    sources.set_missing_reporter(management.missing_reporter())?;
+    let address = local_ipc::endpoint(root, "control")?;
+    let mut listener = Listener::bind(&address)?;
     let state = Arc::new(State {
         instance,
         policy: policy.clone(),
@@ -174,23 +376,14 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
         executable_sha256: crate::runtime_pair::current_executable_sha256()?,
         runtime_sha256: crate::runtime_install::installed_identity(&std::env::current_exe()?)?,
         shutdown: Notify::new(),
-        management: crate::service_management::Management::start(
-            root.canonicalize()?,
-            instance,
-            sources.wake_handle(),
-            log.clone(),
-            _ownership.clone(),
-        )?,
-        supervisor: crate::project_supervisor::Supervisor::start(
-            root.canonicalize()?,
-            instance,
-            policy,
-            sources.process_id.clone(),
-            sources.telemetry_complete.clone(),
-            log.clone(),
-        )?,
+        management,
+        supervisor,
         sources,
         log: log.clone(),
+        catalog_gate,
+        legacy_connections,
+        native_administrative: Default::default(),
+        native_caller: local_ipc::caller_identity()?,
     });
     // Initialization hashes the executable and opens native adapters. None of
     // that time is idle service time: begin the grace only when control can run.

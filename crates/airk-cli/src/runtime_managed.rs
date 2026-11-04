@@ -5,6 +5,8 @@ use super::*;
 const POLICY: &str = "managed-runtime.json";
 const DETACH: &str = "managed-detach.json";
 const MAX_POLICY: u64 = 32 * 1024;
+#[path = "runtime_managed_catalog.rs"]
+pub(super) mod catalog;
 
 #[derive(Debug)]
 struct SupervisorUnavailable;
@@ -61,15 +63,23 @@ pub(super) fn read(root: &Path) -> Result<Option<Managed>> {
     Ok(Some(policy))
 }
 
+pub(super) fn saved_policy_for_lifecycle(root: &Path) -> Result<Option<Managed>> {
+    catalog::saved_policy(root)
+}
+
 pub(super) fn require_unmanaged(root: &Path) -> Result<()> {
     ensure!(
-        read(root)?.is_none() && !exists(&root.join(DETACH))?,
+        read(root)?.is_none()
+            && !exists(&root.join(DETACH))?
+            && layout::managed_origin(root)?.is_none(),
         "managed runtime is pinned by policy; user payload installation, selection changes and login/launcher management are disabled"
     );
     Ok(())
 }
 pub(super) fn is_configured(root: &Path) -> Result<bool> {
-    Ok(exists(&root.join(POLICY))? || exists(&root.join(DETACH))?)
+    Ok(exists(&root.join(POLICY))?
+        || exists(&root.join(DETACH))?
+        || layout::managed_origin(root)?.is_some())
 }
 
 pub(super) fn detaching(root: &Path) -> Result<bool> {
@@ -96,6 +106,7 @@ impl Managed {
         );
         Ok(self.approval.clone())
     }
+    #[cfg(test)]
     pub(super) fn verify(&self) -> Result<(PathBuf, Approval)> {
         let (main, approval, _) = self.verify_inventory()?;
         Ok((main, approval))
@@ -239,7 +250,8 @@ pub(super) async fn configure(
             && !source.starts_with(&state),
         "managed payload must be separate from writable metadata and state"
     );
-    let _lock = install_lock(root)?;
+    let lock = install_lock(root)?;
+    let authority = InstallerAuthority { root, _lock: &lock };
     ensure!(
         !exists(&root.join(DETACH))? && !exists(&root.join("uninstall.json"))?,
         "finish pending runtime removal before configuring a managed payload"
@@ -260,41 +272,86 @@ pub(super) async fn configure(
         executable_sha256: inventory.files[main_name()].clone(),
         lifecycle,
     };
-    layout::initialize(root, requested_state, channel)?;
-    ensure!(
-        layout::control(root)?.parent() == Some(state.as_path()),
-        "state layout changed during managed approval"
-    );
-    if let Some(prior) = read(root)? {
+    let prior = read(root)?;
+    let reserved = layout::managed_origin(root)?;
+    if let Some(prior) = &prior {
         ensure!(
-            prior == policy,
+            prior == &policy,
             "managed runtime policy is already pinned; an explicit transition is required"
         );
+    }
+    let enabled = airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED;
+    if reserved.is_some() && !enabled {
+        layout::require_managed_ready(root)?;
+    }
+    let reservation = if enabled && (prior.is_none() || reserved.is_some()) {
+        // Positive first-pin checks precede the INITIAL layout intent. An
+        // existing reservation resumes those facts; absent policy alone cannot.
+        if reserved.is_none() {
+            ensure!(
+                !exists(&root.join("selected.json"))?
+                    && !exists(&root.join("startup-owner.json"))?
+                    && !exists(&root.join("launcher.json"))?
+                    && !exists(&launcher_path(root))?
+                    && staging::pending(root)?.is_empty(),
+                "managed pin requires a fresh reviewed installation; existing runtime work is preserved"
+            );
+            let runtimes = root.join("runtimes");
+            ensure!(
+                !exists(&runtimes)? || fs::read_dir(&runtimes)?.next().transpose()?.is_none(),
+                "staged user runtimes require explicit removal before managed configuration"
+            );
+            ensure!(
+                !exists(&state.join("control"))?,
+                "managed pin cannot adopt an existing service ledger implicitly"
+            );
+        }
+        Some(catalog::VerifiedManagedReservation::prepare(
+            &authority, &policy, &state,
+        )?)
     } else {
-        ensure!(
-            !exists(&root.join("selected.json"))?
-                && !exists(&root.join("startup-owner.json"))?
-                && !exists(&root.join("launcher.json"))?
-                && !exists(&launcher_path(root))?
-                && staging::pending(root)?.is_empty(),
-            "managed pin requires a fresh reviewed installation; existing runtime work is preserved"
-        );
-        let runtimes = root.join("runtimes");
-        ensure!(
-            !exists(&runtimes)? || fs::read_dir(&runtimes)?.next().transpose()?.is_none(),
-            "staged user runtimes require explicit removal before managed configuration"
-        );
-        ensure!(
-            !exists(&layout::control(root)?)?,
-            "managed pin cannot adopt an existing service ledger implicitly"
-        );
+        None
+    };
+    if let Some(reservation) = &reservation {
+        layout::initialize_managed(root, requested_state, channel, reservation)?;
+    } else {
+        layout::initialize(root, requested_state, channel)?;
+    }
+    ensure!(
+        layout::saved_control(root)?.parent() == Some(state.as_path()),
+        "state layout changed during managed approval"
+    );
+    if prior.is_none() {
+        if let Some(reservation) = &reservation {
+            catalog::admit_initial(&authority, &policy, reservation)?;
+        } else {
+            // Preserve the disabled/old None path, including its strict refusal
+            // to adopt any preexisting control directory.
+            ensure!(
+                !exists(&root.join("selected.json"))?
+                    && !exists(&root.join("startup-owner.json"))?
+                    && !exists(&root.join("launcher.json"))?
+                    && !exists(&launcher_path(root))?
+                    && staging::pending(root)?.is_empty(),
+                "managed pin requires a fresh reviewed installation; existing runtime work is preserved"
+            );
+            let runtimes = root.join("runtimes");
+            ensure!(
+                !exists(&runtimes)? || fs::read_dir(&runtimes)?.next().transpose()?.is_none(),
+                "staged user runtimes require explicit removal before managed configuration"
+            );
+            ensure!(
+                !exists(&layout::control(root)?)?,
+                "managed pin cannot adopt an existing service ledger implicitly"
+            );
+        }
         ensure!(
             serde_json::to_vec(&policy)?.len() as u64 <= MAX_POLICY,
             "managed runtime policy exceeds bound"
         );
         replace_json(root, POLICY, &policy)?;
     }
-    match ensure(root).await {
+    match ensure_running_locked(&authority).await {
         Ok(observation) => Ok(
             serde_json::json!({"managed":true,"selected":true,"policy":policy,"health":observation}),
         ),
@@ -306,14 +363,19 @@ pub(super) async fn configure(
 }
 
 /// Caller holds the installation lock. Public selection commits only after exact native health.
-pub(super) async fn ensure(root: &Path) -> Result<ServiceHealth> {
-    ensure_checked(root, None).await
+#[cfg(test)]
+async fn ensure(root: &Path) -> Result<ServiceHealth> {
+    let lock = install_lock(root)?;
+    let authority = InstallerAuthority { root, _lock: &lock };
+    ensure_checked(&authority, None, || Ok(())).await
 }
 
 pub(super) async fn ensure_checked(
-    root: &Path,
+    authority: &InstallerAuthority<'_>,
     cancel: Option<&setup::SetupCancellation>,
+    after_settlement: impl FnOnce() -> Result<()>,
 ) -> Result<ServiceHealth> {
+    let root = authority.root;
     if let Some(cancel) = cancel {
         cancel.checkpoint()?;
     }
@@ -331,6 +393,8 @@ pub(super) async fn ensure_checked(
             "managed selection differs from its approved pin"
         );
     }
+    catalog::before_start(authority, &policy, cancel)?;
+    after_settlement()?;
     let observation = async {
         match policy.lifecycle {
             ManagedLifecycle::External => health(root, &approval, &policy.executable_sha256)
@@ -420,6 +484,10 @@ mod setup_tests {
 }
 
 pub(super) async fn detach(root: &Path) -> Result<serde_json::Value> {
+    ensure!(
+        layout::managed_origin(root)?.is_none(),
+        "managed_catalog_detach_requires_supported_transition; preserve the reserved operation and use its approved configuration"
+    );
     let intent_path = root.join(DETACH);
     let policy: Managed = if exists(&intent_path)? {
         serde_json::from_slice(&read_bounded(&intent_path, MAX_POLICY)?)?

@@ -233,7 +233,50 @@ fn group_events(
     .map_err(|error| error.context(InvalidRecentChanges))
 }
 
+fn scoped_event_allowed(
+    scope: &airk_core::scoped_reads::CompiledReadScope,
+    event: &ChangeEvent,
+) -> Result<bool> {
+    let mut allowed = false;
+    let mut denied = false;
+    let mut endpoints = 0;
+    for endpoint in [&event.before, &event.after].into_iter().flatten() {
+        endpoints += 1;
+        if scope.allows_source(&endpoint.root, &endpoint.path) {
+            allowed = true;
+        } else {
+            denied = true;
+        }
+    }
+    ensure!(
+        endpoints > 0 && !(allowed && denied),
+        airk_core::scoped_reads::ScopeReadRefused
+    );
+    Ok(allowed)
+}
+
 impl CurrentRead {
+    fn scope_recent_changes(&self, mut view: RecentChanges) -> Result<RecentChanges> {
+        let Some(scope) = self.read_scope.get() else {
+            return Ok(view);
+        };
+        self.require_read_scope_live()?;
+        // Shared authenticated change pages are metadata, selected before the
+        // caller applies response record/count budgets or loads source bodies.
+        let mut selected = Vec::new();
+        for event in view.events {
+            if scoped_event_allowed(scope, &event)? {
+                selected.push(event);
+            }
+        }
+        view.events = selected;
+        view.view_digest = framed_digest(
+            b"scoped-recent-change-view/1",
+            &[view.view_digest.as_bytes(), scope.fingerprint.as_bytes()],
+        );
+        Ok(view)
+    }
+
     /// Admission for the complete retained recent component, independent of age.
     /// Expired stored groups still consume bytes until publication retires them.
     pub(crate) fn recent_audit_bytes(&self) -> Result<u64> {
@@ -294,20 +337,23 @@ impl CurrentRead {
                 error
             }
         });
-        let view = self.observe_private_integrity(result)?;
+        let view = self.scope_recent_changes(self.observe_private_integrity(result)?)?;
         self.token()?;
         Ok(view)
     }
     pub fn recent_changes(&self, now_unix_seconds: u64) -> Result<RecentChanges> {
         // Ordinary queries/diagnostics retain full unexpired-group verification.
         // Selection is private preparation, not a caller-granted read authority.
-        read_recent(
+        let view = read_recent(
             &self.head().scope,
             self.token()?,
             now_unix_seconds,
             |_| Some(0),
             &mut |key| self.map_get(map::MapDomain::RecentChanges, key),
-        )
+        )?;
+        let view = self.scope_recent_changes(view)?;
+        self.token()?;
+        Ok(view)
     }
 }
 
@@ -530,4 +576,79 @@ fn remove(
         put(scope, plan, &chunk_key(group.generation, n), None, changes)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod scoped_changes_tests {
+    use super::*;
+    use airk_core::{
+        identity::ArtifactId,
+        index_catalog::PathScope,
+        scoped_reads::{CompiledReadScope, CompiledSourceAtom, ScopeReadRefused},
+    };
+
+    fn endpoint(path: &str) -> ChangeEndpoint {
+        ChangeEndpoint {
+            citation_path: None,
+            root: "original-root".into(),
+            path: path.into(),
+            source_hash: Sha256Digest::from_bytes([1; 32]),
+            profile_id: Sha256Digest::from_bytes([2; 32]),
+        }
+    }
+    fn event(before: &str, after: &str) -> ChangeEvent {
+        ChangeEvent {
+            generation: 1,
+            event_id: 0,
+            subject: ChangeSubject::Artifact {
+                artifact_id: ArtifactId::from_bytes([3; 16]),
+            },
+            before: Some(endpoint(before)),
+            after: Some(endpoint(after)),
+            before_detail: None,
+            after_detail: None,
+            dimensions: vec![ChangeDimension::Path],
+            cause: ChangeCause::Modified,
+            basis: ContinuityBasis::UniqueCompatibleContent,
+        }
+    }
+    #[test]
+    fn moves_across_scope_are_refused_in_both_directions() -> Result<()> {
+        let scope = CompiledReadScope {
+            fingerprint: Sha256Digest::from_bytes([4; 32]),
+            atoms: vec![],
+            external_aliases: vec![],
+            source_atoms: vec![CompiledSourceAtom {
+                original_root: "original-root".into(),
+                kind: PathScope::Subtree,
+                path: "public".into(),
+            }],
+        };
+        for (before, after) in [("public/a", "private/a"), ("private/a", "public/a")] {
+            assert!(
+                scoped_event_allowed(&scope, &event(before, after))
+                    .unwrap_err()
+                    .downcast_ref::<ScopeReadRefused>()
+                    .is_some()
+            );
+        }
+        assert!(scoped_event_allowed(
+            &scope,
+            &event("public/a", "public/b")
+        )?);
+        assert!(!scoped_event_allowed(
+            &scope,
+            &event("private/a", "private/b")
+        )?);
+        let mut pathless = event("public/a", "public/b");
+        pathless.before = None;
+        pathless.after = None;
+        assert!(
+            scoped_event_allowed(&scope, &pathless)
+                .unwrap_err()
+                .downcast_ref::<ScopeReadRefused>()
+                .is_some()
+        );
+        Ok(())
+    }
 }

@@ -7,7 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { LaunchSpec, launchArgs } from './model';
 import { runText } from './native';
 import { renderReport } from './report';
-import { usageAction } from './usageReport';
+import { ADMINISTRATIVE_USAGE_LABEL, usageAction } from './usageReport';
+import { catalogHex, catalogId, catalogRevision } from './indexingCatalog';
 
 async function withJson<T>(value: unknown, action: (file: string) => Promise<T>): Promise<T> {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'airk-usage-'));
@@ -40,21 +41,61 @@ export interface UsageSurface {
     onDispose(listener: () => void): void;
 }
 
+/** Host-created only after an explicit administrative action and current native
+ * Index/runtime validation. This metadata is not an evidence credential. */
+export interface AdministrativeIndexSelection {
+    purpose:'index_administration';label:typeof ADMINISTRATIVE_USAGE_LABEL;
+    namespace:string;catalogRevision:number;indexId:string;backing:string;
+    runtime:{installDir:string;controlDir:string;runtimeSha256:string};
+    /** Complete native responses captured by the host's administrative review;
+     * retain unknown fields. These observations are not a read grant. */
+    nativeObservation?:{host_context:Record<string,unknown>;index_detail:Record<string,unknown>};
+}
+export interface UsageAccess {
+    administration?:AdministrativeIndexSelection;
+    openIndexAdministration?:()=>Promise<void>;
+}
+function validateAdministration(spec:LaunchSpec,selection:AdministrativeIndexSelection):void {
+    if(spec.catalogSession!==undefined||selection.purpose!=='index_administration'||selection.label!==ADMINISTRATIVE_USAGE_LABEL
+        ||!spec.service||selection.backing!==spec.service.project)throw new Error('invalid_usage_administrative_purpose');
+    catalogHex(selection.namespace);catalogRevision(selection.catalogRevision);catalogId(selection.indexId,'idx_');
+    catalogHex(selection.backing,64);catalogHex(selection.runtime.runtimeSha256,64);
+    for(const value of [selection.runtime.installDir,selection.runtime.controlDir]){
+        if(typeof value!=='string'||!path.isAbsolute(value)||Buffer.byteLength(value)>4096||/[\u0000-\u001f\u007f]/.test(value))throw new Error('invalid_usage_administrative_runtime');
+    }
+    if(path.relative(selection.runtime.installDir,spec.service.installDir)!=='')throw new Error('crossed_usage_administrative_runtime');
+}
+
 /** A standalone panel or Explorer surface captures one collection and the same guarded actions. */
 export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
-    write: (args: string[], valid?: () => boolean) => Promise<unknown>, surface?: UsageSurface): Promise<void> {
-    const panel = surface ? undefined : vscode.window.createWebviewPanel('airk.usage', `AIRK Usage & Savings: ${spec.name}`, vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] });
+    write: (args: string[], valid?: () => boolean) => Promise<unknown>, surface?: UsageSurface, access:UsageAccess={}): Promise<void> {
+    const administration=access.administration?structuredClone(access.administration):undefined;
+    if(administration)validateAdministration(spec,administration);
+    const scoped=spec.catalogSession!==undefined;
+    const panel = surface ? undefined : vscode.window.createWebviewPanel('airk.usage', `AIRK ${administration?'Index administration':'Usage & Savings'}: ${spec.name}`, vscode.ViewColumn.Active, { enableScripts: true, localResourceRoots: [] });
     let days = 30, price: object | undefined, report: object = {}, busy = false, disposed = false;
     const check = () => { if (disposed || !vscode.workspace.isTrusted || !valid()) { throw new Error('This collection or storage selection changed. Reopen Usage & Savings from the current collection.'); } };
     const commit = (args:string[]) => { check();return write(args,()=>{try{check();return true;}catch{return false;}}); };
     const read = async (format = 'json', chosenPrice = price): Promise<string> => {
         check();
+        if(scoped)throw new Error('Usage requires explicit Index administration.');
         const args = ['report', '--days', String(days), '--format', format];
         return chosenPrice ? withJson(chosenPrice, file => runText(spec.command, [...launchArgs(spec, 'usage'), ...args, '--price-scenario', file], path.dirname(spec.command),180000))
             : runText(spec.command, [...launchArgs(spec, 'usage'), ...args], path.dirname(spec.command),180000);
     };
-    const render = () => { check(); const value = { ...report, days, busy }; if (surface) { surface.render(value); } else { panel!.webview.html = renderReport('Usage & Savings', 'usage', value); } };
-    const refresh = async () => { report = JSON.parse(await read()); render(); };
+    const render = () => { check(); const value = { ...report, days, busy }; if (surface) { surface.render(value); } else { panel!.webview.html = renderReport(administration?'Index administration: Usage & Savings':'Usage & Savings', 'usage', value); } };
+    const qualify = (value:object):object => administration?{...value,administrative_scope:{purpose:administration.purpose,
+        label:administration.label,namespace:administration.namespace,
+        catalog_revision:administration.catalogRevision,index_id:administration.indexId,
+        qualification:'host_administrative_context_not_read_grant',
+        ...(administration.nativeObservation?{native_observation:structuredClone(administration.nativeObservation)}:{})}}:value;
+    const refresh = async () => {
+        if(scoped)report={scoped_unavailable:true,can_open_index_administration:!!access.openIndexAdministration};
+        else {
+            report=qualify(JSON.parse(await read()));
+        }
+        render();
+    };
     const show = async (content: string, language: string) => { check(); await vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ content, language }), { preview: false }); };
     const receive = async (message: unknown) => {
         const action = usageAction(message);
@@ -64,6 +105,12 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
         try {
             check();
             render();
+            if(scoped){
+                if(action?.action==='openIndexAdministration'&&access.openIndexAdministration){
+                    await access.openIndexAdministration();check();return;
+                }
+                throw new Error('Usage requires explicit Index administration.');
+            }
             if (json || action?.action === 'json') { await show(JSON.stringify(report, null, 2), 'json'); return; }
             if (!action) { return; }
             switch (action.action) {
@@ -77,7 +124,7 @@ export async function openUsagePanel(spec: LaunchSpec, valid: () => boolean,
                 }
                 case 'prices': {
                     const selected = await prices(); if (!selected) { break; }
-                    const candidate = JSON.parse(await read('json', selected)); check(); price = selected; report = candidate; render(); break;
+                    const candidate = JSON.parse(await read('json', selected)); check(); price = selected; report = qualify(candidate); render(); break;
                 }
                 case 'removePrices': price = undefined; await refresh(); break;
                 case 'recording': {

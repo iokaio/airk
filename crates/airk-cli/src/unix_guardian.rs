@@ -26,6 +26,12 @@ use std::{
 };
 #[path = "unix_guardian_native.rs"]
 mod native;
+#[path = "unix_guardian_shared.rs"]
+pub(crate) mod shared;
+
+pub fn serve_shared() -> Result<()> {
+    shared::serve()
+}
 static PIN: OnceLock<File> = OnceLock::new();
 
 #[derive(Serialize, Deserialize)]
@@ -203,7 +209,10 @@ impl Owner {
         let mut registry = ServiceRegistry::open(&self.runtime, self.identity.service)?;
         registry.recover_provider_drains(&native::boot()?, &[], native::absent)?;
         Ok(self.child.try_wait()?.is_some()
-            && !registry.provider_drains()?.iter().any(|r| r.id == self.id))
+            && !registry
+                .worker_provider_drains()?
+                .iter()
+                .any(|r| r.id == self.id))
     }
     fn finish_uncertain(&mut self) {
         self.socket = None;
@@ -417,22 +426,52 @@ fn drain(
 pub(super) fn recover(registry: &mut ServiceRegistry, active: &[WorkerIdentity]) -> Result<usize> {
     registry.recover_provider_drains(&native::boot()?, active, native::absent)
 }
-pub(super) fn rss(registry: &ServiceRegistry) -> Result<Vec<Option<u64>>> {
+pub(super) fn rss(registry: &ServiceRegistry, pool_pid: Option<u32>) -> Result<Vec<Option<u64>>> {
     let deadline = std::time::Instant::now() + Duration::from_millis(500);
     let boot = native::boot()?;
-    let records = registry.provider_drains()?;
-    ensure!(
-        records
-            .iter()
-            .all(|r| r.boot.process_scope == boot.process_scope),
-        "foreign provider process scope"
-    );
-    let groups = records
-        .iter()
-        .filter_map(|record| record.group)
-        .collect::<Vec<_>>();
+    use airk_store::service::registry::{
+        ProviderOwnership, SharedHelperContainment, SharedHelperPhase,
+    };
+    let records = registry.provider_ownerships()?;
+    let mut groups = Vec::new();
+    let mut guardians = Vec::new();
+    for record in records {
+        match record {
+            ProviderOwnership::Worker(record) => {
+                if boot.changed_from(&record.boot) {
+                    continue;
+                }
+                ensure!(
+                    record.boot.process_scope == boot.process_scope,
+                    "foreign provider process scope"
+                );
+                groups.extend(record.group);
+                guardians.push(record.guardian_pid);
+            }
+            ProviderOwnership::SharedHelper(record) => {
+                if record.phase == SharedHelperPhase::Drained || boot.changed_from(&record.boot) {
+                    continue;
+                }
+                ensure!(
+                    record.boot.process_scope == boot.process_scope,
+                    "foreign shared provider process scope"
+                );
+                let SharedHelperContainment::Unix {
+                    guardian_pid,
+                    group,
+                    ..
+                } = record.containment
+                else {
+                    anyhow::bail!("shared provider native platform differs");
+                };
+                groups.extend(group);
+                guardians.extend(guardian_pid);
+            }
+        }
+    }
     let mut pids = native::members(&groups)?;
-    pids.extend(records.iter().map(|record| record.guardian_pid));
+    pids.extend(guardians);
+    pids.retain(|pid| Some(*pid) != pool_pid);
     pids.sort_unstable();
     pids.dedup();
     let mut observations = Vec::new();
@@ -451,7 +490,7 @@ pub(super) fn wait_for_worker(runtime: &Path, identity: WorkerIdentity) {
             let mut registry = ServiceRegistry::open(runtime, identity.service)?;
             recover(&mut registry, &[])?;
             Ok(!registry
-                .provider_drains()?
+                .worker_provider_drains()?
                 .iter()
                 .any(|r| r.identity == identity)
                 && ProjectLease::acquire(runtime, identity.project).is_ok())

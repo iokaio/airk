@@ -29,7 +29,7 @@ function hostFixture(persistSessions=true){
     const loader=Module as unknown as {_load:(name:string,...args:any[])=>any},original=loader._load;
     loader._load=function(name:string,...args:any[]){
         if(name==='vscode')return vscode;
-        if(name==='./explorerEvidence')return {EvidenceClient:Client};
+        if(name==='./explorerEvidence')return {...original.call(this,name,...args),EvidenceClient:Client};
         if(name==='./explorerWorkspaceIO')return {openSource:async()=>undefined,saveStudioInWorkspace:async()=>({saved:false})};
         return original.call(this,name,...args);
     };

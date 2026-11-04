@@ -32,6 +32,10 @@ pub struct Page {
     pub cursor: Option<String>,
     pub record_bytes: usize,
     pub total_items: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_observation: Option<airk_core::scoped_reads::ScopeObservation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope_publication: Option<airk_core::evidence::RevisionEnvelope>,
 }
 
 fn split(value: Value, path: &mut Vec<Part>, records: &mut Vec<Record>) -> Result<()> {
@@ -88,6 +92,47 @@ fn split(value: Value, path: &mut Vec<Part>, records: &mut Vec<Record>) -> Resul
 }
 
 pub fn page(value: Value, cursor: Option<&str>, max_bytes: usize) -> Result<Page> {
+    page_inner(value, cursor, max_bytes, None, None)
+}
+
+/// Same canonical topology, cursor and accounting with mandatory scoped headers
+/// inside the requested page budget. The document also retains these identities
+/// so a reconstructed CLI value or export cannot lose its authorization context.
+pub fn scoped_page(
+    value: Value,
+    cursor: Option<&str>,
+    max_bytes: usize,
+    observation: airk_core::scoped_reads::ScopeObservation,
+    publication: airk_core::evidence::RevisionEnvelope,
+) -> Result<Page> {
+    observation.validate()?;
+    ensure!(
+        value
+            .get("value")
+            .and_then(|value| value.get("scope_observation"))
+            == Some(&serde_json::to_value(&observation)?)
+            && value
+                .get("value")
+                .and_then(|value| value.get("scope_publication"))
+                == Some(&serde_json::to_value(&publication)?),
+        "native scoped document/header identities disagree"
+    );
+    page_inner(
+        value,
+        cursor,
+        max_bytes,
+        Some(observation),
+        Some(publication),
+    )
+}
+
+fn page_inner(
+    value: Value,
+    cursor: Option<&str>,
+    max_bytes: usize,
+    scope_observation: Option<airk_core::scoped_reads::ScopeObservation>,
+    scope_publication: Option<airk_core::evidence::RevisionEnvelope>,
+) -> Result<Page> {
     ensure!(
         (20 << 10..=48 << 10).contains(&max_bytes),
         "usage page budget must be 20..48 KiB"
@@ -122,20 +167,39 @@ pub fn page(value: Value, cursor: Option<&str>, max_bytes: usize) -> Result<Page
     split(value, &mut Vec::new(), &mut records)?;
     ensure!(offset < records.len(), "usage cursor exceeds snapshot");
     let total_items = records.len();
+    let scope_bytes = if scope_observation.is_some() {
+        serde_json::to_vec(&serde_json::json!({
+        "scope_observation":&scope_observation,"scope_publication":&scope_publication}))?
+        .len()
+    } else {
+        0
+    };
+    let record_budget = max_bytes.saturating_sub(1024 + scope_bytes);
     let mut result = Page {
         digest,
         items: Vec::new(),
         cursor: None,
         record_bytes: 0,
         total_items,
+        scope_observation,
+        scope_publication,
     };
+    let mut first_required = None;
     for record in records.into_iter().skip(offset) {
         let size = serde_json::to_vec(&record)?.len();
-        if result.record_bytes + size > max_bytes - 1024 {
+        if result.record_bytes + size > record_budget {
+            first_required = Some(1024 + scope_bytes + size);
             break;
         }
         result.record_bytes += size;
         result.items.push(record);
+    }
+    if result.items.is_empty() && result.scope_observation.is_some() {
+        return Err(airk_core::scoped_reads::ScopeReplyBudget {
+            required_bytes: first_required.unwrap_or(1024 + scope_bytes),
+            maximum_bytes: max_bytes,
+        }
+        .into());
     }
     ensure!(!result.items.is_empty(), "usage page cannot fit one record");
     let next = offset + result.items.len();
@@ -244,6 +308,25 @@ mod tests {
         assert!(pages > 1);
         assert_eq!(restored, original);
         assert!(page(original, Some("airk-u1:bad:1"), 24 << 10).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn unscoped_pages_keep_original_wire_and_exact_digest() -> Result<()> {
+        let value = serde_json::json!({"project":"legacy","value":{"all_fields":[1,2,3]}});
+        let result = page(value.clone(), None, 20 << 10)?;
+        let wire = serde_json::to_value(&result)?;
+        assert!(wire.get("scope_observation").is_none() && wire.get("scope_publication").is_none());
+        assert_eq!(
+            result.digest,
+            format!("{:x}", Sha256::digest(serde_json::to_vec(&value)?))
+        );
+        assert_eq!(wire.as_object().unwrap().len(), 5);
+        let mut restored = Value::Null;
+        for record in result.items {
+            assemble(&mut restored, record)?;
+        }
+        assert_eq!(restored, value);
         Ok(())
     }
 }

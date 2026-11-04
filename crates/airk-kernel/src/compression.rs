@@ -40,6 +40,7 @@ impl Kernel {
         Ok(mode)
     }
     pub fn compression_status(&self) -> Result<CompressionStatus> {
+        self.require_unrestricted_read()?;
         let mode = self.store.compression_mode(&self.root_id())?;
         let mut result = CompressionStatus {
             mode,

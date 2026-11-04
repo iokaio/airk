@@ -137,7 +137,7 @@
           {
             "id": "airk.indexStep",
             "title": "Index this workspace",
-            "description": "AIRK registers trusted roots with the per-user native service. If needed, use [Manage Workspace Trust](command:workbench.trust.manage). Review the source, collection and separate index storage before registration. Choose manual indexing or automatic watching; native watching continues after editor windows close. [Choose Index Storage Folder](command:airk.chooseStorage) reviews a new storage binding and preserves previous indexes.\n[Index Now](command:airk.index)\n[Open AIRK Explorer](command:airk.explorer.open) to inspect readiness, native jobs and failures in Management.",
+            "description": "AIRK does not register or index open folders automatically. If needed, use [Manage Workspace Trust](command:workbench.trust.manage). [Set Up Index](command:airk.chooseStorage) opens Indexing: choose source and storage locations, review the exact native draft, then apply explicitly. Project memberships and reviewed grants are separate; Use Grant explicitly selects evidence access for this window. Native watching can continue after editor windows close.\n[Index Now](command:airk.index)\n[Open AIRK Explorer](command:airk.explorer.open) to inspect readiness, native jobs and failures in Management.",
             "media": {
               "image": "images/index-to-context.png",
               "altText": "Saved files become a published index before an agent retrieves evidence."
@@ -202,6 +202,110 @@
         {
           "command": "airk.treeRemove",
           "when": "false"
+        },
+        {
+          "command": "airk.installCli",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.setUp",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.showLastUninstallResult",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.reviewData",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.openTools",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.index",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.reindex",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.indexMode",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.pause",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.resume",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.chooseStorage",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.status",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.usage",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.setupAgent",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.verifyMcp",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.manageMcp",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.diagnose",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.currentMaintenance",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.serviceConnect",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.serviceStart",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.serviceRestart",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.serviceStop",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.serviceResources",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.workbench.searchSelection",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.explorer.search",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+        },
+        {
+          "command": "airk.manageVscodeMcp",
+          "when": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
         }
       ],
       "view/title": [
@@ -245,7 +349,7 @@
         "command": "airk.explorer.search",
         "title": "Search Indexed Evidence",
         "category": "AIRK",
-        "enablement": "isWorkspaceTrusted"
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.explorer.showSuggestions",
@@ -256,7 +360,8 @@
       {
         "command": "airk.installCli",
         "title": "Install or Repair CLI",
-        "category": "AIRK"
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.enableNativeExecution",
@@ -266,7 +371,8 @@
       {
         "command": "airk.setUp",
         "title": "Set Up",
-        "category": "AIRK"
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.removeTerminalCommand",
@@ -276,18 +382,20 @@
       {
         "command": "airk.showLastUninstallResult",
         "title": "Show Last Uninstall Result",
-        "category": "AIRK"
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.reviewData",
         "title": "Review and Remove AIRK Data",
-        "category": "AIRK"
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.openTools",
         "title": "Open AIRK Tools",
         "category": "AIRK",
-        "enablement": "isWorkspaceTrusted"
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.treeRefresh",
@@ -299,19 +407,22 @@
         "command": "airk.treeIndex",
         "category": "AIRK",
         "title": "Index This Collection",
-        "icon": "$(run)"
+        "icon": "$(run)",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.treeReindex",
         "category": "AIRK",
         "title": "Reindex This Collection (Full Re-extraction)",
-        "icon": "$(sync)"
+        "icon": "$(sync)",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.treePause",
         "category": "AIRK",
         "title": "Pause Native Project",
-        "icon": "$(debug-pause)"
+        "icon": "$(debug-pause)",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.treeRemove",
@@ -327,32 +438,38 @@
       {
         "command": "airk.index",
         "category": "AIRK",
-        "title": "Index Now"
+        "title": "Index Now",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.reindex",
         "category": "AIRK",
-        "title": "Reindex Collection (Full Re-extraction)"
+        "title": "Reindex Collection (Full Re-extraction)",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.indexMode",
         "category": "AIRK",
-        "title": "Choose Native Automatic Watching…"
+        "title": "Choose Native Automatic Watching…",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.pause",
         "category": "AIRK",
-        "title": "Pause Native Project"
+        "title": "Pause Native Project",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.resume",
         "category": "AIRK",
-        "title": "Resume Native Project"
+        "title": "Resume Native Project",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.chooseStorage",
         "category": "AIRK",
-        "title": "Choose Index Storage Folder…"
+        "title": "Set Up Index (Source and Storage)…",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.collections",
@@ -387,32 +504,38 @@
       {
         "command": "airk.status",
         "category": "AIRK",
-        "title": "Show Collection Status and Coverage"
+        "title": "Show Collection Status and Coverage",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.usage",
         "category": "AIRK",
-        "title": "Usage & Savings"
+        "title": "Usage & Savings",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.setupAgent",
         "category": "AIRK",
-        "title": "Connect Coding Agent…"
+        "title": "Connect Coding Agent…",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.verifyMcp",
         "category": "AIRK",
-        "title": "Check AIRK MCP Helper"
+        "title": "Check AIRK MCP Helper",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.manageMcp",
         "category": "AIRK",
-        "title": "Manage Agent Connections"
+        "title": "Manage Agent Connections",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.diagnose",
         "category": "AIRK",
-        "title": "Diagnose & Repair"
+        "title": "Diagnose & Repair",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.logs",
@@ -427,32 +550,38 @@
       {
         "command": "airk.manageVscodeMcp",
         "category": "AIRK",
-        "title": "VS Code / Copilot MCP Controls"
+        "title": "VS Code / Copilot MCP Controls",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.currentMaintenance",
         "title": "Review Native Index Maintenance…",
-        "category": "AIRK"
+        "category": "AIRK",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.serviceConnect",
         "category": "AIRK",
-        "title": "Connect / Reconnect Service"
+        "title": "Connect / Reconnect Service",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.serviceStart",
         "category": "AIRK",
-        "title": "Start Service"
+        "title": "Start Service",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.serviceRestart",
         "category": "AIRK",
-        "title": "Restart Service"
+        "title": "Restart Service",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.serviceStop",
         "category": "AIRK",
-        "title": "Stop Service"
+        "title": "Stop Service",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.serviceLogs",
@@ -462,7 +591,8 @@
       {
         "command": "airk.serviceResources",
         "category": "AIRK",
-        "title": "Service Resource Settings"
+        "title": "Service Resource Settings",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
       },
       {
         "command": "airk.serviceDiagnostics",
@@ -488,7 +618,13 @@
       },
       {
         "command": "airk.workbench.searchSelection",
-        "title": "AIRK: Search Selection in Workbench"
+        "title": "AIRK: Search Selection in Workbench",
+        "enablement": "isWorkspaceTrusted && config.airk.runtime.nativeExecution && airk.nativeCommandsAvailable"
+      },
+      {
+        "command": "airk.manageWorkspaceTrust",
+        "title": "Manage Workspace Trust",
+        "category": "AIRK"
       }
     ],
     "configuration": [
@@ -608,13 +744,13 @@
           "airk.workbench.persistSessions": {
             "type": "boolean",
             "default": true,
-            "description": "Save Workbench sessions locally. Turning off removes saved sessions for the selected project.",
+            "description": "Save Workbench sessions locally. Turning off removes saved sessions across all projects and scopes.",
             "scope": "window"
           },
           "airk.workbench.persistResults": {
             "type": "boolean",
             "default": true,
-            "description": "Include evidence excerpts in locally saved Workbench sessions. Turning off removes saved results for the selected project.",
+            "description": "Include evidence excerpts in locally saved Workbench sessions. Turning off removes saved results across all projects and scopes.",
             "scope": "window"
           }
         }

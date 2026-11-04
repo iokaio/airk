@@ -16,6 +16,7 @@ pub(super) struct PoolRecovery {
     observed: Option<HelperRecoverySnapshot>,
     initialized: bool,
     healthy_basis: Option<(Incarnation, Option<HelperRecoverySnapshot>)>,
+    reaped: Vec<crate::embedding_pool_process::ProviderReapWitness>,
 }
 
 impl PoolRecovery {
@@ -28,7 +29,31 @@ impl PoolRecovery {
             observed: None,
             initialized: false,
             healthy_basis: None,
+            reaped: Vec::new(),
         }
+    }
+    pub fn record_reaped(
+        &mut self,
+        witness: crate::embedding_pool_process::ProviderReapWitness,
+    ) -> Result<()> {
+        if !self
+            .reaped
+            .iter()
+            .any(|old| old.matches(witness.service(), witness.helper()))
+        {
+            anyhow::ensure!(
+                self.reaped.len() < 128,
+                "native provider reap history capacity exceeded"
+            );
+            self.reaped.push(witness);
+        }
+        Ok(())
+    }
+    pub fn reap_witnesses(&self) -> &[crate::embedding_pool_process::ProviderReapWitness] {
+        &self.reaped
+    }
+    pub fn clear_reap_witnesses(&mut self) {
+        self.reaped.clear();
     }
 
     pub fn due(&self, now: Instant) -> bool {

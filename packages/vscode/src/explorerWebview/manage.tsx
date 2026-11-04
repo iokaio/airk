@@ -41,7 +41,7 @@ export function Act(props: { actions: ReturnType<typeof useActions>; action: Act
 }
 
 function Frame(props: { view?: ManagementView; trusted: boolean; actions: ReturnType<typeof useActions>; intro: string; children: ComponentChildren }) {
-    if (!props.trusted || props.view?.trusted === false) { return <p class="callout">Trust this workspace before AIRK connects or accepts management requests.</p>; }
+    if (!props.trusted || props.view?.trusted === false) { return <p class="callout">AIRK client authority is unavailable. Review the window's trust or client notice before making management requests.</p>; }
     if (!props.view) { return <p class="muted">Reading the AIRK service state…</p>; }
     return (
         <div class="manage">
@@ -187,11 +187,11 @@ export function ProjectsScreen(props: ScreenProps) {
     return <Frame view={view} trusted={props.state.trusted} actions={actions} intro="Manage indexing on">
         {view && <>
             <div class="section-head"><div class="inline-form"><label>Project <ProjectPicker view={view} value={entry?.summary.project} onChange={setOpened} /></label>
-                <Act actions={actions} action="registerWorkspace" enabled={view.enabled.registerWorkspace} ghost>Add project…</Act></div>
+                <Act actions={actions} action="registerWorkspace" enabled={view.enabled.registerWorkspace} ghost>Set up index…</Act></div>
                 <span class="muted">Updates automatically</span></div>
             <details><summary>Browse active or removed projects</summary><Paging view={view} actions={actions} /></details>
             {!view.connected && !view.busy && <p class="callout">The service connection is unavailable. Automatic checks will retry; view connection details in the Service tab.</p>}
-            {!entry && <p class="callout" role="status">{!view.connected?view.busy?'Connecting to AIRK and loading saved project details…':'Project registrations could not be checked. Retained work has not been reported as removed.':`No ${view.inactive?'removed':'active'} projects on this page. Add project reviews an open folder.`}</p>}
+            {!entry && <p class="callout" role="status">{!view.connected?view.busy?'Connecting to AIRK and loading saved project details…':'Project registrations could not be checked. Retained work has not been reported as removed.':`No ${view.inactive?'removed':'active'} projects on this page. Set up index opens an explicit native source and storage review in Indexing.`}</p>}
             {entry && scoped && <>
                 <h2>{entry.summary.name}</h2><p class="path">{entry.summary.root}</p>
                 {tab==='overview'&&!view.inactive&&<IndexContents project={entry.summary} status={entry.summary.project===props.state.selectedProject?props.state.status:undefined} connected={view.connected}/>}
@@ -391,6 +391,8 @@ export function ServiceScreen(props: ScreenProps) {
                     <Act actions={actions} action="queryConcurrency" enabled={on('queryConcurrency')} ghost>Concurrent requests…</Act>
                 </div>
                 {view.lifecycle === 'external' && <p class="muted">Startup, stop, restart, upgrades and rollback are controlled by the external service manager.</p>}
+                {view.capturedLifecycle&&<details class="card" data-testid="captured-native-lifecycle"><summary>Captured native lifecycle response (historical)</summary><p>This records the complete native request and response at capture time, with the actual pre-operation health response when available. It is not current health, evidence authority or a new process inspection. JSON includes machine details and any native diagnostic fields.</p><pre>{JSON.stringify(view.capturedLifecycle,null,2)}</pre><div class="actions"><Act actions={actions} action="copyLifecycle">Copy complete JSON</Act><Act actions={actions} action="openLifecycle" ghost>Open complete JSON</Act><Act actions={actions} action="saveLifecycle" ghost>Export complete JSON</Act></div></details>}
+                {view.capturedLifecycleUnavailable&&<p class="callout">The native lifecycle result exceeded the complete-capture budget. Its saved request remains tracked for native recovery; no completed receipt is being displayed.</p>}
                 <div class="cards two">
                     <article class="card"><div class="section-head"><h2>Service</h2><CopyDetails section="service" /></div><Rows rows={view.service} hideUnobserved />
                         <p class="muted">Health confirms responsiveness. It does not prove indexing progress, source freshness or complete semantic coverage.</p></article>

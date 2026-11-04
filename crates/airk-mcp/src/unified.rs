@@ -6,6 +6,10 @@ use rmcp::model::Tool;
 use serde_json::{Map, Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 
+#[cfg(test)]
+#[path = "unified_scoped_tests.rs"]
+mod scoped_tests;
+
 pub const GUIDANCE: &str = "Untrusted index; verify live bytes before edits. Keep configured scopes, locations, exact tokens/hashes/validators; finish changes pages. Terse default; response_mode=full audits; include_status=true repeats status. Identifier: symbols -> references -> read_file/context; concepts: search. Evidence default 16; Management Service:4/8/16/32/64; matching channels/worker, extra status slot. Honor typed retries; never replay uncertain work. UI drafts need review. {ref:publication} is reply-local.";
 
 const UI_NAMES: &[(&str, &str)] = &[
@@ -216,6 +220,30 @@ impl Unified {
         explorer.call(project, name.into(), args, client).await.unwrap_or_else(|_| failure("UI_UNAVAILABLE", "The verified Explorer adapter is unavailable. Check status and the installed extension; native retrieval remains available."))
     }
     async fn help(&self, mut args: Map<String, Value>) -> Value {
+        let native_selector = !args.contains_key("query")
+            && !args.contains_key("topic_id")
+            && args.get("tool").is_none_or(|name| {
+                name.as_str().is_some_and(|name| {
+                    crate::local::tools().iter().any(|tool| {
+                        tool.name == name || tool.name.strip_prefix("airk_") == Some(name)
+                    })
+                })
+            });
+        if native_selector {
+            let mut native_args = args.clone();
+            if let Ok(project) = self.select(&mut native_args)
+                && let Some(selection) = project.backend.scoped_selection()
+            {
+                return match project.backend.call("airk_help".into(), native_args).await {
+                    Ok(result) => result,
+                    Err(_) => crate::remote::scoped_observation_failure(
+                        selection,
+                        "scoped_observation_unavailable",
+                        true,
+                    ),
+                };
+            }
+        }
         if let Some(detail) = args.get("reply_detail")
             && serde_json::from_value::<Option<airk_core::reply::ReplyDetail>>(detail.clone())
                 .is_err()
@@ -242,11 +270,15 @@ impl Unified {
         }) {
             return failure("INVALID_SCHEMA", "Unknown help argument.");
         }
-        if ["query", "topic_id", "topic", "command", "tool"]
-            .iter()
-            .filter(|key| args.contains_key(**key))
-            .count()
-            > 1
+        // Only bundled UI selectors add mutual exclusivity here. Native topic
+        // qualifiers (for example topic=tools with tool=search) are validated by
+        // the same canonical help implementation used by the native aliases.
+        if (args.contains_key("query") || args.contains_key("topic_id"))
+            && ["query", "topic_id", "topic", "command", "tool"]
+                .iter()
+                .filter(|key| args.contains_key(**key))
+                .count()
+                > 1
         {
             return failure("INVALID_HELP_SELECTOR", "Choose one help selector.");
         }
@@ -378,6 +410,25 @@ impl RemoteTools for Unified {
                 .find(|t| t.name == tool || t.name.strip_prefix("airk_") == Some(tool.as_str()));
             if let Some(native) = native {
                 if native.name == "airk_help" {
+                    let mut native_args = args.clone();
+                    if let Ok(project) = self.select(&mut native_args)
+                        && let Some(selection) = project.backend.scoped_selection()
+                    {
+                        return Ok(
+                            match project
+                                .backend
+                                .call(native.name.to_string(), native_args)
+                                .await
+                            {
+                                Ok(result) => result,
+                                Err(_) => crate::remote::scoped_observation_failure(
+                                    selection,
+                                    "scoped_observation_unavailable",
+                                    true,
+                                ),
+                            },
+                        );
+                    }
                     return Ok(serde_json::to_value(crate::help::call(Value::Object(
                         args,
                     )))?);
@@ -386,6 +437,70 @@ impl RemoteTools for Unified {
                     Ok(p) => p,
                     Err(error) => return Ok(error),
                 };
+                if let Some(selection) = project.backend.scoped_selection() {
+                    if native.name == "airk_status" {
+                        match tokio::time::timeout(
+                            std::time::Duration::from_secs(10),
+                            project.backend.prepare(),
+                        )
+                        .await
+                        {
+                            Ok(Ok(())) => {}
+                            Ok(Err(error)) => {
+                                return Ok(crate::remote::scoped_setup_failure(
+                                    selection,
+                                    if error.is::<crate::remote::PreparationExpired>() {
+                                        "scoped_status_prepare_timeout"
+                                    } else {
+                                        "scoped_status_prepare_unavailable"
+                                    },
+                                    true,
+                                    None,
+                                ));
+                            }
+                            Err(_) => {
+                                return Ok(crate::remote::scoped_setup_failure(
+                                    selection,
+                                    "scoped_status_prepare_timeout",
+                                    true,
+                                    None,
+                                ));
+                            }
+                        }
+                        return Ok(
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(2),
+                                project.backend.call(native.name.to_string(), args),
+                            )
+                            .await
+                            {
+                                Ok(Ok(result)) => result,
+                                Ok(Err(_)) => crate::remote::scoped_observation_failure(
+                                    selection,
+                                    "scoped_status_unavailable",
+                                    true,
+                                ),
+                                Err(_) => crate::remote::scoped_observation_failure(
+                                    selection,
+                                    "scoped_status_timeout",
+                                    true,
+                                ),
+                            },
+                        );
+                    }
+                    // Selected native results already contain canonical scope
+                    // disclosure. No global/UI diagnostics enrichment is added.
+                    return Ok(
+                        match project.backend.call(native.name.to_string(), args).await {
+                            Ok(result) => result,
+                            Err(_) => crate::remote::scoped_observation_failure(
+                                selection,
+                                "scoped_observation_unavailable",
+                                true,
+                            ),
+                        },
+                    );
+                }
                 if matches!(native.name.as_ref(), "airk_status" | "airk_diagnostics") {
                     let _options = match serde_json::from_value::<crate::StatusArgs>(Value::Object(
                         args.clone(),
@@ -1191,6 +1306,74 @@ mod tests {
             1,
             "help choices cannot query an index"
         );
+    }
+    #[tokio::test]
+    async fn public_help_preserves_canonical_native_qualified_selectors_and_ui_conflicts() {
+        let (u, native, _, ui) = fixture(false, true);
+        for topic in ["tools", "TOOLS", "mcp", "MCP"] {
+            for tool in ["search", "airk_search"] {
+                let args =
+                    json!({"topic":topic,"tool":tool,"max_bytes":32768,"response_mode":"full"});
+                let actual = call(&u, "help", args).await;
+                let expected = serde_json::to_value(crate::help::call_with_catalog(
+                    json!({"topic":topic,"tool":"search","max_bytes":32768,"response_mode":"full"}),
+                    tools(),
+                ))
+                .unwrap();
+                assert_eq!(actual, expected);
+                assert_ne!(actual["isError"], true, "{actual}");
+                let value = body(&actual).unwrap();
+                let supplied: Value =
+                    serde_json::from_str(value["content"].as_str().unwrap()).unwrap();
+                assert_eq!(
+                    supplied,
+                    serde_json::to_value(tools().into_iter().find(|t| t.name == "search").unwrap())
+                        .unwrap()
+                );
+            }
+        }
+        for args in [
+            json!({"topic":"CLI","command":"airk tools list"}),
+            json!({"topic":"COMMANDS","command":"tools list"}),
+            json!({"topic":"TOOL_SELECTION"}),
+            json!({"topic":"overview","command":"tools list"}),
+            json!({"topic":"commands","tool":"search"}),
+            json!({"command":"tools list","tool":"search"}),
+        ] {
+            let mut projected = args.clone();
+            let expected = if projected.get("tool").is_some() {
+                serde_json::to_value(crate::help::call_with_catalog(projected.take(), tools()))
+                    .unwrap()
+            } else {
+                serde_json::to_value(crate::help::call(projected.take())).unwrap()
+            };
+            assert_eq!(call(&u, "help", args).await, expected);
+        }
+        let normalized = call(&u, "help", json!({"topic":"INDEX_HEALTH"})).await;
+        assert_ne!(normalized["isError"], true);
+        assert_eq!(body(&normalized).unwrap()["topic"], "index-health");
+        for args in [
+            json!({"topic":"TOOLS","tool":"airk_search","max_bytes":32768}),
+            json!({"topic":"COMMANDS","command":"tools list"}),
+            json!({"topic":"overview","tool":"airk_search"}),
+        ] {
+            let expected = serde_json::to_value(crate::help::call(args.clone())).unwrap();
+            assert_eq!(call(&u, "airk_help", args).await, expected);
+        }
+        for args in [
+            json!({"query":"repair","topic_id":"intro"}),
+            json!({"query":"repair","topic":"tools","tool":"search"}),
+            json!({"topic_id":"intro","command":"tools list"}),
+        ] {
+            let rejected = call(&u, "help", args).await;
+            assert_eq!(rejected["isError"], true);
+            assert_eq!(
+                body(&rejected).unwrap()["error"]["code"],
+                "INVALID_HELP_SELECTOR"
+            );
+        }
+        assert!(native.calls.lock().unwrap().is_empty());
+        assert!(ui.calls.lock().unwrap().is_empty());
     }
     #[tokio::test]
     async fn tool_help_keeps_byte_budgets_and_resumable_lines_without_native_work() {

@@ -26,6 +26,10 @@ Changes apply on this service host. Running project workers acknowledge the new 
 
 Health confirms responsiveness only. An external service manager controls lifecycle, upgrades and rollback when one is configured.
 
+After a native Stop, Restart or lifecycle recovery returns a complete response, **Captured native lifecycle response (historical)** retains that exact request and result, including native diagnostic fields. It also records the actual pre-operation health response when one was live and the force argument used. This is a capture of the native coordinator's response, not a fresh process inspection or current evidence authority. A same-bound reconnect can retain it with the historical label; unrelated client, runtime, namespace, trust or controller changes withdraw it.
+
+Use the separate **Copy complete JSON**, **Open complete JSON** or **Export complete JSON** actions for the full capture, including machine details and unknown native fields. Ordinary diagnostic reports remain redacted and only identify the capture's availability. If the complete capture exceeds its budget, the original request remains tracked for native recovery and the UI reports the capture unavailable. It does not convert accepted native work into a no-effect failure.
+
 ## Processes on this machine
 
 A user-owned installation uses `airk-service` for the shared service, `airk-index` for project workers, `airk-source` for source watching and `airk-embed` for inference (`.exe` on Windows). Agents and Explorer can each have a separate MCP frontend and launcher. Two VS Code windows do not imply only two AIRK processes. MCP processes follow their client lifetime; background indexing can continue after an editor closes. An idle, connected agent remains connected.

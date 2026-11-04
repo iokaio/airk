@@ -1,10 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Native adapter primitives shared by service/client executable modes.
+pub(crate) mod catalog_admission;
+pub(crate) mod catalog_authority;
+pub(crate) mod catalog_coordinator;
+pub(crate) mod catalog_grant_draft;
+mod catalog_host_context;
+mod catalog_index_setup;
+mod catalog_index_setup_control;
+mod catalog_source_change_control;
+#[cfg(test)]
+mod catalog_test_fixture;
 pub mod embedding_client;
+pub mod embedding_pool_bootstrap;
 pub mod embedding_pool_client;
 mod embedding_pool_process;
 pub mod embedding_pool_protocol;
 pub mod local_ipc;
+mod native_admin_connections;
 /// Leaf Windows file-ACL check shared with the Explorer Assistance forwarder,
 /// which must not depend on service or IPC protocol code.
 #[cfg(windows)]

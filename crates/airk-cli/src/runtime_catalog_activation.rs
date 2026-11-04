@@ -9,8 +9,20 @@ use airk_store::service::registry::catalog::upgrade::{
 };
 use std::io::{Seek, SeekFrom};
 
+#[path = "runtime_catalog_authority.rs"]
+mod authority;
+
 const MAX_RECEIPT: u64 = 32 * 1024 * 1024;
 const MAX_ERROR: u64 = 65536;
+
+pub(super) fn activate_managed_genesis(
+    installer: &InstallerAuthority<'_>,
+    policy: &managed::Managed,
+    origin: &airk_store::service::registry::catalog::genesis::ManagedGenesisOrigin,
+    owner: &mut airk_store::service::registry::catalog::genesis::CatalogGenesis,
+) -> Result<()> {
+    authority::activate_managed(installer, policy, origin, owner)
+}
 
 fn resolved_control(root: &Path, installer: Sha256Digest) -> Result<PathBuf> {
     match layout::control(root) {
@@ -35,7 +47,7 @@ pub(super) fn control_for_resume(root: &Path, intent: &Intent) -> Result<PathBuf
 /// These checks compile to a no-op until management/grants can consume the new
 /// catalog. No normal-state metadata scan or extra executable probe is added.
 pub(super) async fn begin_if_enabled(root: &Path, intent: &Intent) -> Result<bool> {
-    if !upgrade::PRODUCTION_ACTIVATION_ENABLED || intent.prior.is_none() {
+    if !upgrade::PRODUCTION_ACTIVATION_ENABLED {
         return Ok(false);
     }
     activate(root, intent).await
@@ -44,6 +56,12 @@ pub(super) async fn begin_if_enabled(root: &Path, intent: &Intent) -> Result<boo
 pub(super) async fn resume_if_enabled(root: &Path, intent: &Intent) -> Result<bool> {
     if !upgrade::PRODUCTION_ACTIVATION_ENABLED {
         return Ok(false);
+    }
+    if let Some(receipt) =
+        airk_store::service::registry::catalog::genesis::pending(&intent.control)?
+        && receipt.stage != airk_store::service::registry::catalog::genesis::GenesisStage::Settled
+    {
+        return activate(root, intent).await;
     }
     let Some(receipt) = upgrade::pending(&intent.control)? else {
         return Ok(false);
@@ -94,6 +112,17 @@ async fn resume_restore(root: &Path, intent: &Intent) -> Result<bool> {
 async fn activate(root: &Path, intent: &Intent) -> Result<bool> {
     let (main, approval) = verify_runtime(root, &intent.candidate)?;
     let process_owner = manager(root, intent)?;
+    if intent.prior.is_none() {
+        if intent.manager {
+            process_owner.stop()?;
+        }
+        if airk_store::service::registry::catalog::genesis::pending(&intent.control)?.is_none() {
+            drain(root, &main, &approval).await?;
+        }
+        process_owner.require_stopped_for_maintenance()?;
+        authority::activate_fresh(root, intent)?;
+        return Ok(true);
+    }
     let pending = upgrade::pending(&intent.control)?;
     if pending.as_ref().is_some_and(|receipt| {
         !matches!(
@@ -133,10 +162,10 @@ async fn activate(root: &Path, intent: &Intent) -> Result<bool> {
     // installation lock together, with no detached migration task that could
     // outlive cancellation of its enclosing installer future. The service is
     // stopped and normal admission stays fenced throughout the synchronous work.
-    let Some((owner, _receipt)) = prepare_readiness(root, intent)? else {
+    let Some((owner, receipt)) = prepare_readiness(root, intent)? else {
         return Ok(true); // We drained the service; the caller must probe/restart it.
     };
-    owner.settle()?;
+    authority::settle_upgrade(root, intent, owner, receipt)?;
     Ok(true)
 }
 
@@ -171,6 +200,19 @@ fn prepare_readiness(
     );
 
     let saved = upgrade::pending(&intent.control)?;
+    if let Some(receipt) = &saved
+        && receipt.authority_v1_host.is_some()
+        && receipt.plan.installer_identity == installer
+        && matches!(
+            receipt.stage,
+            UpgradeStage::Readiness | UpgradeStage::Settled
+        )
+    {
+        // Post-seal recovery must consume its authority-1 evidence. Re-running
+        // the P5 zero-grant import lane would reject or overwrite that seal.
+        let owner = CatalogUpgrade::resume_for_installer(&intent.control, installer)?;
+        return Ok(Some((owner, receipt.clone())));
+    }
     let owner = if saved.as_ref().is_some_and(|receipt| {
         !matches!(
             receipt.stage,
@@ -255,6 +297,8 @@ fn prepare_readiness(
         serde_json::to_value(&current)? == serde_json::to_value(&migrated)?,
         "candidate migration receipt is stale or incomplete"
     );
+    let native_host = crate::catalog_host_context::current_native_host(current.plan.namespace)?;
+    let current = owner.bind_authority_v1_host(native_host)?;
     let nonce = current
         .readiness
         .as_ref()
@@ -288,38 +332,11 @@ fn prepare_readiness(
         return Ok(Some((owner, current)));
     }
 
-    let mut refusals = Vec::new();
-    for write in [false, true] {
-        let mut command = Command::new(&predecessor);
-        command
-            .args(["service", "requests", "--runtime-dir"])
-            .arg(&intent.control);
-        if write {
-            command
-                .arg("forget")
-                .arg(airk_kernel::service_broker::new_instance_id()?.to_string());
-        } else {
-            command.arg("list");
-        }
-        let output = capture(&intent.control, command, 16384, Duration::from_secs(30))?;
-        let error = String::from_utf8_lossy(&output.stderr);
-        ensure!(
-            !output.success && registry_refusal(&error),
-            "predecessor did not provide a registry compatibility refusal: {error}"
-        );
-        refusals.push(framed_digest(
-            b"airk/catalog-predecessor-refusal/1",
-            &[&output.stderr],
-        ));
-    }
+    let predecessor_refusals = authority::preseal_refusals(root, intent, current.plan.id, nonce)?;
     let ready = owner.record_readiness(ReadinessEvidence {
         schema: 1,
         candidate,
-        predecessor_refusals: vec![RuntimeRefusal {
-            payload_identity: predecessor_identity,
-            read_refusal_digest: refusals[0],
-            write_refusal_digest: refusals[1],
-        }],
+        predecessor_refusals,
     })?;
     Ok(Some((owner, ready)))
 }

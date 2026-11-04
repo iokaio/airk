@@ -151,7 +151,7 @@ Commands:
   init           Register --root as a project of the installed runtime and prepare its index storage
   status         Print the project's publication, freshness, coverage and job status
   search         Search indexed evidence; results carry file, line and revision citations
-  files          List indexed files under --prefix, with continuation cursors
+  files          List indexed files under an optional path prefix, with continuation cursors
   read           Read an indexed file's lines (--start-line/--end-line) from the published revision, with a citation
   mcp            Serve the read-only MCP protocol on stdin/stdout for one agent connection (this is what agents launch)
   info           Show what the index knows about one file: language, size, extraction method and parse status
@@ -185,6 +185,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -276,6 +279,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -317,19 +323,22 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
           [possible values: lean, rich]
-
-      --service-project <SERVICE_PROJECT>
-
 
       --since <SINCE>
 
 
       --selector <SELECTORS>
           Repeatable tagged JSON selector, e.g. {"kind":"path","path":"one.rs"}
+
+      --service-project <SERVICE_PROJECT>
+
 
       --path <PATHS>
           Remember an exact collection-relative indexed path
@@ -393,6 +402,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -403,11 +415,11 @@ Options:
 
           [possible values: exact, suffix, contains]
 
-      --service-project <SERVICE_PROJECT>
-
-
       --include-count
           Request qualified match counts; a bounded partial scan can report an unknown total
+
+      --service-project <SERVICE_PROJECT>
+
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
@@ -470,6 +482,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -518,6 +533,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -526,10 +544,10 @@ Options:
       --revision <REVISION>
 
 
-      --service-project <SERVICE_PROJECT>
-
-
       --if-evidence <IF_EVIDENCE>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --follow-moves
@@ -588,6 +606,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -622,6 +643,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -658,6 +682,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -692,6 +719,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -731,6 +761,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -765,6 +798,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -801,6 +837,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -833,6 +872,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -869,6 +911,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -903,6 +948,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -949,6 +997,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -959,11 +1010,11 @@ Options:
 
           [possible values: true, false]
 
-      --service-project <SERVICE_PROJECT>
-
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
+
+      --service-project <SERVICE_PROJECT>
+
 
       --document-key <DOCUMENT_KEY>
           Durable document key; excludes textual filters
@@ -987,7 +1038,7 @@ Options:
 ## airk files
 
 ```text
-List indexed files under --prefix, with continuation cursors
+List indexed files under an optional path prefix, with continuation cursors
 
 Usage: airk files [OPTIONS] [PREFIX]
 
@@ -1022,6 +1073,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -1030,11 +1084,11 @@ Options:
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --service-project <SERVICE_PROJECT>
-
-
       --limit <LIMIT>
           [default: 10]
+
+      --service-project <SERVICE_PROJECT>
+
 
       --max-bytes <MAX_BYTES>
           [default: 8192]
@@ -1062,6 +1116,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -1108,6 +1165,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -1118,11 +1178,11 @@ Options:
 
           [possible values: true, false]
 
-      --service-project <SERVICE_PROJECT>
-
-
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
+
+      --service-project <SERVICE_PROJECT>
+
 
   -h, --help
           Print help
@@ -1152,6 +1212,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -1198,6 +1261,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -1206,10 +1272,10 @@ Options:
       --revision <REVISION>
 
 
-      --service-project <SERVICE_PROJECT>
-
-
       --if-evidence <IF_EVIDENCE>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --follow-moves
@@ -1247,6 +1313,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -1273,6 +1342,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -1313,6 +1385,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --no-default-project
           Require a project argument for scoped tools in multi-root workspaces
 
@@ -1342,6 +1417,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -1388,6 +1466,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -1396,13 +1477,13 @@ Options:
       --cursor <CURSOR>
           Continue the same revision-bound discovery with unchanged filters
 
-      --service-project <SERVICE_PROJECT>
-
-
       --compact [<COMPACT>]
           Return minimal names/kinds/lines/signatures with shared original file/provenance bindings
 
           [possible values: true, false]
+
+      --service-project <SERVICE_PROJECT>
+
 
       --revision <REVISION>
 
@@ -1469,6 +1550,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -1477,10 +1561,10 @@ Options:
       --project <PROJECT>
           Configured native project binding (alias for global --service-project)
 
-      --service-project <SERVICE_PROJECT>
-
-
       --execute
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --request <REQUEST>
@@ -1513,6 +1597,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -1544,6 +1631,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -1590,6 +1680,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -1598,10 +1691,10 @@ Options:
       --revision <REVISION>
 
 
-      --service-project <SERVICE_PROJECT>
-
-
       --if-evidence <IF_EVIDENCE>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --follow-moves
@@ -1664,6 +1757,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -1672,13 +1768,13 @@ Options:
       --language <LANGUAGE>
           Exact indexed extraction-language label; not a filename-extension filter
 
-      --service-project <SERVICE_PROJECT>
-
-
       --evidence-kind <EVIDENCE_KIND>
           Indexed evidence classification; unknown includes unclassified extraction
 
           [possible values: code, document, configuration, unknown]
+
+      --service-project <SERVICE_PROJECT>
+
 
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
@@ -1748,6 +1844,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -1756,10 +1855,10 @@ Options:
       --direction <DIRECTION>
           [default: incoming]
 
-      --service-project <SERVICE_PROJECT>
-
-
       --kind <KIND>
+
+
+      --service-project <SERVICE_PROJECT>
 
 
       --path-prefix <PATH_PREFIX>
@@ -1797,6 +1896,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -1862,6 +1964,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -1894,6 +1999,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -1931,6 +2039,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -1961,6 +2072,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -1990,6 +2104,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2023,6 +2140,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2059,6 +2179,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2097,6 +2220,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2126,6 +2252,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2157,6 +2286,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2187,6 +2319,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2216,6 +2351,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2250,6 +2388,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2279,6 +2420,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2314,6 +2458,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2343,6 +2490,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2374,6 +2524,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2414,6 +2567,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2440,6 +2596,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2468,6 +2627,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2494,6 +2656,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2522,6 +2687,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2549,6 +2717,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2575,6 +2746,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2615,12 +2789,12 @@ Options:
       --verification-basis <VERIFICATION_BASIS>
           [possible values: trusted-distribution, organization-digest]
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --lifecycle <LIFECYCLE>
           [default: external]
           [possible values: external, user-on-demand]
-
-      --service-project <SERVICE_PROJECT>
-
 
       --state-dir <STATE_DIR>
 
@@ -2628,6 +2802,9 @@ Options:
       --channel <CHANNEL>
           [default: stable]
           [possible values: stable, preview]
+
+      --service-project <SERVICE_PROJECT>
+
 
   -h, --help
           Print help
@@ -2655,6 +2832,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2692,6 +2872,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2725,6 +2908,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2754,6 +2940,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2794,6 +2983,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2823,6 +3015,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2857,6 +3052,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2887,6 +3085,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2913,6 +3114,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -2953,6 +3157,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -2991,6 +3198,9 @@ Options:
 
       --source-root <SOURCE_ROOT>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --index-collection <INDEX_COLLECTION>
 
@@ -3034,6 +3244,9 @@ Options:
       --verification-basis <VERIFICATION_BASIS>
           [possible values: trusted-distribution, organization-digest]
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --state-dir <STATE_DIR>
           Writable service state; defaults to native state for a native install, otherwise this install root
 
@@ -3071,6 +3284,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3100,6 +3316,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -3148,6 +3367,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -3156,13 +3378,13 @@ Options:
       --language <LANGUAGE>
           Exact indexed extraction-language label; not a filename-extension filter
 
-      --service-project <SERVICE_PROJECT>
-
-
       --evidence-kind <EVIDENCE_KIND>
           Indexed evidence classification; unknown includes unclassified extraction
 
           [possible values: code, document, configuration, unknown]
+
+      --service-project <SERVICE_PROJECT>
+
 
       --exclude-path-prefix <EXCLUDE_PATH_PREFIX>
           Exclude one literal collection-relative prefix from this query only
@@ -3214,6 +3436,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3256,6 +3481,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3289,6 +3517,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3318,6 +3549,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -3358,6 +3592,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3387,6 +3624,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -3421,6 +3661,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3454,6 +3697,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3484,6 +3730,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3513,6 +3762,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -3547,6 +3799,9 @@ Options:
       --approval <APPROVAL>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3576,6 +3831,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --executable <EXECUTABLE>
 
@@ -3613,6 +3871,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --executable <EXECUTABLE>
 
 
@@ -3648,6 +3909,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -3687,6 +3951,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --output <OUTPUT>
           Capture raw retained diagnostics into a new local file without buffering stdout
@@ -3728,6 +3995,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3754,6 +4024,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -3788,6 +4061,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3821,6 +4097,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3850,6 +4129,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -3889,6 +4171,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3920,6 +4205,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -3946,6 +4234,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -3981,6 +4272,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4014,6 +4308,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4044,6 +4341,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -4081,6 +4381,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4110,6 +4413,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -4147,6 +4453,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4178,6 +4487,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4204,6 +4516,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -4236,6 +4551,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -4282,6 +4600,9 @@ Options:
       --verification-deadline-ms <VERIFICATION_DEADLINE_MS>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --reply-detail <REPLY_DETAIL>
           Lean/Rich reply projection; independent of retained indexing detail
 
@@ -4292,11 +4613,11 @@ Options:
 
           [possible values: exact, suffix, contains]
 
-      --service-project <SERVICE_PROJECT>
-
-
       --include-count
           Request qualified match counts; a bounded partial scan can report an unknown total
+
+      --service-project <SERVICE_PROJECT>
+
 
       --compact [<COMPACT>]
           False includes rich facts and durable IDs; independent of response mode
@@ -4350,6 +4671,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4387,6 +4711,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4422,6 +4749,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4448,6 +4778,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -4485,6 +4818,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -4525,6 +4861,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --content-kind <CONTENT_KIND>
 
 
@@ -4558,6 +4897,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4587,6 +4929,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -4621,6 +4966,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -4659,6 +5007,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4685,6 +5036,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 
@@ -4723,6 +5077,9 @@ Options:
       --service-install-dir <SERVICE_INSTALL_DIR>
 
 
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
+
       --service-project <SERVICE_PROJECT>
 
 
@@ -4753,6 +5110,9 @@ Options:
 
       --service-install-dir <SERVICE_INSTALL_DIR>
 
+
+      --catalog-session <CATALOG_SESSION>
+          Explicit reviewed single-index session JSON; preferences alone grant no access
 
       --service-project <SERVICE_PROJECT>
 

@@ -91,6 +91,26 @@ expansion needs review/reconnect or explicit renewal. A legacy configuration can
 use an imported one-index compatibility snapshot, preserving its original roots
 and restrictions; it cannot acquire new Project members/aliases implicitly.
 
+**3 November 2026 P6f format amendment.** Import one-index compatibility
+snapshots only from the validated P5 backfill plan at owned cutover, after the
+unchanged zero-grant readiness proof. Preserve original source identities,
+aliases and restrictions; context choices and open folders confer no permission.
+Imports use the same scoped native admission, revocation and delivery fences as
+reviewed grants, while new Project discovery remains legacy/configuration-required.
+Missing, changed or revoked imports are never regenerated from current folders,
+memberships or configuration. Unknown original source metadata blocks the whole
+promotion pending explicit recovery; primary-root-only access is not guessed.
+
+Authority contract 1 selects a distinct, fully validated schema-12 DDL shape.
+Authority 0 and P5 retain their exact earlier shape and zero-grant stages. The
+owned promotion atomically seals imported snapshots and advances the format,
+leaving final activation to the native cutover owner. Imported and reviewed
+grants each admit at most 1,024 records, including revoked tombstones, within the
+unchanged 32 MiB registry bound. Maxima across all dimensions need not fit
+simultaneously. Imported provenance and reserved IDs cannot be supplied through
+the user-reviewed grant input. This amendment is an implementation contract,
+not a claim that production activation or platform qualification has passed.
+
 Add a separately versioned, required scoped-grant payload to protected native IPC
 when P6 activates. Existing `ConnectionGrant` rejects unknown fields, so old peers
 must refuse that payload. Do not globally renumber unrelated control methods or

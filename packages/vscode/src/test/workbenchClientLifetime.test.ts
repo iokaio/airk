@@ -4,8 +4,14 @@ import Module from 'node:module';
 import { test } from 'node:test';
 import type { LaunchSpec } from '../model';
 import { applyWorkbenchUpdate, defaultWorkbenchFormDraft, type WorkbenchState, type WorkbenchUpdate, type WorkbenchSession, type Value } from '../workbenchContracts';
-import { newSession } from '../workbenchSessions';
+import { newSession, SessionStore } from '../workbenchSessions';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { renderExport } from '../workbenchRender';
+import { EvidenceClient, EvidenceFailure } from '../explorerEvidence';
+import { explorerError } from '../explorerErrors';
+import { scopeSelectionIdentity, type CatalogSessionSelector } from '../scopeSelection';
 
 function deferred<T>() { let resolve!: (value:T)=>void,reject!: (error:Error)=>void; const promise=new Promise<T>((done,fail)=>{resolve=done;reject=fail;}); return {promise,resolve,reject}; }
 const tick=()=>new Promise<void>(resolve=>setImmediate(resolve));
@@ -44,7 +50,7 @@ function fixture(attach=false) {
     const loader=Module as unknown as {_load:(name:string,...args:any[])=>any},original=loader._load;
     loader._load=function(name:string,...args:any[]){
         if(name==='vscode'){return stub;}
-        if(name==='./explorerEvidence'){return {EvidenceClient:FakeClient};}
+        if(name==='./explorerEvidence'){return {...original.call(this,name,...args),EvidenceClient:FakeClient};}
         if(name==='./explorerWorkspaceIO'){return {openSource:async()=>undefined,saveStudioInWorkspace:async()=>({saved:false})};}
         return original.call(this,name,...args);
     };
@@ -550,4 +556,92 @@ test('explicit held status replies remain fenced across same-project launcher re
         held.resolve({payload:{collection:'fixture',publication:{token:publicationToken(99)},tag:'late-foreign-authority'}});
         await refreshing;assert.notEqual(f.state.status?.tag,'late-foreign-authority');
     }finally{held.resolve({payload:{}});f.provider.dispose();}
+});
+
+
+test('error-only turns retain canonical native refusals in full copies and actual export handlers',async()=>{
+    const f=fixture();const original={isError:true,content:[{type:'text',text:'{"error":{"code":"scope_revoked","message":"Access changed"},"scope_observation":{"schema":1},"retry":{"allowed":false}}'}],extra:{untouched:'```\nembedded'}};
+    try{
+        await f.state.select(A);await tick();
+        f.respond(async()=>{throw new EvidenceFailure(explorerError('scope_revoked','Access changed'),original);});
+        await f.state.run('/status');await f.state.saveQueue;
+        const session=f.state.session!,turn=session.turns.at(-1)!;
+        assert.equal(turn.error,explorerError('scope_revoked').message);assert.equal(turn.envelope,undefined);assert.deepEqual(turn.nativeFailure,original);
+        const json=JSON.parse(renderExport(session,'json',turn.id));assert.deepEqual(json.turns[0].nativeFailure,original);
+        const md=renderExport(session,'markdown',turn.id);assert.match(md,/Complete original native refusal/);assert.ok(md.includes('untouched'));
+        await f.state.message({type:'export',turn:turn.id,format:'json'});
+        assert.deepEqual(JSON.parse(f.exports.at(-1)!.toString()).turns[0].nativeFailure,original);
+        f.respond(async()=>{throw new Error('No native response');});await f.state.run('/status');
+        assert.equal(session.turns.at(-1)!.nativeFailure,undefined);
+    }finally{f.provider.dispose();}
+});
+
+const scopedSelector=(project:string):CatalogSessionSelector=>({schema:1,context_key:'12'.repeat(32),namespace:'34'.repeat(16),expected_catalog_revision:8,grant_id:'grt_'+ '11'.repeat(16),expected_grant_revision:7,index_id:'idx_'+ '22'.repeat(16),project_ids:['prj_'+project.repeat(16)]});
+test('scoped histories separate same backing subsets, preserve old turns, and fence late replies',async()=>{
+    const f=fixture(),one={...spec(A),catalogSession:scopedSelector('44')},two={...spec(A),catalogSession:scopedSelector('55')};
+    const keyOne=scopeSelectionIdentity(one.catalogSession),keyTwo=scopeSelectionIdentity(two.catalogSession);
+    const pending=deferred<{payload:Value}>(),entered=deferred<void>();
+    try{
+        f.replace([one,two]);await f.state.select(keyOne);await tick();
+        f.respond(async()=>({payload:{status:'complete',captured:'old',scope_observation:{fingerprint:'old'}}}));
+        await f.state.run('/status');await f.state.saveQueue;
+        const oldSession=f.state.session!,oldTurn=structuredClone(oldSession.turns[0]);
+        f.respond(async tool=>{if(tool==='airk_parse'){entered.resolve();return pending.promise;}return {payload:{}};});
+        const running=f.state.run('/status');await entered.promise;const oldClient=f.created.at(-1)!;
+        await f.provider.useScope(two);assert.equal(f.state.session!.project,keyTwo);assert.ok(oldClient.disposed>0);
+        pending.resolve({payload:{captured:'late'}});await running;
+        assert.deepEqual(oldSession.turns[0],oldTurn);assert.equal(oldSession.turns.at(-1)!.envelope,undefined);
+        assert.equal(f.state.session!.turns.length,0);assert.equal(f.removed.length,0);
+        const same=f.state.session!;const refreshed={...two,catalogSession:{...two.catalogSession,expected_catalog_revision:9}};
+        f.replace([one,refreshed]);await f.provider.useScope(refreshed);
+        assert.equal(f.state.session,same,'catalog clock reconnects without renaming or deleting transcript');
+        assert.notEqual(keyOne,keyTwo);assert.equal(f.created[0].spec.service!.project,A,'native backing remains unchanged');
+    }finally{pending.resolve({payload:{}});f.provider.dispose();}
+});
+
+
+test('scoped freshness comparisons require matching native scope observations and fingerprint',async()=>{
+    const f=fixture(),selected={...spec(A),catalogSession:scopedSelector('44')};let fingerprint='66'.repeat(32),include=true;
+    const observation=()=>({schema:1,qualifier:'selected_subset',provenance:'user_reviewed_project_grant',fingerprint,
+        grant:{id:selected.catalogSession.grant_id,revision:selected.catalogSession.expected_grant_revision},
+        members:[{index_id:selected.catalogSession.index_id,memberships:selected.catalogSession.project_ids.map(project_id=>({project_id}))}]});
+    f.respond(async()=>({payload:{collection:'fixture',publication:{token:publicationToken(1)},...(include?{scope_observation:observation()}:{})}}));
+    const snapshot=()=> (f.provider as unknown as {state():WorkbenchState}).state();
+    try{
+        f.replace([selected]);await f.provider.useScope(selected);await tick();await f.state.run('/status');
+        const turn=f.state.session!.turns[0];assert.equal(snapshot().publicationRelations?.[turn.id],'equal');
+        fingerprint='77'.repeat(32);await f.state.message({type:'refresh'});
+        assert.equal(snapshot().publicationRelations?.[turn.id],'different','same token under a different native scope has no freshness order');
+        include=false;await f.state.message({type:'refresh'});assert.equal(snapshot().publicationRelations?.[turn.id],'unknown');
+        assert.equal((turn.envelope!.scope_observation as Value).fingerprint,'66'.repeat(32),'captured scope remains immutable');
+    }finally{f.provider.dispose();}
+});
+
+
+test('actual evidence failure through Workbench and durable privacy paths never saves native details as guidance',async()=>{
+    const root=await fs.mkdtemp(path.join(os.tmpdir(),'airk-native-refusal-privacy-'));
+    const marker='PRIVATE_NATIVE_SOURCE_MARKER';
+    try{
+        for(const body of [{error:{code:'invalid_argument',message:marker}},{error:{code:'invalid_argument'},details:{source:marker}},marker]){
+            const f=fixture(),store=new SessionStore(root);
+            const original={isError:true,content:[{type:'text',text:typeof body==='string'?body:JSON.stringify(body)}]};
+            const actual=new EvidenceClient(spec(A),'privacy-test',{workbench:true,open:async()=>({session:{closed:false,close(){},request:async()=>original} as any})});
+            Object.assign(f.state,{sessions:store});
+            f.respond((tool)=>actual.call(tool as 'airk_status'|'airk_parse',{}));
+            try{
+                await f.state.select(A);await tick();await f.state.run('/status');await f.state.saveQueue;
+                const session=f.state.session!,turn=session.turns[0];
+                assert.deepEqual(turn.nativeFailure,original,'full native result remains available when results are retained');
+                assert.ok(!turn.error?.includes(marker));assert.ok(turn.error);
+                assert.ok(JSON.stringify(await store.load(A,session.id)).includes(marker));
+                await store.save(session,false);
+                const inputsOnly=await store.load(A,session.id);
+                assert.ok(!JSON.stringify(inputsOnly).includes(marker));assert.equal(inputsOnly.turns[0].error,undefined);assert.equal(inputsOnly.turns[0].input,'/status');
+                // Older saved sessions may already have copied raw native detail
+                // into error. Privacy cleanup must remove that historical copy.
+                session.turns[0].error=marker;await store.save(session,true);await store.clearResults(A);
+                const cleared=await store.load(A,session.id);assert.ok(!JSON.stringify(cleared).includes(marker));
+            }finally{actual.dispose();f.provider.dispose();}
+        }
+    }finally{await fs.rm(root,{recursive:true,force:true});}
 });

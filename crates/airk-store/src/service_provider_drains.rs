@@ -10,6 +10,13 @@ use rusqlite::{OptionalExtension, TransactionBehavior, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+#[path = "service_provider_shared.rs"]
+mod shared;
+pub use shared::{
+    ProviderOwnership, SharedHelperContainment, SharedHelperDrain, SharedHelperIdentity,
+    SharedHelperPhase, SharedHelperRole, shared_helper_job_name,
+};
+
 pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS service_provider_drains(
  id TEXT PRIMARY KEY CHECK(length(id)=32),
  payload BLOB NOT NULL CHECK(length(payload)<=4096),
@@ -40,7 +47,7 @@ impl ProviderBoot {
         );
         Ok(())
     }
-    fn changed_from(&self, old: &Self) -> bool {
+    pub fn changed_from(&self, old: &Self) -> bool {
         match (&self.boot_id, &old.boot_id) {
             (Some(current), Some(previous)) => current != previous,
             _ => {
@@ -213,7 +220,7 @@ impl ServiceRegistry {
     ) -> Result<usize> {
         current.validate()?;
         ensure!(active.len() <= 32, "active provider worker bound exceeded");
-        let records = self.provider_drains()?;
+        let records = self.worker_provider_drains()?;
         let mut pending = 0;
         for record in records {
             if active.contains(&record.identity) {

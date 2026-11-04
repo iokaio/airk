@@ -89,6 +89,7 @@ fn graceful_pool_stop_closes_an_explicitly_held_idle_model_session() -> Result<(
         &mut input,
         &pool::Control::Register {
             grant: grant.clone(),
+            worker_identity: None,
         },
     )?;
     ensure!(

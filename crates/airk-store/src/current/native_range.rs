@@ -276,6 +276,7 @@ impl NativeLineRead<'_> {
         end: usize,
         max_bytes: usize,
     ) -> Result<SelectedSourceLines> {
+        self._read.require_path(&self.artifact.path)?;
         self.store.load_retained(&self.artifact)?;
         self.store
             .verify_native_line_projection(&self.reference, &self.artifact)?;
@@ -310,6 +311,7 @@ impl NativeLineRead<'_> {
         end: usize,
         max_bytes: usize,
     ) -> Result<SelectedSourceLines> {
+        self._read.require_path(&self.artifact.path)?;
         airk_core::validate_budget(1, max_bytes)?;
         ensure!(start > 0 && end >= start, "invalid line range");
         ensure!(end <= self.index.lines, "line range exceeds indexed source");
@@ -345,6 +347,9 @@ impl NativeLineRead<'_> {
         while !valid.is_char_boundary(length) {
             length -= 1;
         }
+        if self._read.read_scope_fingerprint().is_some() {
+            self._read.token()?;
+        }
         Ok(SelectedSourceLines {
             text: valid[..length].into(),
             truncated: finish - begin > length,
@@ -355,6 +360,7 @@ impl NativeLineRead<'_> {
         ordinal: usize,
         cache: &'b mut BTreeMap<usize, Vec<u8>>,
     ) -> Result<&'b [u8]> {
+        self._read.require_path(&self.artifact.path)?;
         if let std::collections::btree_map::Entry::Vacant(entry) = cache.entry(ordinal) {
             let block = self
                 .index

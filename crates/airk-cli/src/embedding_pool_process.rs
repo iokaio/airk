@@ -3,16 +3,52 @@
 use crate::{embedding_pool_protocol as protocol, runtime_pair, service_ipc};
 use airk_core::{
     identity::{Incarnation, Sha256Digest, framed_digest},
-    service::ProjectRegistration,
+    service::{ProjectRegistration, WorkerIdentity},
 };
 use airk_kernel::service_broker::new_instance_id;
 use anyhow::{Context, Result, ensure};
 use std::{
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, ExitStatus, Stdio},
-    sync::mpsc::{self, Receiver},
+    process::{Command, ExitStatus, Stdio},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver},
+    },
     time::{Duration, Instant},
 };
+
+#[path = "embedding_pool_owned.rs"]
+mod owned;
+#[path = "embedding_pool_retirement.rs"]
+mod retirement;
+#[path = "embedding_pool_shared.rs"]
+pub(crate) mod shared;
+pub use protocol::ProviderDrainTicket;
+pub use retirement::ProviderDrainState;
+pub use shared::{
+    SharedHelperPredecessorProof, prune_predecessor_shared_helpers,
+    recover_predecessor_shared_helpers, recover_shared_helper,
+};
+
+/// Native ownership witness, constructed only after the exact group/job,
+/// leader, and reply-reader have all completed. EOF or assuming Drop completed
+/// is insufficient; callers must obtain the actual native witness.
+#[derive(Clone, Copy, Debug)]
+pub struct ProviderReapWitness {
+    service: Incarnation,
+    helper: Incarnation,
+}
+impl ProviderReapWitness {
+    pub fn service(&self) -> Incarnation {
+        self.service
+    }
+    pub fn matches(&self, service: Incarnation, helper: Incarnation) -> bool {
+        self.service == service && self.helper == helper
+    }
+    pub fn helper(&self) -> Incarnation {
+        self.helper
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub struct PoolHealth {
@@ -85,9 +121,8 @@ pub fn failure_code(error: &anyhow::Error, fallback: &str) -> String {
 }
 
 pub struct Pool {
-    _containment: crate::child_job::ChildJob,
-    child: Child,
-    input: Option<ChildStdin>,
+    child: owned::OwnedHelper,
+    input: Option<owned::Input>,
     output: Receiver<protocol::Observation>,
     reader: Option<std::thread::JoinHandle<()>>,
     runtime: PathBuf,
@@ -96,6 +131,27 @@ pub struct Pool {
     pending_status: bool,
     control_failure: Option<String>,
     health: PoolHealth,
+    drains: Arc<Mutex<retirement::Drains>>,
+    reaped: Option<ProviderReapWitness>,
+}
+
+fn route_observation(
+    observation: protocol::Observation,
+    drains: &Mutex<retirement::Drains>,
+    sender: &mpsc::SyncSender<protocol::Observation>,
+) -> bool {
+    match observation {
+        protocol::Observation::Drain {
+            ticket,
+            observation,
+        } => {
+            if let Ok(mut drains) = drains.lock() {
+                drains.observe(ticket, observation);
+            }
+            true
+        }
+        observation => sender.try_send(observation).is_ok(),
+    }
 }
 impl Drop for Pool {
     fn drop(&mut self) {
@@ -103,42 +159,71 @@ impl Drop for Pool {
             let _ = service_ipc::write_frame(&mut input, &protocol::Control::Stop);
         }
         let until = Instant::now() + Duration::from_secs(10);
-        loop {
+        while self.reaped.is_none() {
             match self.child.try_wait() {
-                Ok(Some(_)) => break,
+                Ok(Some(_)) => {}
                 // Unknown wait state never authorizes a numerical PID signal.
                 // Retain ownership/admission until native exit is observable.
-                Err(_) => std::thread::sleep(Duration::from_millis(25)),
-                Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(25)),
-                Ok(None) => {
-                    let _ = self.child.kill();
-                    let _ = self.child.wait();
-                    break;
+                Err(_) => {
+                    std::thread::sleep(Duration::from_millis(25));
+                    continue;
                 }
+                Ok(None) if Instant::now() < until => {
+                    std::thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+                Ok(None) => {}
             }
-        }
-        self._containment.drain();
-        let _ =
-            crate::local_ipc::remove_exited_endpoint(&self.runtime, &protocol::role(self.instance));
-        if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
+            if self.finish_native_reap().is_err() {
+                std::thread::sleep(Duration::from_millis(25));
+            }
         }
     }
 }
 impl Pool {
     pub fn terminate(&mut self) -> Result<()> {
-        if self.child.try_wait()?.is_none() {
-            self.child.kill()?;
+        self.finish_native_reap()
+    }
+    fn finish_native_reap(&mut self) -> Result<()> {
+        if self.reaped.is_some() {
+            return Ok(());
         }
-        self._containment.drain();
-        self.child.wait()?;
+        self.input.take();
+        self.child.drain(Duration::from_secs(2))?;
+        if let Some(reader) = self.reader.take() {
+            reader
+                .join()
+                .map_err(|_| anyhow::anyhow!("helper reply reader failed during native reap"))?;
+        }
+        if let Ok(mut drains) = self.drains.lock() {
+            drains.closed();
+        }
+        self.reaped = Some(ProviderReapWitness {
+            service: self.service,
+            helper: self.instance,
+        });
+        let _ =
+            crate::local_ipc::remove_exited_endpoint(&self.runtime, &protocol::role(self.instance));
         Ok(())
+    }
+    pub fn reap_witness(&self) -> Option<ProviderReapWitness> {
+        self.reaped
     }
     pub fn identity(&self) -> Incarnation {
         self.instance
     }
     pub fn process_id(&self) -> u32 {
         self.child.id()
+    }
+    #[cfg(windows)]
+    pub fn descendant_rss(&self) -> Result<Vec<Option<u64>>> {
+        Ok(self
+            .child
+            .member_pids()?
+            .into_iter()
+            .filter(|pid| *pid != self.process_id())
+            .map(airk_kernel::service_resource_observations::rss)
+            .collect())
     }
     pub fn start(root: &Path, service: Incarnation, inference_threads: u16) -> Result<Self> {
         Self::start_from_main(
@@ -161,7 +246,8 @@ impl Pool {
         let helper = runtime_pair::verify_helper(main)
             .context(FailureCode("helper_payload_verification_failed".into()))?;
         let instance = new_instance_id()?;
-        let mut command = Command::new(helper);
+        let guarded = crate::embedding_pool_bootstrap::shared_mode(root)?;
+        let mut command = Command::new(&helper);
         command
             .arg("pool")
             .stdin(Stdio::piped())
@@ -172,16 +258,17 @@ impl Pool {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x08000000);
         }
-        let mut child = crate::native_process::spawn(&mut command).map_err(spawn_failure)?;
-        let containment =
-            crate::native_process::attach_owned(&mut child, crate::child_job::ChildJob::attach)
-                .context(FailureCode("helper_containment_failed".into()))?;
+        let mut child = if guarded {
+            owned::OwnedHelper::guarded(root, service, instance, main, &helper)?
+        } else {
+            owned::OwnedHelper::spawn(&mut command)?
+        };
         let input = child.stdin.take().context("pool input missing")?;
         let mut output = child.stdout.take().context("pool output missing")?;
         let (sender, receiver) = mpsc::sync_channel(1);
+        let drains = Arc::new(Mutex::new(retirement::Drains::new(service, instance)));
         let mut pool = Self {
             child,
-            _containment: containment,
             input: Some(input),
             output: receiver,
             reader: None,
@@ -195,18 +282,32 @@ impl Pool {
                 ready_at: Instant::now(),
                 last_ack_at: Instant::now(),
             },
+            drains: drains.clone(),
+            reaped: None,
         };
         pool.reader = Some(
             std::thread::Builder::new()
                 .name("airk-pool-replies".into())
                 .spawn(move || {
                     while let Ok(Some(observation)) = service_ipc::read_frame(&mut output) {
-                        if sender.try_send(observation).is_err() {
+                        if !route_observation(observation, &drains, &sender) {
                             break;
                         }
                     }
+                    if let Ok(mut drains) = drains.lock() {
+                        drains.closed();
+                    }
                 })?,
         );
+        if guarded {
+            let namespace = shared::registry(root)?.incarnation()?;
+            ensure!(
+                matches!(pool.output.recv_timeout(Duration::from_secs(10))?,
+                protocol::Observation::GuardedReady { namespace: observed, service: owner, pool: helper }
+                if observed == namespace && owner == service && helper == instance),
+                "guarded helper startup identity mismatch"
+            );
+        }
         service_ipc::write_frame(
             pool.input.as_mut().context("pool input missing")?,
             &protocol::Init {
@@ -243,6 +344,17 @@ impl Pool {
     pub fn exit_status(&mut self) -> std::io::Result<Option<ExitStatus>> {
         self.child.try_wait()
     }
+    pub fn containment_failed(&self, error: &std::io::Error) -> bool {
+        #[cfg(unix)]
+        {
+            crate::unix_guardian::shared::owner_reaped(error, self.service, self.instance)
+        }
+        #[cfg(windows)]
+        {
+            let _ = error;
+            false
+        }
+    }
     pub fn health(&self) -> PoolHealth {
         self.health
     }
@@ -270,10 +382,36 @@ impl Pool {
         // observation before submitting another operation; do not replay it.
         self.finish_pending_status()
     }
+    #[cfg(test)]
     pub fn access(
         &mut self,
         worker: Incarnation,
         project: ProjectRegistration,
+    ) -> Result<protocol::Access> {
+        self.access_registered(worker, project, None)
+    }
+
+    pub fn access_worker(
+        &mut self,
+        identity: WorkerIdentity,
+        project: ProjectRegistration,
+    ) -> Result<protocol::Access> {
+        ensure!(
+            identity.project == project.binding,
+            "provider worker project identity mismatch"
+        );
+        self.drains
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider retirement state unavailable"))?
+            .validate_member(identity)?;
+        self.access_registered(identity.worker, project, Some(identity))
+    }
+
+    fn access_registered(
+        &mut self,
+        worker: Incarnation,
+        project: ProjectRegistration,
+        worker_identity: Option<WorkerIdentity>,
     ) -> Result<protocol::Access> {
         self.begin_control()?;
         let first = new_instance_id()?;
@@ -294,6 +432,7 @@ impl Pool {
                 self.input.as_mut().context("pool input missing")?,
                 &protocol::Control::Register {
                     grant: grant.clone(),
+                    worker_identity,
                 },
             )?;
             match self.output.recv_timeout(Duration::from_secs(5))? {
@@ -304,6 +443,12 @@ impl Pool {
                 _ => anyhow::bail!(FailureCode("helper_control_protocol_invalid".into())),
             }
             self.acknowledged();
+            if let Some(identity) = worker_identity {
+                self.drains
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("provider retirement state unavailable"))?
+                    .registered(identity);
+            }
             Ok(protocol::Access {
                 runtime: self.runtime.clone(),
                 role: protocol::role(self.instance),
@@ -312,6 +457,7 @@ impl Pool {
         })();
         self.finish_control(result)
     }
+    #[cfg(test)]
     pub fn revoke(&mut self, worker: Incarnation) -> Result<()> {
         self.begin_control()?;
         let result = (|| {
@@ -327,9 +473,82 @@ impl Pool {
                 _ => anyhow::bail!(FailureCode("helper_control_protocol_invalid".into())),
             }
             self.acknowledged();
+            self.drains
+                .lock()
+                .map_err(|_| anyhow::anyhow!("provider retirement state unavailable"))?
+                .revoked(worker);
             Ok(())
         })();
         self.finish_control(result)
+    }
+
+    /// Begin before ordinary fast revoke. The ticket is retained independently
+    /// of a caller waiting for completion; control/EOF never proves drain.
+    pub fn begin_retirement(&mut self, identity: WorkerIdentity) -> Result<ProviderDrainTicket> {
+        let (ticket, send) = self
+            .drains
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider retirement state unavailable"))?
+            .begin(identity, new_instance_id()?)?;
+        if send {
+            self.write_drain(&ticket, protocol::Control::BeginDrain { ticket });
+        }
+        Ok(ticket)
+    }
+
+    /// Bounded local lookup; never starts or replays a helper operation.
+    pub fn retirement_ticket(
+        &self,
+        identity: WorkerIdentity,
+    ) -> Result<Option<ProviderDrainTicket>> {
+        self.drains
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider retirement state unavailable"))?
+            .ticket(identity)
+    }
+
+    pub fn poll_retirement(&mut self, ticket: &ProviderDrainTicket) -> Result<ProviderDrainState> {
+        let (state, send) = self
+            .drains
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider retirement state unavailable"))?
+            .poll(ticket)?;
+        if send && !self.write_drain(ticket, protocol::Control::PollDrain { ticket: *ticket }) {
+            return Ok(ProviderDrainState::Unknown);
+        }
+        // A write failure leaves an unknown retained ticket, never a successful
+        // revocation or a reason to kill a sibling's shared helper.
+        Ok(state)
+    }
+
+    /// Call only after the exact engine ACK and combined native retirement
+    /// proof have been durably recorded. Drop/canceled callers must not call it.
+    pub fn finish_retirement(&mut self, ticket: &ProviderDrainTicket) -> Result<()> {
+        let send = self
+            .drains
+            .lock()
+            .map_err(|_| anyhow::anyhow!("provider retirement state unavailable"))?
+            .forget(ticket)?;
+        if send {
+            self.write_drain(ticket, protocol::Control::ForgetDrain { ticket: *ticket });
+        }
+        Ok(())
+    }
+
+    fn write_drain(&mut self, ticket: &ProviderDrainTicket, command: protocol::Control) -> bool {
+        let result = self
+            .input
+            .as_mut()
+            .context("pool input missing")
+            .and_then(|input| {
+                service_ipc::write_frame(input, &command).map_err(anyhow::Error::from)
+            });
+        if result.is_err()
+            && let Ok(mut drains) = self.drains.lock()
+        {
+            drains.failed_write(ticket);
+        }
+        result.is_ok()
     }
     pub fn status(&mut self) -> Result<protocol::Observation> {
         self.require_control()?;
@@ -423,6 +642,235 @@ impl Pool {
 mod tests {
     use super::*;
 
+    fn worker(pool: &Pool) -> WorkerIdentity {
+        WorkerIdentity {
+            service: pool.service,
+            worker: Incarnation::from_bytes([3; 16]),
+            project: Sha256Digest::from_bytes([4; 32]),
+            fencing_generation: 1,
+        }
+    }
+
+    #[test]
+    fn correlated_drain_reader_never_consumes_or_blocks_ordinary_control_reply() -> Result<()> {
+        let service = Incarnation::from_bytes([1; 16]);
+        let helper = Incarnation::from_bytes([2; 16]);
+        let identity = WorkerIdentity {
+            service,
+            worker: Incarnation::from_bytes([3; 16]),
+            project: Sha256Digest::from_bytes([4; 32]),
+            fencing_generation: 1,
+        };
+        let drains = Mutex::new(retirement::Drains::new(service, helper));
+        drains.lock().unwrap().registered(identity);
+        let ticket = drains
+            .lock()
+            .unwrap()
+            .begin(identity, Incarnation::from_bytes([5; 16]))?
+            .0;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        sender.send(protocol::Observation::Renewed)?;
+        let mut frame = Vec::new();
+        service_ipc::write_frame(
+            &mut frame,
+            &protocol::Observation::Drain {
+                ticket,
+                observation: protocol::ProviderDrainObservation::Drained,
+            },
+        )?;
+        let observation = service_ipc::read_frame(&mut std::io::Cursor::new(frame))?
+            .context("missing actual drain frame")?;
+        assert!(route_observation(observation, &drains, &sender));
+        assert!(matches!(
+            receiver.try_recv()?,
+            protocol::Observation::Renewed
+        ));
+        assert_eq!(
+            drains.lock().unwrap().poll(&ticket)?,
+            (ProviderDrainState::Drained, false)
+        );
+        assert!(receiver.try_recv().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn canceled_provider_waiter_keeps_ticket_and_sibling_control_healthy() -> Result<()> {
+        let (mut pool, sender, _owner, frames) = held_control()?;
+        let identity = worker(&pool);
+        pool.drains.lock().unwrap().registered(identity);
+        let ticket = pool.begin_retirement(identity)?;
+        assert_eq!(pool.retirement_ticket(identity)?, Some(ticket));
+        assert_eq!(pool.poll_retirement(&ticket)?, ProviderDrainState::Pending);
+        assert!(pool.finish_retirement(&ticket).is_err());
+        // A correlated drain has no waiter on the ordinary response channel.
+        sender.send(protocol::Observation::Renewed)?;
+        assert_eq!(
+            pool.renew(Incarnation::from_bytes([8; 16]))?,
+            Renewal::Renewed
+        );
+        assert!(pool.control_failure().is_none());
+        assert!(pool.child.try_wait()?.is_none());
+        pool.drains.lock().unwrap().closed();
+        assert_eq!(pool.poll_retirement(&ticket)?, ProviderDrainState::Unknown);
+        assert!(pool.control_failure().is_none());
+        assert_eq!(pool.retirement_ticket(identity)?, Some(ticket));
+        let controls = written_controls(&mut pool, &frames)?;
+        assert_eq!(controls.len(), 2);
+        assert!(matches!(controls[0], protocol::Control::BeginDrain { .. }));
+        assert!(matches!(controls[1], protocol::Control::Renew { .. }));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_helper_reap_witness_requires_descendant_exit_and_reply_reader_completion()
+    -> Result<()> {
+        use std::io::Read;
+        let owner = tempfile::tempdir()?;
+        let runtime = owner.path().join("runtime");
+        crate::local_ipc::prepare_root(&runtime)?;
+        let ready = owner.path().join("descendant-ready");
+        let lease = owner.path().join("descendant.lock");
+        let mut command = Command::new(std::env::current_exe()?);
+        command
+            .args([
+                "--exact",
+                "embedding_pool_process::tests::owned_helper_parent_fixture",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("AIRK_HELPER_DESCENDANT_READY", &ready)
+            .env("AIRK_HELPER_DESCENDANT_LEASE", &lease)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = owned::OwnedHelper::spawn(&mut command)?;
+        let input = child.stdin.take();
+        let mut output = child
+            .stdout
+            .take()
+            .context("missing helper reader fixture")?;
+        let reader_finished = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let finished = reader_finished.clone();
+        let reader = std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            output.read_to_end(&mut bytes).unwrap();
+            finished.store(true, std::sync::atomic::Ordering::Release);
+        });
+        let (_sender, receiver) = mpsc::sync_channel(1);
+        let instance = Incarnation::from_bytes([2; 16]);
+        let service = Incarnation::from_bytes([1; 16]);
+        let mut pool = Pool {
+            child,
+            input,
+            output: receiver,
+            reader: Some(reader),
+            runtime,
+            service,
+            instance,
+            pending_status: false,
+            control_failure: None,
+            health: PoolHealth {
+                instance,
+                ready_at: Instant::now(),
+                last_ack_at: Instant::now(),
+            },
+            drains: Arc::new(Mutex::new(retirement::Drains::new(service, instance))),
+            reaped: None,
+        };
+        let until = Instant::now() + Duration::from_secs(10);
+        while !ready.try_exists()? || pool.child.try_wait()?.is_none() {
+            ensure!(
+                Instant::now() < until,
+                "owned descendant fixture did not become ready"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let guard = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&lease)?;
+        assert!(
+            matches!(guard.try_lock(), Err(std::fs::TryLockError::WouldBlock)),
+            "descendant was not holding native resources"
+        );
+        assert!(!reader_finished.load(std::sync::atomic::Ordering::Acquire));
+        assert!(
+            pool.reap_witness().is_none(),
+            "leader exit alone produced a reap proof"
+        );
+        pool.terminate()?;
+        guard.try_lock()?;
+        assert!(reader_finished.load(std::sync::atomic::Ordering::Acquire));
+        let witness = pool
+            .reap_witness()
+            .context("missing actual native reap witness")?;
+        assert!(witness.matches(service, instance));
+        assert!(!witness.matches(service, Incarnation::from_bytes([9; 16])));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "actual owned helper parent fixture invoked by native reap test"]
+    fn owned_helper_parent_fixture() -> Result<()> {
+        let Some(ready) = std::env::var_os("AIRK_HELPER_DESCENDANT_READY") else {
+            return Ok(());
+        };
+        let lease = std::env::var_os("AIRK_HELPER_DESCENDANT_LEASE")
+            .context("missing native lease path")?;
+        let mut child = Command::new(std::env::current_exe()?)
+            .args([
+                "--exact",
+                "embedding_pool_process::tests::owned_helper_descendant_fixture",
+                "--ignored",
+                "--nocapture",
+            ])
+            .env("AIRK_HELPER_DESCENDANT_READY", &ready)
+            .env("AIRK_HELPER_DESCENDANT_LEASE", lease)
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let until = Instant::now() + Duration::from_secs(10);
+        while !Path::new(&ready).try_exists()? {
+            ensure!(
+                Instant::now() < until,
+                "native descendant did not acquire its resource"
+            );
+            ensure!(
+                child.try_wait()?.is_none(),
+                "native descendant fixture exited early"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // Intentionally leave a real descendant and inherited reply pipe after
+        // leader exit. Only canonical native group drain may finish the proof.
+        std::mem::forget(child);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "actual inherited-group descendant fixture"]
+    fn owned_helper_descendant_fixture() -> Result<()> {
+        let Some(ready) = std::env::var_os("AIRK_HELPER_DESCENDANT_READY") else {
+            return Ok(());
+        };
+        let lease = std::env::var_os("AIRK_HELPER_DESCENDANT_LEASE")
+            .context("missing native lease path")?;
+        let guard = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(lease)?;
+        guard.try_lock()?;
+        std::fs::write(ready, b"owned")?;
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+
     // The child records real writes to its private stdin. Replies are controlled
     // independently so a late acknowledgment cannot accidentally satisfy a new
     // request in the test or in the owning Pool implementation.
@@ -447,16 +895,13 @@ mod tests {
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
-        let mut child = crate::native_process::spawn(&mut command)?;
-        let containment =
-            crate::native_process::attach_owned(&mut child, crate::child_job::ChildJob::attach)?;
+        let mut child = owned::OwnedHelper::spawn(&mut command)?;
         let input = child.stdin.take().context("fixture stdin missing")?;
         let (sender, output) = mpsc::sync_channel(4);
         let instance = Incarnation::from_bytes([2; 16]);
         let now = Instant::now();
         Ok((
             Pool {
-                _containment: containment,
                 child,
                 input: Some(input),
                 output,
@@ -471,6 +916,11 @@ mod tests {
                     ready_at: now,
                     last_ack_at: now,
                 },
+                drains: Arc::new(Mutex::new(retirement::Drains::new(
+                    Incarnation::from_bytes([1; 16]),
+                    instance,
+                ))),
+                reaped: None,
             },
             sender,
             owner,

@@ -6,11 +6,14 @@ import { test } from 'node:test';
 import type { ExplorerViewState } from '../explorerContracts';
 import { FEATURES } from '../explorerFeatures';
 import { HandoffStore } from '../explorerHandoffs';
+import { IndexingCatalogController } from '../indexingCatalogController';
 
 // Minimal vscode stub: panels record HTML/messages and expose their message handler.
 const disposable = { dispose() {} };
 const panels: any[] = [];
+const executedCommands:string[]=[];
 const vscodeStub = {
+    commands:{executeCommand:async(name:string)=>{executedCommands.push(name);}},
     env: {clipboard:{writeText:async(_text:string)=>{}}},
     workspace: { textDocuments: [] as any[] },
     Uri: { file: (fsPath: string) => ({ scheme: 'file', fsPath }), joinPath: (base: any, ...parts: string[]) => ({ path: [base.path, ...parts].join('/'), toString() { return `vscode-resource:${this.path}`; } }) },
@@ -62,6 +65,7 @@ test('sharing requires explicit confirmation and rechecks the draft revision aft
     } finally { explorer.dispose(); }
 });
 function controller(trusted = true, stored = new Map<string, unknown>(), handoffs?: HandoffStore) {
+    let specsListener=()=>{};
     const suggestions = new SuggestionStore({ binding: () => 'ab12ab12ab12ab12', revisions: () => ({}), publication: () => undefined, ttlMs: () => 3600_000 });
     const statusBar: string[] = [];
     const runs: unknown[] = [];
@@ -71,9 +75,9 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
         bootstrap: { state: 'live', checkedAt: 1, value: {} }, currentProjects: new Set([project]),
         page: { revision: 1, cached: true, observed_unix_ms: 7, after: null, projects: [{ project: { registration: { binding: project, root: '/src/demo', collection: 'demo' } } }] } };
     const host = {
-        extensionUri: { path: '/ext' } as any, version: '1.5.0-test', trusted: () => trusted,
+        extensionUri: { path: '/ext' } as any, version: '1.5.0-test', trusted: () => trusted,workspaceTrusted:()=>trusted,
         specs: () => [{ command: '/launcher', root: '/src/demo', dataDir: '/data', collection: 'demo', name: 'demo', service: { installDir: '/install', project } }],
-        activeProject: () => project, onDidChangeSpecs: () => disposable, log: () => undefined,
+        activeProject: () => project, onDidChangeSpecs: (listener:()=>void) => {specsListener=listener;return disposable;}, log: () => undefined,
         setStatusBar: (text: string) => { statusBar.push(text); },
         workspaceState: { get: <T>(key: string, fallback?: T) => (stored.has(key) ? stored.get(key) : fallback) as T, update: async (key: string, value: unknown) => { stored.set(key, value); } },
         suggestions, handoffs,
@@ -93,9 +97,59 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
             }, dispose() {} };
         }
     }
-    return { explorer: new TestController(host as any), statusBar, runs, suggestions, host };
+    return { explorer: new TestController(host as any), statusBar, runs, suggestions, host,fireSpecs:()=>specsListener() };
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
+
+test('registered spec-change listener fences same-backing scoped identity even before an evidence client exists',()=>{
+    const f=controller(),before=f.explorer.snapshot().selectionEpoch,base=f.host.specs()[0];
+    assert.ok(before!==undefined,'the registered controller has an initial selected-project epoch');
+    try{
+        f.host.specs=()=>[{...base,catalogSession:{schema:1,context_key:'11'.repeat(32),namespace:'22'.repeat(16),expected_catalog_revision:1,grant_id:'grt_'+'33'.repeat(16),expected_grant_revision:1,index_id:'idx_'+'44'.repeat(16),project_ids:['prj_'+'55'.repeat(16)]}}];
+        f.fireSpecs();assert.equal(f.explorer.snapshot().selectionEpoch,before+1);assert.equal(f.explorer.snapshot().selectedProject,project);
+        f.fireSpecs();assert.equal(f.explorer.snapshot().selectionEpoch,before+1,'identical scoped specs do not repeatedly reset the session');
+    }finally{f.explorer.dispose();}
+});
+
+test('actual Explorer distinguishes Restricted Mode, revoked authority and native-off while trust review stays inert',async()=>{
+    const f=controller(false),instance=f.explorer as any;
+    try{
+        assert.equal(f.explorer.snapshot().workspaceTrusted,false);assert.equal(f.explorer.snapshot().connection,'untrusted');
+        await assert.rejects(instance.dispatch({type:'indexing.context.read'}),/Restricted Mode/);
+        const before=executedCommands.length;await instance.dispatch({type:'workspace.manageTrust'});
+        assert.deepEqual(executedCommands.slice(before),['workbench.trust.manage']);assert.deepEqual(f.runs,[]);
+        f.host.workspaceTrusted=()=>true;f.host.trusted=()=>false;
+        assert.equal(f.explorer.snapshot().connection,'disconnected');
+        await assert.rejects(instance.dispatch({type:'indexing.context.read'}),/client is no longer authorized/);
+        await assert.rejects(instance.dispatch({type:'workspace.manageTrust'}),/client is no longer authorized/);
+        f.host.trusted=()=>true;(f.host as any).nativeExecutionEnabled=()=>false;
+        await assert.rejects(instance.dispatch({type:'indexing.context.read'}),/native_execution_disabled/);
+        await instance.dispatch({type:'workspace.manageTrust'});assert.deepEqual(f.runs,[]);
+        f.explorer.dispose();await assert.rejects(instance.dispatch({type:'workspace.manageTrust'}),/client is no longer authorized/);
+    }finally{f.explorer.dispose();}
+});
+
+test('same-panel ready resends the complete retained catalog while scalar updates do not',async()=>{
+    const f=controller(),nativePage={status:'catalog_page',page:{namespace:'aa'.repeat(16),revision:1,items:[],continuation:null,native_metadata:{retained:'complete'}}};
+    let reads=0;
+    const indexing=new IndexingCatalogController({authorized:()=>true,identity:()=> 'one-owner',changed:()=> (f.explorer as any).publish(),control:{
+        catalogRead:async()=>{reads++;return nativePage;},catalogPrepare:async()=>{throw new Error('unexpected preview');},catalogApply:async()=>{throw new Error('unexpected apply');},catalogReconcile:async()=>[],catalogPending:()=>[],
+    }});
+    (f.explorer as any).indexing=indexing;
+    try{
+        f.explorer.open('#indexing/projects');const panel=panels.at(-1);panel.send({v:1,type:'ready',requestId:'ready'});await flush();
+        await indexing.page('projects');await flush();
+        const initial=panel.posted.filter((message:any)=>message.type==='indexing.session').length;
+        assert.deepEqual(panel.posted.filter((message:any)=>message.type==='indexing.session').at(-1).session.page,nativePage);
+        (f.explorer as any).publish();await flush();
+        assert.equal(panel.posted.filter((message:any)=>message.type==='indexing.session').length,initial);
+        assert.ok(panel.posted.filter((message:any)=>message.type==='state').every((message:any)=>message.state.indexing===undefined));
+        panel.send({v:1,type:'ready',requestId:'ready-again'});await flush();
+        assert.equal(panel.posted.filter((message:any)=>message.type==='indexing.session').length,initial+1);
+        assert.deepEqual(panel.posted.filter((message:any)=>message.type==='indexing.session').at(-1).session.page,nativePage);
+        assert.equal(reads,1,'ready and scalar updates do not replay a catalog read');
+    }finally{f.explorer.dispose();}
+});
 
 test('refresh confirms unchanged observations and reports disconnection instead of silent success',async()=>{
     const f=controller();

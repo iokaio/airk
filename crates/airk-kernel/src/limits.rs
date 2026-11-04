@@ -66,6 +66,11 @@ impl Kernel {
     }
 
     pub fn describe_scan_limits(&self) -> Result<LimitsDescription> {
+        self.require_unrestricted_read()?;
+        self.index_scan_limits_description()
+    }
+    /// Canonical body shared only after the full-index metadata guard.
+    pub(crate) fn index_scan_limits_description(&self) -> Result<LimitsDescription> {
         let memory = machine::memory_bytes();
         let automatic = automatic_scan_limits(memory);
         let explicit = self

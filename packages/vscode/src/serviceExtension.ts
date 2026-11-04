@@ -3,21 +3,23 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import { statSync } from 'node:fs';
-import * as os from 'node:os';
+import { randomBytes } from 'node:crypto';
 import * as path from 'node:path';
 import { setupAgent, AgentSetupHost } from './agentSetup';
-import { collectionId, launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry } from './model';
+import { launchArgs, LaunchSpec, McpVerification, unifiedEntry, ServerEntry } from './model';
 import { probeMcp, runText } from './native';
 import { automaticUpgrade, BootstrapObservation, nativeRunner, RuntimeBinding, RuntimeHost } from './serviceBootstrap';
 import { ConsoleRuntime, ServiceConsole, serviceRuntimeOptions } from './serviceConsole';
 import { identifier, record, ServiceError } from './serviceClient';
 import { IntentJournal } from './serviceIntents';
-import { readWorkspaceRegistrations, renamedDefaultDataRoot, ServiceWorkspace } from './serviceWorkspace';
+import { nativeScopeLaunchSpec, readWorkspaceRegistrations, ServiceWorkspace } from './serviceWorkspace';
 import { installLauncherCli, shellIntegration, ShellTouch } from './cliInstall';
 import { defaultProfiles, removeShellIntegration } from './cliRemove';
-import { openUsagePanel } from './usagePanel';
-import { renderUsage } from './usageReport';
-import { COMMAND_ROUTES } from './explorerCommands';
+import { openUsagePanel, type AdministrativeIndexSelection, type UsageAccess } from './usagePanel';
+import { ADMINISTRATIVE_USAGE_LABEL, renderUsage } from './usageReport';
+import { COMMAND_ROUTES, MANAGE_WORKSPACE_TRUST_COMMAND, NATIVE_COMMANDS } from './explorerCommands';
+import { CatalogObject, WindowContextDescriptor, catalogBound, catalogId, catalogObject, catalogRevision, catalogHex, validateNativeHostContext, validateWindowContext } from './indexingCatalog';
+import { reviewScopeSelection, scopeSelectionPreference, type ReviewedScopeSelection } from './scopeSelection';
 import { ExplorerSidebar } from './explorerSidebar';
 import { WorkbenchView } from './workbenchView';
 import type { ExplorerController, ExplorerHost } from './explorerController';
@@ -70,7 +72,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private diagnosticObservation?:BootstrapObservation;
     private generation=0;
     private disposed=false;
+    private readonly transientWindowKey=randomBytes(32).toString('hex');
+    private readonly windowContextChanges=new vscode.EventEmitter<void>();
+    private windowContextRead?:{identity:string;work:Promise<void>};
+    private windowContextValue?:{identity:string;generation:number;controller:ServiceConsole['controller'];controlIdentity:string;response:CatalogObject;descriptor:WindowContextDescriptor};
     private specs:LaunchSpec[]=[];
+    private explicitCatalogScope?:{selection:ReviewedScopeSelection;spec:LaunchSpec;generation:number;window:string;controlIdentity:string;runtime:string};
     // Early UI availability is deliberately separate from complete workspace MCP scopes.
     private selectedEligible?:{spec:LaunchSpec;opened:string;generation:number;folders:string;host:RuntimeHost};
     private selectedScope?:{root:string;collection:string|null;outcome:'registered'|'missing'|'removed'|'ambiguous';generation:number;folders:string;host:RuntimeHost};
@@ -117,6 +124,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(installed===this.runningVersion&&this.codeIdentity!==undefined&&codeStamp(extension?.extensionPath??this.context.extensionPath)!==this.codeIdentity)installed=`${installed} (rebuilt)`;
         if(!this.extensionUpdate&&typeof installed==='string'&&/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?(?: \(rebuilt\))?$/.test(installed)&&installed!==this.runningVersion){
             this.extensionUpdate={runningVersion:this.runningVersion,installedVersion:installed};
+            this.publishNativeCommandAvailability();
             this.output.appendLine(`AIRK ${installed} is installed; this window is still running ${this.runningVersion}. Reload to finish the update. Saved indexing work remains with the native service.`);
             this.renderUpdateStatus();this.treeChanges.fire();this.definitions.fire();
             void vscode.window.showWarningMessage(`AIRK ${installed} is installed. Reload this window to replace the running ${this.runningVersion} interface. Saved indexing work is retained.`,
@@ -160,6 +168,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
         }});
         this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.show();
+        this.publishNativeCommandAvailability();
     }
     private runtime():RuntimeHost{
         if(!this.host){const generation=this.generation;
@@ -168,9 +177,94 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         return this.host;
     }
     trusted():void {
+        if(this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');
+        if(!vscode.workspace.isTrusted)throw new ServiceError('workspace_untrusted');
         if(this.checkForExtensionUpdate())throw new ServiceError('extension_reload_required');
-        if(!vscode.workspace.isTrusted||this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');
         if(!nativeExecutionAllowed())throw new NativeExecutionDisabled();
+    }
+    private publishNativeCommandAvailability():void{
+        void vscode.commands.executeCommand('setContext','airk.nativeCommandsAvailable',!this.disposed&&vscode.workspace.isTrusted&&!this.extensionUpdate&&nativeExecutionAllowed()).then(undefined,()=>{});
+    }
+    async manageWorkspaceTrust():Promise<void>{
+        if(this.disposed)throw new ServiceError('runtime_client_no_longer_authorized');
+        await vscode.commands.executeCommand(MANAGE_WORKSPACE_TRUST_COMMAND);
+    }
+    private windowIdentity():{identity:string;kind:WindowContextDescriptor['kind'];name:string;persistent:boolean}{
+        const file=vscode.workspace.workspaceFile,folders=this.folders();
+        const uri=(value:vscode.Uri)=>value.toString();
+        const kind:WindowContextDescriptor['kind']=file?(file.scheme==='untitled'?'untitled':'workspace'):folders.length===1?'folder':folders.length?'untitled':'empty';
+        const name=vscode.workspace.name??(kind==='folder'?folders[0].name:kind==='empty'?'Empty window':kind==='untitled'?'Untitled workspace':'Workspace');
+        const context=file?uri(file):kind==='folder'?uri(folders[0].uri):this.transientWindowKey;
+        return {identity:JSON.stringify([kind,context,name]),kind,name,persistent:!!file||kind==='folder'};
+    }
+    private currentWindowContext(){
+        const value=this.windowContextValue;
+        if(!value||this.disposed||!vscode.workspace.isTrusted||!nativeExecutionAllowed()||this.extensionUpdate||value.generation!==this.generation
+            ||value.identity!==this.windowIdentity().identity||value.controller!==this.console.controller||value.controlIdentity!==this.console.controller.observationIdentity)return undefined;
+        return value;
+    }
+    /** Explicit administrative read only. Getters never connect, register, grant or invoke native work. */
+    async prepareWindowContext():Promise<void>{
+        this.trusted();const window=this.windowIdentity(),generation=this.generation,controller=this.console.controller,controlIdentity=controller.observationIdentity;
+        if(this.windowContextRead?.identity===JSON.stringify([window.identity,generation,controlIdentity]))return this.windowContextRead.work;
+        const identity=JSON.stringify([window.identity,generation,controlIdentity]);
+        const current=()=>{this.trusted();if(generation!==this.generation||controller!==this.console.controller||controlIdentity!==controller.observationIdentity||window.identity!==this.windowIdentity().identity)throw new ServiceError('window_context_changed');};
+        const work=(async()=>{
+            current();if(!controller.state.connected)throw new ServiceError('catalog_control_connection_unavailable');
+            let key=this.transientWindowKey;
+            if(window.persistent){
+                const saved=this.context.workspaceState.get<string>('airk.windowContextKey.1');
+                if(saved!==undefined&&!/^[0-9a-f]{64}$/.test(saved))throw new ServiceError('invalid_saved_window_context_key');
+                key=saved??randomBytes(32).toString('hex');
+                if(saved===undefined){current();await this.context.workspaceState.update('airk.windowContextKey.1',key);current();}
+            }
+            const response=await controller.catalogHostContext(key);current();
+            const native=validateNativeHostContext(response.descriptor);
+            const descriptor=validateWindowContext({host:native.host,key:native.key,kind:window.kind,name:window.name});
+            this.windowContextValue={identity:window.identity,generation,controller,controlIdentity,response,descriptor};
+            this.windowContextChanges.fire();
+        })();
+        this.windowContextRead={identity,work};
+        try{await work;}finally{if(this.windowContextRead?.work===work)this.windowContextRead=undefined;}
+    }
+    private currentCatalogScope(){
+        const value=this.explicitCatalogScope,context=this.currentWindowContext();
+        if(!value||!context||!this.binding||this.disposed||value.generation!==this.generation||value.window!==this.windowIdentity().identity||value.controlIdentity!==this.console.controller.observationIdentity
+            ||value.runtime!==JSON.stringify([this.binding.installDir,this.binding.controlDir,this.binding.runtimeSha256])||value.selection.host!==context.descriptor.host||value.selection.session.context_key!==context.descriptor.key||catalogObject(context.response.descriptor).namespace!==value.selection.session.namespace)return undefined;
+        return value;
+    }
+    private hasScopeWithdrawal():boolean{
+        try{
+            const saved=this.context.workspaceState.get('airk.scope.explicitWithdrawal.1');if(saved===undefined)return false;
+            const value=catalogObject(saved);catalogBound(value,4096);
+            if(value.schema!==1||!Array.isArray(value.project_ids)||!value.project_ids.length||value.project_ids.length>32||new Set(value.project_ids).size!==value.project_ids.length)throw new Error('invalid_scope_withdrawal');
+            catalogHex(value.namespace);catalogHex(value.host,64);catalogHex(value.context_key,64);catalogId(value.grant_id,'grt_');catalogRevision(value.expected_grant_revision);catalogId(value.index_id,'idx_');value.project_ids.forEach(id=>catalogId(id,'prj_'));
+            return true;
+        }catch{return true;} // Uncertain local storage can withdraw access, never enable a legacy fallback.
+    }
+    /** Explicit user selection only: reads metadata, then exposes one native-reviewed selector. */
+    async useGrant(input:CatalogObject,namespace:string,revision:number,valid:()=>boolean):Promise<CatalogObject>{
+        this.trusted();const context=this.currentWindowContext(),binding=this.binding,controller=this.console.controller,generation=this.generation,controlIdentity=controller.observationIdentity;
+        if(!context||!binding||!controller.state.connected)throw new ServiceError('read_current_native_window_context_before_use_grant');
+        const descriptor=validateNativeHostContext(context.response.descriptor);catalogHex(namespace);catalogRevision(revision);
+        if(descriptor.namespace!==namespace||descriptor.catalog_revision!==revision)throw new ServiceError('read_current_native_window_context_before_use_grant');
+        if(Object.keys(input).sort().join(',')!=='expected_grant_revision,grant_id,index_id,project_ids'||!Array.isArray(input.project_ids)||!input.project_ids.length||input.project_ids.length>32||new Set(input.project_ids).size!==input.project_ids.length)throw new ServiceError('invalid_scope_selection');
+        const choice={grant_id:catalogId(input.grant_id,'grt_'),expected_grant_revision:catalogRevision(input.expected_grant_revision),index_id:catalogId(input.index_id,'idx_'),project_ids:input.project_ids.map(id=>catalogId(id,'prj_'))};
+        const current=()=>{this.trusted();if(!valid()||generation!==this.generation||binding!==this.binding||controller!==this.console.controller||controlIdentity!==controller.observationIdentity||context!==this.currentWindowContext())throw new ServiceError('stale_scope_selection');};
+        current();const grant=await controller.catalogRead({catalog_detail:{entity:{kind:'grant',id:choice.grant_id},expected_catalog_revision:revision}});current();
+        const index=await controller.catalogRead({catalog_detail:{entity:{kind:'index',id:choice.index_id},expected_catalog_revision:revision}});current();
+        const selection=reviewScopeSelection(choice,descriptor,grant.detail,index.detail),spec=nativeScopeLaunchSpec(binding,selection);current();
+        // An inert local withdrawal survives reload; stored choices never activate access.
+        await this.context.workspaceState.update('airk.scope.explicitWithdrawal.1',scopeSelectionPreference(selection));current();
+        // No asynchronous gap between the final fence and publishing the new authority.
+        this.explicitCatalogScope={selection,spec,generation,window:this.windowIdentity().identity,controlIdentity,runtime:JSON.stringify([binding.installDir,binding.controlDir,binding.runtimeSha256])};
+        this.checks.clear();this.connectionCheck=undefined;this.treeChanges.fire();this.definitions.fire();
+        // Workbench uses semantic scope identity and preserves histories from prior subsets.
+        await this.workbench?.useScope(spec);
+        this.trusted();if(this.currentCatalogScope()?.spec!==spec)throw new ServiceError('stale_scope_selection');
+        await this.openWorkbenchAfterSetup();
+        this.trusted();if(this.currentCatalogScope()?.spec!==spec)throw new ServiceError('stale_scope_selection');
+        return {selection,host_context:context.response,grant_detail:grant,index_detail:index,selected_subset:true};
     }
     /** Reported instead of probing: native status is never inferred while execution is off. */
     private renderNativeDisabled():void{
@@ -190,10 +284,17 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private responseMode():'terse'|'full'{return vscode.workspace.getConfiguration('airk').inspect<string>('mcp.responseMode')?.globalValue==='full'?'full':'terse';}
     registrationChanged():void{this.definitions.fire();}
     private currentBinding():boolean{return !!this.binding&&this.observedFolders===JSON.stringify(this.folders().map(folder=>folder.uri.fsPath));}
-    isCurrent(spec:LaunchSpec):boolean{return !this.disposed&&this.currentBinding()&&this.specs.some(current=>current.command===spec.command&&current.dataDir===spec.dataDir&&current.collection===spec.collection&&current.service?.project===spec.service?.project&&JSON.stringify(launchArgs(current))===JSON.stringify(launchArgs(spec)));}
+    isCurrent(spec:LaunchSpec):boolean{
+        if(this.disposed||!this.currentBinding())return false;
+        const selected=this.currentCatalogScope();
+        if(!spec.catalogSession&&(this.explicitCatalogScope||this.hasScopeWithdrawal()))return false;
+        const candidates=spec.catalogSession?selected?[selected.spec]:[]:this.specs;
+        return candidates.some(current=>current.command===spec.command&&current.dataDir===spec.dataDir&&current.collection===spec.collection&&current.service?.project===spec.service?.project&&JSON.stringify(launchArgs(current))===JSON.stringify(launchArgs(spec)));
+    }
     subscribe(panel:vscode.WebviewPanel):void{this.context.subscriptions.push(panel);}
     verification(spec:LaunchSpec):McpVerification|undefined{return this.checks.get(spec.service!.project);}
     private uiSpecs():LaunchSpec[]{
+        const explicit=this.currentCatalogScope();if(this.explicitCatalogScope||this.hasScopeWithdrawal())return explicit?[explicit.spec]:[];
         const early=this.selectedEligible,scope=this.selectedScope;
         // Exact native absence/replacement suppresses stale UI receipts only.
         // Complete configured workspace MCP declarations still use this.specs.
@@ -295,25 +396,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         finally{if(!this.disposed&&generation===this.generation){this.treeChanges.fire();if(previous!==JSON.stringify(this.specs.map(spec=>[spec.command,launchArgs(spec)])))this.definitions.fire();}}
     }
     async registerWorkspace():Promise<void>{
-        this.trusted();
-        const folder=await vscode.window.showQuickPick(this.folders().map(folder=>({label:folder.name,description:folder.uri.fsPath,folder})),
-            {title:'Register a trusted source root with AIRK'});if(!folder)return;this.trusted();
-        const old=this.context.globalState.get<Record<string,unknown>>('collections-1.2',{});
-        const mode=await vscode.window.showQuickPick([
-            {label:'Automatic source watching',description:'Native indexing continues after editor windows close',enabled:true},
-            {label:'Manual indexing',description:'Only explicit indexing requests capture sources',enabled:false},
-        ],{title:'AIRK indexing ownership',placeHolder:'The native service owns indexing; this is separate from login startup'});if(!mode)return;this.trusted();
-        const binding=await this.runtime().ensure();this.trusted();
-        const observation=await this.runtime().discover();this.trusted();
-        const dataRoot=await this.projectDataRoot(observation);
-        const canonical=await fs.realpath(folder.folder.uri.fsPath);this.trusted();
-        const registered=await this.workspace.register(binding,folder.folder.uri.fsPath,dataRoot,collectionId(canonical),async review=>{
-            const legacy=Object.keys(old).length?`\n${Object.keys(old).length} older collection records are retained; old startup entries need separate review.`:'';
-            const detail=`Source: ${review.root}\nIndex storage: ${review.data_root}\nCollection: ${review.collection}\n${mode.enabled?'Automatic updates continue after windows close.':'Manual updates: initial setup runs once; later changes need Update index.'}\nExisting settings and model selections are preserved. New projects use the shared offline semantic model. Original source files are unchanged.${legacy}`;
-            return await vscode.window.showWarningMessage('Add this project to AIRK and prepare its index?',{modal:true,detail},'Register')==='Register';
-        },mode.enabled);if(!registered)return;this.trusted();
-        await this.refresh();
-        this.output.appendLine(`Registered ${registered.binding}. Native setup is queued and continues independently. Management shows model preparation, indexing and saved outcomes.`);
+        this.trusted();await this.showManagement('#indexing/library');
+        this.output.appendLine('Set up an index in Indexing → Index library. Choose source and index-storage locations, review the native draft, then apply explicitly.');
     }
     private async enqueue(binding:RuntimeBinding,project:string,kind:'index'|'inspect'|'model_setup',existing?:ReturnType<RuntimeHost['client']>):Promise<void>{
         this.trusted();const client=existing??this.runtime().client(binding);
@@ -327,6 +411,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     }
     async chooseSpec(requested?:LaunchSpec,registerMissing=true):Promise<LaunchSpec|undefined>{
         this.trusted();if(!this.currentBinding())await this.refresh();
+        const explicit=this.currentCatalogScope();if(explicit){if(requested&&!this.isCurrent(requested))throw new ServiceError('workspace_registration_changed');return explicit.spec;}
+        if(this.explicitCatalogScope||this.hasScopeWithdrawal())throw new ServiceError('explicit_scope_selection_changed');
         if(requested!==undefined){
             if(!this.isCurrent(requested))throw new ServiceError('workspace_registration_changed');
             return this.specs.find(spec=>spec.service!.project===requested.service!.project);
@@ -342,6 +428,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     async resolveAgentSpec(spec:LaunchSpec):Promise<LaunchSpec>{
         this.trusted();
         if(!this.binding||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
+        if(spec.catalogSession)return spec;
         const binding=this.binding,generation=this.generation,client=this.runtime().client(binding);
         try{
             const selected=await this.workspace.resolveConnection(binding,spec,async(after,revision)=>{
@@ -351,12 +438,22 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             });
             this.trusted();
             if(generation!==this.generation||this.binding!==binding||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
+            // Saved registration metadata does not establish a legacy read grant.
+            // New library indexes require explicit Use Grant before agent export.
+            const controller=this.console.controller;
+            if(!controller.state.connected){await controller.whenIdle();this.trusted();if(!controller.state.connected)await controller.refresh();this.trusted();if(!controller.state.connected)throw new ServiceError('catalog_control_connection_unavailable');}
+            const identity=controller.observationIdentity,response=await controller.catalogRead({catalog_legacy_binding:{project:selected.service!.project,expected_catalog_revision:null}});
+            this.trusted();if(generation!==this.generation||this.binding!==binding||controller!==this.console.controller||identity!==controller.observationIdentity||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
+            const eligibility=catalogObject(catalogObject(response.observation).eligibility);
+            if(eligibility.kind==='unavailable')throw new ServiceError('legacy_connection_unavailable_use_reviewed_grant',false,response);
+            const registration=catalogObject(eligibility.registration);
+            if(registration.binding!==selected.service!.project||typeof registration.root!=='string'||typeof registration.data_root!=='string'||!same(registration.root,selected.root)||!same(registration.data_root,selected.dataDir)||registration.collection!==selected.collection)throw new ServiceError('crossed_native_legacy_registration');
             this.specs=this.specs.map(current=>current.service?.project===spec.service?.project?selected:current);
             this.definitions.fire();return selected;
         }finally{client.dispose();}
     }
     async index(requested?:LaunchSpec):Promise<void>{
-        await this.refresh();if(requested===undefined&&!this.specs.length){await this.registerWorkspace();await this.showManagement('#manage/activity');return;}
+        await this.refresh();if(requested===undefined&&!this.uiSpecs().length){await this.registerWorkspace();return;}
         const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();
         const binding=await this.runtime().ensure();this.trusted();await this.enqueue(binding,spec.service!.project,'index');
         await this.showManagement('#manage/activity');
@@ -445,11 +542,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     async usage():Promise<void>{
         const spec=await this.chooseSpec();if(!spec)return;this.trusted();await this.runtime().ensure();this.trusted();
         const generation=this.generation,valid=()=>generation===this.generation&&this.isCurrent(spec);
-        await openUsagePanel(spec,valid,this.usageWriter(spec,valid));
+        await openUsagePanel(spec,valid,this.usageWriter(spec,valid),undefined,this.usageAccess(spec,valid));
     }
     private usageWriter(spec:LaunchSpec,valid:()=>boolean):(args:string[],continuing?:()=>boolean)=>Promise<unknown>{
         return async(args,continuing)=>{
             this.trusted();if(!valid()||continuing?.()===false)throw new ServiceError('project_configuration_selection_changed');
+            if(spec.catalogSession)throw new ServiceError('explicit_index_administration_required');
             let draft:Record<string,unknown>;
             if(args.length===1&&args[0]==='clear')draft={operation:'clear_usage'};
             else if(args.length===3&&args[0]==='configure'&&args[1]==='--mode'&&['disabled','aggregates-only','diagnostic-events'].includes(args[2]))draft={operation:'usage',mode:args[2].replaceAll('-','_')};
@@ -462,6 +560,27 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             await this.console.configureProject(spec.service.project,draft,()=>valid()&&continuing?.()!==false);
         };
     }
+    private usageAccess(spec:LaunchSpec,valid:()=>boolean):UsageAccess{
+        return spec.catalogSession?{openIndexAdministration:()=>this.openIndexAdministration(spec,valid)}:{};
+    }
+    private async openIndexAdministration(spec:LaunchSpec,valid:()=>boolean):Promise<void>{
+        this.trusted();const selected=this.currentCatalogScope(),context=this.currentWindowContext(),binding=this.binding,controller=this.console.controller,generation=this.generation,controlIdentity=controller.observationIdentity;
+        if(!selected||!context||!binding||!spec.catalogSession||!this.isUiCurrent(spec))throw new ServiceError('explicit_scope_selection_changed');
+        const descriptor=validateNativeHostContext(context.response.descriptor);
+        const current=()=>{this.trusted();if(!valid()||generation!==this.generation||binding!==this.binding||context!==this.currentWindowContext()||selected!==this.currentCatalogScope()||controlIdentity!==controller.observationIdentity)throw new ServiceError('stale_index_administration_selection');};
+        current();const response=await controller.catalogRead({catalog_detail:{entity:{kind:'index',id:selected.selection.session.index_id},expected_catalog_revision:descriptor.catalog_revision}});current();
+        const detail=catalogObject(response.detail),item=catalogObject(detail.item),index=catalogObject(item.value),backing=catalogObject(index.backing);
+        if(detail.namespace!==descriptor.namespace||detail.revision!==descriptor.catalog_revision||item.kind!=='index'||index.id!==selected.selection.session.index_id||index.tombstone!==false||index.source_import!=='complete'
+            ||backing.binding!==selected.selection.index.backing.binding||backing.root!==selected.selection.index.backing.root||backing.data_root!==selected.selection.index.backing.data_root||backing.collection!==selected.selection.index.backing.collection)throw new ServiceError('crossed_native_index_administration');
+        const command=binding.universalLauncher??binding.launcher;
+        if(!command||binding.payloadVerified===false)throw new ServiceError('stable_launcher_unavailable');
+        const administration:AdministrativeIndexSelection & {nativeObservation:{host_context:CatalogObject;index_detail:CatalogObject}}={purpose:'index_administration',label:ADMINISTRATIVE_USAGE_LABEL,namespace:descriptor.namespace,catalogRevision:descriptor.catalog_revision,indexId:String(index.id),backing:catalogHex(backing.binding,64),
+            runtime:{installDir:binding.installDir,controlDir:binding.controlDir,runtimeSha256:binding.runtimeSha256},nativeObservation:{host_context:context.response,index_detail:response}};
+        const administrativeSpec:LaunchSpec={command,root:selected.selection.index.backing.root,dataDir:selected.selection.index.backing.data_root,collection:selected.selection.index.backing.collection,
+            name:`${selected.selection.index.name} · Entire Index administration`,service:{installDir:binding.installDir,project:administration.backing,...(binding.universalLauncher?{universal:true}:{})}};
+        const authorized=()=>{try{current();return true;}catch{return false;}};current();
+        await openUsagePanel(administrativeSpec,authorized,this.usageWriter(administrativeSpec,authorized),undefined,{administration});
+    }
     private async embeddedUsage(spec:LaunchSpec,current:()=>boolean):Promise<import('./explorerController').EmbeddedUsage>{
         this.trusted();if(!current()||!this.isUiCurrent(spec))throw new ServiceError('project_configuration_selection_changed');
         await this.runtime().ensure();this.trusted();
@@ -469,7 +588,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         let value:object={},receive:(message:unknown)=>Promise<void>=async()=>undefined,dispose=()=>{};
         await openUsagePanel(spec,valid,this.usageWriter(spec,valid),{
             render:next=>{value=next;},onMessage:listener=>{receive=listener;return {dispose(){receive=async()=>{throw new ServiceError('usage_session_disposed');};}};},onDispose:listener=>{dispose=listener;},
-        });
+        },this.usageAccess(spec,valid));
         const view=()=>{this.trusted();if(!valid())throw new ServiceError('project_configuration_selection_changed');return {html:renderUsage(value)};};
         return {view,action:async message=>{await receive(message);return view();},dispose};
     }
@@ -499,7 +618,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         await this.context.globalState.update(key,identity);this.trusted();
         this.migratedConnections=false;
         const message=this.installationWarnings?'AIRK runtime installed with connection or cleanup issues. Review the details before reconnecting tools.':
-            `AIRK ${this.runningVersion} ready. This window is running the updated interface. Project indexing continues in Management.`;
+            `AIRK ${this.runningVersion} ready. This window is running the updated interface. Existing native work remains in Management; new indexes require explicit setup in Indexing.`;
         this.output.appendLine(message);
         this.output.appendLine('Copilot: MCP: List Servers → select AIRK → Restart Server. Codex and Claude Code running outside VS Code need their own session restart. Reload Window reloads editor extensions. If VS Code refuses a VSIX reinstall and requests a restart, fully exit all VS Code windows, reopen, then install the VSIX again.');
         // Successful activation needs no decision. Only actionable problems produce a notification.
@@ -561,14 +680,6 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         }
     }
     private shellScope(){return shellIntegration(vscode.workspace.getConfiguration('airk').inspect<string>('cli.shellIntegration')?.globalValue);}
-    /** Home folders and filesystem/volume roots need an explicit choice before registration. */
-    private async broadRoot(canonical:string):Promise<boolean>{
-        const home=await fs.realpath(os.homedir()).catch(()=>os.homedir());
-        return same(canonical,home)||same(path.dirname(canonical),canonical);
-    }
-    private folderChoices():{declined:string[];approved:string[]}{
-        return {declined:this.context.globalState.get<string[]>('airk.setupDeclinedFolders.1',[]),approved:this.context.globalState.get<string[]>('airk.setupApprovedRoots.1',[])};
-    }
     /** Before the first installation only: show persistent effects and let the user
      * accept, customize, defer or disable. Existing and managed installations skip it. */
     private async firstUseReview(installed:BootstrapObservation,explicit:boolean):Promise<boolean>{
@@ -585,13 +696,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const shell=scope==='off'?'No shell startup file or user PATH is changed (airk.cli.shellIntegration is off).'
             :process.platform==='win32'?'Adds the airk command directory to the front of your user PATH.'
             :scope==='all'?'Adds a marked PATH block to Bash, Zsh and fish startup files.':'Adds a marked PATH block to ~/.profile and the startup files of shells you use.';
-        const folders:{opened:string;canonical:string;broad:boolean}[]=[];
-        for(const folder of this.folders()){
-            try{const canonical=await fs.realpath(folder.uri.fsPath);folders.push({opened:folder.uri.fsPath,canonical,broad:await this.broadRoot(canonical)});}catch{/* Missing folders are reported during preparation. */}
-        }
-        const detail=[`Installs the AIRK ${this.runningVersion} runtime for this user account and stores indexes in ${storage}.`,
-            `Registers these folders for background indexing: ${folders.filter(folder=>!folder.broad).map(folder=>folder.opened).join(', ')||'none'}.`,
-            ...(folders.some(folder=>folder.broad)?['Home folders and drive roots are not registered unless you choose them in Customize.']:[]),
+        const detail=[`Installs the AIRK ${this.runningVersion} runtime for this user account. The saved storage preference is ${storage}; each new index requires an explicit storage choice.`,
+            'Open folders are not registered or indexed automatically. Set up each new index with explicit source and storage locations in Indexing → Index library.',
             'Indexing continues after editor windows close; login startup is a separate opt-in.',shell,
             'Existing recognized AIRK agent entries in these projects may be updated.',
             'Hidden files can be indexed: review .airkignore first. AIRK is not a secret scanner.'].join('\n');
@@ -599,16 +705,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(choice==="Don't set up automatically"){await vscode.workspace.getConfiguration('airk').update('cli.autoInstall',false,vscode.ConfigurationTarget.Global);return false;}
         if(choice==='Not now'){await this.context.globalState.update(key,{decision:'deferred',at:Date.now()});return this.firstUseReview(installed,false);}
         if(choice==='Customize…'){
-            const {declined,approved}=this.folderChoices();
-            const items:(vscode.QuickPickItem&{folder?:string})[]=[...folders.map(folder=>({label:path.basename(folder.opened)||folder.opened,description:folder.opened,
-                detail:folder.broad?'Home folder or drive root: registered only if you select it':undefined,picked:!folder.broad&&!declined.some(value=>same(value,folder.canonical)),folder:folder.canonical})),
-                {label:'Terminal command in external shells',description:process.platform==='win32'?'User PATH':'Shell startup files',picked:scope!=='off'}];
+            const items:vscode.QuickPickItem[]=[{label:'Terminal command in external shells',description:process.platform==='win32'?'User PATH':'Shell startup files',picked:scope!=='off'}];
             const picked=await vscode.window.showQuickPick(items,{canPickMany:true,title:'Choose what AIRK sets up'});
             if(!picked)return false;
-            const selected=new Set(picked.flatMap(item=>item.folder?[item.folder]:[]));
-            await this.context.globalState.update('airk.setupDeclinedFolders.1',[...declined.filter(value=>!folders.some(folder=>same(folder.canonical,value))),...folders.filter(folder=>!selected.has(folder.canonical)).map(folder=>folder.canonical)]);
-            await this.context.globalState.update('airk.setupApprovedRoots.1',[...approved,...folders.filter(folder=>folder.broad&&selected.has(folder.canonical)).map(folder=>folder.canonical)]);
-            if(!picked.some(item=>!item.folder)&&scope!=='off')await vscode.workspace.getConfiguration('airk').update('cli.shellIntegration','off',vscode.ConfigurationTarget.Global);
+            if(!picked.length&&scope!=='off')await vscode.workspace.getConfiguration('airk').update('cli.shellIntegration','off',vscode.ConfigurationTarget.Global);
         }else if(choice!=='Set up')return false;
         await this.context.globalState.update(key,{decision:'accepted',at:Date.now()});return true;
     }
@@ -733,7 +833,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                     // A completed installation does not prove that its on-demand service survived editor/OS shutdown.
                     const connected=await this.runtime().reconnect(installed);this.trusted();
                     if(connected.runtimeSha256!==binding.runtimeSha256||!same(connected.controlDir,binding.controlDir))throw new ServiceError('runtime_selection_changed_review_again');
-                    await this.prepareWorkspaceProjects(binding,installed);
+                    await this.prepareWorkspaceProjects(binding);
                     await this.refresh(installed);
                     this.reportInstall('Connected to AIRK. Saved project work remains with the service.');
                     await this.openWorkbenchAfterSetup();
@@ -768,8 +868,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const binding=await this.runtime().ensure();this.trusted();
             runtimeInstalled=true;
             const completed=await this.runtime().discover();
-            await this.prepareWorkspaceProjects(binding,completed);await this.refresh(completed);
-            this.reportInstall(this.installationWarnings?'Runtime installation finished with issues to review.':'Runtime ready. Project indexing continues in Management.');
+            await this.prepareWorkspaceProjects(binding);await this.refresh(completed);
+            this.reportInstall(this.installationWarnings?'Runtime installation finished with issues to review.':'Runtime ready. Set up new indexes explicitly in Indexing; existing native work remains in Management.');
             await this.openWorkbenchAfterSetup();
             if(notify)await this.installationComplete();
             },progressTitle);
@@ -810,21 +910,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             this.reportInstall('Installation did not complete. See AIRK output for the failure and retry instructions.');
             void vscode.window.showErrorMessage(`AIRK installation needs attention: ${error instanceof Error?error.message:String(error)}. Use AIRK: Install or Repair CLI to retry.`);}
     }
-    private async projectDataRoot(observation:BootstrapObservation):Promise<string>{
-        const configuration=vscode.workspace.getConfiguration('airk'),configured=configuration.inspect<string>('storage.path')?.globalValue;
-        const nativeData=record(observation.location.user_paths).data;
-        const renamed=configured&&typeof nativeData==='string'?await renamedDefaultDataRoot(configured,nativeData):undefined;
-        this.trusted();
-        if(renamed){
-            if(vscode.workspace.getConfiguration('airk').inspect<string>('storage.path')?.globalValue!==configured)throw new ServiceError('project_storage_preference_changed');
-            await configuration.update('storage.path',renamed,vscode.ConfigurationTarget.Global);this.trusted();
-            this.output.appendLine('Updated the saved storage preference to the renamed native index directory.');
-        }
-        const dataRoot=renamed||configured||nativeData;
-        if(typeof dataRoot!=='string'||!path.isAbsolute(dataRoot))throw new ServiceError('invalid_project_data_location');
-        return dataRoot;
-    }
-    private async prepareWorkspaceProjects(binding:RuntimeBinding,observation:import('./serviceBootstrap').BootstrapObservation):Promise<void>{
+    private async prepareWorkspaceProjects(binding:RuntimeBinding):Promise<void>{
         this.trusted();
         const generation=this.generation,host=this.runtime();
         try{await this.observeSelected(binding);}
@@ -844,10 +930,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             if(generation!==this.generation||host!==this.host)throw new ServiceError('workspace_registration_changed');return page;
         });}finally{client.dispose();}
 
-        const folders=this.folders(),specs=await this.workspace.definitions(binding,folders.map(folder=>folder.uri.fsPath));
-        const dataRoot=await this.projectDataRoot(observation);this.trusted();
+        const folders=this.folders();this.trusted();
         if(generation!==this.generation)throw new ServiceError('workspace_registration_changed');
-        const restored:LaunchSpec[]=[];
         for(const folder of folders){
             try{await fs.realpath(folder.uri.fsPath);}
             catch(error){
@@ -858,30 +942,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             }
             const state=await this.workspace.reconcileStartup(binding,folder.uri.fsPath,observed);this.trusted();
             if(state==='registered')continue;
-            const {declined,approved}=this.folderChoices(),real=await fs.realpath(folder.uri.fsPath);
-            if(declined.some(value=>same(value,real))){this.output.appendLine(`Not registering ${folder.uri.fsPath}: it was left out during setup review. Use Add Project to register it.`);continue;}
-            if(await this.broadRoot(real)&&!approved.some(value=>same(value,real))){
-                this.output.appendLine(`Not registering ${folder.uri.fsPath} automatically: it is a home folder or drive root. Use Add Project to register it deliberately.`);continue;
-            }
-            if(state==='removed'){this.output.appendLine(`Project remains removed: ${folder.uri.fsPath}. Add it in Management to register it again.`);continue;}
-            this.trusted();const canonical=await fs.realpath(folder.uri.fsPath);this.trusted();
-            const saved=specs.find(spec=>same(spec.root,canonical));
-            this.reportInstall(saved?'Restoring workspace registration after service data was reset…':'Registering a new workspace project...');
-            let project;
-            try{project=await this.workspace.register(binding,folder.uri.fsPath,dataRoot,saved?.collection??collectionId(canonical),async()=>true,true,true);}
-            catch(error){
-                if(error instanceof ServiceError&&error.code==='project_was_removed_refresh_registration'){
-                    await this.workspace.withdraw(binding,folder.uri.fsPath);
-                    this.output.appendLine(`Project remains removed: ${folder.uri.fsPath}. Add it in Management to register it again.`);continue;
-                }
-                throw error;
-            }
-            if(!project)continue;this.trusted();
-            if(saved)restored.push(saved);
-            this.output.appendLine(`Registered ${folder.uri.fsPath}. Native model preparation and indexing continue independently of VS Code. Follow progress in Management.`);
+            this.output.appendLine(state==='removed'?`Index remains removed: ${folder.uri.fsPath}. Use the explicit native setup review in Indexing → Index library to set up an index again.`:
+                `No native index is registered for ${folder.uri.fsPath}. Open Indexing → Index library to choose source and storage locations and review setup. Opening folders does not create indexes.`);
         }
         this.reportInstall('Checking saved agent connections…');
-        await this.migrateAgentConnections(binding,restored);
+        await this.migrateAgentConnections(binding);
         await this.context.workspaceState.update('airk.projectStartupNotice.1',undefined);
     }
     async manageVscodeMcp():Promise<void>{this.trusted();await vscode.commands.executeCommand('workbench.mcp.listServer');}
@@ -901,7 +966,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(!vscode.workspace.isTrusted||!this.registrationEnabled()||!nativeExecutionAllowed())return [];
         if(!this.currentBinding())await this.refresh();if(!vscode.workspace.isTrusted||!this.registrationEnabled())return [];
         if(await this.hasManualVscodeConnection())return [];
-        const entry=this.workspaceConnection();if(!entry)return [];
+        const observation=await this.workspaceConnection();if(!observation)return [];
+        this.trusted();if(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity||!this.registrationEnabled())throw new ServiceError('workspace_registration_changed');const entry=observation.entry;
         const definition=new vscode.McpStdioServerDefinition('AIRK',entry.command,[...entry.args],
             {AIRK_CLIENT:'vscode',AIRK_MCP_RESPONSE_MODE:this.responseMode()},`${this.runningVersion}:${JSON.stringify(entry.args)}:${this.responseMode()}`);
         definition.cwd=vscode.Uri.file(path.dirname(entry.command));return [definition];
@@ -910,7 +976,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         this.trusted();if(!this.registrationEnabled())throw new ServiceError('mcp_registration_disabled');
         await this.refresh();this.trusted();
         if(await this.hasManualVscodeConnection())throw new ServiceError('manual_mcp_configuration_owns_connection');
-        const entry=this.workspaceConnection();
+        const observation=await this.workspaceConnection(),entry=observation?.entry;
+        this.trusted();if(observation&&(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity))throw new ServiceError('workspace_registration_changed');
         if(!(definition instanceof vscode.McpStdioServerDefinition)||!entry||entry.command!==definition.command||JSON.stringify(entry.args)!==JSON.stringify(definition.args))throw new ServiceError('workspace_registration_changed');
         await this.runtime().ensure();this.trusted();if(!this.registrationEnabled())throw new ServiceError('mcp_registration_disabled');return definition;
     }
@@ -936,10 +1003,18 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     attachWorkbench(view:WorkbenchView):void{this.workbench=view;}
     private async openWorkbenchAfterSetup():Promise<void>{
         const key='airk.workbench.welcome.1';
-        if(this.disposed||!vscode.workspace.isTrusted||this.checkForExtensionUpdate()||!this.specs.length||!this.workbench||this.context.globalState.get<boolean>(key))return;
+        if(this.disposed||!vscode.workspace.isTrusted||this.checkForExtensionUpdate()||(!this.currentCatalogScope()&&!this.specs.length)||!this.workbench||this.context.globalState.get<boolean>(key))return;
         try{
+            const generation=this.generation,scope=this.currentCatalogScope();
+            // A saved/native registration alone also describes new ungranted indexes.
+            // Initial legacy opening requires the same positive sealed-compatibility
+            // observation as automatic MCP definitions; reviewed scope use is explicit.
+            const legacy=scope?undefined:await this.workspaceConnection();
+            const current=()=>!this.disposed&&vscode.workspace.isTrusted&&generation===this.generation&&!this.checkForExtensionUpdate()
+                &&(scope?scope===this.currentCatalogScope():!!legacy&&legacy.generation===this.generation&&legacy.identity===this.console.controller.observationIdentity&&!this.currentCatalogScope()&&!this.explicitCatalogScope&&!this.hasScopeWithdrawal());
+            if(!current())return;
             await this.workbench.focus();
-            if(!this.disposed&&vscode.workspace.isTrusted)await this.context.globalState.update(key,true);
+            if(current())await this.context.globalState.update(key,true);
         }catch(error){this.output.appendLine(`Workbench could not open after setup: ${String(error)}. Use AIRK: Open Workbench.`);}
     }
 
@@ -949,7 +1024,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             connectionCheck:()=>this.connectionCheck,startup:()=>this.startup,
             workbenchVisible:()=>this.workbench?.visible??false,toggleWorkbench:async()=>{await this.workbench?.toggle();},
             onDidChangeWorkbenchVisibility:this.workbench?.onDidChangeVisibility,
-            trusted:()=>vscode.workspace.isTrusted&&!this.disposed,specs:()=>this.uiSpecs(),
+            trusted:()=>vscode.workspace.isTrusted&&!this.disposed&&!this.extensionUpdate,workspaceTrusted:()=>vscode.workspace.isTrusted,nativeExecutionEnabled:()=>nativeExecutionAllowed(),specs:()=>this.uiSpecs(),
+            windowContext:()=>this.currentWindowContext()?.descriptor,windowContextObservation:()=>this.currentWindowContext()?.response,
+            prepareWindowContext:()=>this.prepareWindowContext(),onDidChangeWindowContext:this.windowContextChanges.event,
+            useGrant:(choice,namespace,revision,valid)=>this.useGrant(choice,namespace,revision,valid),
             activeProject:()=>{
                 const active=vscode.window.activeTextEditor&&vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
                 const root=active&&this.roots.find(root=>same(root.opened,active.uri.fsPath));
@@ -993,9 +1071,32 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     private explorerDescriptor():string|undefined{
         return vscode.workspace.getConfiguration('airk').get<boolean>('explorer.assistance.enabled',true)?launchDescriptorPath(this.context.globalStorageUri.fsPath):undefined;
     }
-    private workspaceConnection():ServerEntry|undefined{
-        const [first,...additional]=this.specs;
-        return first?unifiedEntry(first,this.explorerDescriptor(),additional):undefined;
+    private async workspaceConnection():Promise<{entry:ServerEntry;identity:string;generation:number}|undefined>{
+        const selected=this.currentCatalogScope();
+        if(selected)return {entry:unifiedEntry(selected.spec,this.explorerDescriptor()),identity:this.console.controller.observationIdentity,generation:this.generation};
+        if(this.explicitCatalogScope||this.hasScopeWithdrawal())return undefined;
+        const specs=[...this.specs],binding=this.binding,generation=this.generation,controller=this.console.controller;
+        if(!binding||!specs.length)return undefined;
+        if(specs.length>32)throw new ServiceError('legacy_mcp_binding_capacity_exceeded');
+        const current=()=>{this.trusted();if(binding!==this.binding||generation!==this.generation||controller!==this.console.controller||this.explicitCatalogScope||this.hasScopeWithdrawal()||JSON.stringify(specs)!==JSON.stringify(this.specs))throw new ServiceError('workspace_registration_changed');};
+        current();if(!controller.state.connected){await controller.whenIdle();current();if(!controller.state.connected)await controller.refresh();current();if(!controller.state.connected)throw new ServiceError('catalog_control_connection_unavailable');}
+        const controlIdentity=controller.observationIdentity,resolved:LaunchSpec[]=[];let namespace:string|undefined,revision:number|null|undefined;
+        for(const spec of specs){
+            if(!spec.service)throw new ServiceError('native_project_binding_required');
+            const response=await controller.catalogRead({catalog_legacy_binding:{project:spec.service.project,expected_catalog_revision:revision??null}});current();
+            if(controlIdentity!==controller.observationIdentity)throw new ServiceError('stale_catalog_client');
+            const observed=catalogObject(response.observation),eligibility=catalogObject(observed.eligibility);
+            if(namespace!==undefined&&(observed.namespace!==namespace||observed.catalog_revision!==revision))throw new ServiceError('catalog_revision_changed_refresh');
+            namespace=String(observed.namespace);revision=observed.catalog_revision===null?null:catalogRevision(observed.catalog_revision);
+            if(eligibility.kind==='unavailable')return undefined;
+            const registration=catalogObject(eligibility.registration);
+            // Match the existing workspace adapter's Windows namespace/casing aliases,
+            // then retain the complete native spelling for the actual connection.
+            if(registration.binding!==spec.service.project||typeof registration.root!=='string'||typeof registration.data_root!=='string'||!path.isAbsolute(registration.root)||!path.isAbsolute(registration.data_root)
+                ||!same(registration.root,spec.root)||!same(registration.data_root,spec.dataDir)||registration.collection!==spec.collection)throw new ServiceError('crossed_native_legacy_registration');
+            resolved.push({...spec,root:registration.root,dataDir:registration.data_root});
+        }
+        current();const [first,...additional]=resolved;return {entry:unifiedEntry(first,this.explorerDescriptor(),additional),identity:controlIdentity,generation};
     }
     async verifyAssistance(spec:LaunchSpec):Promise<string[]>{
         this.trusted();
@@ -1019,8 +1120,8 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(nativeExecutionAllowed()){this.status.text='AIRK';this.status.command='airk.explorer.open';this.status.tooltip=undefined;}
         this.reset();this.definitions.fire();void this.start();
     }
-    reset():void{this.generation++;this.host=undefined;this.selectedEligible=undefined;this.selectedScope=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
-    dispose():void{if(this.disposed)return;this.disposed=true;this.generation++;this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
+    reset():void{this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.host=undefined;this.selectedEligible=undefined;this.selectedScope=undefined;this.specs=[];this.binding=undefined;this.checks.clear();this.checking=undefined;this.connectionCheck=undefined;this.console.reset();void this.refresh();}
+    dispose():void{if(this.disposed)return;this.disposed=true;this.generation++;this.windowContextValue=undefined;this.publishNativeCommandAvailability();this.windowContextChanges.dispose();this.assistanceGeneration++;this.assistanceHost?.dispose();this.assistanceDefinitions.dispose();void this.explorer?.then(explorer=>explorer.dispose(),()=>undefined);this.console.dispose();this.status.dispose();this.definitions.dispose();this.treeChanges.dispose();this.output.dispose();}
 }
 
 let active:ServiceExtension|undefined;
@@ -1047,6 +1148,10 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
         vscode.window.createTreeView('airk.collectionsView',{treeDataProvider:controller}));
     const safe=(action:(...args:unknown[])=>unknown|Promise<unknown>)=>async(...args:unknown[])=>{try{return await action(...args);}catch(error){controller.output.appendLine(String(error));
         if(error instanceof ServiceError&&error.code==='extension_reload_required')return;
+        if(error instanceof ServiceError&&error.code==='workspace_untrusted'){
+            void vscode.window.showWarningMessage('AIRK native work is unavailable in VS Code Restricted Mode.','Manage Workspace Trust').then(action=>action==='Manage Workspace Trust'?controller.manageWorkspaceTrust():undefined).then(undefined,()=>{});
+            throw error;
+        }
         void vscode.window.showErrorMessage(`AIRK: ${error instanceof Error?error.message:String(error)}`);throw error;}};
     // Former Service Console commands open the matching Explorer tab (design Appendix B).
     const routed=(name:string)=>async()=>{
@@ -1062,11 +1167,10 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
     commands.reindex=()=>controller.repair('rebuild');commands.treeReindex=spec=>controller.repair('rebuild',spec as LaunchSpec|undefined);
     commands.diagnose=()=>controller.repair('verify');commands.currentMaintenance=()=>controller.repair('auto');
     commands.status=()=>controller.showTool('airk_status');
-    commands.chooseStorage=async()=>{controller.trusted();const selected=await vscode.window.showOpenDialog({canSelectFolders:true,canSelectFiles:false,canSelectMany:false,openLabel:'Review new project storage'});
-        if(selected?.length){controller.trusted();await vscode.workspace.getConfiguration('airk').update('storage.path',selected[0].fsPath,vscode.ConfigurationTarget.Global);
-            await controller.registerWorkspace();}};
+    commands.chooseStorage=()=>controller.registerWorkspace();
     commands.installCli=()=>controller.repairInstallation();
     commands.enableNativeExecution=()=>controller.enableNativeExecution();
+    commands.manageWorkspaceTrust=(...args)=>{if(args.length)throw new ServiceError('invalid_manage_workspace_trust_arguments');return controller.manageWorkspaceTrust();};
     commands.setUp=()=>controller.repairInstallation();
     commands.removeTerminalCommand=()=>controller.removeTerminalCommand();
     commands.showLastUninstallResult=()=>controller.showLastUninstallResult();
@@ -1090,7 +1194,8 @@ export async function activate(context:vscode.ExtensionContext):Promise<{getServ
         const text=typeof query==='string'?query:await vscode.window.showInputBox({title:'AIRK: Search indexed evidence',prompt:'All words must appear (lexical) unless the project uses vector or hybrid search.'});
         if(text?.trim())(await controller.explorerController()).search(text);
     };
-    for(const [name,action] of Object.entries(commands))context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`,safe(action)));
+    const nativeCommands=new Set(NATIVE_COMMANDS);
+    for(const [name,action] of Object.entries(commands))context.subscriptions.push(vscode.commands.registerCommand(`airk.${name}`,safe((...args)=>{if(nativeCommands.has(name))controller.trusted();return action(...args);} )));
     if(vscode.lm?.registerMcpServerDefinitionProvider)context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.collections',{
         onDidChangeMcpServerDefinitions:controller.definitions.event,provideMcpServerDefinitions:()=>controller.provideDefinitions(),resolveMcpServerDefinition:value=>controller.resolveDefinition(value)}));
     if(vscode.lm?.registerMcpServerDefinitionProvider)context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider('airk.explorerAssistance',{

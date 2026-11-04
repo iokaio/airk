@@ -65,6 +65,22 @@ impl Binding {
         Ok(())
     }
 }
+
+pub(super) fn preflight(layout: &Layout) -> Result<()> {
+    for namespace in [
+        None,
+        layout
+            .managed_catalog_origin
+            .as_ref()
+            .map(|origin| origin.namespace),
+    ] {
+        ensure!(
+            serde_json::to_vec(&Binding::new(layout, namespace)?)?.len() as u64 <= MAX_LAYOUT,
+            "installed registry binding exceeds budget"
+        );
+    }
+    Ok(())
+}
 fn read(layout: &Layout) -> Result<Option<Binding>> {
     let path = layout.state.join(PIN);
     if !exists(&path)? {
@@ -194,8 +210,16 @@ pub(super) fn begin(lease: &ServiceLease, layout: &Layout, completed: bool) -> R
         || exists(&control.join("service-1.4.sqlite3"))?
         || exists(&control.join("service-1.4.owner.json"))?;
     let namespace = if existing {
-        let registry =
-            ServiceRegistry::open(control, airk_kernel::service_broker::new_instance_id()?)?;
+        let expected = if let Some(origin) = &layout.managed_catalog_origin {
+            ensure!(
+                retained_namespace(control)? == origin.namespace,
+                "managed initial registry namespace differs"
+            );
+            origin.namespace
+        } else {
+            airk_kernel::service_broker::new_instance_id()?
+        };
+        let registry = ServiceRegistry::open(control, expected)?;
         Some(registry.incarnation()?)
     } else {
         None
@@ -203,6 +227,12 @@ pub(super) fn begin(lease: &ServiceLease, layout: &Layout, completed: bool) -> R
     write(layout, None, &Binding::new(layout, namespace)?)
 }
 pub(super) fn finish(lease: &ServiceLease, layout: &Layout, namespace: Incarnation) -> Result<()> {
+    if let Some(origin) = &layout.managed_catalog_origin {
+        ensure!(
+            namespace == origin.namespace,
+            "managed initial namespace differs"
+        );
+    }
     ensure!(
         lease.root() == layout.state.join("control")
             && retained_namespace(lease.root())? == namespace,

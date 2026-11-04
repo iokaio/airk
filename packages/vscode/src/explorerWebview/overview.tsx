@@ -43,9 +43,9 @@ export function Overview(props: { state: ExplorerViewState; project?: ProjectSum
         <p class="callout" role="status">Your project has not been reported as removed or unregistered. Waiting for the service response.</p>
         <button type="button" class="ghost" onClick={()=>props.go({workspace:'manage',tab:'service'})}>View connection details</button>
     </section>;
-    const first = !state.trusted ? 'Trust this workspace in VS Code before AIRK can connect or read evidence.'
+    const first = !state.trusted ? state.workspaceTrusted===false?'VS Code Restricted Mode is active. Manage Workspace Trust to review this workspace.':'AIRK client authority is unavailable; no current evidence access is assumed.'
         : state.connection === 'connecting' ? 'Connecting to AIRK and checking registered projects. Saved project details will appear when the service responds.'
-        : !state.projects.length ? 'No AIRK project is registered for this window yet. Registration and indexing start automatically for trusted folders, or use Management.'
+        : !state.projects.length ? 'No AIRK index is selected for this window. Use Indexing to set up an index, assign Project memberships, review access, then explicitly Use Grant.'
         : state.connection === 'disconnected' ? 'The AIRK service is not connected. Open Management › Service to start or reconnect it.'
         : state.connection === 'incompatible' ? 'The selected AIRK runtime does not match this extension. Review the runtime in Management › Service.'
         : undefined;

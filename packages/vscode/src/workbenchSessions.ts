@@ -16,7 +16,7 @@ export function trimSession(session: WorkbenchSession): void {
     for (const turn of session.turns) {
         if (bytes <= LIMIT-64) { break; }
         const before=Buffer.byteLength(JSON.stringify(turn));
-        delete turn.envelope; turn.trimmed=true;
+        delete turn.envelope;delete turn.nativeFailure;delete turn.error; turn.trimmed=true;
         bytes-=before-Buffer.byteLength(JSON.stringify(turn));
     }
     while (bytes > LIMIT-64 && session.turns.length) {bytes-=Buffer.byteLength(JSON.stringify(session.turns.shift()))+1;session.omitted++;}
@@ -70,7 +70,7 @@ export class SessionStore {
             try {current=await this.load(session.project,session.id);} catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT'){throw error;}}
             if(current && current.revision!==session.revision){throw new Error('Session changed in another window. Open it again or start a new session.');}
             const saved=structuredClone(session);saved.revision++;
-            if(!persistResults){for(const turn of saved.turns){delete turn.envelope;turn.trimmed=true;}}
+            if(!persistResults){for(const turn of saved.turns){delete turn.envelope;delete turn.nativeFailure;delete turn.error;turn.trimmed=true;}}
             const file=path.join(root,`${session.id}.json`),temporary=path.join(root,`${session.id}.${randomUUID()}.tmp`);
             try {await fs.writeFile(temporary,JSON.stringify(saved),{flag:'wx',mode:0o600});await fs.rename(temporary,file);session.revision=saved.revision;}
             finally {await fs.unlink(temporary).catch(()=>undefined);}
@@ -90,7 +90,7 @@ export class SessionStore {
         return entries.filter(entry=>entry.isDirectory()&&!entry.isSymbolicLink()&&/^[0-9a-f]{64}$/.test(entry.name)).map(entry=>entry.name);
     }
     async clearResults(project:string):Promise<void>{
-        for(const session of await this.scan(project)){for(const turn of session.turns){delete turn.envelope;turn.trimmed=true;}await this.save(session,false);}
+        for(const session of await this.scan(project)){for(const turn of session.turns){delete turn.envelope;delete turn.nativeFailure;delete turn.error;turn.trimmed=true;}await this.save(session,false);}
     }
     private async shortcuts(project:string):Promise<{input:string;scope:string;plan:Value}[]>{
         const file=path.join(await this.root(project),'shortcuts.json');

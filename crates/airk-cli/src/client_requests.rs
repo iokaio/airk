@@ -320,6 +320,12 @@ pub fn list(control: &Path) -> Result<Vec<Pending>> {
         })
         .collect()
 }
+pub fn refusal_guidance(code: &str) -> Option<&'static str> {
+    (code == "source_change_review_required").then_some(
+        "Review the Index's sources or retirement in Indexing, or prepare a CatalogSourceMutationDraft through 'airk service rpc'",
+    )
+}
+
 pub async fn submit(control: &Path, nonce: Incarnation) -> Result<ControlResponse> {
     let control = control.canonicalize()?;
     let control = control.as_path();
@@ -336,6 +342,9 @@ pub async fn submit(control: &Path, nonce: Incarnation) -> Result<ControlRespons
             "crossed native CLI job receipt"
         ),
         ControlResponse::Failure { code } => {
+            if let Some(guidance) = refusal_guidance(code) {
+                anyhow::bail!("native request refused: {code}; {guidance}; saved key is preserved")
+            }
             anyhow::bail!("native request refused: {code}; saved key is preserved")
         }
         _ => anyhow::bail!("native request outcome unknown; saved key is preserved"),

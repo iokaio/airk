@@ -7,7 +7,25 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { RuntimeHost } from '../serviceBootstrap';
 import { ServiceWorkspace } from '../serviceWorkspace';
-import { ServiceError } from '../serviceClient';
+import { ServiceClient, ServiceError, record } from '../serviceClient';
+
+/** Canonical metadata transport through the real persistent ServiceClient adapter. */
+function metadataClient(registrations:()=>readonly Record<string,unknown>[],revision=1,beforePage?:()=>Promise<void>):ServiceClient{
+    const namespace='12'.repeat(16);
+    return new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(record(method))[0];
+        if(name==='health')return {status:'health',observation:{instance:'56'.repeat(16),policy:{accepting:true}}};
+        if(name==='events')return {status:'events',page:{namespace,events:[],retained_prefix_lost:false,next:null,tail:{namespace,project:null,after:0,through:null}}};
+        if(name==='console'||name==='inactive_console'){await beforePage?.();return {status:'console',page:{revision,cached:true,observed_unix_ms:1,after:null,projects:name==='inactive_console'?[]:registrations().map(registration=>({project:{registration,paused:false,fencing_generation:1}}))}};}
+        if(name==='catalog_legacy_binding'){const project=String(record(record(method).catalog_legacy_binding).project),row=registrations().find(row=>row.binding===project);return {status:'catalog_legacy_binding',observation:{schema:1,namespace,catalog_revision:null,project,eligibility:row?{kind:'authority_zero',registration:{binding:row.binding,root:row.root,data_root:row.data_root,collection:row.collection}}:{kind:'unavailable'}}};}
+        if(name==='workers'){const projects=record(record(method).workers).projects as string[];return {status:'workers',age_ms:0,observations:projects.map(project=>({project,identity:null,restarting:false,automatic_start_blocked:false}))};}
+        if(name==='logs')return {status:'logs',page:{schema:1,records:[]}};
+        if(name==='resources')return {status:'resources',observation:{}};
+        if(name==='embedding_status')return {status:'embedding_status',available:false};
+        if(name==='source_status')return {status:'source_status',available:false};
+        throw new Error(`Unexpected native mutation or unsupported fixture method: ${name}`);
+    }});
+}
 
 test('service activation advertises reviewed bindings without indexing and preserves explicit Stop during resolution',async context=>{
     const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-service-activation-'))),source=path.join(root,'source');await fs.mkdir(source);
@@ -35,8 +53,7 @@ test('service activation advertises reviewed bindings without indexing and prese
             scope:{schema:1,root:row.root,collection:args.includes('--index-collection')?args[args.indexOf('--index-collection')+1]:null,
                 namespace:'12'.repeat(16),revision:7,observed_unix_ms:1,outcome:'registered',registration:row,fencing_generation:1}};
     });
-    context.mock.method(RuntimeHost.prototype,'client',()=>({projects:async(_after:unknown,_revision:unknown,_limit:unknown,inactive:boolean)=>({revision:1,cached:true,observed_unix_ms:1,after:null,
-        projects:inactive?[]:[{project:{registration}}]}),dispose(){}}) as any);
+    context.mock.method(RuntimeHost.prototype,'client',()=>metadataClient(()=>[registration]));
     const disposable={dispose(){}},event=()=>disposable;
     const stub:any={workspace:{isTrusted:true,workspaceFolders:[{name:'Fixture',uri:{scheme:'file',fsPath:source}}],
         getConfiguration:()=>({get:(key:string,fallback?:unknown)=>key==='explorer.assistance.enabled'?false:fallback,inspect:(key:string)=>({globalValue:key==='mcp.responseMode'?'full':key==='cli.autoInstall'?false:undefined})}),
@@ -53,11 +70,12 @@ test('service activation advertises reviewed bindings without indexing and prese
     McpStdioServerDefinition:class {cwd:unknown;constructor(public label:string,public command:string,public args:string[],public env:unknown,public version:string){}}};
     const loader=Module as unknown as {_load:(...args:any[])=>any},original=loader._load;
     loader._load=function(request:string,...args:any[]){return request==='vscode'?stub:original.call(this,request,...args);};
-    let extension:any;const extensionContext:any={extensionPath:root,extensionUri:stub.Uri.file(root),extension:{packageJSON:{version:'1.4.0'}},globalState:storage,subscriptions:[]};
+    let extension:any;const extensionContext:any={extensionPath:root,extensionUri:stub.Uri.file(root),extension:{packageJSON:{version:'1.4.0'}},globalState:storage,workspaceState:storage,subscriptions:[]};
     try{
         delete require.cache[require.resolve('../serviceExtension')];extension=require('../serviceExtension');
         const api=await extension.activate(extensionContext);await api.whenReady();assert.equal(ensures,0);assert.ok(discoveries>0);
-        // Actual activation wiring and actual hidden Explorer; no panel/native transport is opened.
+        // Actual activation and hidden Explorer; metadata uses the real client adapter
+        // with an in-memory native read transport, never an evidence process or indexer.
         const controller=extensionContext.subscriptions[0],explorer=await controller.explorerController();
         const consoleController=controller.console.controller;
         let refreshes=0;
@@ -111,7 +129,8 @@ test('service activation advertises reviewed bindings without indexing and prese
         await commands.get('airk.usage')!();
         assert.deepEqual(usageDrafts,[{operation:'usage',mode:'disabled'},{operation:'usage',mode:'aggregates_only'},{operation:'usage',mode:'diagnostic_events'}]);
         stub.workspace.isTrusted=false;assert.deepEqual(await api.getServerDefinitions(),[]);
-        const before=ensures;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),/runtime_client_no_longer_authorized/);assert.equal(ensures,before);
+        const before=ensures;await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),(error:unknown)=>error instanceof ServiceError&&error.code==='workspace_untrusted');assert.equal(ensures,before);
+        stub.workspace.isTrusted=true;extension.deactivate();await assert.rejects(provider.resolveMcpServerDefinition(definitions[0]),(error:unknown)=>error instanceof ServiceError&&error.code==='runtime_client_no_longer_authorized');assert.equal(ensures,before);
     }finally{extension?.deactivate();loader._load=original;delete require.cache[require.resolve('../serviceExtension')];await fs.rm(root,{recursive:true,force:true});}
 });
 
@@ -138,7 +157,7 @@ test('selected Explorer project is available while other root waits without narr
                 namespace:'12'.repeat(16),revision:7,observed_unix_ms:1,outcome:selectedOutcome,registration:selectedOutcome==='registered'?{...row,binding:selectedProject}:null,fencing_generation:selectedOutcome==='registered'?1:null}};
     });
     let pageReads=0;
-    context.mock.method(RuntimeHost.prototype,'client',()=>({projects:async(_after:unknown,_revision:unknown,_limit:unknown,inactive:boolean)=>{pageReads++;await held;return {revision:7,cached:true,observed_unix_ms:1,after:null,projects:inactive?[]:registrations.map(registration=>({project:{registration}}))};},dispose(){}}) as any);
+    context.mock.method(RuntimeHost.prototype,'client',()=>metadataClient(()=>registrations,7,async()=>{pageReads++;await held;}));
     let release!:()=>void,published!:()=>void,host:any,controller:any,definitionsChanged=0;
     const held=new Promise<void>(resolve=>{release=resolve;}),selected=new Promise<void>(resolve=>{published=resolve;});
     const nativeFs=require('node:fs/promises'),realpath=nativeFs.realpath;
