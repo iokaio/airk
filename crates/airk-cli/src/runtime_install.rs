@@ -2056,12 +2056,19 @@ fn quiescent(root: &Path) -> Result<Quiescence> {
         .map(|binding| airk_store::service::ProjectLease::acquire(&control, binding))
         .collect::<Result<Vec<_>>>()?;
     let embedding = airk_store::service::EmbeddingLease::acquire(&control)?;
+    let source_watch = airk_store::service::SourceWatchLease::acquire(&control)?;
+    if control.join("service-1.4.sqlite3").try_exists()? {
+        ensure!(
+            crate::embedding_pool_process::shared::quiesce_for_maintenance(&service)?,
+            std::fs::TryLockError::WouldBlock
+        );
+    }
     Ok(Quiescence {
         catalog,
         _service: service,
         _projects: projects,
         _embedding: embedding,
-        _source_watch: airk_store::service::SourceWatchLease::acquire(&control)?,
+        _source_watch: source_watch,
     })
 }
 

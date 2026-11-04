@@ -107,6 +107,9 @@ where
 }
 
 fn setup_rejection(error: &anyhow::Error) -> Option<serde_json::Value> {
+    if error.is::<airk_core::scoped_reads::ScopeReadRefused>() {
+        return serde_json::to_value(airk_mcp::response::error_result(error)).ok();
+    }
     if !setup_retryable(error) {
         return None;
     }
@@ -309,6 +312,9 @@ impl Connection {
         }
         let (role, mut grant) = match response {
             ControlResponse::Connection { role, grant } => (role, grant),
+            ControlResponse::Failure { code } if code == "scoped_read_unavailable" => {
+                return Err(airk_core::scoped_reads::ScopeReadRefused.into());
+            }
             ControlResponse::Failure { code } if code == "project_unregistered" => {
                 anyhow::bail!(
                     "project is unregistered; review native registration before connecting"
@@ -1238,6 +1244,14 @@ mod tests {
 
     #[test]
     fn only_temporary_pre_submission_setup_failures_get_a_retry_receipt() {
+        let refusal = anyhow::Error::new(airk_core::scoped_reads::ScopeReadRefused);
+        assert!(!setup_retryable(&refusal));
+        let envelope = setup_rejection(&refusal).unwrap();
+        let detail: serde_json::Value =
+            serde_json::from_str(envelope["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(envelope["isError"], true);
+        assert_eq!(detail["error"]["code"], "scoped_read_unavailable");
+        assert_eq!(detail["error"]["retryable"], false);
         for error in [
             anyhow::Error::new(RetrySetup("capacity")),
             std::io::Error::from(std::io::ErrorKind::ConnectionRefused).into(),

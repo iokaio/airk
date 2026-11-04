@@ -13,10 +13,10 @@ async function connect(target,deadline){
         if(value.method==='Runtime.executionContextDestroyed')contexts.delete(value.params.executionContextId);
         if(value.method==='Runtime.executionContextsCleared')contexts.clear();
         const request=pending.get(value.id);if(request){pending.delete(value.id);clearTimeout(request.timer);value.error?request.reject(new Error(JSON.stringify(value.error))):request.resolve(value.result);}});
-    const call=(method,params={})=>new Promise((resolve,reject)=>{if(pending.size>=16){reject(new Error('CDP pending bound exhausted'));return;}const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(new Error(`CDP timeout: ${method}`));},budget(method==='Runtime.evaluate'?2000:15000));
+    const call=(method,params={})=>new Promise((resolve,reject)=>{if(socket.readyState!==WebSocket.OPEN){reject(new Error('CDP socket closed'));return;}if(pending.size>=16){reject(new Error('CDP pending bound exhausted'));return;}const id=++sequence,timer=setTimeout(()=>{pending.delete(id);reject(new Error(`CDP timeout: ${method}`));},budget(method==='Runtime.evaluate'?2000:15000));
         pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}));});
     await call('Runtime.enable');
-    return {contexts,call,close:()=>socket.close(),async evaluate(contextId,expression){const result=await call('Runtime.evaluate',{contextId,expression,returnByValue:true});if(result.exceptionDetails)throw new Error('CDP expression failed: '+JSON.stringify(result.exceptionDetails));return result.result?.value;}};
+    return {contexts,call,get closed(){return socket.readyState!==WebSocket.OPEN;},close:()=>socket.close(),async evaluate(contextId,expression){const result=await call('Runtime.evaluate',{contextId,expression,returnByValue:true});if(result.exceptionDetails)throw new Error('CDP expression failed: '+JSON.stringify(result.exceptionDetails));return result.result?.value;}};
 }
 async function editorUi(port,deadline=Date.now()+600000){
     const clients=new Map();
@@ -32,9 +32,9 @@ async function editorUi(port,deadline=Date.now()+600000){
         try{targets=await(await fetch(`http://127.0.0.1:${port}/json/list`,{signal:AbortSignal.timeout(budget(10000))})).json();}
         catch(error){if(/ECONNREFUSED|ECONNRESET|UND_ERR_SOCKET|UND_ERR_CONNECT_TIMEOUT/.test(String(error?.cause?.code??'')))return;throw error;}
         for(const target of targets.filter(value=>value.type===type&&(type==='page'?value.url.includes('workbench'):value.url.includes('extensionId=iokaio.airk')))){
-            let client=clients.get(target.id);if(!client){client=await connect(target,deadline);clients.set(target.id,client);}
+            let client=clients.get(target.id);if(client?.closed){clients.delete(target.id);client=undefined;}if(!client){try{client=await connect(target,deadline);}catch(error){if(/CDP socket closed|WebSocket.*closed/.test(String(error)))continue;throw error;}clients.set(target.id,client);}
             for(const context of client.contexts){try{if(await client.evaluate(context,predicate))return {value:await client.evaluate(context,expression),client,context,target};}
-                catch(error){if(!/CDP timeout: Runtime.evaluate|Cannot find context|navigated or closed/.test(String(error)))throw error;}}
+                catch(error){if(/CDP socket closed/.test(String(error))){client.close();clients.delete(target.id);break;}if(!/CDP timeout: Runtime.evaluate|Cannot find context|navigated or closed/.test(String(error)))throw error;}}
         }
     }
     const workbench=expression=>document('!!document.querySelector(".monaco-workbench")',expression,'page');
@@ -80,8 +80,8 @@ async function editorUi(port,deadline=Date.now()+600000){
     async function catalog(){
         return until(async()=>{const value=(await service("(()=>{const d=[...document.querySelectorAll('details')].find(d=>d.querySelector('summary')?.textContent==='Complete response');if(!d)return;try{return JSON.parse(d.querySelector('pre').textContent);}catch{return;}})()"))?.value;return value||undefined;},'complete native catalog details');
     }
-    async function settled(predicate){
-        return until(async()=>{const value=await catalog();if(value.error)throw new Error(value.error);return !value.busy&&predicate(value)?value:undefined;},'native catalog outcome');
+    async function settled(predicate,previous){
+        return until(async()=>{const value=await catalog();if(value.error){if(previous&&value.error===previous.error&&value.generation===previous.generation)return undefined;throw new Error(value.error);}return !value.busy&&predicate(value)?value:undefined;},'native catalog outcome');
     }
     async function inspect(kind,id){
         const label=kind==='grant'?'Inspect grant':'Inspect';
@@ -109,7 +109,7 @@ async function editorUi(port,deadline=Date.now()+600000){
             const admin="document.visibilityState==='visible'&&document.body.innerText.includes('Entire Index history and shared data-root totals')&&document.body.innerText.includes("+JSON.stringify(request.collection??'')+")&&!!document.querySelector('[data-usage=clear]')";
             const report=(predicate,expression)=>document(predicate,expression);
             const reportClick=async(predicate,action)=>{
-                const selector='[data-usage="'+action+'"]';
+                const selector=action==='json'?'#open-json':'[data-usage="'+action+'"]';
                 return dispatch(predicate,`!!document.querySelector(${JSON.stringify(selector)})&&!document.querySelector(${JSON.stringify(selector)}).disabled`,`(()=>{const b=document.querySelector(${JSON.stringify(selector)});if(!b||b.disabled)return false;b.click();return true;})()`);
             };
             if(request.action==='usageScoped'){
@@ -124,7 +124,15 @@ async function editorUi(port,deadline=Date.now()+600000){
             }
         }
         switch(request.action){
-            case 'connect':await click('Connect / reconnect');return {connected:true};
+            case 'connect':
+            case 'startService':{
+                const receipt=await click(request.action==='startService'?'Start service':'Connect / reconnect');
+                const observation=await until(async()=>{
+                    const value=(await service("(()=>{const root=document.querySelector('.manage');const text=root?.querySelector('p.muted')?.textContent;const buttons=[...document.querySelectorAll('button')];const connect=buttons.find(b=>b.textContent.trim()==='Connect / reconnect'),stop=buttons.find(b=>b.textContent.trim()==='Stop service');return text?.includes('· connected')&&connect&&!connect.disabled&&stop&&!stop.disabled?{connected:true,text,service:[...document.querySelectorAll('article')].find(a=>a.querySelector('h2')?.textContent==='Service')?.innerText}:undefined;})()"))?.value;
+                    return value;
+                },'authenticated service connection after explicit action');
+                return {...observation,dispatch:receipt};
+            }
             case 'page':await click(request.kind==='projects'?'Refresh Projects':request.kind==='grants'?'Read grants':'Refresh indexes');return settled(v=>!!(request.kind==='grants'?v.grants:v.page));
             case 'inspect':return inspect(request.kind,request.id);
             case 'setupDraft':
@@ -155,7 +163,7 @@ async function editorUi(port,deadline=Date.now()+600000){
             case 'useGrant':await fill('Use Grant for this window',{'Index ID from this grant':request.index,'Project IDs from this grant (1–32, comma separated)':request.project});await click('Use Grant for this window');return settled(v=>!!v.outcome?.selected_subset);
             case 'revokeDraft':await click('Preview revoke grant');return settled(v=>!!v.review);
             case 'read':return catalog();
-            case 'reconcile':await click('Check native receipts');return settled(v=>Array.isArray(v.outcome?.receipts));
+            case 'reconcile':{const previous=await catalog();await click('Check native receipts');return settled(v=>v.generation>previous.generation&&Array.isArray(v.outcome?.receipts),previous);}
             case 'staleApply':{
                 const original=await catalog(),receipt=await click('Apply reviewed changes');
                 const value=await until(async()=>{const v=await catalog();return !v.busy&&(v.error||v.outcome)?v:undefined;},'stale native preview refusal');

@@ -1,5 +1,14 @@
 # MCP tools
 
+The P6f working candidate preserves complete native scope observations for one
+explicitly selected index and Project subset. Reviewed grants and imported legacy
+snapshots retain distinct provenance. MCP reads cannot create an index, recover
+missing data by making directories, grant access or initiate catalog migration.
+Native catalog setup and upgrade require reviewed owning operations; incomplete
+activation remains fenced. Combined multi-index queries remain a later phase.
+The [setup guide](service-project-setup.md) and [ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation)
+record supported paths and actual validation limits.
+
 P6c's [search execution contract](search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
 
 **1.8.8 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).

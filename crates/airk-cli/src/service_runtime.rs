@@ -27,6 +27,8 @@ fn connection_failure_code<'a>(error: &anyhow::Error, fallback: &'a str) -> &'a 
         .is_some()
     {
         "catalog_clock_pending"
+    } else if error.is::<airk_core::scoped_reads::ScopeReadRefused>() {
+        "scoped_read_unavailable"
     } else {
         fallback
     }
@@ -505,4 +507,26 @@ async fn request_scoped(
         );
     }
     Ok(response)
+}
+
+#[cfg(test)]
+mod connection_failure_tests {
+    #[test]
+    fn authority_refusal_remains_permanent_across_both_connection_routes() {
+        let error = anyhow::Error::new(airk_core::scoped_reads::ScopeReadRefused)
+            .context("native connection admission");
+        for fallback in [
+            "project_unavailable_or_busy",
+            "scoped_connection_unavailable",
+        ] {
+            assert_eq!(
+                super::connection_failure_code(&error, fallback),
+                "scoped_read_unavailable"
+            );
+            assert_eq!(
+                super::connection_failure_code(&anyhow::anyhow!("busy"), fallback),
+                fallback
+            );
+        }
+    }
 }

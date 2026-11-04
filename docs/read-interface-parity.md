@@ -1,5 +1,15 @@
 # CLI, MCP and Workbench read parity
 
+P6f keeps single-index scoped reads on the canonical native handlers. CLI tool
+calls/shell and convenience commands, MCP aliases and public names, and Workbench
+complete or explicitly selected JSON/Markdown exports retain scope provenance,
+publication, coverage and complete refusals. Native administrative reads remain
+separate from evidence grants. Partial-subtree status/diagnostics refuse corpus
+aggregates rather than returning guessed counts. Input-catalog comparisons retain
+raw schemas and explicitly account for documented transport selectors and UI-only
+tools. Actual transport and installed-editor evidence have separate receipts in
+the [ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation).
+
 P6c's [search execution contract](search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
 
 The current manual-test working version is **1.8.8**, implementing the planned

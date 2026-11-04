@@ -1,5 +1,16 @@
 # Service provider lifetime
 
+The P6f working implementation records shared embedding helpers separately from
+worker providers in the same bounded ownership table. Installer maintenance
+holds the native service, worker, embedding and source-watch exclusions, then
+checks every shared-helper record through the owning native containment adapter.
+A missing legacy embedding lease alone cannot certify a guarded helper as drained.
+Maintenance preserves the recorded service identity and terminal helper history
+for subsequent worker-obligation recovery; it never starts a replacement service
+or prunes that history. Unknown coverage and incomplete native containment remain
+explicit failures. Guarded catalog activation uses this maintenance path; current execution
+evidence is recorded in the [P6f ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation).
+
 In 1.4.4, owned Unix cleanup first checks for a waitable leader and an empty process group. If that proof is incomplete, it attempts one signal after independently rechecking ownership, then polls fresh completion observations within the original deadline. Native signal and observation errors do not authorize reaping. At expiry, the signal error, latest observation error, or timeout is returned with ownership retained. This handles macOS zombie-only groups, which can reject a group signal with `EPERM`, without releasing live descendants or treating permission denial as success.
 
 The default 1.4.0 service uses the existing `airk` executable in a private Unix guardian role for each admitted extraction provider, including the PDF subprocess. This adds a process role without adding a third deployed executable. Windows retains native Job Object containment. Providers must remain in their private group; these mechanisms are lifetime ownership for trusted providers, not a sandbox.

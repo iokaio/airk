@@ -258,16 +258,15 @@ fn before_start_enabled(
         genesis::require_managed_settled(&origin.control, &origin)?;
         return Ok(ManagedCatalogDisposition::Settled);
     }
-    ensure!(
-        policy.lifecycle == ManagedLifecycle::UserOnDemand,
-        ManagementUnavailable("managed_catalog_requires_external_supervisor_maintenance")
-    );
     if let Some(cancel) = cancel {
         cancel.checkpoint()?;
     }
     // A reserved first pin never starts normal service before its Genesis is
     // settled. Acquisition is actual exclusion, not a claim about old helpers;
-    // old layouts without this reservation cannot enter this fresh lane.
+    // old layouts without this reservation cannot enter this fresh lane. The
+    // same exclusion permits an explicitly reserved external first pin to settle
+    // metadata; its later health path still cannot elect a service. Existing
+    // external installations without an origin never enter this fresh lane.
     let mut owner = admit(authority, policy, &origin)?;
     if let Some(cancel) = cancel {
         cancel.checkpoint()?;

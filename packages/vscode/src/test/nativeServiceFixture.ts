@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 /** Real native client fixture. All writable paths and service owners belong to this test. */
 import {strict as assert} from 'node:assert';
-import {createHash} from 'node:crypto';
+import {createHash,randomBytes} from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -59,9 +59,10 @@ export function publishedStatusPending(status:RecordValue,collection:string,proj
 export class NativeServiceFixture {
     client?:ServiceClient;
     control='';launcher='';
+    private retained=false;
     private constructor(readonly binary:string,readonly owner:string,readonly install:string){}
     static async create(binary:string,mode:'managed'|'owned'='managed'):Promise<NativeServiceFixture>{
-        const owner=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'airk-native-')));
+        const owner=await fs.realpath(await fs.mkdtemp(path.join(process.env.AIRK_PRIVATE_CENSUS_BASE??os.tmpdir(),'airk-native-')));
         const fixture=new NativeServiceFixture(path.resolve(binary),owner,path.join(owner,'i'));
         try{
             const source=nativePayloadDirectory(fixture.binary),bytes=await fs.readFile(path.join(source,'airk-install.json'));
@@ -114,13 +115,24 @@ export class NativeServiceFixture {
     async register(name:string,source?:string):Promise<LaunchSpec>{
         const root=source??path.join(this.owner,name);await fs.mkdir(root,{recursive:true});
         const data=path.join(this.owner,'data');await fs.mkdir(data,{recursive:true});
-        const registration=await this.run(['--root',root,'--data-dir',data,'--collection',name,'service','prepare-registration']);
-        const project=String(registration.binding);
-        const reserved=await this.client!.rpc({reserve_project:{project:registration}},'registered');
-        assert.deepEqual(record(reserved.project).registration,registration);
-        await this.run(['service','prepare-storage','--runtime-dir',this.control,'--project',project]);
+        const client=this.client!,contextKey=randomBytes(32).toString('hex');
+        let descriptor=record((await client.catalogHostContext(contextKey)).descriptor),revision=Number(descriptor.catalog_revision);
+        const review=await client.catalogIndexSetupDraft({key:await client.key(),expected_catalog_revision:revision,name,primary_root:root,data_root:path.join(data,name),collection:name,additional_roots:[],setup_watch:false});
+        const setup=await client.submitIndexSetup({catalog_index_setup_apply:{draft:review.draft},request_digest:review.requestDigest});
+        const receipt=record(setup.receipt),registration=record(record(receipt.request).registration),index=String(receipt.index_id),projectId='prj_'+randomBytes(16).toString('hex');revision=Number(receipt.catalog_revision);
+        const apply=async(operation:RecordValue)=>{
+            const request=await client.prepareCatalog(operation,revision),preview=await client.rpc({catalog_preview:{request}},'catalog_preview');
+            const response=await client.submitCatalog({catalog_apply:{request,preview_digest:String(preview.preview_digest)},request_digest:String(record(preview.preview).request_digest)});
+            revision=Number(record(response.receipt).catalog_revision);return response;
+        };
+        await apply({operation:'create_project',id:projectId,name});
+        await apply({operation:'set_membership',membership:{project_id:projectId,index_id:index,revision:1,scope:[{source_root_id:(receipt.source_ids as string[])[0],kind:'subtree',path:''}]},expected_scope_revision:1,expected_membership_revision:null});
+        descriptor=record((await client.catalogHostContext(contextKey)).descriptor);
+        const grant=await client.catalogGrantDraft(contextKey,{key:await client.key(),expected_catalog_revision:revision,project_ids:[projectId],index_ids:[index]});
+        const granted=await client.submitCatalog({catalog_apply:{request:grant.request,preview_digest:grant.previewDigest},request_digest:grant.requestDigest});revision=Number(record(granted.receipt).catalog_revision);
         return {command:this.launcher,root:String(registration.root),dataDir:String(registration.data_root),collection:name,name,
-            service:{installDir:this.install,project}};
+            catalogSession:{schema:1,context_key:contextKey,namespace:String(descriptor.namespace),expected_catalog_revision:revision,grant_id:String(record(grant.request.operation.grant).id),expected_grant_revision:1,index_id:index,project_ids:[projectId]},
+            service:{installDir:this.install,project:String(registration.binding)}};
     }
     async tool(spec:LaunchSpec,name:string,args:RecordValue={},deadline?:number):Promise<RecordValue>{
         process.stderr.write(`[native fixture] tool ${name}\n`);
@@ -179,7 +191,7 @@ export class NativeServiceFixture {
     }
     async configure(spec:LaunchSpec,draft:RecordValue):Promise<RecordValue>{
         process.stderr.write(`[native fixture] configure ${String(draft.operation)}\n`);
-        const accepted=record(JSON.parse(await runText(spec.command,[...launchArgs(spec,'configure'),'--stdin'],
+        const accepted=record(JSON.parse(await runText(spec.command,[...launchArgs({...spec,catalogSession:undefined},'configure'),'--stdin'],
             path.dirname(spec.command),180000,undefined,undefined,JSON.stringify(draft))));
         const job=await this.waitJob(String(record(accepted.job).id));assert.equal(job.state,'succeeded',JSON.stringify(job));return job;
     }
@@ -211,6 +223,7 @@ export class NativeServiceFixture {
         const completed=await wait('finished');assert.equal(completed.outcome,'succeeded',JSON.stringify(completed));return completed;
     }
     async retainFailure(error:unknown,sessions:readonly McpStdioSession[]=[]):Promise<void>{
+        this.retained=true;
         const parent=process.env.AIRK_NATIVE_DIAGNOSTIC_DIR;
         if(!parent)return;
         try{
@@ -220,7 +233,9 @@ export class NativeServiceFixture {
             const directory=await fs.mkdtemp(path.join(parent,'failure-'));
             const disk=await fs.statfs(this.owner).catch(()=>undefined);
             const report={schema:'airk-native-test-failure/1',observed_utc:new Date().toISOString(),
+                fixture_owner:this.owner,
                 error:String(error).slice(0,8192),memory:{total_bytes:os.totalmem(),free_bytes:os.freemem()},
+                ...(error instanceof ServiceError&&error.nativeResponse?{nativeResponse:error.nativeResponse}:{}),
                 disk:disk?{available_bytes:disk.bavail*disk.bsize,total_bytes:disk.blocks*disk.bsize}:null,
                 sessions:sessions.slice(0,16).map(session=>session.diagnosticSnapshot())};
             await fs.writeFile(path.join(directory,'failure.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx'});
@@ -231,11 +246,23 @@ export class NativeServiceFixture {
         }
     }
     async dispose():Promise<void>{
+        let stopped=false;
+        if(this.client){
+            const health=record((await this.client.rpc('health','health')).observation),inspection=await this.run(['runtime','inspect','--install-dir',this.install]);
+            const request={caller:randomBytes(16).toString('hex'),key:await this.client.key(),action:'stop',expected_instance:health.instance,runtime:record(inspection.selection).active,force:false};
+            const receipt=await this.run(['runtime','lifecycle','--install-dir',this.install],180000,JSON.stringify(request));
+            assert.equal(record(receipt.record).phase,'complete',JSON.stringify(receipt));
+            stopped=true;
+        }
         this.client?.transport.dispose();this.client=undefined;
         // Native uninstall authenticates and drains only this fixture's approved
         // fixture owner. A failed drain preserves the directory for diagnosis.
-        if(await fs.stat(this.install).then(()=>true,()=>false))await this.run(['runtime','uninstall','--install-dir',this.install],180000);
-        const resolved=await fs.realpath(this.owner),temporary=await fs.realpath(os.tmpdir());
+        // Fresh managed catalogs intentionally retain their reservation on
+        // detach. Complete native Stop above precedes fixture-owned deletion;
+        // this is not a claim that managed uninstall is supported.
+        if(!stopped&&await fs.stat(this.install).then(()=>true,()=>false))await this.run(['runtime','uninstall','--install-dir',this.install],180000);
+        if(this.retained){process.stderr.write(`[native fixture] stopped fixture retained: ${this.owner}\n`);return;}
+        const resolved=await fs.realpath(this.owner),temporary=await fs.realpath(process.env.AIRK_PRIVATE_CENSUS_BASE??os.tmpdir());
         assert.equal(path.dirname(resolved),temporary);assert.ok(path.basename(resolved).startsWith('airk-native-'));
         await fs.rm(resolved,{recursive:true,force:true,maxRetries:20,retryDelay:100});
     }

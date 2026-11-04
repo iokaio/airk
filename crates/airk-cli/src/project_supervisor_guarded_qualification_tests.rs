@@ -135,7 +135,7 @@ impl NativeOwner {
         )
     }
 
-    fn charges(&self) -> Result<(usize, usize, usize, usize)> {
+    fn charges(&self) -> Result<(usize, usize, usize, usize, usize, usize)> {
         let resources = self.resources.snapshot();
         let broker = self
             .policy
@@ -143,12 +143,15 @@ impl NativeOwner {
             .map_err(|_| anyhow::anyhow!("native policy poisoned"))?
             .status(Instant::now());
         // Semantic reads retain resident/query ownership, not an invented job
-        // allowance. Running job and host active-query counts remain explicit.
+        // allowance. Broker project counts include retained fencing tombstones;
+        // allocated slots/bytes separately prove release of their charges.
         Ok((
             resources.resident_workers,
             broker.projects,
             resources.running_jobs,
             broker.active_queries,
+            broker.allocated.concurrent_queries,
+            broker.allocated.response_bytes,
         ))
     }
 }
@@ -673,7 +676,7 @@ impl NativeFixture {
             resources: airk_kernel::service_resources::Resources::detect(
                 airk_core::service_resources::ResourceConfiguration {
                     memory_bytes: Some(4 << 30),
-                    query_concurrency: 1,
+                    query_concurrency: 4,
                     ..Default::default()
                 },
             )?,
@@ -763,7 +766,7 @@ fn ordinary_exit_keeps_real_provider_work_and_sibling_ownership_until_engine_rel
             (a, b, pool.identity(), loads)
         };
         let before = fixture.control.owner.borrow().charges()?;
-        assert_eq!(before, (2, 2, 0, 0), "fixture must not invent a job-work/query charge for resident reads");
+        assert_eq!(before, (2, 2, 0, 0, 4, 4 * MAX_FRAME_BYTES), "fixture must not invent a job-work/query charge for resident reads");
         let nonce = fixture.gate.arm(a_identity, helper)?;
         let accepted = tokio::spawn(async move { search_scope(&mut a, "vector", "harbor cobalt cobalt").await });
         let entered = fixture.gate.entered(nonce)?;
@@ -791,7 +794,7 @@ fn ordinary_exit_keeps_real_provider_work_and_sibling_ownership_until_engine_rel
             ensure!(Instant::now() < deadline, "actual engine Release never drained");
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        assert_eq!(fixture.control.owner.borrow().charges()?, (1, 1, 0, 0));
+        assert_eq!(fixture.control.owner.borrow().charges()?, (1, 2, 0, 0, 2, 2 * MAX_FRAME_BYTES));
         search_scope(&mut b, "vector", "cobalt harbor harbor").await?;
         let mut owner = fixture.control.owner.borrow_mut();
         assert_eq!(owner.workers[&b_identity.project].identity, Some(b_identity));
@@ -898,7 +901,10 @@ fn retire_requires_actual_engine_release_and_complete_native_worker_obligation()
             intent.worker_confirmations.is_empty(),
             "Scope ACK falsely completed actual provider drain"
         );
-        assert_eq!(fixture.control.owner.borrow().charges()?, (2, 2, 0, 0));
+        assert_eq!(
+            fixture.control.owner.borrow().charges()?,
+            (2, 2, 0, 0, 4, 4 * MAX_FRAME_BYTES)
+        );
         let detail = fixture.registry.catalog_detail(
             &CatalogEntity::Index {
                 id: fixture.indices[0].definition,
@@ -977,7 +983,10 @@ fn retire_requires_actual_engine_release_and_complete_native_worker_obligation()
             "terminal replay repeated or changed native effects"
         );
         fixture.control.owner.borrow_mut().poll_exits()?;
-        assert_eq!(fixture.control.owner.borrow().charges()?, (1, 1, 0, 0));
+        assert_eq!(
+            fixture.control.owner.borrow().charges()?,
+            (1, 2, 0, 0, 2, 2 * MAX_FRAME_BYTES)
+        );
         search_scope(&mut b, "vector", "cobalt harbor harbor").await?;
         let owner = fixture.control.owner.borrow();
         assert_eq!(

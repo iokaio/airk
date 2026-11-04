@@ -206,9 +206,11 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     /** Explicit administrative read only. Getters never connect, register, grant or invoke native work. */
     async prepareWindowContext():Promise<void>{
         this.trusted();const window=this.windowIdentity(),generation=this.generation,controller=this.console.controller,controlIdentity=controller.observationIdentity;
+        const binding=controller.connectedRuntimeBinding;
+        if(!binding||binding.version!==this.runningVersion)throw new ServiceError('catalog_control_connection_unavailable');
         if(this.windowContextRead?.identity===JSON.stringify([window.identity,generation,controlIdentity]))return this.windowContextRead.work;
         const identity=JSON.stringify([window.identity,generation,controlIdentity]);
-        const current=()=>{this.trusted();if(generation!==this.generation||controller!==this.console.controller||controlIdentity!==controller.observationIdentity||window.identity!==this.windowIdentity().identity)throw new ServiceError('window_context_changed');};
+        const current=()=>{this.trusted();if(generation!==this.generation||controller!==this.console.controller||controlIdentity!==controller.observationIdentity||binding!==controller.connectedRuntimeBinding||window.identity!==this.windowIdentity().identity)throw new ServiceError('window_context_changed');};
         const work=(async()=>{
             current();if(!controller.state.connected)throw new ServiceError('catalog_control_connection_unavailable');
             let key=this.transientWindowKey;
@@ -221,6 +223,14 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
             const response=await controller.catalogHostContext(key);current();
             const native=validateNativeHostContext(response.descriptor);
             const descriptor=validateWindowContext({host:native.host,key:native.key,kind:window.kind,name:window.name});
+            // Another window may have installed the runtime after our startup.
+            // Adopt only this completed, authenticated console connection. Reading
+            // its context selects no grant and restores no saved authority.
+            if(!this.binding||JSON.stringify(this.binding)!==JSON.stringify(binding)){
+                this.specs=[];this.roots=[];this.retireSelectedEligibility();this.explicitCatalogScope=undefined;
+                this.binding=binding;
+            }
+            this.observedFolders=JSON.stringify(this.folders().map(folder=>folder.uri.fsPath));
             this.windowContextValue={identity:window.identity,generation,controller,controlIdentity,response,descriptor};
             this.windowContextChanges.fire();
         })();
@@ -332,6 +342,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         if(selected?.kind==='ambiguous')throw new ServiceError('workspace_binding_review_required');
     }
     async refresh(observation?:BootstrapObservation):Promise<void>{
+        // The authenticated explicit scope owns its native Index independently
+        // of legacy workspace registrations. Re-enumerating those registrations
+        // must not clear its runtime during another window's installer work.
+        if(this.currentCatalogScope())return;
         if(this.refreshing?.generation===this.generation)return this.refreshing.promise;
         const owner={generation:this.generation,promise:Promise.resolve()};
         owner.promise=this.refreshOnce(observation).finally(()=>{if(this.refreshing===owner)this.refreshing=undefined;});
@@ -453,9 +467,30 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         }finally{client.dispose();}
     }
     async index(requested?:LaunchSpec):Promise<void>{
-        await this.refresh();if(requested===undefined&&!this.uiSpecs().length){await this.registerWorkspace();return;}
+        // An explicit native selection already owns its exact Index. A broad
+        // legacy-workspace refresh can encounter another window's launcher lock
+        // and must not replace that choice with the new-index setup guide.
+        if(!this.currentCatalogScope()){
+            if(this.explicitCatalogScope){
+                const saved=this.windowContextValue;
+                this.output.appendLine('Selected Index authority is unavailable: '+JSON.stringify({
+                    context:!!this.currentWindowContext(),binding:!!this.binding,
+                    generation:saved?.generation===this.generation,window:saved?.identity===this.windowIdentity().identity,
+                    controller:saved?.controller===this.console.controller,connection:saved?.controlIdentity===this.console.controller.observationIdentity,
+                    trusted:vscode.workspace.isTrusted,nativeExecution:nativeExecutionAllowed(),extensionUpdate:!!this.extensionUpdate,
+                }));
+                throw new ServiceError('explicit_scope_selection_changed');
+            }
+            await this.refresh();
+        }
+        if(requested===undefined&&!this.uiSpecs().length){
+            if(this.explicitCatalogScope||this.hasScopeWithdrawal())throw new ServiceError('explicit_scope_selection_changed');
+            await this.registerWorkspace();return;
+        }
         const spec=await this.chooseSpec(requested);if(!spec)return;this.trusted();
-        const binding=await this.runtime().ensure();this.trusted();await this.enqueue(binding,spec.service!.project,'index');
+        const generation=this.generation,binding=await this.runtime().ensure();this.trusted();
+        if(generation!==this.generation||!this.isCurrent(spec))throw new ServiceError('workspace_registration_changed');
+        await this.enqueue(binding,spec.service!.project,'index');
         await this.showManagement('#manage/activity');
     }
     async watching():Promise<void>{
@@ -979,7 +1014,10 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
         const observation=await this.workspaceConnection(),entry=observation?.entry;
         this.trusted();if(observation&&(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity))throw new ServiceError('workspace_registration_changed');
         if(!(definition instanceof vscode.McpStdioServerDefinition)||!entry||entry.command!==definition.command||JSON.stringify(entry.args)!==JSON.stringify(definition.args))throw new ServiceError('workspace_registration_changed');
-        await this.runtime().ensure();this.trusted();if(!this.registrationEnabled())throw new ServiceError('mcp_registration_disabled');return definition;
+        const selected=this.currentCatalogScope();
+        await this.runtime().ensure();this.trusted();if(!this.registrationEnabled())throw new ServiceError('mcp_registration_disabled');
+        if(observation.generation!==this.generation||observation.identity!==this.console.controller.observationIdentity||selected!==this.currentCatalogScope())throw new ServiceError('workspace_registration_changed');
+        return definition;
     }
     getTreeItem(spec:LaunchSpec):vscode.TreeItem {
         const item=new vscode.TreeItem(spec.name);item.id=spec.service!.project;item.description=spec.collection;item.tooltip=spec.root;item.contextValue='airkServiceProject';
@@ -989,7 +1027,7 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
     /** Refresh the shared console observations, then reveal a Management tab in the Explorer. */
     async showManagement(route:string):Promise<void>{
         (await this.explorerController()).open(route);
-        void this.console.run('connect').catch(error=>{if(!this.disposed)this.output.appendLine(String(error));});
+        void this.console.run('refresh').catch(error=>{if(!this.disposed)this.output.appendLine(String(error));});
     }
     /** The AIRK Explorer is loaded on first use; it shares this extension's console and registrations. */
     explorerController():Promise<ExplorerController>{

@@ -1,6 +1,6 @@
 # AIRK: Local Search for Coding Agents
 
-P6f is an implementation checkpoint: reviewed Indexing/setup/grant forms and scoped native reads are present, with actual CLI/MCP parity evidence in the [ledger](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation-in-progress). Production catalog activation remains disabled pending managed lifecycle, installed-editor and final qualification. Version remains **1.8.8**.
+P6f implements reviewed Indexing/setup/grant forms and scoped native reads. Native Genesis/upgrade admits only qualified authority-1 activation. Windows implementation, installed-editor and all 84 matched native performance gates passed, alongside focused Neo tests. The full Neo checkpoint remains required before P7. [Evidence and platform limits](https://github.com/iokaio/airk/blob/main/docs/research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation). Version remains **1.8.8**.
 
 P6e makes [oversized stdio input](https://github.com/iokaio/airk/blob/main/docs/mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](https://github.com/iokaio/airk/blob/main/docs/workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
 
@@ -8,7 +8,7 @@ P6d's [source admission changes](https://github.com/iokaio/airk/blob/main/docs/s
 
 P6c's [search execution contract](https://github.com/iokaio/airk/blob/main/docs/search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
 
-**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) records accepted development phases toward the planned 1.9.0 release. Project/index management remains gated. Saved-source verification defaults to Report; see the [controls and limits](https://github.com/iokaio/airk/blob/main/docs/source-verification.md).
+**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.8.md) records accepted development phases toward the planned 1.9.0 release. Project/index setup and grants require explicit review. Saved-source verification defaults to Report; see the [controls and limits](https://github.com/iokaio/airk/blob/main/docs/source-verification.md).
 
 Compact discovery now supplies cited evidence to dependent plans and Workbench
 results. Nested plan inputs are advertised as JSON objects. See the candidate
@@ -34,7 +34,7 @@ require no reindex. Rich cannot recreate unretained facts. See the
 and suggests a next read without executing tools or changing indexing. See the
 [guide](https://github.com/iokaio/airk/blob/main/docs/evidence-guidance.md).
 
-The [P3 design contracts](https://github.com/iokaio/airk/blob/main/docs/research/contracts-v190/README.md) define Project/index scope, migration and verification safeguards. Project/index management remains gated; P4 implemented saved-source verification.
+The [P3 design contracts](https://github.com/iokaio/airk/blob/main/docs/research/contracts-v190/README.md) define Project/index scope, migration and verification safeguards. P6f implements their single-index management and grant path; P4 implemented saved-source verification.
 
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](https://github.com/iokaio/airk/blob/main/docs/releases/release-1.8.7.md) for current behavior and dated validation.
 

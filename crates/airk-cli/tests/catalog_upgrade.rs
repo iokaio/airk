@@ -436,7 +436,10 @@ fn actual_candidate_probe_preserves_the_complete_observation_and_refuses_a_cross
                 actual,
                 upgrade::observe(root.path(), receipt.plan.id, nonce)?
             );
-            assert!(!actual.production_activation_enabled);
+            assert_eq!(
+                actual.production_activation_enabled,
+                upgrade::PRODUCTION_ACTIVATION_ENABLED
+            );
         }
         let ordinary = run(&requests(&binary, root.path(), false))?;
         ensure!(

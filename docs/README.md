@@ -1,6 +1,6 @@
 # AIRK documentation
 
-P6f is an implementation checkpoint: reviewed Indexing/setup/grant forms and scoped native reads are present, with actual CLI/MCP parity evidence in the [ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation-in-progress). Production catalog activation remains disabled pending managed lifecycle, installed-editor and final qualification. Version remains **1.8.8**.
+P6f implements reviewed Indexing/setup/grant forms and scoped native reads. Native Genesis/upgrade admits only qualified authority-1 activation. Windows implementation, installed-editor and all 84 matched native performance gates passed, alongside focused Neo tests. The full Neo checkpoint remains required before P7. [Evidence and platform limits](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation). Version remains **1.8.8**.
 
 P6e makes [oversized stdio input](mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
 
@@ -13,7 +13,7 @@ P6c's [search execution contract](search-execution.md) discloses policy-qualifie
 The [1.8.8 working-build record](releases/release-1.8.8.md) tracks current validation. [1.9.0](releases/release-1.9.0.md) remains the planned promotion target after implementation and manual acceptance. The [approved plan](research/plan-v190.md) retains its phase names and gates.
 
 P5's catalog upgrade foundation passed local isolated qualification. The [storage boundary](storage-formats.md#development-catalog-boundary)
-records candidate-owned migration and recovery limits; normal activation remains disabled.
+records candidate-owned migration and recovery limits; P6f activation requires native readiness and grant enforcement.
 
 P6a's copied Mac launcher, shared signed release producer and offline contributor
 bootstrap passed local gates, including actual Developer ID signed installation
@@ -222,6 +222,7 @@ The [Windows build/editor guide](windows-local-build.md) describes pair builds, 
 - [AIRK 1.9.0 research assessments, decisions and delivery plan — proposal, 2 November 2026](research/plan-v190.md)
 - [AIRK 1.9.0 implementation ledger — phase status, baseline identities and observed validation](research/implementation-v190.md)
 - [Projects, shared indexes and cross-project queries — feature design and upgrade path, 2 November 2026](research/cross-project-indexing.md)
+- [New issues from the 4 November 2026 external audit, hands-on test and GitHub #82/#83 — sorted against plan-v190 with a post-1.9.0 plan](research/new-issues.md)
 - [Google Antigravity manual MCP setup](antigravity-mcp.md)
 - [Coding-agent tool alignment and online documentation review](agent-tool-alignment.md)
 - [Agent Lean index modes and MCP efficiency plan](mcp-prioritization.md)

@@ -230,8 +230,8 @@ fn historical_receipts_and_control_binding_cannot_be_silently_replaced() -> Resu
 }
 
 #[tokio::test]
-async fn failed_initial_probe_rolls_back_without_a_public_selection_or_source_changes() -> Result<()>
-{
+async fn failed_initial_probe_preserves_recovery_without_a_public_selection_or_source_changes()
+-> Result<()> {
     let (_owner, root, mut intent) = fixture()?;
     fs::remove_file(root.join("selected.json"))?;
     intent.prior = None;
@@ -241,16 +241,26 @@ async fn failed_initial_probe_rolls_back_without_a_public_selection_or_source_ch
         .join(&intent.candidate)
         .join(main_name());
     let original = fs::read(&main)?;
-    // The owned inert fixture cannot execute. The failure must clear only its
-    // activation intent, retain approved payloads and leave no selected runtime.
+    // The inert approved payload cannot qualify. Authority-1 Genesis must retain
+    // its exact recoverable operation rather than pretend an admitted namespace
+    // was never touched. Neither route may publish selection or change payloads.
     assert!(resume(&root).await.is_err());
-    assert!(pending(&root)?.is_none());
     assert!(selection(&root)?.is_none());
     assert_eq!(fs::read(main)?, original);
-    assert!(matches!(
-        result(&root)?.unwrap().outcome,
-        Outcome::AbortedOrFailed
-    ));
+    if airk_store::service::registry::catalog::upgrade::PRODUCTION_ACTIVATION_ENABLED {
+        let retained = pending(&root)?.context("failed fresh qualification lost its operation")?;
+        assert_eq!(retained.candidate, intent.candidate);
+        assert_eq!(retained.control, intent.control);
+        assert!(retained.prior.is_none());
+        assert!(retained.phase == Phase::Probe);
+        assert!(result(&root)?.is_none());
+    } else {
+        assert!(pending(&root)?.is_none());
+        assert!(matches!(
+            result(&root)?.unwrap().outcome,
+            Outcome::AbortedOrFailed
+        ));
+    }
     Ok(())
 }
 

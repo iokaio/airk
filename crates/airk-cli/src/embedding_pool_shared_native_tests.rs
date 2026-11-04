@@ -73,6 +73,16 @@ impl Drop for Controller {
 #[test]
 #[ignore = "requires newly built verified airk/airk-embed native pair"]
 fn abrupt_service_exit_recovers_real_guarded_helper_before_predecessor_proof() -> Result<()> {
+    abrupt_service_exit_recovers(false)
+}
+
+#[test]
+#[ignore = "requires newly built verified airk/airk-embed native pair"]
+fn installer_maintenance_recovers_last_service_helper_without_new_service_identity() -> Result<()> {
+    abrupt_service_exit_recovers(true)
+}
+
+fn abrupt_service_exit_recovers(maintenance: bool) -> Result<()> {
     let main = real_main()?;
     let Fixture {
         _directory,
@@ -110,6 +120,27 @@ fn abrupt_service_exit_recovers_real_guarded_helper_before_predecessor_proof() -
     controller.0.kill()?;
     controller.0.wait()?;
     let lease = ServiceLease::acquire(&root)?;
+    if maintenance {
+        let until = Instant::now() + Duration::from_secs(30);
+        while !quiesce_for_maintenance(&lease)? {
+            ensure!(
+                Instant::now() < until,
+                "installer helper containment did not drain"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let saved = registry(&root)?;
+        assert_eq!(saved.recorded_service_instance()?, Some(OLD));
+        let after = saved.shared_helper_drains()?;
+        assert_eq!(after.len(), 1, "maintenance preserves obligations' history");
+        assert_eq!(after[0].owner, before[0].owner);
+        assert_eq!(after[0].phase, SharedHelperPhase::Drained);
+        assert!(
+            quiesce_for_maintenance(&lease)?,
+            "exact retry is idempotent"
+        );
+        return Ok(());
+    }
     registry(&root)?.record_service_instance(&lease, CURRENT)?;
     let until = Instant::now() + Duration::from_secs(30);
     let proof = loop {
@@ -234,10 +265,10 @@ fn actual_guardian_death_contains_helper_and_descendant_while_pool_input_is_open
     );
     let until = Instant::now() + Duration::from_secs(30);
     loop {
-        if let Err(error) = pool.exit_status() {
-            if pool.containment_failed(&error) {
-                break;
-            }
+        if let Err(error) = pool.exit_status()
+            && pool.containment_failed(&error)
+        {
+            break;
         }
         ensure!(
             Instant::now() < until,

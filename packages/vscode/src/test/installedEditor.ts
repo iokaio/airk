@@ -185,8 +185,7 @@ export async function run(): Promise<void> {
     await vscode.commands.executeCommand('airk.dashboard.focus');
     if(scenario==='legacy'){
         const fixture=JSON.parse(await fs.readFile(path.join(folder,'legacy-fixture.json'),'utf8'));
-        const actualLegacyProducerQualified=false;
-        assert.ok(actualLegacyProducerQualified,'Legacy editor execution is unavailable until the actual native producer and semantic bindings are qualified');
+        assert.equal(fixture.qualification?.status,'qualified_native_fixture','Legacy editor execution requires the verified actual native producer observations');
         assert.equal(fixture.fixture_kind,'managed_native_catalog_upgrade');
         const configBytes=await fs.readFile(fixture.legacy_config.path);
         assert.equal(createHash('sha256').update(configBytes).digest('hex'),fixture.legacy_config.sha256);
@@ -204,6 +203,12 @@ export async function run(): Promise<void> {
             }else{
                 await client.start();const result=await client.call('symbols',{name:fixture.probe.symbol,compact:false});
                 assert.equal(result.scope_observation?.provenance,'imported_legacy_snapshot');
+                const at=fixture.legacy_config.args.indexOf('--service-project');
+                const imported=fixture.native.upgrade_receipt.plan.indexes.find((index:any)=>index.registration.binding===fixture.legacy_config.args[at+1]);
+                assert.ok(imported,'Original connection must belong to the native upgrade roster');
+                assert.equal(result.scope_observation.members.length,1);
+                assert.equal(result.scope_observation.members[0].index_id,imported.index_id);
+                assert.deepEqual(result.scope_observation.members[0].memberships.map((member:any)=>member.project_id),[imported.project_id]);
                 assert.equal(result.items.length,1);assert.equal(result.items[0].citation.path,fixture.probe.path);
                 assert.equal(result.items[0].citation.content_hash,fixture.probe.content_sha256);
                 evidence.native.push({legacyProbe:result});evidence.legacyRetrievalParity=true;
@@ -262,7 +267,8 @@ export async function run(): Promise<void> {
     }else{
         await noSelection('Fresh trusted folders are not indexes or permission');
         await vscode.commands.executeCommand('airk.collections');
-        await ui('connect',{},'#manage/service');
+        if(role==='b')await waitFor(marker('created','a'));
+        await ui(role==='a'?'startService':'connect',{},'#manage/service');
         await ui('page',{kind:'indexes'},route.library);
         if(scenario==='same'&&role==='b'){
             await waitFor(marker('created','a'));
@@ -288,7 +294,13 @@ export async function run(): Promise<void> {
     const definition=await use(selection);
     if(scenario==='multi'&&!phase){
         await mark('phase',{stage:'reloaded',selection,sequence});
-        await vscode.commands.executeCommand('workbench.action.reloadWindow');
+        try{await vscode.commands.executeCommand('workbench.action.reloadWindow');}
+        catch(error){
+            // The real replacement host can cancel the old host's command
+            // promise during teardown. Only that exact cancellation is expected;
+            // the external harness still requires the replacement-host evidence.
+            if(!(error instanceof Error&&error.name==='Canceled'&&error.message==='Canceled'))throw error;
+        }
         // The actual replacement extension host resumes from the harness marker.
         await new Promise<void>(()=>{});return;
     }
@@ -346,11 +358,12 @@ export async function run(): Promise<void> {
                     evidence.native.push({staleOriginal:old.review,staleRefusal:rejected});await mark('retained-evidence',evidence);
                     // CatalogApply wraps this Store stale-preview error in the
                     // complete native Unknown contract. This non-fenced request
-                    // has no retained Gate absence proof; null stays unknown.
+                    // has no retained Gate absence proof. The canonical native
+                    // envelope omits an absent optional observation.
                     assert.match(rejected.error??'',/^(?:AIRK service: )?catalog_apply_outcome_unknown$/);
                     assert.equal(rejected.outcome?.status,'catalog_outcome_unknown');assert.equal(rejected.outcome.code,'catalog_apply_outcome_unknown');
                     assert.equal(rejected.outcome.caller,old.review.request.caller);assert.deepEqual(rejected.outcome.key,old.review.request.key);
-                    assert.equal(rejected.outcome.request_digest,old.review.requestDigest);assert.equal(rejected.outcome.observation,null);
+                    assert.equal(rejected.outcome.request_digest,old.review.requestDigest);assert.equal(Object.hasOwn(rejected.outcome,'observation'),false);
                     assert.equal(rejected.review,undefined);
                     assert.deepEqual(rejected.submittedReview,old.review);assert.deepEqual(rejected.original_review,old.review);
                     assert.equal(rejected.dispatch_count,1);assert.ok(Number.isSafeInteger(rejected.ui_dispatch?.dispatch));
@@ -393,8 +406,10 @@ export async function run(): Promise<void> {
                 do{try{value=JSON.parse(vscode.window.activeTextEditor?.document.getText()??'');}catch{}if(value?.administrative_scope?.index_id===target.index)break;assert.ok(Date.now()<end);await sleep(100);}while(true);
                 assert.equal(value.administrative_scope.label,'Entire Index history and shared data-root totals');
                 assert.equal(value.administrative_scope.qualification,'host_administrative_context_not_read_grant');assert.ok(value.administrative_scope.native_observation);
-                await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
-                evidence.native.push({administrativeUsage:value});return value;
+                evidence.native.push({administrativeUsage:value});
+                assert.equal(vscode.window.activeTextEditor?.document.isUntitled,true,'Only the owned generated report may be discarded');
+                await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
+                return value;
             };
             const secondaryDefinition=await use(secondary),otherClient=new Mcp(secondaryDefinition);
             try{await otherClient.start();await vscode.commands.executeCommand('airk.index');
@@ -410,7 +425,8 @@ export async function run(): Promise<void> {
             evidence.native.push({primaryAfterClear:cleared});await mark('retained-evidence',evidence);
             assert.equal(BigInt(cleared.report.calls),0n);assert.equal(BigInt(cleared.lifetime?.calls??0),0n);
             assert.deepEqual(cleared.supplemental??[],[]);assert.deepEqual(cleared.history??[],[]);
-            await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+            assert.equal(vscode.window.activeTextEditor?.document.isUntitled,true,'Only the owned generated report may be discarded');
+            await vscode.commands.executeCommand('workbench.action.revertAndCloseActiveEditor');
             const after=await report(secondary);
             assert.ok(BigInt(after.report.calls)>=BigInt(before.report.calls),'Clearing one Index must preserve the other Index ledger');
             await use(selection);

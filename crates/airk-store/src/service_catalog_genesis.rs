@@ -135,7 +135,7 @@ pub fn require_managed_settled(root: &Path, origin: &ManagedGenesisOrigin) -> Re
             && receipt.stage == GenesisStage::Settled,
         "managed catalog operation is not settled"
     );
-    activation::validate_completed_genesis(root, &receipt)
+    activation::validate_live_completed_genesis(root, &receipt)
 }
 
 /// Read only the bounded saved intent. This neither acquires ownership nor

@@ -168,7 +168,12 @@ test('trusted activation withdraws the old provider and attaches UI to one nativ
         const directory = path.join(f.root, 'editor-storage', 'explorer-assistance');
         await assert.rejects(async()=>provider.resolveMcpServerDefinition(definition),/legacy_mcp_definition_retired/);
         await f.refreshFolders();
-        await new Promise(resolve => setTimeout(resolve, 200));
+        // Folder refresh schedules asynchronous private-directory preparation.
+        // Observe publication instead of assuming Windows ACL setup takes 200ms.
+        const deadline = Date.now() + 10000;
+        while (descriptorFiles(directory).length !== 1 && Date.now() < deadline) {
+            await new Promise(resolve => setTimeout(resolve, 25));
+        }
         assert.equal(descriptorFiles(directory).length, 1, 'one descriptor per window, replaced when folders change');
         assert.ok(f.calls.some(line => line.startsWith('Explorer Assistance launch descriptor was not written')), 'a missing bundle is reported, not hidden');
         await f.close();

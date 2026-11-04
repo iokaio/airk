@@ -24,9 +24,10 @@ Fresh installations use the version-independent defaults. Existing default index
 ## Development catalog boundary
 
 The 1.8.8 working build implements the planned 1.9.0 changes. P5 prepares registry
-schema 12 in isolated upgrade fixtures; normal activation
-remains disabled until Indexing and native grants are ready in P6. Ordinary new
-registries still use schema 11. Schema 12 adds independent index/Project/source
+schema 12 in isolated upgrade fixtures. The P6f working candidate activates
+qualified authority-1 catalogs through the native installer and exact fresh
+managed reservations. Raw legacy registry initialization still uses schema 11;
+it does not implicitly activate the catalog. Schema 12 adds independent index/Project/source
 identities, memberships, context preferences, grants and upgrade metadata without
 changing index-v1, collection filenames or source bytes. A prepared table does
 not enable grant, trim or split enforcement; authority and source-policy contract

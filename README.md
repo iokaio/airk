@@ -1,6 +1,6 @@
 # AIRK: Local Search for Coding Agents
 
-P6f is an implementation checkpoint: reviewed Indexing/setup/grant forms and scoped native reads are present, with actual CLI/MCP parity evidence in the [ledger](docs/research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation-in-progress). Production catalog activation remains disabled pending managed lifecycle, installed-editor and final qualification. Version remains **1.8.8**.
+P6f implements reviewed Indexing/setup/grant forms and scoped native reads. Native Genesis/upgrade admits only qualified authority-1 activation. Windows implementation, installed-editor and all 84 matched native performance gates passed, alongside focused Neo tests. The full Neo checkpoint remains required before P7. [Evidence and platform limits](docs/research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation). Version remains **1.8.8**.
 
 P6e makes [oversized stdio input](docs/mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](docs/workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
 
@@ -8,10 +8,11 @@ P6d's [source admission changes](docs/service-freshness.md) give eligible source
 
 P6c's [search execution contract](docs/search-execution.md) discloses policy-qualified lexical results when the embedding helper is unavailable, preserving strict explicit semantic requests and independent source-verification receipts. Local Windows/Mac ARM gates and all 84 unchanged-bound latency comparisons passed; the ledger records exact coverage and remaining release limits.
 
-**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](docs/releases/release-1.8.8.md) and [implementation ledger](docs/research/implementation-v190.md) track implementation and validation toward the [planned 1.9.0 release](docs/research/plan-v190.md). Project/index management remains gated. Saved-source verification defaults to Report; see the [controls and limits](docs/source-verification.md).
+**1.8.8 manual-test working build:** native/extension versions and lockfiles are synchronized. The [working-build record](docs/releases/release-1.8.8.md) and [implementation ledger](docs/research/implementation-v190.md) track implementation and validation toward the [planned 1.9.0 release](docs/research/plan-v190.md). Project/index setup and grants require explicit review. Saved-source verification defaults to Report; see the [controls and limits](docs/source-verification.md).
 
-P5's catalog upgrade foundation passed local isolated qualification. Normal activation of
-the new hierarchy remains disabled; see the [storage boundary](docs/storage-formats.md#development-catalog-boundary).
+P5's catalog upgrade foundation passed local isolated qualification. P6f's working
+candidate admits activation through qualified native Genesis/upgrade readiness;
+see the [storage boundary](docs/storage-formats.md#development-catalog-boundary).
 
 P6a implements the macOS copied-launcher correction, shared signed release
 producer and offline contributor bootstrap. Local gates passed, including the
@@ -39,7 +40,7 @@ defaults; Rich cannot restore evidence omitted during indexing.
 [Evidence guidance](docs/evidence-guidance.md) explains returned limitations and
 useful next reads without extra queries or automatic indexing.
 
-P3 records the [Project/index, migration and verification design contracts](docs/research/contracts-v190/README.md). Project/index management remains gated; P4 implemented saved-source verification.
+P3 records the [Project/index, migration and verification design contracts](docs/research/contracts-v190/README.md). P6f implements their single-index management and grant path; P4 implemented saved-source verification.
 
 **Inherited 1.8.7 behavior:** CLI and Workbench reads use the MCP handlers and retain their full results, including configured `query_concurrency` in status/diagnostics. Cold status preserves explicit setup-timeout receipts across later polls. This release consolidates all unpublished 1.8.0-1.8.6 storage, startup, retrieval, concurrency and Workbench improvements. See the [consolidated release notes](docs/releases/release-1.8.7.md) for current behavior and dated validation.
 

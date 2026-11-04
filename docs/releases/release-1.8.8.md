@@ -1,6 +1,6 @@
 # AIRK 1.8.8 manual-test working build
 
-P6f is an implementation checkpoint: reviewed Indexing/setup/grant forms and scoped native reads are present, with actual CLI/MCP parity evidence in the [ledger](../research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation-in-progress). Production catalog activation remains disabled pending managed lifecycle, installed-editor and final qualification. Version remains **1.8.8**.
+P6f implements reviewed Indexing/setup/grant forms and scoped native reads. Native Genesis/upgrade admits only qualified authority-1 activation. Windows implementation, installed-editor and all 84 matched native performance gates passed, alongside focused Neo tests. The full Neo checkpoint remains required before P7. [Evidence and platform limits](../research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation). Version remains **1.8.8**.
 
 P6e makes [oversized stdio input](../mcp.md) an explicit bounded failure and uses [qualified Workbench publication comparisons](../workbench/implementation.md) instead of treating unequal tokens as older. It adds no status polling and preserves retained exports. Local qualification and release limits remain in the implementation ledger.
 
@@ -28,10 +28,9 @@ they do not qualify a newly built 1.8.8 pair.
 
 P5's foundation passed local isolated qualification: normalized catalog metadata,
 backup/migration/import/recovery, candidate-process handoff and a gated installer
-coordinator. Normal
-catalog activation remains disabled until P6's Indexing/grant consumers are ready.
-Project/index management, recommendations, combined queries, trim and split remain
-subject to their implementation and parity gates. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
+coordinator. P6f's working candidate activates only qualified authority-1 catalogs
+with reviewed Indexing/setup/grant consumers. Recommendations, combined queries,
+trim and split remain subject to their implementation and parity gates. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
 
 Complete implementation and local gates, then manually test the identified 1.8.8
 native pair and VSIX before the CI/release handoff. Use explicit isolated testing

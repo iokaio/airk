@@ -16,7 +16,7 @@ pub(super) fn activate_fresh(root: &Path, intent: &Intent) -> Result<()> {
         ServiceLease,
         registry::catalog::genesis::{self, CatalogGenesis, GenesisStage},
     };
-    let producer = NativeProducer::new(root, intent)?;
+    let producer = NativeProducer::fresh(root, intent)?;
     ensure!(
         intent.prior.is_none(),
         "fresh genesis cannot replace a predecessor"
@@ -32,7 +32,33 @@ pub(super) fn activate_fresh(root: &Path, intent: &Intent) -> Result<()> {
         .as_ref()
         .map(|receipt| receipt.operation)
         .map_or_else(airk_kernel::service_broker::new_instance_id, Ok)?;
+    ensure!(
+        layout::initialization_control(root)? == intent.control,
+        "fresh control binding changed"
+    );
     let service = ServiceLease::acquire(&intent.control)?;
+    ensure!(
+        service.root() == intent.control,
+        "fresh control directory was redirected"
+    );
+    if let Some(receipt) = &saved {
+        layout::validate_catalog_control(&intent.control, receipt.namespace)?;
+    } else {
+        // Initialize only this owned layout before the Genesis admission fence.
+        // Existing metadata is validated read-only before the normal initializer
+        // can run, so a fresh intent cannot migrate an older saved registry.
+        if intent.control.join("service-1.4.sqlite3").try_exists()? {
+            drop(airk_store::service::registry::ServiceRegistry::open_saved(
+                &intent.control,
+            )?);
+        }
+        layout::record_control(&service)?;
+        let registry =
+            airk_store::service::registry::ServiceRegistry::open(&intent.control, operation)?;
+        let namespace = registry.incarnation()?;
+        drop(registry);
+        layout::record_registry(&service, namespace)?;
+    }
     let mut owner = CatalogGenesis::begin(service, producer.installer, operation)?;
     let mut receipt = owner.receipt()?;
     if receipt.authority_v1.is_none() {
@@ -73,6 +99,7 @@ pub(in crate::runtime_install) fn activate_managed(
         managed: Some((authority, policy, origin)),
         installer: origin.installer_identity,
         predecessor: None,
+        expected_selection: None,
     };
     let mut receipt = owner.receipt()?;
     ensure!(
@@ -135,14 +162,30 @@ pub(super) struct NativeProducer<'a> {
     )>,
     installer: Sha256Digest,
     predecessor: Option<Sha256Digest>,
+    expected_selection: Option<Selection>,
 }
 
 impl<'a> NativeProducer<'a> {
     pub(super) fn new(root: &'a Path, intent: &'a Intent) -> Result<Self> {
-        intent.validate(root)?;
+        Self::bound(root, intent, false)
+    }
+
+    fn fresh(root: &'a Path, intent: &'a Intent) -> Result<Self> {
         ensure!(
-            intent.phase == Phase::Probe && selection(root)? == Some(intent.selected()),
-            "authority qualification requires the committed candidate selection"
+            intent.prior.is_none(),
+            "fresh qualification has a predecessor"
+        );
+        Self::bound(root, intent, true)
+    }
+
+    fn bound(root: &'a Path, intent: &'a Intent, fresh: bool) -> Result<Self> {
+        intent.validate(root)?;
+        let expected_selection = selection(root)?;
+        ensure!(
+            intent.phase == Phase::Probe
+                && (expected_selection == Some(intent.selected())
+                    || (fresh && intent.prior.is_none() && expected_selection.is_none())),
+            "authority qualification requires the exact installer selection"
         );
         manager(root, intent)?.require_stopped_for_maintenance()?;
         let (candidate, _) = verify_runtime(root, &intent.candidate)?;
@@ -165,6 +208,7 @@ impl<'a> NativeProducer<'a> {
             managed: None,
             installer,
             predecessor,
+            expected_selection,
         })
     }
 
@@ -178,10 +222,9 @@ impl<'a> NativeProducer<'a> {
     fn candidate(&self) -> Result<PathBuf> {
         if let Some((authority, policy, origin)) = self.managed {
             managed::catalog::verify_origin(authority, policy, origin)?;
-            ensure!(
-                policy.lifecycle == ManagedLifecycle::UserOnDemand,
-                "external maintenance capability required"
-            );
+            // The fresh managed Genesis owner holds actual ServiceLease and
+            // provider/worker exclusions. This fixed candidate probe starts no
+            // service, including for an externally supervised reservation.
             return Ok(policy.saved_executable());
         }
         let intent = self
@@ -189,7 +232,7 @@ impl<'a> NativeProducer<'a> {
             .context("native copied installer intent missing")?;
         intent.validate(self.root)?;
         ensure!(
-            selection(self.root)? == Some(intent.selected()),
+            selection(self.root)? == self.expected_selection,
             "candidate selection changed during authority qualification"
         );
         manager(self.root, intent)?.require_stopped_for_maintenance()?;
@@ -416,6 +459,11 @@ fn authority_refusal(error: &str) -> bool {
                 || error.contains("unsupported catalog authority contract")
                 || error.contains("unknown field `authority_v1_host`")
                 || error.contains("unknown field `authority_v1`")
+                // P5's strict saved RuntimeRefusal decoder can reject this
+                // added receipt field before reaching the authority-1 fields.
+                // This is a saved-format refusal from the actual old artifact,
+                // not an argument-parser or connection error.
+                || error.contains("unknown field `native_provenance`")
                 || error
                     .contains("unsupported registry table, index, foreign-key or trigger shape")))
 }
@@ -434,6 +482,7 @@ mod tests {
     fn authority_refusal_requires_format_failure_not_parser_or_connection_failure() {
         for value in [
             "unsupported index catalog authority contract",
+            "Error: unknown field `native_provenance`, expected one of `payload_identity`, `read_refusal_digest`, `write_refusal_digest` at line 1 column 2764",
             "unsupported catalog authority contract",
             "unsupported saved service registry format",
             "unsupported registry table, index, foreign-key or trigger shape",
@@ -449,6 +498,10 @@ mod tests {
             "Usage: unsupported registry table, index, foreign-key or trigger shape",
             "index catalog upgrade is pending; resume owned installation",
             "Usage: unknown field `authority_v1_host`",
+            "Usage: unknown field `native_provenance`",
+            "unexpected argument: unknown field `native_provenance`",
+            "unrecognized subcommand 'unknown field `native_provenance`'",
+            "unknown field `unrelated_user_input`",
         ] {
             assert!(!authority_refusal(value));
         }

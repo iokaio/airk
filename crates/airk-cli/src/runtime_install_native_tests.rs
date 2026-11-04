@@ -499,3 +499,74 @@ async fn native_mcp_pending_health_eof_drains_without_late_startup() -> Result<(
         _ => Ok(()),
     }
 }
+
+#[tokio::test]
+#[ignore = "requires fresh sealed AIRK_F03_RUNTIME and explicit approval; run serially"]
+async fn actual_copied_first_install_qualifies_genesis_before_first_service() -> Result<()> {
+    use airk_store::service::registry::{ServiceRegistry, catalog::genesis};
+    let source = PathBuf::from(
+        std::env::var_os("AIRK_F03_RUNTIME").context("fresh sealed runtime required")?,
+    )
+    .canonicalize()?;
+    let approved =
+        std::env::var("AIRK_F03_APPROVED_SHA256").context("explicit runtime approval required")?;
+    ensure!(
+        runtime_pair::digest_file(&source.join("airk-install.json"))? == approved,
+        "approved runtime differs"
+    );
+    for separate_state in [false, true] {
+        let directory = tempfile::tempdir()?;
+        let base = directory.path().canonicalize()?;
+        let root = base.join("install");
+        let state = base.join("state");
+        let requested = separate_state.then_some(state.as_path());
+        staging::stage_with_layout(
+            &source,
+            &root,
+            &approved,
+            VerificationBasis::OrganizationDigest,
+            requested,
+            RuntimeChannel::Stable,
+        )?;
+        let control = layout::control(&root)?;
+        assert!(!root.join("selected.json").exists());
+        assert!(!control.join("service-1.4.sqlite3").exists());
+        let result = async {
+            activate(&root, &approved).await?;
+            let receipt =
+                genesis::pending(&control)?.context("copied installer skipped Genesis")?;
+            assert_eq!(receipt.stage, genesis::GenesisStage::Settled);
+            let qualification = receipt
+                .authority_v1
+                .context("actual native qualification absent")?;
+            assert!(qualification.readiness.required_predecessors.is_empty());
+            let registry = ServiceRegistry::open_saved(&control)?;
+            let catalog = registry
+                .catalog_state()?
+                .context("copied catalog missing")?;
+            assert!(catalog.activated);
+            assert_eq!(catalog.authority_contract, 1);
+            let health = ensure_running(&root).await?;
+            assert_eq!(registry.recorded_service_instance()?, Some(health.instance));
+            assert_eq!(selection_record(&root)?.active, approved);
+            assert!(!root.join("activation.json").exists());
+            activate(&root, &approved).await?;
+            assert_eq!(
+                ensure_running(&root).await?.instance,
+                health.instance,
+                "completed replay restarted service"
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        let _ = service_runtime::request_for_version(
+            &control,
+            ControlMethod::Shutdown,
+            env!("CARGO_PKG_VERSION"),
+        )
+        .await;
+        let cleanup = wait_quiescent(&root).await;
+        result.and(cleanup)?;
+    }
+    Ok(())
+}

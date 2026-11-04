@@ -44,7 +44,7 @@ cross-platform qualification.
 | P3 | Complete - `b72fbc8` | ADRs, schemas, authority/partition fixtures and upgrade fault boundaries |
 | P4 | Complete - `a425ba0` | Single-index saved-source verification; maintainer selected Report as the default, with explicit Off and Require |
 | P5 | Complete — this locally qualified checkpoint | Inert normalized catalogs and owned U0–U6 upgrade/recovery; production activation disabled until P6 |
-| P6 | In progress — P6a source and actual Mac validation | Operational remediation, then Indexing/grants activation; production activation remains disabled |
+| P6 | P6a–P6f locally qualified; full Neo checkpoint pending | Guarded authority-1 activation, reviewed setup/grants, installed Windows scenarios and all 84 matched native latency gates passed; full source-bound Neo campaign precedes P7 |
 | P7 | Not started | Complete combined-read parity after P6 |
 | P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
 | P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
@@ -2538,11 +2538,19 @@ implemented behavior. The next phase records the resulting DCO commit ID. No PR,
 CI run, marketplace publication or user runtime installation accompanies this
 checkpoint. Full neo public-repository qualification after all P6 remains pending.
 
-## P6f — catalog management and scoped native activation (in progress)
+<a id="p6f--catalog-management-and-scoped-native-activation-in-progress"></a>
+
+## P6f — catalog management and scoped native activation
+
+**Local acceptance, 4 November 2026:** implementation and Windows/native/editor
+gates are complete, including all 84 matched isolated-native latency comparisons.
+Focused Neo checks passed; the separately required full source-bound Neo campaign
+remains pending before P7. Working version **1.8.8** remains unpublished.
+The dated checkpoints below preserve earlier failures and incomplete states.
 
 P6e was committed and pushed as
-`df442dcfaf49d6dd5edb50feee7445513e4e64e3`. P6f is uncommitted implementation
-work; production catalog activation remains disabled and version **1.8.8** is
+`df442dcfaf49d6dd5edb50feee7445513e4e64e3`. At the initial P6f checkpoint, production catalog activation remained disabled.
+The continuation below enables guarded candidate execution. Version **1.8.8** is
 unchanged. The explicit authority-1 physical format preserves the exact
 authority-0/P5 layout and readiness contract. Backend recognition of authority
 contract 1 was enabled only after all five physical-layout tests passed,
@@ -2920,3 +2928,279 @@ Actual installer predecessor probes, accepted engine work with sibling resource
 drainage, and the remaining qualification are still required. The
 full frozen public-repository build/test checkpoint on neo remains mandatory
 after P6f acceptance and before P7; no release, signing or publication is implied.
+
+
+### P6f continuation after checkpoint b523e50 (4 November)
+
+The requested checkpoint is `b523e505685f3558e9a9240cb87718bd590884d0`,
+with the configured human DCO trailer. Nothing was pushed. The working version
+remains 1.8.8. The initial continuation passed formatting, workspace all-target /
+all-feature warning-denied Clippy and repository checks (1,692 public files).
+The extension build/suite passed 645 cases with nineteen explicit skips.
+Python collected 394 passes, one error and nine skips out of 404 cases: the
+error was this sandbox account's Git ownership refusal in the exact source-tree
+fixture. Its targeted rerun passed with a process-local safe-directory exception;
+no repository ownership or global Git configuration was changed.
+
+The installer quiescence audit found that the legacy embedding lease alone did
+not cover the separately recorded shared helper. Maintenance now holds actual
+service/worker/embedding/watch exclusion and uses the canonical native helper
+recovery adapter, preserving recorded service identity and terminal history.
+Four focused component cases passed; four explicitly native cases were ignored
+in that selector. The freshly staged instrumented pair subsequently passed actual
+startup/completion and abrupt-exit installer maintenance, with all owned command
+jobs empty at cleanup. The latter preserves the last recorded service identity
+and its exact terminal helper row, including an idempotent second observation.
+
+The first pair build withheld its receipt because the ignored runner changed
+while it was running. No qualification is claimed from that output. A frozen
+copy of the current runner produced receipt
+`3cf25015b1bbdb5c4d3b6fd126f990337b83e300b9ccc9640f6255c251db4efb`
+under `artifacts/v190/p6f-resume-guarded-pair-r2/`, bound to native input manifest
+`6f28b7615cb2962427c985d7da75cf14470c4409c35b8416cc9c3741dd8a5dc5`.
+This is an unsealed cfg(test) helper and actual minimal main, not a release pair.
+
+All three accepted-engine-work scenarios initially failed because their common
+fixture requested unsupported query concurrency 1. Using the supported minimum 4
+allowed restart/WDO recovery to pass. Ordinary exit and Retire then failed only
+on an expectation that the broker removes fencing tombstones. Their corrected
+checks preserve the tombstone count and additionally assert allocated slots/bytes
+remain charged during held work and are released afterward. Both affected cases
+passed against the same instrumented pair. Logs and actual test-binary hashes
+remain in the three `p6f-resume-native-qualification*` records; the earlier failed
+runs are not relabeled. Source preservation, sibling semantic reads, complete
+worker/provider obligations, uncertain accepted outcomes and terminal replay
+were exercised. These are native component qualifiers, not installed-editor or
+managed-upgrade acceptance.
+
+The final activation candidate is under validation. It permanently refuses P5's
+old production settlement entry point; only qualified authority-1 settlement can
+activate. Exact fresh external reservations may settle Genesis under actual
+native exclusion, while their health path still cannot elect a service. Legacy
+external layouts remain on their existing read-compatible path. The source flag
+is enabled for candidate execution; this is not yet accepted P6f cutover.
+The activation changes passed formatting and workspace warning-denied Clippy.
+Actual managed first-pin/reconnect/external-health execution, complete upgrade /
+installed-editor qualification and final source checks remain outstanding.
+
+
+The actual managed on-demand and external first-pin/reconnect/native-health case
+passed on the sealed activation pair (22.05 s on the later r3 pair). A real
+predecessor upgrade initially stopped on the old artifact's strict rejection of
+`native_provenance` before its later authority fields. The precise saved-format
+classifier and positive/parser/connection regressions were corrected. A new owned
+upgrade then passed with unchanged source and original manual MCP configuration,
+actual predecessor read/write refusal provenance, settled authority-1 readiness,
+post-health and complete native Stop. The failed earlier fixture remains retained.
+
+The first installed VSIX Restricted Mode case was blocked by Electron's install
+ACL check when launched from the execution sandbox. The same isolated test passed
+outside that sandbox, with Electron sandboxing and machine ACLs unchanged. The
+first trusted management attempt exposed a driver error: a read-only Connect click
+was recorded as connected immediately and used as fresh installation. The driver
+now uses the explicit Start service action and waits for authenticated settled UI
+state. That next run exposed a production copied-first-install ordering defect:
+a legacy service was probed before fresh Genesis. The source correction qualifies
+fresh metadata before its first service start and preserves the actual absent
+public selection until native health succeeds. Native namespace initialization
+and accepted prefix recovery use the existing claimed layout and actual leases;
+no synthetic preceding selection or arbitrary missing-directory repair is used.
+
+The r3 sealed pair passed actual copied first install for both default and separate
+state roots, including complete replay without service replacement (68.48 s).
+Its initial native-prefix fixture failed before admission because it omitted the
+real control-directory preparation step; the managed case passed after that full
+run. The fixture correction now uses actual quiescence and native role preparation.
+The affected native-prefix rerun passed (114.25 s) without changing its original
+namespace. These results do not qualify the unfinished
+trusted installed-editor scenarios, final complete workspace or performance gates.
+
+The final release pair built successfully with install-manifest SHA-256
+`4fc35d52d163b9e236708989884d399a0466d2b0adaf2ce40c91f7b1f19fe86b`.
+The first final extension suite exposed a fixed 200 ms descriptor-publication wait;
+it now observes actual publication under a bounded deadline. Its rerun passed
+645 tests with nineteen skips. The final Python run passed 402 tests with nine
+skips (411 total); repository checks cover 1,694 public files. Formatting,
+warning-denied workspace Clippy and workspace doctests passed.
+
+The first final trusted installed run reached native setup and persisted grants.
+Window B then refused Use Grant because its extension retained the startup
+absence of a runtime after window A had installed it. Its authenticated console
+connection was live. Explicit context read now adopts only that already verified
+connection, preserving client/instance/trust fences and withdrawing stale scope.
+It performs no discovery, registration or implicit grant selection. The extension
+suite now covers both prior installation and installation by another window:
+646 passes, nineteen explicit skips. Failed owned editor fixtures remain retained;
+their missing complete native Stop receipts are not claimed as qualified cleanup.
+
+
+#### P6f continuation, 4 November 2026 — installed forms and native setup
+
+P6f remains under qualification; P7 has not started. The checkpoint is committed
+as `b523e50` with the authorized contributor's DCO. Subsequent corrections are
+still working changes. Only one agent/session is active; no reset or independent
+review is claimed. Failed fixtures and their incomplete cleanup observations are
+retained separately from passing cases.
+
+The installed 1.8.8 r6 VSIX passed same-source and different-source windows
+(`native-installed-GIoHFl`), actual multi-root reload (`native-installed-GTMKJo`),
+Usage exports and Restricted Mode (`native-installed-VcKOHU`), and an unchanged
+original manual MCP configuration after an actual predecessor upgrade
+(`native-installed-O7KMLG`). Completed scenarios retain native Stop receipts.
+These records use the release pair whose manifest begins `4fc35d52`; they do not
+qualify later native corrections. The extension fixes preserve explicit scope
+through Index Now, MCP definition resolution and Activity refresh, adopt an
+already authenticated peer-installed binding, and avoid an unintended forced
+reconnect. Driver corrections reattach only read-only CDP observations after
+view replacement, tolerate the exact old-host reload cancellation, and close
+owned untitled Usage exports without an interactive Save prompt. Mutation dispatch
+is never replayed. The later full extension run passed 646 with nineteen skips
+(665 total).
+
+Managed native setup initially refused before reservation: its source-isolation
+reader did not recognize the new typed `managed_catalog_origin`. The reader now
+validates paired receipts and their install/state/control/incarnation binding,
+retains the external payload as a private boundary, and rejects unknown fields.
+All five source-isolation tests pass. The actual first-pin fixture now applies a
+reviewed tiny-file setup under both managed lifecycle policies, verifies source
+preservation and unavailable legacy compatibility authority, and passed in
+25.69 seconds on the corrected debug pair.
+
+Reconnect then exposed a separate live rollback-journal classification defect.
+Completed Genesis validation now distinguishes actual service-lease exclusion
+from the strict stopped-owner recovery lane. The live lane uses the canonical
+read-only registry reader; unknown stopped overlays still refuse without repair.
+All 21 Genesis tests pass, including the live transaction and orphan journal
+regression. A successful native status diagnostic preserves the complete selected
+scope observation and confirms that scoped status deliberately rechecks authority
+rather than using the legacy frontend scalar cache.
+
+The original local four-core campaign is failed evidence: five native-client/model
+runs passed, while five old smoke fixtures and five installer fixtures failed.
+The lifetime fixture now creates native reviewed setup/membership/grant authority
+and reuses that exact fixture scope across launcher aliases; actual abrupt client
+loss, sibling preservation and EOF passed through both tested aliases before the
+next installer failure. That failure reproduced an already-activated catalog
+update incorrectly rejected as `catalog predecessor equals candidate` when only
+package inventory changed. The distinct-engine requirement now applies to actual
+migration admission/resume; a compatible activated catalog retains its existing
+no-backfill update path. Final native execution is still pending.
+
+A missing imported compatibility grant also surfaced as temporary busy. Native
+connection classification now preserves `ScopeReadRefused` as the existing
+permanent `scoped_read_unavailable` contract, including the canonical MCP error
+receipt. Scoped callers retain the complete native refusal in their existing
+setup envelope. Focused classifier and frontend receipt regressions pass. Smoke
+fixtures now distinguish deliberately selected grants from unselected source-only
+connections and preserve the original scalar byte bound alongside the additional
+complete scope provenance. Final transport parity, installer/smoke execution,
+performance gates, source review and package identities remain outstanding.
+
+
+The corrected debug pair passed all seven actual native MCP smoke cases
+(`p6f-resume-native-smoke-r5.log`, 203.50 s), including four cold scoped clients,
+four cold unselected source clients, complete status provenance, 24 successful
+mixed scoped reads and one deliberate permanent source-only refusal. Six actual
+publication-busy receipts were handled by the existing typed retry helper; they
+are retained, not reported as zero-retry observations. The complete installer
+fixture passed after observing the documented 60-second healthy-owner interval
+before another rapid stop/update/rollback sequence (`p6f-resume-install-r4.log`).
+The prior circuit-open failure remains historical evidence; neither its limits
+nor production counters were bypassed. Installer failures now retain their owned
+fixture rather than deleting ambiguous state during exception unwinding.
+
+The affected complete Store run passed **765/765**, with four skips, in 179.56 s
+(`p6f-resume-final-store-tests-r4.log`). The actual managed setup/lifecycle-policy
+case also passed on the corrected debug pair in 23.95 s. Warning-denied complete
+workspace Clippy passed after moving the new classifier test module to the end of
+its file. The later Python suite passed **402**, with nine skips (411 total), and
+repository checks passed for **1,695** public files. These supplement the earlier
+full workspace run and corrected targeted reruns; that original run's nine
+failures are not relabeled as an all-pass full run. The final release rebuild,
+new package/transport execution, corrected four-core campaign and frozen latency
+comparisons remain pending. No new full Neo campaign has run; the focused Neo
+component snapshots above remain their own historical evidence.
+
+#### P6f local acceptance — 4 November 2026
+
+The final native input identity is
+`386c0882bd5b657ecfe85c67f7af121a04e6c8c868ed8eb92a64fb3c5b28ba18`
+(**893** inputs). The release pair manifest is
+`9ca2560e06af7a03a3c7001f28cf212b9bca0c5f4bd337eddde93c55f29e0a2d`;
+main `4e6c39fb6f2d0e14ac241a8c51bb7ca89942adb24d4b90c091a9eb6721253d5c`,
+helper `3953c420c7508003e840bac317bccdd0120afe1b0015969d03419670e1bd44c7`.
+The verified r8 Windows VSIX SHA-256 is
+`845c4087ff6bb6b8253513bb6bede3c022a1a67d535c1caafc262bb944904562`.
+Native ZIP/VSIX packaging checks passed. These remain local working artifacts;
+no push, PR, publication, promotion or signing qualification is claimed.
+
+Actual installed VSIX r7 passed all six scenario families: same-source and
+separate-source windows, real multi-root reload, Usage exports/clear, Restricted
+Mode and unchanged original legacy configuration after actual upgrade. Evidence
+is in `native-installed-bJJecU` and `native-installed-mVXk4D`, with complete native
+Stop and source preservation. Neo's first focused run then found one Unix-only
+Clippy error in a test condition. Its correction preserves the assertions and
+all production bytes. The r4/r5 payload comparison verifies all **675** payload
+files differ only in `airk-build.json` and the enclosing install manifest. The
+r7/r8 VSIX comparison verifies all **769** entries differ only in those receipts
+and their two enclosing provenance descriptors; every extension/executable byte
+is identical. Full correspondence receipts are retained. The new r5 identity
+also passed seven actual MCP smoke cases, the complete installer lifecycle,
+**219** scoped handler/CLI/MCP/Workbench calls and **73** metadata parity calls,
+and a fresh actual predecessor/installed-editor legacy scenario with complete
+native Stop. The earlier whole-UI records are not relabeled as r8 execution.
+
+The corrected four-core campaign passed **15/15** suite runs: five smoke runs
+(**7/7** each), five native-client/model runs and five complete installer runs.
+The fixture observes the existing stable-owner interval before another rapid
+restart sequence; it does not reset/bypass the production circuit. Logs and
+all outcomes are under `artifacts/ci-local/20261104-103328-73ea822a/`.
+This campaign used r4; the exact production-byte correspondence and additional
+r5 identity checks above retain that distinction. No hosted CI was used.
+
+The initial performance wrapper accidentally compared an installed launcher
+candidate with isolated-native controls. Its **52/84** outcome and raw records
+remain retained under `p6f-final-*`; it cannot qualify the plan's isolated-native
+gates or establish an installed-launcher regression against a matching installed
+baseline. Installed startup observations remain separate. The corrected private
+wrapper preserves actual native predecessor upgrade/sealed imported authority,
+then invokes the same isolated approved-runtime route as the frozen controls.
+It changes no benchmark workload, warmup, sample count, filter, budget, model or
+threshold. The canonical benchmark script is unchanged.
+
+All **84/84** corrected comparisons passed in `p6f-matched-final-gates.json`,
+including frozen/archived P5/contemporary P5 cumulative controls and the preceding
+P6e controls. Bounds remain median +max(10%, 25 ms), p95 +max(15%, 50 ms).
+Candidate Off and Report each completed **90 trials / 810 calls**, with complete
+mandatory evidence/publications, preserved source bytes, **zero errors and zero
+retries**. Off emitted zero verification receipts; Report retained all **720**
+required verified receipts. Both contemporary controls retain the same counts
+and mode-specific receipt coverage. Candidate fixtures retain complete native
+Stop. These are isolated-native latency results; installed/editor observations
+and their platform/signing limits remain separate.
+
+Neo's corrected immutable focused snapshot passed warning-denied all-target CLI
+Clippy, **20** selected native cases, **25** selected Store cases and five actual
+native fixtures: shared-helper maintenance, abrupt-owner recovery, native helper
+completion, copied Genesis and managed first-pin/setup for both lifecycle
+policies. Before/after hashes retain the same 893-input native identity. The
+failed initial snapshot is preserved separately. The focused debug pair is
+ad-hoc signed. A further actual Unix guardian-death/descendant-containment
+case passed (2.93 s) with unchanged source, bringing focused execution to 51
+passing tests. These are not the required full Neo campaign or
+Developer ID/notarization/installed-Mac-editor qualification. The pinned Rust,
+nextest and Node are available. Verified repository-pinned audit/deny/vet tools
+and portable PowerShell were prepared inside the owned qualification directory;
+no global installation or ACL was changed.
+
+Formatting, warning-denied workspace Clippy, the earlier full workspace plus
+explicit affected reruns, all 765 Store cases, doctests, Python (402 passes,
+nine skips), extension (646 passes, nineteen skips), version synchronization and
+repository/whitespace checks constitute the local source evidence. Counts and
+limitations from the earlier full run are preserved above. The combined owning
+paths and validation evidence received a primary-agent review; no independent
+review is claimed. Offline dependency policy remains limited: fresh/yanked/npm
+advisory qualification and baseline review exemptions are not relabeled as a
+fresh full release audit. Full Neo source-bound qualification is the next
+required checkpoint before P7; Linux, Intel, credentials and publication gates
+remain separate. P7 has not started.

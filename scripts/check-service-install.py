@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Offline native lifecycle fixture; installs only into its owned temporary directory."""
 import argparse
+import contextlib
 import hashlib
 import importlib.util
 import json
@@ -28,6 +29,23 @@ def fixture_parent(root=Path(__file__).resolve().parents[1]):
     parent = root / "target"
     parent.mkdir(parents=True, exist_ok=True)
     return parent
+
+
+@contextlib.contextmanager
+def owned_fixture():
+    parent = fixture_parent().resolve(strict=True)
+    fixture = Path(tempfile.mkdtemp(prefix="airk install original café fixture-", dir=parent))
+    try:
+        yield fixture
+    except BaseException:
+        print(f"Failed owned installation fixture retained: {fixture}", file=sys.stderr, flush=True)
+        raise
+    else:
+        resolved = fixture.resolve(strict=True)
+        if (fixture.is_symlink() or resolved.parent != parent
+                or not resolved.name.startswith("airk install original café fixture-")):
+            raise RuntimeError("Owned installation cleanup boundary changed")
+        shutil.rmtree(resolved)
 
 
 def check_login_plan(plan, install, platform=sys.platform):
@@ -171,7 +189,7 @@ def main():
             raise RuntimeError(f"Client lifetime fixture failed ({result.returncode}): {result.stdout[-4096:]} {result.stderr[-8192:]}")
         print(result.stdout.strip(), flush=True)
 
-    with tempfile.TemporaryDirectory(prefix="airk install original café fixture-", dir=fixture_parent()) as temporary:
+    with owned_fixture() as temporary:
         fixture = Path(temporary)
         install = fixture / "install"
         state = fixture / "service-state"
@@ -307,6 +325,16 @@ def main():
                         foreground.kill()
                         foreground.wait(timeout=30)
             health = run("ensure", "--install-dir", install)
+            # Earlier steps deliberately restart the same approved payload several
+            # times. Observe the documented healthy interval before testing another
+            # stop/upgrade/rollback sequence; do not reset or bypass its crash circuit.
+            print("Observing the stable-owner interval before upgrade/rollback...", flush=True)
+            stable_deadline = time.monotonic() + 90
+            while health["uptime_ms"] < 60_000:
+                if time.monotonic() >= stable_deadline:
+                    raise RuntimeError("Owned runtime did not sustain its healthy startup interval")
+                time.sleep(1)
+                health = run("ensure", "--install-dir", install)
             # A legal-payload change deliberately retains identical native executable
             # hashes. Health must still distinguish these approved installation identities.
             next_payload = fixture / "next-payload"

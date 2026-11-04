@@ -83,6 +83,43 @@ pub fn recover_shared_helper(
     if owner.service == current {
         return Ok(None);
     }
+    recover_record(root, &mut registry, &record)
+}
+
+/// Installer maintenance holds native service exclusion rather than inventing
+/// a replacement service instance. All recorded helpers are now excluded owners,
+/// including the last recorded instance. Never prune history here: worker drain
+/// obligations may still need these terminal observations on the next startup.
+pub(crate) fn quiesce_for_maintenance(lease: &airk_store::service::ServiceLease) -> Result<bool> {
+    let root = lease.root();
+    let saved = ServiceRegistry::open_saved(root)?;
+    let Some(state) = saved.catalog_state()? else {
+        return Ok(true); // Legacy helper lifetime remains covered by its lease.
+    };
+    if state.authority_contract == 0 {
+        return Ok(true);
+    }
+    ensure!(
+        state.activated && state.authority_contract == 1,
+        "installer shared helper coverage requires a supported active catalog"
+    );
+    let records = saved.shared_helper_drains()?;
+    drop(saved);
+    let mut registry = registry(root)?;
+    for record in records {
+        if recover_record(root, &mut registry, &record)?.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn recover_record(
+    _root: &Path,
+    registry: &mut ServiceRegistry,
+    record: &SharedHelperDrain,
+) -> Result<Option<ProviderReapWitness>> {
+    let owner = record.owner;
     // The strict canonical row records a prior native completion. Never open
     // a newly recreated job name or probe a reused numerical group after that
     // durable terminal transition; those resources are no longer ours.
@@ -93,16 +130,16 @@ pub fn recover_shared_helper(
         }));
     }
     #[cfg(unix)]
-    let done = crate::unix_guardian::shared::recover(&record, root)?;
+    let done = crate::unix_guardian::shared::recover(record, _root)?;
     #[cfg(windows)]
-    let done = recover_windows(&record)?;
+    let done = recover_windows(record)?;
     if !done {
         return Ok(None);
     }
     let mut expected = record.clone();
     expected.phase = SharedHelperPhase::Drained;
-    let result = registry.complete_shared_helper_drain(&record);
-    known_transition(&registry, result, &expected)?;
+    let result = registry.complete_shared_helper_drain(record);
+    known_transition(registry, result, &expected)?;
     // The predecessor service is excluded by the current native owner; its
     // reader threads ended with that process. Native container/guardian proof
     // above is additional, never inferred from service or row absence alone.

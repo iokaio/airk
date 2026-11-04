@@ -18,13 +18,15 @@ see the [recovery contract](../service-embedding.md#helper-recovery) and ledger.
 ## Accepted work and current behavior
 
 P5's foundation passed local isolated qualification at working version 1.8.8.
-Normal activation remains disabled. Its isolated catalog
-upgrade fixtures now exercise candidate-owned migration, retained predecessor
+P6f enables guarded authority-1 activation in the 1.8.8 working candidate.
+Its catalog upgrade fixtures exercise candidate-owned migration, retained predecessor
 refusal, bounded backup/import/recovery and the no-restore barrier after writes.
 The [storage boundary](../storage-formats.md#development-catalog-boundary)
 and [ledger](../research/implementation-v190.md) record qualified coordinator and
-performance results separately from the remaining UI/grant gates. Installing
-this candidate does not activate the new Project/index hierarchy.
+performance results, including completed local UI/grant qualification and the
+pending full Neo checkpoint before P7. Installing
+the working candidate requires qualified native Genesis/upgrade readiness;
+full release acceptance remains separate.
 
 P6a implements the copied Mac launcher correction, shared signed release
 producer and offline contributor bootstrap. Local tests, actual Developer ID

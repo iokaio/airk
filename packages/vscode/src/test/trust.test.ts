@@ -194,11 +194,14 @@ async function contextReadStarted(keys:string[],count=1):Promise<void>{
     assert.equal(keys.length,count,'explicit context read reached the existing control client');
 }
 
-test('explicit Use Grant validates actual native metadata and publishes the exact selector to MCP and Workbench',async context=>{
-    const f=await serviceTestHost(context,{registered:false}),controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function'),namespace='34'.repeat(16),host='56'.repeat(32),grantId='grt_'+'11'.repeat(16),indexId='idx_'+'22'.repeat(16),projectId='prj_'+'33'.repeat(16),sourceId='src_'+'44'.repeat(16);
+for(const peerInstalled of [false,true])test(`explicit Use Grant validates native metadata and publishes the exact selector (${peerInstalled?'installed by another window':'present at startup'})`,async context=>{
+    const f=await serviceTestHost(context,{registered:false,fresh:peerInstalled}),controller=f.context.subscriptions.find((item:any)=>typeof item.useGrant==='function'),namespace='34'.repeat(16),host='56'.repeat(32),grantId='grt_'+'11'.repeat(16),indexId='idx_'+'22'.repeat(16),projectId='prj_'+'33'.repeat(16),sourceId='src_'+'44'.repeat(16);
     const rows:any[]=[];let workbenchSpec:LaunchSpec|undefined;
     try{
-        await controller.refresh();await controller.console.controller.refresh();await controller.prepareWindowContext();
+        await controller.refresh();
+        if(peerInstalled){assert.equal(controller.binding,undefined);f.state.ensured=1;}
+        await controller.console.controller.refresh();await controller.prepareWindowContext();
+        assert.equal(controller.currentBinding(),true,'authenticated context adoption is current without a legacy registration refresh');
         const key=controller.explorerHost().windowContext().key;
         const backing={binding:'77'.repeat(32),root:path.join(f.root,'native-outside-window'),data_root:path.join(f.root,'native-index-storage'),collection:'native-index'};
         const grant={grant:{id:grantId,host,revision:1,revoked:false,memberships:[{membership:{project_id:projectId,index_id:indexId,revision:1,scope:[{source_root_id:sourceId,kind:'subtree',path:''}]},source_revision:1,policy_epoch:0,policy_digest:null}]},provenance:{kind:'user_reviewed_project_grant'}};
@@ -209,10 +212,23 @@ test('explicit Use Grant validates actual native metadata and publishes the exac
         assert.equal(f.writes.length,before);assert.equal(result.grant_detail.detail.future_native_detail,'retained');assert.equal(result.index_detail.detail.future_native_detail,'retained');assert.ok(workbenchSpec);
         assert.deepEqual(workbenchSpec!.catalogSession,{schema:1,context_key:key,namespace,expected_catalog_revision:1,grant_id:grantId,expected_grant_revision:1,index_id:indexId,project_ids:[projectId]});
         const definitions=await controller.provideDefinitions();assert.equal(definitions.length,1);assert.equal(definitions[0].command,workbenchSpec!.command);assert.deepEqual(definitions[0].args,launchArgs(workbenchSpec!));assert.equal(definitions[0].args.includes('--root'),false);assert.equal(workbenchSpec!.root,backing.root);
+        const discovered=f.state.discovered;
+        await controller.refresh();assert.equal(f.state.discovered,discovered,'valid explicit scope does not re-enumerate legacy registrations');
+        assert.equal(await controller.resolveDefinition(definitions[0]),definitions[0],'actual MCP resolution preserves the deliberate selector');
         assert.deepEqual(rows.map(value=>value.expected_catalog_revision),[1,1]);assert.deepEqual(rows.map(value=>value.entity.kind),['grant','index']);
+        const priorWrites=f.writes.length;
+        const managementActions:string[]=[],run=controller.console.run.bind(controller.console);
+        context.mock.method(controller.console,'run',async(action:string,...args:unknown[])=>{managementActions.push(action);return run(action,...args);});
+        await controller.index();await controller.index();
+        assert.deepEqual(managementActions,['refresh','refresh'],'opening Activity observes the existing client rather than replacing its authority');
+        assert.equal(f.writes.length,priorWrites+2,'each explicit index action dispatches a native job');
+        assert.ok(f.writes.slice(priorWrites).every(value=>value.enqueue?.project===backing.binding),'both jobs retain the selected Index backing');
+        assert.deepEqual(await controller.provideDefinitions(),definitions,'index actions retain the deliberate native selection');
+        // Subsequent read-only administration assertions start after those explicit jobs.
+        const afterIndexWrites=f.writes.length;
         const reports:string[][]=[];context.mock.method(native,'runText',async(_command:string,args:string[])=>{reports.push(args);return JSON.stringify({future_native_usage:'retained'});});
         const usage=await controller.explorerHost().usage(workbenchSpec,()=>true);assert.match(usage.view().html,/Open Index administration/);assert.equal(reports.length,0,'selected Usage cannot read entire Index history');
-        await assert.rejects(controller.usageWriter(workbenchSpec,()=>true)(['clear']),/explicit_index_administration_required/);assert.equal(f.writes.length,before);
+        await assert.rejects(controller.usageWriter(workbenchSpec,()=>true)(['clear']),/explicit_index_administration_required/);assert.equal(f.writes.length,afterIndexWrites);
         await usage.action({type:'usage',action:'openIndexAdministration'});assert.equal(reports.length,1);assert.equal(reports[0].includes('--catalog-session'),false);assert.equal(reports[0][reports[0].indexOf('--service-project')+1],backing.binding);
         const admin=f.panels.find((panel:any)=>panel.viewType==='airk.usage');assert.ok(admin);assert.match(admin.webview.html,/Entire Index history and shared data-root totals/);
         const actualDetail=f.state.catalogDetailReply;f.state.catalogDetailReply=args=>{const response=actualDetail!(args) as any;if((args.entity as any).kind==='index')return {...response,detail:{...response.detail,item:{...response.detail.item,value:{...response.detail.item.value,backing:{...backing,binding:'88'.repeat(32)}}}}};return response;};

@@ -18,6 +18,8 @@ struct StateBinding {
     logs: Option<std::path::PathBuf>,
     channel: String,
     ready: bool,
+    #[serde(default)]
+    managed_catalog_origin: Option<super::catalog::genesis::ManagedGenesisOrigin>,
 }
 
 fn binding(path: &Path) -> Result<StateBinding> {
@@ -64,9 +66,31 @@ fn private_paths(connection: &Connection, runtime: &Path) -> Result<Vec<std::pat
                 binding(&owner.install.join("runtime-layout.json"))? == owner,
                 "install/state source-isolation receipts disagree"
             );
+            if let Some(origin) = &owner.managed_catalog_origin {
+                origin.validate()?;
+                let namespace: String = connection.query_row(
+                    "SELECT incarnation FROM service_meta WHERE id=1",
+                    [],
+                    |row| row.get(0),
+                )?;
+                ensure!(
+                    origin.install == owner.install
+                        && origin.state == owner.state
+                        && origin.control == runtime
+                        && origin.namespace.to_string() == namespace
+                        && origin.source.canonicalize()? == origin.source,
+                    "managed source-isolation origin differs from the native binding"
+                );
+            }
             for path in [&owner.install, &owner.state]
                 .into_iter()
                 .chain(owner.logs.as_ref())
+                .chain(
+                    owner
+                        .managed_catalog_origin
+                        .as_ref()
+                        .map(|origin| &origin.source),
+                )
             {
                 ensure!(
                     path.is_absolute()

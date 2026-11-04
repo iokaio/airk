@@ -89,6 +89,31 @@ fn shared_recovery_requires_positive_coverage_and_exact_admission() -> Result<()
 }
 
 #[test]
+fn maintenance_keeps_legacy_identity_and_refuses_inactive_shared_coverage() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let root = directory.path().join("legacy");
+    crate::local_ipc::prepare_root(&root)?;
+    drop(ServiceRegistry::open(&root, OLD)?);
+    let lease = ServiceLease::acquire(&root)?;
+    assert!(quiesce_for_maintenance(&lease)?);
+    assert!(
+        ServiceRegistry::open_saved(&root)?
+            .catalog_state()?
+            .is_none()
+    );
+    let fixture = Fixture::new()?;
+    assert!(quiesce_for_maintenance(&fixture.lease)?);
+    assert_eq!(
+        registry(&fixture.root)?.recorded_service_instance()?,
+        Some(OLD)
+    );
+    let sql = rusqlite::Connection::open(fixture.root.join("service-1.4.sqlite3"))?;
+    sql.execute("UPDATE index_catalog_meta SET activated=0", [])?;
+    assert!(quiesce_for_maintenance(&fixture.lease).is_err());
+    Ok(())
+}
+
+#[test]
 fn guarded_mode_never_falls_back_for_unqualified_or_unknown_catalog_contracts() -> Result<()> {
     let fixture = Fixture::new()?;
     assert!(crate::embedding_pool_bootstrap::shared_mode(&fixture.root)?);

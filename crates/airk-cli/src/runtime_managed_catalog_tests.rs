@@ -3,10 +3,11 @@
 //! These do not qualify execution of an activated paired runtime.
 use super::*;
 use airk_core::identity::Incarnation;
+use airk_store::service::registry::ServiceRegistry;
 
 // Isolated PHYSICAL-FORMAT fixture, not executed native activation, service
 // shutdown, provider containment, or a runtime qualification receipt. Only this
-// test leaf sets fixture activation markers; production keeps its flag false.
+// test leaf sets fixture activation markers; it is not native activation evidence.
 fn settled_format_fixture(
     authority: &InstallerAuthority<'_>,
     policy: &Managed,
@@ -558,5 +559,209 @@ fn lost_initialized_control_is_not_recreated_or_assigned_another_namespace() -> 
         assert_eq!(fs::read(path)?, bytes);
     }
     assert_eq!(layout::managed_origin(&root)?.unwrap().namespace, namespace);
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore = "requires fresh sealed AIRK_F03_RUNTIME and explicit approval; run serially"]
+async fn actual_managed_first_pin_settles_before_connection_and_external_health() -> Result<()> {
+    let source = PathBuf::from(
+        std::env::var_os("AIRK_F03_RUNTIME").context("fresh sealed runtime required")?,
+    )
+    .canonicalize()?;
+    let approved =
+        std::env::var("AIRK_F03_APPROVED_SHA256").context("explicit runtime approval required")?;
+    ensure!(
+        runtime_pair::digest_file(&source.join("airk-install.json"))? == approved,
+        "approved input differs"
+    );
+    for lifecycle in [ManagedLifecycle::UserOnDemand, ManagedLifecycle::External] {
+        let directory = tempfile::tempdir()?;
+        let base = directory.path().canonicalize()?;
+        let root = base.join("install");
+        let state = base.join("state");
+        local_ipc::prepare_root(&root)?;
+        let mut external = None;
+        let result = async {
+            let configured = configure(
+                &source,
+                &root,
+                &approved,
+                VerificationBasis::OrganizationDigest,
+                lifecycle,
+                Some(&state),
+                RuntimeChannel::Stable,
+            )
+            .await?;
+            let origin =
+                layout::managed_origin(&root)?.context("actual first pin lacks reservation")?;
+            let receipt =
+                genesis::pending(&origin.control)?.context("actual Genesis receipt missing")?;
+            assert_eq!(receipt.stage, genesis::GenesisStage::Settled);
+            assert_eq!(receipt.coordinator_origin.as_ref(), Some(&origin));
+            assert!(receipt.authority_v1.is_some());
+            genesis::require_managed_settled(&origin.control, &origin)?;
+            let saved = ServiceRegistry::open_saved(&origin.control)?;
+            let catalog = saved
+                .catalog_state()?
+                .context("actual activated catalog missing")?;
+            assert!(catalog.activated);
+            assert_eq!(catalog.authority_contract, 1);
+            drop(saved);
+            if lifecycle == ManagedLifecycle::External {
+                assert_eq!(configured["awaiting_external_supervisor"], true);
+                assert!(!root.join("selected.json").exists());
+                let _excluded = ServiceLease::acquire(&origin.control)?;
+                drop(_excluded);
+                let mut command = Command::new(source.join(main_name()));
+                command
+                    .args(["serve", "--runtime-dir"])
+                    .arg(&origin.control)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null());
+                hidden(&mut command);
+                external = Some(crate::native_process::spawn(&mut command)?);
+            } else {
+                assert_eq!(configured["selected"], true);
+            }
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+            let first = loop {
+                match ensure_running(&root).await {
+                    Ok(health) => break health,
+                    Err(error)
+                        if tokio::time::Instant::now() < deadline
+                            && lifecycle == ManagedLifecycle::External =>
+                    {
+                        ensure!(
+                            error.downcast_ref::<SupervisorUnavailable>().is_some(),
+                            "unexpected external refusal: {error:#}"
+                        );
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    Err(error) => return Err(error),
+                }
+            };
+            assert_eq!(selection_record(&root)?.active, approved);
+            assert!(
+                !root.join("runtimes").exists(),
+                "managed pin copied its immutable provider"
+            );
+            let called = std::cell::Cell::new(0);
+            let lock = install_lock(&root)?;
+            let authority = InstallerAuthority {
+                root: &root,
+                _lock: &lock,
+            };
+            let second = ensure_running_locked_after_settlement(&authority, || {
+                genesis::require_managed_settled(&origin.control, &origin)?;
+                called.set(called.get() + 1);
+                Ok(())
+            })
+            .await?;
+            assert_eq!(called.get(), 1);
+            assert_eq!(
+                first.instance, second.instance,
+                "healthy connection re-elected service"
+            );
+            assert_eq!(
+                genesis::pending(&origin.control)?.unwrap().operation,
+                receipt.operation
+            );
+            let primary = base.join("source");
+            fs::create_dir(&primary)?;
+            let original = b"export function ManagedFirstEvidence() { return 17; }\n";
+            fs::write(primary.join("fixture.ts"), original)?;
+            let epoch = service_runtime::request_for_version(
+                &origin.control,
+                ControlMethod::RequestEpoch,
+                env!("CARGO_PKG_VERSION"),
+            )
+            .await?;
+            let ControlResponse::RequestEpoch { namespace, epoch } = epoch else {
+                anyhow::bail!("actual managed request epoch missing");
+            };
+            let current = ServiceRegistry::open_saved(&origin.control)?
+                .catalog_state()?
+                .context("managed catalog missing")?;
+            let selection = airk_core::catalog_setup::IndexSetupSelection {
+                key: airk_core::service::RequestKey {
+                    namespace,
+                    epoch,
+                    nonce: airk_kernel::service_broker::new_instance_id()?,
+                },
+                expected_catalog_revision: current.revision,
+                name: "Managed first Index".into(),
+                primary_root: primary.to_str().context("source path")?.into(),
+                data_root: base
+                    .join("index-data")
+                    .to_str()
+                    .context("data path")?
+                    .into(),
+                collection: "managed-first".into(),
+                additional_roots: vec![],
+                setup_watch: false,
+            };
+            let draft = service_runtime::request_for_version(
+                &origin.control,
+                ControlMethod::CatalogIndexSetupDraft { selection },
+                env!("CARGO_PKG_VERSION"),
+            )
+            .await?;
+            let ControlResponse::CatalogIndexSetupDraft { draft, .. } = draft else {
+                anyhow::bail!("actual managed native setup review missing");
+            };
+            let applied = service_runtime::request_for_version(
+                &origin.control,
+                ControlMethod::CatalogIndexSetupApply { draft },
+                env!("CARGO_PKG_VERSION"),
+            )
+            .await?;
+            let ControlResponse::CatalogIndexSetupApplied { receipt: setup } = applied else {
+                anyhow::bail!(
+                    "actual managed native setup was not applied: {}",
+                    serde_json::to_string(&applied)?
+                );
+            };
+            assert_eq!(setup.stage, airk_core::catalog_setup::SetupStage::Ready);
+            assert_eq!(fs::read(primary.join("fixture.ts"))?, original);
+            let eligibility = service_runtime::request_for_version(
+                &origin.control,
+                ControlMethod::CatalogLegacyBinding {
+                    project: setup.request.registration.binding,
+                    expected_catalog_revision: None,
+                },
+                env!("CARGO_PKG_VERSION"),
+            )
+            .await?;
+            let ControlResponse::CatalogLegacyBinding { observation } = eligibility else {
+                anyhow::bail!("actual managed compatibility observation missing");
+            };
+            assert!(
+                matches!(
+                    observation.eligibility,
+                    airk_core::catalog_host::NativeLegacyBindingEligibility::Unavailable
+                ),
+                "setup alone granted evidence access"
+            );
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+        let control = state.join("control");
+        let _ = service_runtime::request_for_version(
+            &control,
+            ControlMethod::Shutdown,
+            env!("CARGO_PKG_VERSION"),
+        )
+        .await;
+        let cleanup = wait_quiescent(&root).await;
+        if let Some(mut child) = external {
+            if cleanup.is_err() {
+                let _ = child.kill();
+            }
+            child.wait()?;
+        }
+        result.and(cleanup)?;
+    }
     Ok(())
 }

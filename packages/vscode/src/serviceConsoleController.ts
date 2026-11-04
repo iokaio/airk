@@ -50,6 +50,10 @@ export class ServiceConsoleController {
     private registryObservationSuspended=false;
     /** Internal host ownership fence; never serialized into a webview/native schema. */
     get observationIdentity():string{return this.observationToken;}
+    /** Already authenticated connection only; never discovers or starts a runtime. */
+    get connectedRuntimeBinding():RuntimeBinding|undefined{
+        return !this.disposed&&this.host.trusted()&&this.state.connected&&this.client?this.binding:undefined;
+    }
     private binding?:RuntimeBinding;
     private bootstrap?:BootstrapObservation;
     private client?:ServiceClient;

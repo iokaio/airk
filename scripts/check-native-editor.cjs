@@ -127,7 +127,19 @@ async function legacyFixture(){
     if(!value.probe?.symbol||!value.probe.path||!/^[a-f0-9]{64}$/.test(value.probe.content_sha256))throw new Error('Native legacy fixture probe is missing');
     const probe=await canonicalOwned(value.source_root,path.resolve(value.source_root,value.probe.path));
     if(sha(await fs.readFile(probe))!==value.probe.content_sha256)throw new Error('Actual original legacy probe bytes changed');
-    return {...value,qualification:{status:'unqualified',reason:'Actual managed-upgrade producer and exact activation/readiness/post-health semantic bindings are not yet qualified'}};
+    const previous=value.predecessor;
+    if(!previous)throw new Error('Actual predecessor inventory is required');
+    const previousRuntime=await canonicalOwned(fixture,previous.runtime_dir),previousManifest=await fs.readFile(path.join(previousRuntime,'airk-install.json'));
+    if(sha(previousManifest)!==previous.install_manifest_sha256)throw new Error('Predecessor manifest changed');
+    const previousInventory=JSON.parse(previousManifest),previousNames=Object.keys(previousInventory.files);
+    if(previousNames.length>4096)throw new Error('Predecessor payload inventory exceeds fixture bound');
+    for(const name of previousNames){const file=await ownedPath(previousRuntime,path.resolve(previousRuntime,name));if(sha(await fs.readFile(file))!==previousInventory.files[name])throw new Error('Predecessor payload changed: '+name);}
+    const previousPair=JSON.parse(await fs.readFile(path.join(previousRuntime,'airk-runtime.json'),'utf8'));
+    const previousMain=process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk':process.platform==='win32'?'airk.exe':'airk';
+    const previousHelper=process.platform==='darwin'?'AIRK.app/Contents/MacOS/airk-embed':process.platform==='win32'?'airk-embed.exe':'airk-embed';
+    if(previousInventory.files[previousMain]!==previousPair.airk_sha256||previousInventory.files[previousHelper]!==previousPair.embed_sha256)throw new Error('Predecessor native pair differs from its verified inventory');
+    const {pairIdentity,qualifyLegacyNative}=require('./native-editor-legacy.cjs');
+    return {...value,qualification:qualifyLegacyNative(value,{candidateIdentity:pairIdentity(pair),predecessorIdentity:pairIdentity(previousPair)})};
 }
 /** Installed AIRK Explorer: Search shows a cited fixture hit and Management lists the registered project. */
 async function checkExplorer(ui){
@@ -175,6 +187,8 @@ async function cleanupServices(){
     return results;
 }
 async function main(){
+    const harnessPaths=['scripts/check-native-editor.cjs','scripts/editor-ui.cjs','scripts/native-editor-legacy.cjs','packages/vscode/out/test/installedEditor.js'];
+    const harness=Object.fromEntries(await Promise.all(harnessPaths.map(async name=>[name,sha(await fs.readFile(path.join(root,name)))])));
     const stage=(await fs.lstat(source)).isDirectory();
     if(stage){const version=JSON.parse(await fs.readFile(path.join(source,'package.json'),'utf8')).version;
         bundle=await require(path.join(root,'packages/vscode/out/serviceBootstrap.js')).verifyBundledRuntime(source,version);}
@@ -193,12 +207,12 @@ async function main(){
 exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON.stringify(path.join(root,'packages/vscode/out/test/installedEditor.js'))}).run()
 .catch(error=>fs.writeFile(path.join(process.env.AIRK_EDITOR_RUN,process.env.AIRK_EDITOR_SCENARIO,process.env.AIRK_EDITOR_ROLE+'-error.json'),JSON.stringify({error:String(error),stack:error.stack})))
 .finally(()=>vscode.commands.executeCommand('workbench.action.quit'));};`);
-    const summary={schema:'airk-native-editor/2',source,staged:stage,nativeInstallDigest:bundle.digest,selectedScenarios:scenarios,legacyUpgradeCoverage:false,scenarios:[]};
+    const summary={schema:'airk-native-editor/2',source,staged:stage,nativeInstallDigest:bundle.digest,harness,selectedScenarios:scenarios,legacyUpgradeCoverage:false,scenarios:[]};
     console.log(`Native editor output: ${run}`);
     for(const scenario of scenarios){
         const folder=path.join(run,scenario);await fs.mkdir(folder);const scenarioDeadline=Date.now()+600000;
         const legacy=scenario==='legacy'?await legacyFixture():undefined;
-        if(scenario==='legacy'){
+        if(scenario==='legacy'&&!legacy){
             summary.scenarios.push({scenario,status:'unqualified',coverage:false,reason:legacy?.qualification.reason??'AIRK_EDITOR_LEGACY_FIXTURE from an actual native managed upgrade is unavailable'});
             if(legacy)await fs.writeFile(path.join(folder,'legacy-fixture-unqualified.json'),JSON.stringify(legacy,null,2));
             await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));continue;}
@@ -241,7 +255,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
                     if(request&&handled.get(role)!==request.sequence){
                         if(!Number.isSafeInteger(request.sequence)||request.sequence<1||request.sequence>256)throw new Error('Private UI action budget/sequence invalid');
                         uis[role]??=await editorUi(ports[role],scenarioDeadline);
-                        const actions=['serviceStop','connect','page','inspect','setupDraft','setupApply','projectDraft','renameDraft','membershipDraft','apply','context','associationDraft','grantDraft','useGrant','revokeDraft','read','reconcile','staleApply','restricted','usageScoped','usageAdmin','usageJson','usageClear'];
+                        const actions=['serviceStop','connect','startService','page','inspect','setupDraft','setupApply','projectDraft','renameDraft','membershipDraft','apply','context','associationDraft','grantDraft','useGrant','revokeDraft','read','reconcile','staleApply','restricted','usageScoped','usageAdmin','usageJson','usageClear'];
                         if(!actions.includes(request.action))throw new Error('Unknown private Indexing action');
                         const fixture=await fs.realpath(folder);
                         if(request.action==='serviceStop'){await canonicalOwned(fixture,request.installDir);if(request.installDir!==path.join(folder,'native-service')||request.runtimeSha256!==bundle.digest||!/^[a-f0-9]{32}$/.test(request.namespace))throw new Error('Crossed owned Stop fixture binding');}
@@ -285,6 +299,7 @@ exports.activate=()=>{if(!process.env.AIRK_EDITOR_RUN)return;void require(${JSON
         await cleanupServices();
         await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));console.log(`${scenario}: native editor passed`);
     }
+    for(const [name,digest]of Object.entries(harness))if(sha(await fs.readFile(path.join(root,name)))!==digest)throw new Error('Installed-editor harness changed during qualification: '+name);
     summary.status=summary.scenarios.some(row=>row.status==='unqualified')?'partial':'passed';
     summary.qualifiesFullScenarioSelection=summary.status==='passed';
     await fs.writeFile(path.join(run,'summary.json'),JSON.stringify(summary,null,2));

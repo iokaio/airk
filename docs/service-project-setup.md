@@ -1,6 +1,39 @@
 # Reviewed project registration and launcher binding
 
-Current onboarding follow-up (October 25): trusted VSIX activation automatically prepares and submits registrations for new workspace folders using native defaults or User storage selection, then queues model setup and indexing with automatic watching. The native canonical-path, reservation, isolation and trust checks below still apply. Existing saved 1.4 bindings are retained without changing their storage, watching or index work. Manual storage changes still show an exact review. The dated checkpoint and artifact results below describe the earlier manual-only setup.
+The 1.8.8 P6f working candidate uses explicit setup and grant review. In a fresh
+trusted installation, **Management → Service → Start service** prepares the
+approved bundled runtime; **Connect / reconnect** observes an existing installation.
+Neither action selects workspace folders for indexing or grants evidence access.
+If another window installed the runtime after this window opened, connect and
+read the saved window association to adopt that authenticated runtime. This read
+does not restore saved grant authority; Use Grant remains an explicit action.
+Fresh native Genesis completes before the first ordinary service start. Public
+runtime selection follows qualified catalog metadata and actual native health.
+An interrupted fresh installer resumes its exact claimed layout and namespace;
+it does not create a replacement for lost initialized state.
+
+In **Indexing → Library**, review the primary source, optional additional source
+locations, existing storage parent and new index leaf, collection and watching
+choice. Native prepare/reserve/storage/register ownership remains authoritative.
+The host retains the full draft and original request across uncertain outcomes;
+reconciliation follows that request rather than guessing that a timeout failed.
+Occupied or unowned destinations, missing parents, aliases and source/private
+state overlap refuse. Reads never create missing storage. Restore missing owned
+data from its original state, or review a distinct new index setup explicitly.
+
+Create a Project and its source/path memberships, review and persist an access
+grant, then explicitly **Use Grant for this window** for one index and a Project
+subset. Saved associations and defaults convey no authority. Revocation closes
+existing and new scoped connections through native delivery and worker fences.
+Imported legacy snapshots remain bound to their original one-index connection.
+Restricted Mode exposes Manage Workspace Trust and blocks native work; disposed
+or revoked client authority retains its distinct refusal and requires a current
+connection. See the [CLI catalog](cli-reference.md), [storage boundary](storage-formats.md#development-catalog-boundary)
+and [P6f execution ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation).
+
+## Historical registration checkpoints
+
+Historical onboarding follow-up (25 October 2026; superseded by P6f): trusted VSIX activation automatically prepares and submits registrations for new workspace folders using native defaults or User storage selection, then queues model setup and indexing with automatic watching. The native canonical-path, reservation, isolation and trust checks below still apply. Existing saved 1.4 bindings are retained without changing their storage, watching or index work. Manual storage changes still show an exact review. The dated checkpoint and artifact results below describe the earlier manual-only setup.
 
 **Development checkpoint before the 1.4 default cutover (2026-10-24).** The artifact identities and 1.3.2 development versions below remain historical evidence. The current source/lockfiles are 1.4.0 and the extension/public CLI now use service defaults; see the [current completion checklist](service-implementation-checklist.md).
 

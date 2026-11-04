@@ -257,8 +257,11 @@ After accepted post-upgrade writes, automatic backup restore/downgrade is refuse
 forward repair preserves user work. Backups include committed SQLite/WAL state,
 stay private and never restore collection directories. Retain settings, jobs,
 outcomes, source watermarks, aliases, pause/manual policies and removal history.
-Production activation is **disabled until complete P6**; public combined reads
-remain **disabled until complete P7**. Old executables reject newer schema;
+P5 kept production activation disabled. P6f's 1.8.8 working candidate enables only
+qualified native authority-1 Genesis/upgrade activation with reviewed management
+and grant enforcement; its acceptance evidence and remaining gates are in the
+[implementation ledger](../research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation).
+Public combined reads remain **disabled until complete P7**. Old executables reject newer schema;
 new legacy API adapters preserve one-index semantics without weakening fences.
 
 Complete the existing owned control-layout/default-storage relocation while the

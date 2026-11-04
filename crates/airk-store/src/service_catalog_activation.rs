@@ -274,7 +274,7 @@ fn verify_fresh_inactive(
     );
     Ok(current)
 }
-pub(super) fn validate_completed_genesis(root: &Path, receipt: &GenesisReceipt) -> Result<()> {
+fn completed_genesis_record(receipt: &GenesisReceipt) -> Result<&AuthorityV1ActivationRecord> {
     ensure!(
         matches!(
             receipt.stage,
@@ -287,9 +287,41 @@ pub(super) fn validate_completed_genesis(root: &Path, receipt: &GenesisReceipt) 
         .as_ref()
         .context("committed genesis activation lacks qualification")?;
     validate_genesis_record(receipt, record)?;
+    Ok(record)
+}
+pub(super) fn validate_completed_genesis(root: &Path, receipt: &GenesisReceipt) -> Result<()> {
+    let record = completed_genesis_record(receipt)?;
     let read = registry(root, false)?;
     super::super::validate_existing(&read)?;
     activated_identity(&super::super::state(&read)?, record, true)
+}
+pub(super) fn validate_live_completed_genesis(root: &Path, receipt: &GenesisReceipt) -> Result<()> {
+    let record = completed_genesis_record(receipt)?;
+    let current = match crate::service::ServiceLease::acquire(root) {
+        Ok(_excluded) => {
+            // With no live owner, every unexplained overlay still requires its
+            // original recovery lane. This reader never replays a journal.
+            let read = registry(root, false)?;
+            super::super::validate_existing(&read)?;
+            super::super::state(&read)?
+        }
+        Err(error)
+            if matches!(
+                error.downcast_ref::<std::fs::TryLockError>(),
+                Some(std::fs::TryLockError::WouldBlock)
+            ) =>
+        {
+            // An actual native owner can be committing an ordinary DELETE-mode
+            // transaction. Reuse the canonical read-only saved-registry reader,
+            // which retains owner/namespace/schema/authority checks and rejects
+            // WAL/SHM, instead of calling that live rollback journal corruption.
+            super::super::super::ServiceRegistry::open_saved(root)?
+                .catalog_state()?
+                .context("completed genesis catalog missing")?
+        }
+        Err(error) => return Err(error),
+    };
+    activated_identity(&current, record, true)
 }
 pub(super) fn validate_owned_genesis(root: &Path, receipt: &GenesisReceipt) -> Result<()> {
     if admission(root, receipt)? == GenesisAdmission::Committed {
@@ -727,6 +759,36 @@ mod tests {
         }
         Ok(())
     }
+    #[test]
+    fn completed_genesis_reads_live_owner_transaction_but_refuses_orphan_overlay() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let owner = qualified_genesis(root.path())?;
+        let receipt = owner.settle_authority_v1_at(|_| Ok(()))?;
+        drop(owner);
+        let native_owner = crate::service::ServiceLease::acquire(root.path())?;
+        let writer = Connection::open(root.path().join(DATABASE))?;
+        writer.execute_batch("BEGIN IMMEDIATE; UPDATE service_meta SET revision=revision+1;")?;
+        let journal = root.path().join(format!("{DATABASE}-journal"));
+        assert!(
+            journal.try_exists()?,
+            "live native transaction did not create its journal"
+        );
+        assert!(
+            validate_completed_genesis(root.path(), &receipt).is_err(),
+            "owned recovery accepted a live journal"
+        );
+        validate_live_completed_genesis(root.path(), &receipt)?;
+        writer.execute_batch("ROLLBACK;")?;
+        drop(writer);
+        drop(native_owner);
+        let before = fs::read(root.path().join(DATABASE))?;
+        fs::write(&journal, b"unknown stopped-owner journal")?;
+        assert!(validate_live_completed_genesis(root.path(), &receipt).is_err());
+        assert_eq!(fs::read(&journal)?, b"unknown stopped-owner journal");
+        assert_eq!(fs::read(root.path().join(DATABASE))?, before);
+        Ok(())
+    }
+
     #[test]
     fn committed_genesis_never_recovers_an_unknown_postclear_journal() -> Result<()> {
         let root = tempfile::tempdir()?;

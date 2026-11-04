@@ -1,5 +1,17 @@
 # Architecture
 
+P6f keeps typed catalog/grant/setup contracts in Core and bounded durable catalog,
+setup, source-change and fencing journals in Store. CLI owns the native installer,
+provider containment, authenticated admission and receipt reconciliation; the
+existing Supervisor owns worker/resource drainage. MCP and canonical native read
+handlers preserve complete scoped results. The extension renders reviewed forms
+and explicitly selects a grant for one index; preferences grant no authority.
+Fresh managed reservations settle Genesis under actual native exclusion before
+service admission. External policies still cannot elect a service from health
+checks. No new scheduler, database service or source mutation is introduced. The
+[ledger](research/implementation-v190.md#p6f--catalog-management-and-scoped-native-activation)
+separates current native execution from installed/platform qualification.
+
 The 1.8.8 working build adds [evidence guidance](evidence-guidance.md) as a pure Core
 projection of returned metadata. Native rendering and Kernel Workbench fallback
 share it; the extension only presents/preserves the result. It introduces no
@@ -40,8 +52,8 @@ configuration. The CLI installer owns process drain and verified payload choice;
 an internal candidate-process command owns an already admitted Store migration
 and returns the complete receipt, leaving readiness admission fenced. Pending
 resume verifies the payload before journal recovery and retains service ownership
-across that transition. Production activation remains disabled until P6; ordinary
-reads and service startup cannot initiate migration. Bounded native overlap and
+across that transition. P6f adds qualified authority-1 activation; ordinary reads
+and unfenced service startup cannot initiate migration. Bounded native overlap and
 repository-marker observations remain internal until their authorized routes and
 consumer parity are implemented. See the [ledger](research/implementation-v190.md)
 and [storage boundary](storage-formats.md#development-catalog-boundary).

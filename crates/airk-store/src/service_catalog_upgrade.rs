@@ -397,7 +397,7 @@ pub fn pending(root: &Path) -> Result<Option<UpgradeReceipt>> {
 
 /// P5 only prepares and qualifies isolated upgrades. P6 must enable this together
 /// with native grant enforcement and the reviewed editor/explicit-setup cutover.
-pub const PRODUCTION_ACTIVATION_ENABLED: bool = false;
+pub const PRODUCTION_ACTIVATION_ENABLED: bool = true;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

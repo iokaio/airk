@@ -37,15 +37,17 @@ fn resolved_control(root: &Path, installer: Sha256Digest) -> Result<PathBuf> {
 pub(super) fn control_for_resume(root: &Path, intent: &Intent) -> Result<PathBuf> {
     intent.validate(root)?;
     ensure!(
-        intent.phase == Phase::Probe && selection(root)? == Some(intent.selected()),
-        "pending catalog requires its committed installer activation"
+        intent.phase == Phase::Probe
+            && (selection(root)? == Some(intent.selected())
+                || (intent.prior.is_none() && selection(root)?.is_none())),
+        "pending catalog requires its exact installer activation"
     );
     let (main, _) = verify_runtime(root, &intent.candidate)?;
     layout::catalog_control(root, runtime_pair::engine_identity_at(&main)?)
 }
 
-/// These checks compile to a no-op until management/grants can consume the new
-/// catalog. No normal-state metadata scan or extra executable probe is added.
+/// The production switch admits only the owned installer transition. Normal
+/// settled-state reads add no metadata scan or executable qualification probe.
 pub(super) async fn begin_if_enabled(root: &Path, intent: &Intent) -> Result<bool> {
     if !upgrade::PRODUCTION_ACTIVATION_ENABLED {
         return Ok(false);
@@ -116,9 +118,9 @@ async fn activate(root: &Path, intent: &Intent) -> Result<bool> {
         if intent.manager {
             process_owner.stop()?;
         }
-        if airk_store::service::registry::catalog::genesis::pending(&intent.control)?.is_none() {
-            drain(root, &main, &approval).await?;
-        }
+        // No ordinary service has been admitted by this fresh route. Genesis
+        // acquires the actual service lease before initialization; a live owner
+        // refuses rather than being inferred absent or adopted as fresh state.
         process_owner.require_stopped_for_maintenance()?;
         authority::activate_fresh(root, intent)?;
         return Ok(true);
@@ -194,11 +196,6 @@ fn prepare_readiness(
         .context("catalog upgrade requires a verified predecessor")?;
     let (predecessor, _) = verify_runtime(root, &prior.active)?;
     let predecessor_identity = engine_identity(&predecessor)?;
-    ensure!(
-        installer != predecessor_identity,
-        "catalog predecessor equals candidate"
-    );
-
     let saved = upgrade::pending(&intent.control)?;
     if let Some(receipt) = &saved
         && receipt.authority_v1_host.is_some()
@@ -219,6 +216,10 @@ fn prepare_readiness(
             UpgradeStage::Settled | UpgradeStage::Restored
         )
     }) {
+        ensure!(
+            installer != predecessor_identity,
+            "catalog predecessor equals candidate"
+        );
         CatalogUpgrade::resume_for_installer(&intent.control, installer)?
     } else {
         let admission = quiescent(root)?;
@@ -226,6 +227,10 @@ fn prepare_readiness(
         if admission.catalog.is_some() {
             return Ok(None); // A subsequent supported runtime update needs no backfill.
         }
+        ensure!(
+            installer != predecessor_identity,
+            "catalog predecessor equals candidate"
+        );
         ensure!(
             saved.is_none(),
             "catalog snapshot was restored; explicit reviewed retry is required"
@@ -528,7 +533,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disabled_catalog_activation_performs_no_state_or_payload_work() -> Result<()> {
+    async fn missing_installation_cannot_admit_catalog_work_or_create_state() -> Result<()> {
         let temporary = tempfile::tempdir()?;
         let missing = temporary.path().join("must-not-be-created");
         let intent = Intent {
@@ -544,8 +549,26 @@ mod tests {
             manager: false,
             phase: Phase::Probe,
         };
-        assert!(!begin_if_enabled(&missing, &intent).await?);
-        assert!(!resume_if_enabled(&missing, &intent).await?);
+        let begin = begin_if_enabled(&missing, &intent).await;
+        if upgrade::PRODUCTION_ACTIVATION_ENABLED {
+            assert!(
+                begin
+                    .unwrap_err()
+                    .to_string()
+                    .contains("runtime installation is missing")
+            );
+        } else {
+            assert!(!begin?);
+        }
+        let resume = resume_if_enabled(&missing, &intent).await;
+        if upgrade::PRODUCTION_ACTIVATION_ENABLED {
+            assert!(
+                resume.is_err(),
+                "missing native control cannot authorize recovery"
+            );
+        } else {
+            assert!(!resume?);
+        }
         assert!(!super::resume_catalog_before_lifecycle(&missing, None).await?);
         assert!(!missing.exists());
         Ok(())
@@ -702,5 +725,114 @@ mod tests {
         .await;
         let cleanup = fixture.cleanup().await;
         result.and(cleanup)
+    }
+}
+
+#[cfg(test)]
+mod copied_genesis_recovery_tests {
+    use super::*;
+    use airk_store::service::{
+        ServiceLease,
+        registry::{
+            ServiceRegistry,
+            catalog::genesis::{self, CatalogGenesis},
+        },
+    };
+
+    #[tokio::test]
+    #[ignore = "requires fresh sealed AIRK_F03_RUNTIME and explicit approval; run serially"]
+    async fn actual_fresh_installer_resumes_native_namespace_and_genesis_prefixes() -> Result<()> {
+        let source = PathBuf::from(
+            std::env::var_os("AIRK_F03_RUNTIME").context("fresh sealed runtime required")?,
+        )
+        .canonicalize()?;
+        let approved =
+            std::env::var("AIRK_F03_APPROVED_SHA256").context("explicit approval required")?;
+        ensure!(
+            runtime_pair::digest_file(&source.join("airk-install.json"))? == approved,
+            "approved runtime differs"
+        );
+        for prefix in 0..4 {
+            let directory = tempfile::tempdir()?;
+            let base = directory.path().canonicalize()?;
+            let root = base.join("install");
+            staging::stage_with_layout(
+                &source,
+                &root,
+                &approved,
+                VerificationBasis::OrganizationDigest,
+                None,
+                RuntimeChannel::Stable,
+            )?;
+            let control = layout::control(&root)?;
+            let result = async {
+                let lock = install_lock(&root)?;
+                drop(quiescent(&root)?);
+                let (main, _) = verify_runtime(&root, &approved)?;
+                let installer = runtime_pair::engine_identity_at(&main)?;
+                launcher_repair::repair(&root, &approved)?;
+                crate::process_roles::install(&main)?;
+                let intent = Intent {
+                    schema: 1,
+                    install: root.canonicalize()?,
+                    control: control.clone(),
+                    candidate: approved.clone(),
+                    prior: None,
+                    manager: false,
+                    phase: Phase::Probe,
+                };
+                intent.save(&root)?;
+                let service = ServiceLease::acquire(&control)?;
+                layout::record_control(&service)?;
+                let operation = airk_kernel::service_broker::new_instance_id()?;
+                let namespace = if prefix >= 1 {
+                    let saved = ServiceRegistry::open(&control, operation)?;
+                    Some(saved.incarnation()?)
+                } else {
+                    None
+                };
+                if prefix >= 2 {
+                    layout::record_registry(&service, namespace.unwrap())?;
+                }
+                if prefix == 3 {
+                    let mut owner = CatalogGenesis::begin(service, installer, operation)?;
+                    owner.backup()?;
+                    owner.migrate()?;
+                    drop(owner);
+                } else {
+                    drop(service);
+                }
+                assert!(!root.join("selected.json").exists());
+                drop(lock);
+                crate::runtime_install::activate(&root, &approved).await?;
+                let receipt = genesis::pending(&control)?.context("resumed Genesis missing")?;
+                assert_eq!(receipt.stage, genesis::GenesisStage::Settled);
+                if let Some(namespace) = namespace {
+                    assert_eq!(
+                        receipt.namespace, namespace,
+                        "resume replaced the original namespace"
+                    );
+                }
+                assert_eq!(selection_record(&root)?.active, approved);
+                let health = ensure_running(&root).await?;
+                assert_eq!(
+                    ServiceRegistry::open_saved(&control)?.recorded_service_instance()?,
+                    Some(health.instance)
+                );
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+            let _ = service_runtime::request_for_version(
+                &control,
+                ControlMethod::Shutdown,
+                env!("CARGO_PKG_VERSION"),
+            )
+            .await;
+            let cleanup = wait_quiescent(&root).await;
+            result
+                .with_context(|| format!("copied native initialization prefix {prefix}"))
+                .and(cleanup)?;
+        }
+        Ok(())
     }
 }

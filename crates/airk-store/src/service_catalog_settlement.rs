@@ -168,13 +168,12 @@ impl CatalogUpgrade {
     }
 
     pub fn settle(&self) -> Result<UpgradeReceipt> {
-        ensure!(
-            PRODUCTION_ACTIVATION_ENABLED,
-            "catalog activation is disabled until Indexing and grant enforcement are ready"
-        );
-        self.settle_at(|_| Ok(()))
+        anyhow::bail!(
+            "P5 readiness cannot activate a production catalog; qualify and settle authority contract 1"
+        )
     }
 
+    #[cfg(test)]
     fn settle_at(&self, checkpoint: impl Fn(&str) -> Result<()>) -> Result<UpgradeReceipt> {
         let mut receipt = pending(&self.root)?.context("catalog upgrade intent missing")?;
         ensure!(

@@ -590,6 +590,14 @@ pub(super) fn saved_control(root: &Path) -> Result<PathBuf> {
     );
     Ok(layout.state.join("control"))
 }
+
+/// Owning installer initialization only. Preserve the ordinary no-redirect and
+/// existing-directory guards without requiring a completed registry pin yet.
+pub(super) fn initialization_control(root: &Path) -> Result<PathBuf> {
+    let control = saved_control(root)?;
+    require_control(&control)?;
+    Ok(control)
+}
 pub(super) fn retained_parameters(root: &Path) -> Result<(PathBuf, RuntimeChannel)> {
     let layout = Layout::read(root)?.context("runtime state layout missing")?;
     ensure!(
