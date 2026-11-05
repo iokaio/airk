@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, Command as ProcessCommand, Stdio},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex, Weak,
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
     },
@@ -38,6 +38,7 @@ struct Replies {
     events: BTreeMap<ProjectBinding, (u64, u64)>,
     missing: BTreeMap<ProjectBinding, (u64, u64)>,
     removal_results: BTreeMap<ProjectBinding, (bool, bool)>,
+    policy_acks: BTreeMap<ProjectBinding, (Incarnation, Incarnation, bool)>,
 }
 
 /// Native watcher evidence only. Wire callers cannot construct or deserialize
@@ -191,6 +192,37 @@ impl WatchChild {
                 .spawn(move || {
                     while let Ok(Some(reply)) = service_ipc::read_frame::<_, Reply>(&mut output) {
                         match reply {
+                            Reply::PolicyFenced {
+                                service: reply_service,
+                                worker: reply_worker,
+                                project,
+                                operation_id,
+                                nonce,
+                            }
+                            | Reply::PolicyReleased {
+                                service: reply_service,
+                                worker: reply_worker,
+                                project,
+                                operation_id,
+                                nonce,
+                            } => {
+                                if reply_service != service || reply_worker != worker {
+                                    break;
+                                }
+                                let released = matches!(reply, Reply::PolicyReleased { .. });
+                                let Ok(mut observed) = observed.lock() else {
+                                    break;
+                                };
+                                if !observed.policy_acks.contains_key(&project)
+                                    && observed.policy_acks.len() >= 1024
+                                {
+                                    break;
+                                }
+                                observed
+                                    .policy_acks
+                                    .insert(project, (operation_id, nonce, released));
+                                observed.pulse = Some(Instant::now());
+                            }
                             Reply::Ready { .. } | Reply::Activated => {
                                 if ready.try_send(reply).is_err() {
                                     break;
@@ -386,6 +418,102 @@ impl WatchChild {
     }
 }
 
+/// Only this coordinator owns child handles and may qualify an acknowledgement
+/// or prove native absence with the actual source lease. PID caches are unused.
+fn coordinate_policy_fences(
+    root: &Path,
+    service: Incarnation,
+    child: Option<&WatchChild>,
+    fences: &PolicyFences,
+) -> Result<bool> {
+    let mut entries = fences
+        .entries
+        .lock()
+        .map_err(|_| anyhow::anyhow!("source policy fence unavailable"))?;
+    if entries.is_empty() {
+        return Ok(false);
+    }
+    let mut released = false;
+    if let Some(child) = child {
+        let acknowledgements = {
+            let mut replies = child
+                .replies
+                .lock()
+                .map_err(|_| anyhow::anyhow!("source policy acknowledgement unavailable"))?;
+            std::mem::take(&mut replies.policy_acks)
+        };
+        for (project, (operation_id, nonce, was_released)) in acknowledgements {
+            let Some(current) = entries.get_mut(&project) else {
+                continue;
+            };
+            if !current.matches_ack(child.worker, operation_id, nonce, was_released) {
+                continue;
+            }
+            if was_released {
+                entries.remove(&project);
+                released = true;
+            } else {
+                current.acknowledged = true;
+            }
+        }
+        let commands = entries
+            .iter()
+            .filter(|(_, fence)| fence.sent != Some((child.worker, fence.release_requested)))
+            .take(20)
+            .map(|(project, fence)| {
+                let command = if fence.release_requested {
+                    Command::ReleasePolicy {
+                        service,
+                        worker: child.worker,
+                        project: *project,
+                        operation_id: fence.operation_id,
+                        nonce: fence.nonce,
+                    }
+                } else {
+                    Command::FencePolicy {
+                        service,
+                        worker: child.worker,
+                        project: *project,
+                        operation_id: fence.operation_id,
+                        nonce: fence.nonce,
+                    }
+                };
+                (*project, fence.release_requested, command)
+            })
+            .collect::<Vec<_>>();
+        if !commands.is_empty() {
+            let projects = commands
+                .iter()
+                .map(|(project, release, _)| (*project, *release))
+                .collect::<Vec<_>>();
+            child.send(
+                commands
+                    .into_iter()
+                    .map(|(_, _, command)| command)
+                    .collect(),
+            )?;
+            for (project, release) in projects {
+                if let Some(fence) = entries.get_mut(&project) {
+                    fence.sent = Some((child.worker, release));
+                }
+            }
+        }
+    } else if let Ok(_absence) = SourceWatchLease::acquire(root) {
+        entries.retain(|_, fence| {
+            if fence.release_requested {
+                released = true;
+                false
+            } else {
+                fence.acknowledged = true;
+                fence.sent = None;
+                true
+            }
+        });
+    }
+    fences.changed.notify_all();
+    Ok(released)
+}
+
 #[derive(Default)]
 struct Cache {
     available: bool,
@@ -401,9 +529,45 @@ struct Cache {
 }
 #[derive(Clone)]
 pub(crate) struct SourceWake {
-    sender: SyncSender<()>,
+    sender: Weak<SyncSender<()>>,
     revision: Arc<AtomicU64>,
     idle: Arc<AtomicBool>,
+    policy_fences: Arc<PolicyFences>,
+}
+
+struct PolicyFence {
+    operation_id: Incarnation,
+    nonce: Incarnation,
+    acknowledged: bool,
+    release_requested: bool,
+    sent: Option<(Incarnation, bool)>,
+}
+impl PolicyFence {
+    fn matches_ack(
+        &self,
+        worker: Incarnation,
+        operation_id: Incarnation,
+        nonce: Incarnation,
+        released: bool,
+    ) -> bool {
+        self.operation_id == operation_id
+            && self.nonce == nonce
+            && self.sent == Some((worker, released))
+            && (!released || self.release_requested)
+    }
+}
+#[derive(Default)]
+struct PolicyFences {
+    entries: Mutex<BTreeMap<ProjectBinding, PolicyFence>>,
+    changed: Condvar,
+    closing: AtomicBool,
+}
+impl PolicyFences {
+    fn blocked(&self, project: ProjectBinding) -> bool {
+        self.entries
+            .lock()
+            .map_or(true, |entries| entries.contains_key(&project))
+    }
 }
 impl SourceWake {
     pub(crate) fn changed(&self) {
@@ -411,11 +575,141 @@ impl SourceWake {
         self.idle.store(false, Ordering::Release);
         // A queued wake already covers this revision. The coordinator also checks
         // the revision when publishing an idle observation, closing the scan race.
-        let _ = self.sender.try_send(());
+        if let Some(sender) = self.sender.upgrade() {
+            let _ = sender.try_send(());
+        }
+    }
+    /// Close configuration admission before waiting for the exact native source
+    /// owner to discard its retained traversal plan. Timeout retains the fence.
+    pub(crate) fn fence_policy(
+        &self,
+        project: ProjectBinding,
+        operation_id: Incarnation,
+    ) -> Result<()> {
+        ensure!(
+            !self.policy_fences.closing.load(Ordering::Acquire),
+            "source owner is closing"
+        );
+        let mut entries = self
+            .policy_fences
+            .entries
+            .lock()
+            .map_err(|_| anyhow::anyhow!("source policy fence unavailable"))?;
+        if let Some(existing) = entries.get(&project) {
+            ensure!(
+                existing.operation_id == operation_id && !existing.release_requested,
+                "source policy fence belongs to another operation"
+            );
+        } else {
+            ensure!(
+                entries.len() < 1024,
+                "source policy fence capacity exhausted"
+            );
+            entries.insert(
+                project,
+                PolicyFence {
+                    operation_id,
+                    nonce: new_instance_id()?,
+                    acknowledged: false,
+                    release_requested: false,
+                    sent: None,
+                },
+            );
+        }
+        drop(entries);
+        self.changed();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut entries = self
+            .policy_fences
+            .entries
+            .lock()
+            .map_err(|_| anyhow::anyhow!("source policy fence unavailable"))?;
+        loop {
+            ensure!(
+                !self.policy_fences.closing.load(Ordering::Acquire),
+                "source owner closed before policy acknowledgement"
+            );
+            let current = entries
+                .get(&project)
+                .context("source policy fence disappeared")?;
+            ensure!(
+                current.operation_id == operation_id && !current.release_requested,
+                "source policy fence changed"
+            );
+            if current.acknowledged {
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            ensure!(
+                !remaining.is_zero(),
+                "source policy fence acknowledgement is uncertain; exclusion remains closed"
+            );
+            (entries, _) = self
+                .policy_fences
+                .changed
+                .wait_timeout(entries, remaining)
+                .map_err(|_| anyhow::anyhow!("source policy fence unavailable"))?;
+        }
+    }
+    /// Release only an exact completed/no-effect native operation. No saved
+    /// source binding is replayed: the coordinator observes the registry anew.
+    pub(crate) fn release_policy(
+        &self,
+        project: ProjectBinding,
+        operation_id: Incarnation,
+    ) -> Result<()> {
+        ensure!(
+            !self.policy_fences.closing.load(Ordering::Acquire),
+            "source owner is closing"
+        );
+        let mut entries = self
+            .policy_fences
+            .entries
+            .lock()
+            .map_err(|_| anyhow::anyhow!("source policy fence unavailable"))?;
+        let Some(current) = entries.get_mut(&project) else {
+            return Ok(());
+        };
+        ensure!(
+            current.operation_id == operation_id,
+            "source policy release belongs to another operation"
+        );
+        current.release_requested = true;
+        drop(entries);
+        self.changed();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut entries = self
+            .policy_fences
+            .entries
+            .lock()
+            .map_err(|_| anyhow::anyhow!("source policy fence unavailable"))?;
+        loop {
+            ensure!(
+                !self.policy_fences.closing.load(Ordering::Acquire),
+                "source owner closed before policy release"
+            );
+            let Some(current) = entries.get(&project) else {
+                return Ok(());
+            };
+            ensure!(
+                current.operation_id == operation_id && current.release_requested,
+                "source policy release changed"
+            );
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            ensure!(
+                !remaining.is_zero(),
+                "source policy release acknowledgement is uncertain"
+            );
+            (entries, _) = self
+                .policy_fences
+                .changed
+                .wait_timeout(entries, remaining)
+                .map_err(|_| anyhow::anyhow!("source policy fence unavailable"))?;
+        }
     }
 }
 pub struct SourceSupervisor {
-    sender: Option<SyncSender<()>>,
+    sender: Option<Arc<SyncSender<()>>>,
     thread: Option<std::thread::JoinHandle<()>>,
     pub process_id: Arc<AtomicU32>,
     pub telemetry_complete: Arc<AtomicBool>,
@@ -423,9 +717,12 @@ pub struct SourceSupervisor {
     idle_safe: Arc<AtomicBool>,
     configuration_revision: Arc<AtomicU64>,
     missing_reporter: Arc<Mutex<Option<Arc<dyn MissingSourceReporter>>>>,
+    policy_fences: Arc<PolicyFences>,
 }
 impl Drop for SourceSupervisor {
     fn drop(&mut self) {
+        self.policy_fences.closing.store(true, Ordering::Release);
+        self.policy_fences.changed.notify_all();
         self.sender.take();
         if let Some(thread) = self.thread.take() {
             let _ = thread.join();
@@ -451,6 +748,8 @@ impl SourceSupervisor {
         let configuration = configuration_revision.clone();
         let missing_reporter = Arc::new(Mutex::new(None::<Arc<dyn MissingSourceReporter>>));
         let report_missing = missing_reporter.clone();
+        let policy_fences = Arc::new(PolicyFences::default());
+        let fences = policy_fences.clone();
         let thread = std::thread::Builder::new()
             .name("airk-source-coordinator".into())
             .spawn(move || {
@@ -517,6 +816,22 @@ impl SourceSupervisor {
                         attempts = attempts.saturating_add(1);
                         retry = Instant::now() + Duration::from_secs(1 << attempts.min(6));
                     }
+                    if coordinate_policy_fences(&root, service, child.as_ref(), &fences).unwrap_or(false) {
+                        after = None;
+                        seen.clear();
+                        scanned = false;
+                        next_page = Instant::now();
+                        // Released bindings are reconstructed from current
+                        // registry metadata, never replayed from this cache.
+                        sent.retain(|project, _| !fences.blocked(*project));
+                    }
+                    if let Ok(entries) = fences.entries.lock() {
+                        for project in entries.keys() {
+                            sent.remove(project);
+                            periodic.remove(project);
+                            enabled.remove(project);
+                        }
+                    }
                     if registry.is_none() {
                         registry = ServiceRegistry::open(&root, service).ok();
                     }
@@ -575,6 +890,7 @@ impl SourceSupervisor {
                                 (vec![], vec![], vec![])
                             };
                             for (project, (registration_epoch, configuration_epoch)) in missing {
+                                if fences.blocked(project) { continue; }
                                 match registry.catalog_state() {
                                     Ok(Some(catalog)) if catalog.authority_contract == 1 => {
                                         let event = NativeMissingSourceEvent::observed(registry,
@@ -644,6 +960,7 @@ impl SourceSupervisor {
                                 },
                             ) in observations
                             {
+                                if fences.blocked(project) { continue; }
                                 if failure == Some(WatchFailure::RootLimit) {
                                     sent.remove(&project);
                                 }
@@ -669,6 +986,7 @@ impl SourceSupervisor {
                                 }
                             }
                             for (project, (epoch, sequence)) in events {
+                                if fences.blocked(project) { continue; }
                                 if registry
                                     .source_event(project, epoch, active.worker, sequence)
                                     .is_ok()
@@ -726,6 +1044,13 @@ impl SourceSupervisor {
                             for project in projects {
                                 let id = project.project.registration.binding;
                                 seen.insert(id);
+                                if fences.blocked(id) {
+                                    enabled.remove(&id);
+                                    periodic.remove(&id);
+                                    sent.remove(&id);
+                                    after = Some(id);
+                                    continue;
+                                }
                                 if project.observation.enabled {
                                     enabled.insert(id);
                                     if periodic.get(&id).is_none_or(|time| {
@@ -766,6 +1091,15 @@ impl SourceSupervisor {
                                     }
                                 }
                                 if let Some(active) = child.as_ref() {
+                                    let Ok(policy_guard) = fences.entries.lock() else {
+                                        complete = false;
+                                        break;
+                                    };
+                                    if policy_guard.contains_key(&id) {
+                                        sent.remove(&id);
+                                        after = Some(id);
+                                        continue;
+                                    }
                                     if active
                                         .send(vec![Command::CheckSource {
                                             registration: project.project.registration.clone(),
@@ -812,7 +1146,8 @@ impl SourceSupervisor {
                         cache.coordinated = Some(Instant::now());
                         cache.configuration_revision = configuration_snapshot;
                         let no_background_intent =
-                            scanned && enabled.is_empty() && !removals_pending;
+                            scanned && enabled.is_empty() && !removals_pending
+                                && fences.entries.lock().is_ok_and(|entries| entries.is_empty());
                         cache.blocked = attempts >= 3;
                         cache.available = false;
                         if let Some(active) = child.as_ref()
@@ -844,7 +1179,7 @@ impl SourceSupervisor {
                 pid.store(0, Ordering::Release);
             })?;
         Ok(Self {
-            sender: Some(sender),
+            sender: Some(Arc::new(sender)),
             thread: Some(thread),
             process_id,
             telemetry_complete,
@@ -852,6 +1187,7 @@ impl SourceSupervisor {
             idle_safe,
             configuration_revision,
             missing_reporter,
+            policy_fences,
         })
     }
     pub(crate) fn set_missing_reporter(
@@ -880,13 +1216,10 @@ impl SourceSupervisor {
     }
     pub(crate) fn wake_handle(&self) -> SourceWake {
         SourceWake {
-            sender: self
-                .sender
-                .as_ref()
-                .expect("active source supervisor")
-                .clone(),
+            sender: Arc::downgrade(self.sender.as_ref().expect("active source supervisor")),
             revision: self.configuration_revision.clone(),
             idle: self.idle_safe.clone(),
+            policy_fences: self.policy_fences.clone(),
         }
     }
     pub fn status(&self) -> ControlResponse {
@@ -963,6 +1296,93 @@ fn send_configuration(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn policy_acknowledgements_bind_operation_nonce_child_and_release_phase() -> Result<()> {
+        let operation_id = new_instance_id()?;
+        let nonce = new_instance_id()?;
+        let worker = new_instance_id()?;
+        let mut fence = PolicyFence {
+            operation_id,
+            nonce,
+            acknowledged: false,
+            release_requested: false,
+            sent: Some((worker, false)),
+        };
+        assert!(fence.matches_ack(worker, operation_id, nonce, false));
+        assert!(!fence.matches_ack(new_instance_id()?, operation_id, nonce, false));
+        assert!(!fence.matches_ack(worker, new_instance_id()?, nonce, false));
+        assert!(!fence.matches_ack(worker, operation_id, new_instance_id()?, false));
+        assert!(!fence.matches_ack(worker, operation_id, nonce, true));
+        fence.release_requested = true;
+        assert!(!fence.matches_ack(worker, operation_id, nonce, true));
+        fence.sent = Some((worker, true));
+        assert!(fence.matches_ack(worker, operation_id, nonce, true));
+        assert!(!fence.matches_ack(worker, operation_id, nonce, false));
+        Ok(())
+    }
+
+    #[test]
+    fn policy_fence_requires_native_lease_absence_and_exact_release_without_scanning() -> Result<()>
+    {
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().canonicalize()?.join("control");
+        crate::local_ipc::prepare_root(&root)?;
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let sender = Arc::new(sender);
+        let fences = Arc::new(PolicyFences::default());
+        let wake = SourceWake {
+            sender: Arc::downgrade(&sender),
+            revision: Arc::new(AtomicU64::new(0)),
+            idle: Arc::new(AtomicBool::new(true)),
+            policy_fences: fences.clone(),
+        };
+        let project = Sha256Digest::from_bytes([73; 32]);
+        let operation = new_instance_id()?;
+        let service = new_instance_id()?;
+        let waiting = wake.clone();
+        let fence_thread = std::thread::spawn(move || waiting.fence_policy(project, operation));
+        receiver.recv_timeout(Duration::from_secs(5))?;
+        let lease = SourceWatchLease::acquire(&root)?;
+        assert!(!coordinate_policy_fences(&root, service, None, &fences)?);
+        assert!(
+            fences
+                .entries
+                .lock()
+                .unwrap()
+                .get(&project)
+                .is_some_and(|fence| !fence.acknowledged)
+        );
+        drop(lease);
+        assert!(!coordinate_policy_fences(&root, service, None, &fences)?);
+        fence_thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("policy fence fixture panicked"))??;
+        assert!(fences.blocked(project));
+        assert!(wake.fence_policy(project, new_instance_id()?).is_err());
+        assert!(wake.release_policy(project, new_instance_id()?).is_err());
+        let releasing = wake.clone();
+        let release_thread =
+            std::thread::spawn(move || releasing.release_policy(project, operation));
+        receiver.recv_timeout(Duration::from_secs(5))?;
+        assert!(coordinate_policy_fences(&root, service, None, &fences)?);
+        release_thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("policy release fixture panicked"))??;
+        assert!(!fences.blocked(project));
+        assert!(
+            !root.join("service-1.4.sqlite3").exists(),
+            "source fence absence proof cannot create/read source configuration"
+        );
+        drop(sender);
+        assert!(
+            wake.sender.upgrade().is_none(),
+            "wake clones must not retain the coordinator sender"
+        );
+        fences.closing.store(true, Ordering::Release);
+        assert!(wake.fence_policy(project, operation).is_err());
+        Ok(())
+    }
 
     #[test]
     fn native_missing_event_requires_current_enabled_epochs_and_actual_missing_root() -> Result<()>

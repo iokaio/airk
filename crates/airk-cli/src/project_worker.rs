@@ -339,7 +339,8 @@ async fn query(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 }
             };
             let value = response.unwrap_or_else(|error| {
-                if response_kernel.scope_observation().is_some() {
+                if response_kernel.scope_observation().is_some()
+                    || error.is::<airk_kernel::SourcePolicyReadUnavailable>() {
                     return scoped_worker_error(&response_kernel, &error, native_read);
                 }
                 if native_read { serde_json::json!({"error":{"code":"native_read_failed","message":format!("{error:#}").chars().take(1024).collect::<String>()}}) }
@@ -670,12 +671,34 @@ pub async fn run() -> Result<()> {
         Some((&registration.data_root).into()),
         &registration.collection,
     )?
+    .with_expected_source_policy(if scopes_required {
+        registry
+            .catalog_index_for_binding(init.project)?
+            .map(|index| registry.catalog_source_policy(index.id))
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    })?
     .with_service_freshness(identity)?
     .with_service_models(&init.runtime, crate::bundled_assets::default_plan()?)?;
     airk_kernel::service_execution::install(Path::new(&registration.data_root), identity)?;
     let receipt = kernel.service_rebuild_receipt()?;
     registry.recover_jobs_with_rebuild_receipt(&lease, receipt.as_ref())?;
     source_configuration::recover(&kernel, &mut registry, &lease, init.engine)?;
+    // A crash after the accepted Configure result settles but before catalog
+    // bookkeeping must not require replaying a policy change or clearing its deny.
+    if scopes_required
+        && let Some(index) = registry.catalog_index_for_binding(init.project)?
+        && let Some(snapshot) = registry.catalog_policy_status(index.id)?
+        && snapshot
+            .application
+            .as_ref()
+            .is_none_or(|report| report.physical_cleanup_pending)
+        && registry.job(snapshot.job)?.state == airk_core::service::JobState::Succeeded
+    {
+        registry.catalog_record_policy_job(index.id, snapshot.operation_id)?;
+    }
     // Only an actually opened retained index can become an automatic audit
     // candidate. A fresh/unprepared registration remains ordinary setup work.
     let initial_integrity_failure = observe_native_integrity(
@@ -1439,6 +1462,12 @@ pub async fn run() -> Result<()> {
                     }
                     drop(source_completion.take());
                     if job.kind == JobKind::Configure {
+                        if matches!(outcome, JobOutcome::Succeeded { .. })
+                            && let Some(work) = registry.configuration_work(job.id)?
+                            && let airk_core::service_configuration::ProjectConfiguration::ApplySourcePolicy { policy, operation_id } = work.request.configuration
+                        {
+                            registry.catalog_record_policy_job(policy.index_id, operation_id)?;
+                        }
                         let _ = reconcile_semantic_setup(
                             &kernel,
                             &mut registry,

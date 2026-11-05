@@ -50,6 +50,20 @@ pub enum Command {
         configuration_epoch: u64,
         sequence: u64,
     },
+    FencePolicy {
+        service: Incarnation,
+        worker: Incarnation,
+        project: ProjectBinding,
+        operation_id: Incarnation,
+        nonce: Incarnation,
+    },
+    ReleasePolicy {
+        service: Incarnation,
+        worker: Incarnation,
+        project: ProjectBinding,
+        operation_id: Incarnation,
+        nonce: Incarnation,
+    },
     CleanupRemoved {
         project: ProjectBinding,
     },
@@ -69,6 +83,20 @@ pub enum Reply {
         worker: Incarnation,
     },
     Activated,
+    PolicyFenced {
+        service: Incarnation,
+        worker: Incarnation,
+        project: ProjectBinding,
+        operation_id: Incarnation,
+        nonce: Incarnation,
+    },
+    PolicyReleased {
+        service: Incarnation,
+        worker: Incarnation,
+        project: ProjectBinding,
+        operation_id: Incarnation,
+        nonce: Incarnation,
+    },
     RemovalResult {
         project: ProjectBinding,
         complete: bool,

@@ -1,5 +1,11 @@
 # Source folders and aliases
 
+P9 [permanent exclusions](source-policy.md) bind canonical source identity,
+independently of alias spelling and ordinary extraction settings. Native source
+changes on policy-bearing indexes refuse until a qualified reconciliation adapter
+can preserve those bindings, including after the last deny is unblocked. A new
+alias or root setup cannot clear a recorded exclusion.
+
 A collection has one permanent primary root and up to sixteen explicitly registered additional source folders. This lets code in one repository share a collection with separate requirements, specifications or supporting documents. AIRK does not discover other folders automatically. Every source remains read-only.
 
 Use the same `--root`, `--data-dir` and `--collection` options for all commands:

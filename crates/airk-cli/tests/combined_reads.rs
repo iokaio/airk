@@ -4,6 +4,9 @@
 #[path = "common/read_retry.rs"]
 mod read_retry;
 
+#[path = "combined_reads/permanent_trim.rs"]
+mod permanent_trim;
+
 use airk_core::{
     identity::{Incarnation, Sha256Digest, framed_digest},
     index_catalog::{CatalogRevision, GrantId, IndexId, QueryProjectId, SourceRootId},

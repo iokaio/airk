@@ -80,10 +80,14 @@ struct Owner {
     /// Relocation changes the physical root without changing published ownership.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     identity_data_root: Option<String>,
+    /// Required reader capability, deliberately outside immutable ownership.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    required_source_policy: Option<airk_core::index_catalog::PolicyReference>,
 }
 
 fn owner_digest(owner: &Owner) -> Result<Sha256Digest> {
     let mut identity = owner.clone();
+    identity.required_source_policy = None;
     if let Some(original) = identity.identity_data_root.take() {
         identity.data_root = original;
     }
@@ -396,6 +400,58 @@ fn write<T: Serialize>(collection: &Collection, name: &str, value: &T) -> Result
 }
 
 impl Collection {
+    /// Reference observed when this stable collection owner was opened.
+    pub fn required_source_policy(&self) -> Option<airk_core::index_catalog::PolicyReference> {
+        self.owner.required_source_policy.clone()
+    }
+
+    /// The native caller retains worker exclusion and its metadata quota grant.
+    /// Older owners reject this required field before read/rebuild/purge setup.
+    pub fn retain_source_policy(
+        &self,
+        policy: &airk_core::source_policy::SourcePolicy,
+    ) -> Result<()> {
+        policy.validate()?;
+        let registration = airk_core::service::ProjectRegistration::new(
+            self.owner.root.clone(),
+            self.owner.data_root.clone(),
+            self.owner.collection.clone(),
+        )?;
+        ensure!(
+            policy.owner_binding == registration.binding
+                && policy.collection == registration.collection,
+            "source policy differs from stable collection owner"
+        );
+        let reference = airk_core::index_catalog::PolicyReference {
+            epoch: policy.epoch,
+            digest: policy.identity()?,
+        };
+        let _lock = manifest_lock(&self.directory)?;
+        let mut owner: Owner = json(&self.directory.join("service-owner.json"))?;
+        ensure!(
+            owner_digest(&owner)? == self.binding
+                && owner.root == self.owner.root
+                && owner.data_root == self.owner.data_root
+                && owner.collection == self.owner.collection,
+            "stable collection ownership changed"
+        );
+        if let Some(existing) = &owner.required_source_policy {
+            ensure!(
+                existing.epoch <= reference.epoch,
+                "source policy owner epoch regressed"
+            );
+            if existing.epoch == reference.epoch {
+                ensure!(
+                    *existing == reference,
+                    "source policy owner epoch was reused"
+                );
+                return Ok(());
+            }
+        }
+        owner.required_source_policy = Some(reference);
+        write(self, "service-owner.json", &owner)
+    }
+
     fn sweep_metadata_scratch(&self) -> Result<()> {
         let mut removed = 0usize;
         for (count, entry) in fs::read_dir(&self.directory)?.enumerate() {

@@ -9,7 +9,7 @@ import type { LaunchSpec } from './model';
 import type { SearchDraft } from './explorerDrafts';
 import { combinedScopeSelectionIdentity, observedScopeSelectionIdentity, scopeSelectionIdentity } from './scopeSelection';
 import { EvidenceClient, EvidenceFailure } from './explorerEvidence';
-import { readResultBody } from './sourceVerification';
+import { nativeSavedSourceState, readResultBody, verificationLabel } from './sourceVerification';
 import { SharedCapabilityDisplayCache } from './sharedCapabilityFields';
 import { explorerError } from './explorerErrors';
 import { openSource, saveStudioInWorkspace } from './explorerWorkspaceIO';
@@ -58,6 +58,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     private recent:WorkbenchState['recent']=[];
     private busy=false;
     private notice?:string;
+    private sourceOpen?:{id:string;generation:number;project:string;observation:Value};
     private saving='';
     private status?:Value;
     private statusAuthority?:string;
@@ -142,7 +143,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     private state():WorkbenchState{
         return {projects:this.host.specs().flatMap(s=>{const id=workbenchProjectKey(s);return id?[{id,name:s.name}]:[];}),project:this.session?.project,session:this.session,sessionEpoch:this.sessionEpoch,recent:this.recent,
-            ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations};
+            ...this.display.project(this.session?.turns??[],turn=>this.metadata.view(turn.envelope??{}).payload??{}),metadataViews:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope).map(turn=>[turn.id,this.metadata.view(turn.envelope!).payload??{}])),metadataIssues:Object.fromEntries((this.session?.turns??[]).filter(turn=>turn.envelope&&this.metadata.view(turn.envelope).error).map(turn=>[turn.id,this.metadata.view(turn.envelope!).error!])),capabilityDetails:this.capabilityDisplay.project(this.session?.turns??[]),busy:this.busy,notice:this.notice,sourceOpen:this.sourceOpen?.generation===this.generation&&this.sourceOpen.project===this.session?.project?{id:this.sourceOpen.id,observation:this.sourceOpen.observation}:undefined,save:this.saving,status:this.status,publicationRelations:this.publicationRelations(),persistence:this.persistence(),operations:this.operations};
     }
     private send():void{if(!this.disposed){void this.view?.webview.postMessage({type:'state',state:this.state()});}}
     private sendStatus():void{if(!this.disposed){void this.view?.webview.postMessage({type:'status',sessionId:this.session?.id,project:this.session?.project,status:this.status,publicationRelations:this.publicationRelations()});}}
@@ -365,7 +366,7 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                     const plan={schema:'airk.parse.plan/1',...(selected?{query_scope:selected}:{publication:card.publication}),steps:[{id:'context',tool:'context',args:{path:card.path,line:card.start,known_hash:card.hash,before:3,after:3,...(selected?{revision:card.publication}:{})}}]};
                     await this.run(`Context ${card.path}:${card.start}`,false,undefined,plan);
                 }else{
-                    const generation=this.generation,payload=(await this.evidence().call('airk_file_info',{path:card.path,response_mode:'full',...(selected?{...selected,revision:card.publication,known_hash:card.hash}:{})})).payload;
+                    const generation=this.generation,native=await this.evidence().call('airk_file_info',{path:card.path,response_mode:'full',...(selected?{...selected,revision:card.publication,known_hash:card.hash}:{})}),payload=native.payload;
                     const members=Array.isArray(payload.members)?payload.members.map(object):[];
                     const origin=selected?members.filter(member=>member.index_id===card.indexId&&member.outcome==='complete'):[];
                     if(selected&&origin.length!==1)throw new Error('The originating index did not return a complete source location.');
@@ -377,8 +378,18 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
                     }
                     if(generation!==this.generation){throw new Error('Project changed before opening the source.');}this.authorized();
                     if(typeof source.root!=='string'||typeof source.relative_path!=='string'){throw new Error('AIRK did not report the original source location.');}
-                    const result=await openSource({root:source.root,relative:source.relative_path,contentHash:card.hash,startLine:card.start,lineBasis:typeof info.line_basis==='string'?info.line_basis:undefined},vscode.ViewColumn.Active);this.notice=result.message;this.send();
+                    const result=await openSource({root:source.root,relative:source.relative_path,contentHash:card.hash,startLine:card.start,lineBasis:typeof info.line_basis==='string'?info.line_basis:undefined,
+                        savedState:nativeSavedSourceState(info,card.hash,selected?card.publication:native.publication),nativeResult:native.rawPayload??native.payload,
+                        nativeMessage:info.content_hash!==card.hash?'The indexed hash changed since this citation; a saved-source comparison for that older hash is unavailable.':verificationLabel(info.source_verification)},vscode.ViewColumn.Active);
+                    if(generation!==this.generation)throw new Error('Project changed while opening the source.');this.authorized();
+                    this.sourceOpen={id:randomUUID().replaceAll('-',''),generation,project:this.session!.project,observation:{path:card.path,expected_hash:card.hash,response:result}};this.notice=result.message;this.send();
                 }break;
+            }
+            case 'exportSourceOpen':{
+                const captured=this.sourceOpen,current=()=>{this.authorized();if(!captured||captured.id!==message.id||captured.generation!==this.generation||captured.project!==this.session?.project)throw new Error('The source-open observation is no longer selected.');};current();
+                const text=JSON.stringify(captured!.observation,null,2)+'\n';
+                if(message.format==='copy'){await vscode.env.clipboard.writeText(text);current();break;}
+                const uri=await vscode.window.showSaveDialog({title:'Export dated source-open observation',filters:{JSON:['json']}});if(!uri)break;current();await vscode.workspace.fs.writeFile(uri,new TextEncoder().encode(text));break;
             }
             case 'copy':case 'export':{
                 if(!this.session){return;}

@@ -13,6 +13,8 @@ export interface CatalogRetirementReview { id:string; response:CatalogObject }
 export interface IndexSetupApplyIntent { catalog_index_setup_apply: { draft: CatalogObject }; request_digest: string }
 /** namespace is local journal metadata; only the exact resolve body crosses the wire. */
 export interface SourceResolveIntent { catalog_source_change_resolve:{begin_operation:string}; namespace:string }
+/** project is local receipt-routing metadata; only catalog_policy_resume crosses the wire. */
+export interface PolicyResumeIntent { catalog_policy_resume:{index_id:string;operation_id:string;caller:string;key:CatalogKey}; project:string }
 export interface CatalogScopeAtom { source_root_id: string; kind: 'exact' | 'subtree'; path: string }
 export type WindowContextKind = 'folder' | 'workspace' | 'empty' | 'untitled';
 /** Supplied by the trusted host adapter, never inferred from a webview selection. */
@@ -34,10 +36,11 @@ export interface CatalogView {
     grants?: CatalogObject; grantDetail?: CatalogObject; canUseGrant?: boolean;
     canReviewSource?:boolean; canReadPendingSource?:boolean; sourceObservation?:CatalogObject;
     retirementReview?:CatalogRetirementReview; canReviewRetirement?:boolean;
+    policyStatus?:CatalogObject; canReadPolicy?:boolean; canResumePolicy?:boolean;
 }
 export const CATALOG_PAGE_BYTES = 48 * 1024;
 export const CATALOG_RECEIPT_BYTES = 16 * 1024;
-export const CATALOG_UI_OPERATIONS = ['create_project', 'rename_project', 'delete_project', 'rename_index', 'set_membership', 'remove_membership', 'set_project_defaults', 'set_context', 'delete_context', 'create_grant', 'revoke_grant', 'begin_index_source_change', 'retire_index'] as const;
+export const CATALOG_UI_OPERATIONS = ['create_project', 'rename_project', 'delete_project', 'rename_index', 'set_membership', 'remove_membership', 'set_project_defaults', 'set_context', 'delete_context', 'create_grant', 'revoke_grant', 'begin_index_source_change', 'retire_index', 'change_index_policy'] as const;
 export function catalogObject(value: unknown): CatalogObject {
     if (!value || typeof value !== 'object' || Array.isArray(value)) { throw new Error('invalid_catalog_object'); }
     return value as CatalogObject;
@@ -225,6 +228,18 @@ export function validateCatalogOperation(input: unknown): CatalogObject {
         case 'create_grant': exact(op,'operation,grant');validateReviewedGrant(op.grant);break;
         case 'revoke_grant':exact(op,'operation,id,expected_revision');catalogId(op.id,'grt_');catalogRevision(op.expected_revision);break;
         case 'begin_index_source_change':exact(op,'operation,id,expected_source_revision,plan');catalogId(op.id,'idx_');catalogRevision(op.expected_source_revision);validateSourceChangePlan(op.plan);break;
+        case 'change_index_policy':{
+            exact(op,'operation,id,expected_source_revision,expected_policy_epoch,expected_policy_digest,change,configuration,engine_identity');catalogId(op.id,'idx_');catalogRevision(op.expected_source_revision);
+            if(typeof op.expected_policy_epoch!=='number'||!Number.isSafeInteger(op.expected_policy_epoch)||op.expected_policy_epoch<0||(op.expected_policy_epoch===0)!==(op.expected_policy_digest===null))throw new Error('invalid_source_policy_revision');
+            if(op.expected_policy_digest!==null)catalogHex(op.expected_policy_digest,64);const change=validatePolicyChange(op.change);catalogHex(op.engine_identity,64);
+            const policy=validateNativePolicyConfiguration(op.configuration);
+            if(policy.index_id!==op.id||policy.epoch!==op.expected_policy_epoch+1)throw new Error('crossed_native_policy_configuration');
+            const denies=policy.denies as CatalogObject[];
+            if(change.operation==='trim'){
+                const selector=catalogObject(change.selector),added=denies.find(rule=>rule.rule_id===change.rule_id);
+                if(!added||added.reason!=='trim'||added.created_epoch!==policy.epoch||added.inherited_from!==undefined||!sameCatalogValue(selector,{source_root_id:added.source_root_id,kind:added.kind,path:added.path}))throw new Error('crossed_native_policy_change');
+            }else if(denies.some(rule=>rule.rule_id===change.rule_id))throw new Error('crossed_native_policy_change');break;
+        }
         case 'retire_index':{
             exact(op,'operation,id,expected_definition_revision,expected_source_revision,reason');catalogId(op.id,'idx_');catalogRevision(op.expected_definition_revision);catalogRevision(op.expected_source_revision);
             const reason=catalogObject(op.reason);exact(reason,'reason');if(reason.reason!=='explicit')throw new Error('native_explicit_retirement_required');break;
@@ -375,6 +390,12 @@ export function validateSourceMutationSelection(input:unknown):CatalogObject{
     if(change.operation==='add_root'){exact(change,'operation,alias,path');setupPath(change.path);}
     else if(change.operation==='remove_root')exact(change,'operation,alias');
     else if(change.operation==='retire_index'){exact(change,'operation');return change;}
+    else if(change.operation==='trim_path'){
+        exact(change,'operation,source_root_id,kind,path');validateCatalogScope([{source_root_id:change.source_root_id,kind:change.kind,path:change.path}]);catalogBound(change,CATALOG_RECEIPT_BYTES);return change;
+    }
+    else if(change.operation==='unblock_path'){
+        exact(change,'operation,rule_id');validatePolicyChange({operation:'unblock',rule_id:change.rule_id});return change;
+    }
     else throw new Error('invalid_source_mutation_selection');
     if(typeof change.alias!=='string'||!/^[a-zA-Z0-9_-]{1,64}$/.test(change.alias))throw new Error('invalid_source_alias');catalogBound(change,CATALOG_RECEIPT_BYTES);return change;
 }
@@ -382,15 +403,204 @@ export function validateNativeSourceDraft(input:unknown,selection:CatalogObject)
     const response=catalogObject(input);catalogBound(response,65536);if(response.status!=='catalog_source_mutation_draft')throw new Error('invalid_native_source_draft_status');
     const draft=catalogObject(response.draft),preview=catalogObject(draft.preview);catalogBound(draft);
     const intent=validateCatalogApply({catalog_apply:{request:draft.request,preview_digest:draft.preview_digest},request_digest:preview.request_digest}),request=intent.catalog_apply.request,operation=request.operation,chosen=validateSourceMutationSelection(selection.change);
-    if(!sameCatalogValue(request.key,selection.key)||request.expected_catalog_revision!==selection.expected_catalog_revision||operation.id!==selection.index_id||!sameCatalogValue(preview.operation,operation)||preview.catalog_revision!==request.expected_catalog_revision||preview.next_revision!==request.expected_catalog_revision+1||preview.authority_fence_required!==true||preview.file_data_changes!==false)throw new Error('crossed_native_source_draft');
-    if(chosen.operation==='retire_index'){if(operation.operation!=='retire_index')throw new Error('crossed_native_source_selection');}
+    if(!sameCatalogValue(request.key,selection.key)||request.expected_catalog_revision!==selection.expected_catalog_revision||operation.id!==selection.index_id||!sameCatalogValue(preview.operation,operation)||preview.catalog_revision!==request.expected_catalog_revision||preview.next_revision!==request.expected_catalog_revision+1||preview.authority_fence_required!==true||preview.file_data_changes!==(operation.operation==='change_index_policy'))throw new Error('crossed_native_source_draft');
+    if(chosen.operation==='trim_path'||chosen.operation==='unblock_path'){
+        if(operation.operation!=='change_index_policy')throw new Error('crossed_native_source_selection');
+        const impact=validatePolicyImpact(preview.source_policy_impact),target=catalogObject(impact.target),policy=catalogObject(catalogObject(catalogObject(operation.configuration).configuration).policy);
+        const root=(policy.roots as CatalogObject[]).find(root=>root.id===target.source_root_id);
+        if(!root||root.canonical_path!==impact.canonical_root)throw new Error('crossed_native_policy_impact_root');
+        const change=validatePolicyChange(operation.change);
+        if(chosen.operation==='trim_path'){
+            if(change.operation!=='trim'||!sameCatalogValue(change.selector,{source_root_id:chosen.source_root_id,kind:chosen.kind,path:chosen.path})||!sameCatalogValue(change.selector,target))throw new Error('crossed_native_policy_selection');
+        }else if(change.operation!=='unblock'||change.rule_id!==chosen.rule_id)throw new Error('crossed_native_policy_selection');
+    }
+    else if(chosen.operation==='retire_index'){if(operation.operation!=='retire_index')throw new Error('crossed_native_source_selection');}
     else {if(operation.operation!=='begin_index_source_change')throw new Error('crossed_native_source_selection');const change=catalogObject(catalogObject(catalogObject(operation.plan).configuration).configuration);if(change.operation!==chosen.operation||change.alias!==chosen.alias)throw new Error('crossed_native_source_selection');}
     return {request,response,previewDigest:intent.catalog_apply.preview_digest,requestDigest:intent.request_digest};
 }
 export function validateSourceResolveIntent(input:unknown):SourceResolveIntent{
     const value=catalogObject(input);exact(value,'catalog_source_change_resolve,namespace');catalogHex(value.namespace);const request=catalogObject(value.catalog_source_change_resolve);exact(request,'begin_operation');catalogHex(request.begin_operation);return input as SourceResolveIntent;
 }
+export function validatePolicyResumeIntent(input:unknown):PolicyResumeIntent{
+    const value=catalogObject(input);exact(value,'catalog_policy_resume,project');catalogHex(value.project,64);
+    const request=catalogObject(value.catalog_policy_resume);exact(request,'index_id,operation_id,caller,key');catalogId(request.index_id,'idx_');catalogHex(request.operation_id);catalogHex(request.caller);
+    const key=catalogObject(request.key);exact(key,'namespace,epoch,nonce');catalogHex(key.namespace);catalogHex(key.nonce);
+    if(typeof key.epoch!=='number'||!Number.isSafeInteger(key.epoch)||key.epoch<0)throw new Error('invalid_policy_resume_epoch');
+    return input as PolicyResumeIntent;
+}
 export function sourceChangeObservation(response:CatalogObject):CatalogObject|undefined{
     if(!['catalog_source_change_observation','catalog_source_change_resolved','source_change_resolution_outcome_unknown','catalog_pending_source_change'].includes(String(response.status)))return undefined;
     return response.observation==null?undefined:catalogObject(response.observation);
+}
+
+/** Native source-policy wire checks. These values never establish source authority. */
+
+const POLICY_BYTES = 1024 * 1024;
+function policyExact(value: CatalogObject, fields: string): void {
+    if (Object.keys(value).sort().join(',') !== fields.split(',').sort().join(',')) throw new Error('invalid_source_policy_fields');
+}
+function denyId(value: unknown): string {
+    if (typeof value !== 'string' || !/^deny_[0-9a-f]{32}$/.test(value)) throw new Error('invalid_source_policy_rule');
+    return value;
+}
+function rootPath(value: unknown): string {
+    if (typeof value !== 'string' || !value || new TextEncoder().encode(value).length > 32768 || value.includes('\0') || !/^(?:\/|[A-Za-z]:[\\/]|\\\\)/.test(value)) throw new Error('invalid_source_policy_root');
+    return value;
+}
+/** Matches the existing Core format; unknown transport envelope fields stay with their caller. */
+export function validateSourcePolicy(input: unknown): CatalogObject {
+    const policy = catalogObject(input); catalogBound(policy, POLICY_BYTES);
+    policyExact(policy, 'schema,index_id,owner_binding,namespace,collection,epoch,roots,positive_includes,denies');
+    if (policy.schema !== 'airk.source-policy/1' || policy.namespace !== 'collections-1.4') throw new Error('unsupported_source_policy');
+    catalogId(policy.index_id, 'idx_'); catalogHex(policy.owner_binding, 64); catalogRevision(policy.epoch);
+    if (typeof policy.collection !== 'string' || !/^[a-zA-Z0-9._-]{1,128}$/.test(policy.collection) || ['.', '..'].includes(policy.collection)) throw new Error('invalid_source_policy_collection');
+    if (!Array.isArray(policy.roots) || !policy.roots.length || policy.roots.length > 17) throw new Error('invalid_source_policy_roots');
+    const roots = new Set<string>(), paths = new Set<string>(), aliases = new Set<string>();
+    for (const value of policy.roots) {
+        const root = catalogObject(value); policyExact(root, 'id,canonical_path,aliases,owner');
+        const id = catalogId(root.id, 'src_'), path = rootPath(root.canonical_path);
+        if (roots.has(id) || paths.has(path) || typeof root.owner !== 'boolean' || !Array.isArray(root.aliases) || root.aliases.length > 16) throw new Error('invalid_source_policy_roots');
+        roots.add(id); paths.add(path);
+        for (const alias of root.aliases) {
+            if (typeof alias !== 'string' || !alias || new TextEncoder().encode(alias).length > 128 || /[\u0000-\u001f\u007f-\u009f]/.test(alias) || aliases.has(alias)) throw new Error('invalid_source_policy_alias');
+            aliases.add(alias);
+        }
+    }
+    if (policy.positive_includes !== null) {
+        const includes = validateCatalogScope(policy.positive_includes);
+        if (includes.some(atom => !roots.has(atom.source_root_id))) throw new Error('unknown_source_policy_root');
+    }
+    if (!Array.isArray(policy.denies) || policy.denies.length > 128) throw new Error('invalid_source_policy_denies');
+    const ids = new Set<string>(), predicates = new Set<string>();
+    for (const value of policy.denies) {
+        const deny = catalogObject(value); policyExact(deny, `source_root_id,kind,path,rule_id,reason,created_epoch${deny.inherited_from === undefined ? '' : ',inherited_from'}`);
+        const atom = validateCatalogScope([{ source_root_id: deny.source_root_id, kind: deny.kind, path: deny.path }])[0];
+        const id = denyId(deny.rule_id), predicate = JSON.stringify([atom.source_root_id, atom.kind, atom.path]);
+        if (!roots.has(atom.source_root_id) || ids.has(id) || predicates.has(predicate) || !['trim', 'split_transfer'].includes(String(deny.reason)) || catalogRevision(deny.created_epoch) > Number(policy.epoch)) throw new Error('invalid_source_policy_deny');
+        ids.add(id); predicates.add(predicate);
+        if (deny.inherited_from !== undefined) {
+            const inherited = catalogObject(deny.inherited_from); policyExact(inherited, 'index_id,rule_id,epoch');
+            if (catalogId(inherited.index_id, 'idx_') === policy.index_id) throw new Error('self_inherited_source_policy');
+            denyId(inherited.rule_id); catalogRevision(inherited.epoch);
+        }
+    }
+    return policy;
+}
+
+export function validatePolicyChange(input: unknown): CatalogObject {
+    const change = catalogObject(input);
+    if (change.operation === 'trim') {
+        policyExact(change, 'operation,rule_id,selector'); denyId(change.rule_id); validateCatalogScope([change.selector]);
+    } else if (change.operation === 'unblock') {
+        policyExact(change, 'operation,rule_id'); denyId(change.rule_id);
+    } else throw new Error('invalid_source_policy_change');
+    return change;
+}
+
+/** Internal native job carried by an immutable catalog draft, never a generic UI configuration intent. */
+export function validateNativePolicyConfiguration(input: unknown): CatalogObject {
+    const request = catalogObject(input); policyExact(request, `incarnation,settings,configuration${request.prepare === undefined ? '' : ',prepare'}`);
+    catalogBound(request, 16384); catalogHex(request.incarnation); catalogHex(request.settings, 64);
+    if (request.prepare !== undefined && request.prepare !== false) throw new Error('native_concrete_policy_configuration_required');
+    const configuration = catalogObject(request.configuration); policyExact(configuration, 'operation,policy,operation_id');
+    if (configuration.operation !== 'apply_source_policy') throw new Error('native_source_policy_configuration_required');
+    catalogHex(configuration.operation_id); return validateSourcePolicy(configuration.policy);
+}
+
+/** Bounded native administrative observations; null counts remain unknown. */
+export function validatePolicyImpact(input: unknown): CatalogObject {
+    const impact = catalogObject(input); catalogBound(impact, 49152);
+    policyExact(impact, 'target,canonical_root,affected_artifacts,affected_vectors,affected_facts,affected_relationships,counts_basis,affected_source_root_ids,affected_project_ids,other_covering_index_ids,overlap_basis');
+    const target=validateCatalogScope([impact.target])[0];rootPath(impact.canonical_root);
+    for (const name of ['affected_artifacts', 'affected_vectors', 'affected_facts', 'affected_relationships']) {
+        const value = impact[name];
+        if (value !== null && (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0)) throw new Error('invalid_source_policy_impact_count');
+    }
+    for (const name of ['counts_basis', 'overlap_basis']) {
+        if (typeof impact[name] !== 'string' || !impact[name] || new TextEncoder().encode(String(impact[name])).length > 4096) throw new Error('invalid_source_policy_impact_basis');
+    }
+    for (const [name, prefix, maximum] of [['affected_source_root_ids', 'src_', 17], ['affected_project_ids', 'prj_', 32], ['other_covering_index_ids', 'idx_', 32]] as const) {
+        const values = impact[name];
+        if (!Array.isArray(values) || values.length > maximum || new Set(values).size !== values.length) throw new Error('invalid_source_policy_impact_selection');
+        values.forEach(value => catalogId(value, prefix));
+    }
+    if(!(impact.affected_source_root_ids as string[]).includes(target.source_root_id))throw new Error('crossed_source_policy_impact_root');
+    return impact;
+}
+
+/** Null means no retained policy observation, never proof of completed cleanup. */
+export function validatePolicyStatus(input: unknown, index: string, status:'catalog_policy_status'|'catalog_policy_resumed'='catalog_policy_status'): CatalogObject {
+    const response = catalogObject(input); catalogBound(response, 65536); catalogId(index, 'idx_');
+    if (response.status !== status || response.index_id !== index) throw new Error('crossed_source_policy_status');
+    if(status==='catalog_policy_resumed'){catalogHex(response.accepted_job_id,64);if(response.status_basis!=='current_policy')throw new Error('invalid_source_policy_status_basis');}
+    if (response.snapshot === null) {
+        if (response.job !== null) throw new Error('crossed_source_policy_job');
+        return response;
+    }
+    const snapshot = catalogObject(response.snapshot); catalogBound(snapshot, 49152);
+    if (snapshot.schema !== 1) throw new Error('unsupported_source_policy_snapshot');
+    catalogHex(snapshot.operation_id); catalogHex(snapshot.job, 64);
+    const policy = validateSourcePolicy(snapshot.policy);
+    if (policy.index_id !== index) throw new Error('crossed_source_policy_index');
+    const job = catalogObject(response.job); catalogHex(job.id, 64); catalogHex(job.project, 64);
+    if (job.id !== snapshot.job || job.project !== policy.owner_binding || job.kind !== 'configure' || !['pending', 'running', 'succeeded', 'failed', 'canceled'].includes(String(job.state))) throw new Error('crossed_source_policy_job');
+    for (const name of ['fencing_generation', 'attempts']) {
+        if (typeof job[name] !== 'number' || !Number.isSafeInteger(job[name]) || Number(job[name]) < 0) throw new Error('invalid_source_policy_job');
+    }
+    if (snapshot.last_error !== null && (typeof snapshot.last_error !== 'string' || new TextEncoder().encode(snapshot.last_error).length > 1024)) throw new Error('invalid_source_policy_error');
+    if(snapshot.application===null){if(snapshot.application_job!==null)throw new Error('crossed_source_policy_application_job');}
+    else {
+        catalogHex(snapshot.application_job,64);
+        const application = catalogObject(snapshot.application); catalogHex(application.policy_digest, 64); catalogHex(application.operation_id);
+        if (typeof application.observed_unix_ms !== 'number' || !Number.isSafeInteger(application.observed_unix_ms) || application.observed_unix_ms < 1) throw new Error('invalid_source_policy_observation_time');
+        if (application.operation_id !== snapshot.operation_id || typeof application.no_index !== 'boolean' || typeof application.physical_cleanup_pending !== 'boolean' || (application.removal_publication !== null) === application.no_index) throw new Error('invalid_source_policy_application');
+        for (const name of ['removed_artifacts', 'reclaimed_files']) {
+            if (typeof application[name] !== 'number' || !Number.isSafeInteger(application[name]) || Number(application[name]) < 0) throw new Error('invalid_source_policy_accounting');
+        }
+        if (application.reclaimed_bytes !== null && (typeof application.reclaimed_bytes !== 'number' || !Number.isSafeInteger(application.reclaimed_bytes) || application.reclaimed_bytes < 0)) throw new Error('invalid_source_policy_accounting');
+        if (application.cleanup_error !== undefined && (typeof application.cleanup_error !== 'string' || new TextEncoder().encode(application.cleanup_error).length > 1024 || application.physical_cleanup_pending !== true)) throw new Error('invalid_source_policy_cleanup_error');
+        if (!Array.isArray(application.retired_components) || application.retired_components.length > 2 || new Set(application.retired_components).size !== application.retired_components.length || application.retired_components.some(value => !['analysis', 'embedding_cache'].includes(String(value)))) throw new Error('invalid_source_policy_retired_components');
+        if (application.no_index && (application.removed_artifacts !== 0 || application.retired_components.length !== 0)) throw new Error('invalid_empty_source_policy_application');
+        if (application.removal_publication !== null) {
+            const token=application.removal_publication;
+            const fields=typeof token==='string'&&token.length<=126?/^airk-r1:([0-9a-f]{32}):(0|[1-9][0-9]{0,19}):([0-9a-f]{64})$/.exec(token):null;
+            if(!fields||fields[0]!==token||BigInt(fields[2])>18446744073709551615n)throw new Error('invalid_source_policy_publication');
+        }
+    }
+    return response;
+}
+
+/** Labels only recorded native states. Missing observations stay unknown. */
+export function canReviewPolicyUnblock(response:CatalogObject|undefined):boolean {
+    if(!response?.snapshot)return false;
+    const state=catalogObject(response.job).state;
+    if(state==='pending'||state==='running')return false;
+    return catalogObject(response.snapshot).application!==null||state==='failed'||state==='canceled';
+}
+
+export function policyStatusLabels(response: CatalogObject): string[] {
+    if (response.snapshot === null) return ['No permanent-policy observation returned. Removal and cleanup are unknown.'];
+    const snapshot = catalogObject(response.snapshot), policy = catalogObject(snapshot.policy);
+    const exclusions=Array.isArray(policy.denies)&&policy.denies.length>0||policy.positive_includes!==null;
+    const labels = [exclusions ? 'Permanent exclusions active.' : 'No permanent exclusions in this policy.'];
+    if(response.resume_receipt&&catalogObject(response.resume_receipt).operation_id!==snapshot.operation_id)labels.push('The accepted resume belongs to an earlier policy operation. Its exact receipt is retained separately; the displayed policy and cleanup state describe the current operation.');
+    if(response.accepted_job_id!==undefined&&response.accepted_job_id!==snapshot.job)labels.push('The accepted resume job differs from the currently observed cleanup job; its exact native receipt is retained separately.');
+    if (snapshot.application === null) {
+        const state=catalogObject(response.job).state;
+        labels.push(state==='failed'||state==='canceled'?'Removal has no recorded publication; the native operation failed or was canceled.':'Removal from the current index pending.');
+        if(exclusions&&(state==='failed'||state==='canceled'))labels.push('Recorded exclusions remain active. An existing trim rule can be selected for a separate native unblock review.');
+    }
+    else {
+        const application = catalogObject(snapshot.application);
+        const stamp = new Date(Number(application.observed_unix_ms));
+        labels.push(`Removal and cleanup observation: ${Number.isNaN(stamp.getTime()) ? `${String(application.observed_unix_ms)} milliseconds since the Unix epoch` : stamp.toISOString()}.`);
+        if(snapshot.application_job!==snapshot.job)labels.push('The removal receipt is from an earlier cleanup job.');
+        labels.push(application.no_index ? 'No retained index required removal.' : 'Removed from the current index at the recorded publication.');
+        labels.push(application.physical_cleanup_pending ? 'Physical cleanup pending.' : 'Physical cleanup complete for this native operation.');
+        if (Array.isArray(application.retired_components) && application.retired_components.includes('analysis')) labels.push('Imported analysis was retired for the entire index; it has not been regenerated.');
+        if (Array.isArray(application.retired_components) && application.retired_components.includes('embedding_cache')) labels.push('The embedding cache was retired for the entire index.');
+        if (application.cleanup_error !== undefined) labels.push(`Physical cleanup needs attention: ${String(application.cleanup_error)}`);
+    }
+    if (snapshot.last_error !== null) labels.push(exclusions?'Native operation needs attention; exclusions remain active.':'Native operation needs attention; no permanent exclusions are active.');
+    return labels;
 }

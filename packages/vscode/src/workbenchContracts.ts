@@ -50,6 +50,7 @@ export interface WorkbenchState {
     projects: { id: string; name: string }[]; project?: string; session?: WorkbenchSession;
     recent: WorkbenchSessionSummary[];
     cards: Record<string, EvidenceCard[]>; busy: boolean; notice?: string; save: string;
+    sourceOpen?:{id:string;observation:Value};
     continuations?:Record<string,Continuation[]>;
     metadataViews?:Record<string,Value>;metadataIssues?:Record<string,string>;
     capabilityDetails?:Record<string,Record<string,CapabilityFieldDisplay>>;
@@ -147,6 +148,7 @@ export type WorkbenchMessage =
     | { type:'followDefinition';turn:string;step:string;name:string;path:string }
     | { type:'formDraft';sessionId:string;project:string;epoch:number;revision:number;tool:string;values?:Record<string,string>;scope?:string;recipe?:string }
     | { type:'resetForm';sessionId:string;project:string;epoch:number;revision:number;tool:string }
+    | {type:'exportSourceOpen';id:string;format:'copy'|'json'}
     | { type: 'copy' | 'export'; turn?: string; format: 'json' | 'markdown'; cards?: string[] };
 export const object = (v: unknown): Value => v && typeof v === 'object' && !Array.isArray(v) ? v as Value : {};
 export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefined {
@@ -161,6 +163,7 @@ export function parseWorkbenchMessage(raw: unknown): WorkbenchMessage | undefine
         &&(v.values===undefined||validWorkbenchToolFormValues(v.values))&&(v.scope===undefined||validFormText(v.scope,1024))
         &&(v.recipe===undefined||typeof v.recipe==='string'&&FORM_RECIPES.includes(v.recipe))){return v as WorkbenchMessage;}
     if(type==='resetForm'&&exact(['type','sessionId','project','epoch','revision','tool'])&&formFence()){return v as WorkbenchMessage;}
+    if(type==='exportSourceOpen'&&exact(['type','id','format'])&&str('id',32)&&/^[0-9a-f]{32}$/.test(String(v.id))&&['copy','json'].includes(String(v.format)))return v as WorkbenchMessage;
     if (['ready','stop','new','clear','manage','help','refresh','retrySave','fork','forms'].includes(type) && exact(['type'])) { return v as WorkbenchMessage; }
     if (['project','recent','delete'].includes(type) && exact(['type','id']) && str('id')) { return v as WorkbenchMessage; }
     if (type === 'rename' && exact(['type','title']) && str('title',80)) { return v as WorkbenchMessage; }

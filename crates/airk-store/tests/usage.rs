@@ -470,6 +470,7 @@ fn deletion_and_recreation_cannot_receive_an_old_workers_history() -> anyhow::Re
         current.initialize_collection(
             &token,
             &CollectionConfiguration {
+                source_policy_digest: None,
                 roots: Default::default(),
                 extractor_version: "fixture".into(),
                 extraction_policy_digest: Sha256Digest::from_bytes([4; 32]),

@@ -254,15 +254,6 @@ fn registration(
 )> {
     let (root,data,collection,definition,source,tombstone,import):(String,String,String,i64,i64,bool,String)=db.query_row("SELECT backing_root,data_root,collection,definition_revision,source_revision,tombstone,source_import_state FROM index_definitions WHERE id=?1",[id.to_string()],|row|Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?,row.get(5)?,row.get(6)?)))?;
     let registration = ProjectRegistration::new(root, data, collection)?;
-    let policy: i64 = db.query_row(
-        "SELECT policy_epoch FROM index_definitions WHERE id=?1",
-        [id.to_string()],
-        |row| row.get(0),
-    )?;
-    ensure!(
-        policy == 0,
-        "source policy mutation requires its qualified policy adapter"
-    );
     Ok((
         registration,
         u64::try_from(definition)?.try_into()?,
@@ -628,6 +619,12 @@ pub(in crate::service::registry) fn require_configuration_admission(
     db: &Connection,
     request: &ConfigurationRequest,
 ) -> Result<()> {
+    if matches!(
+        request.configuration,
+        ProjectConfiguration::ApplySourcePolicy { .. }
+    ) {
+        anyhow::bail!("source policy work requires its exact native catalog admission");
+    }
     if live(db)?
         && matches!(
             request.configuration,
@@ -645,6 +642,9 @@ pub(in crate::service::registry) fn require_claim(
     job: Sha256Digest,
 ) -> Result<()> {
     if !live(db)? {
+        return Ok(());
+    }
+    if super::policy::require_claim(db, job)? {
         return Ok(());
     }
     if let Some(work) = super::super::configuration::work(db, job)? {
@@ -690,6 +690,7 @@ pub(in crate::service::registry) fn validate_configuration_result(
     if !live(db)? {
         return Ok(());
     }
+    super::policy::validate_result(db, job, result)?;
     let Some(work) = super::super::configuration::work(db, job)? else {
         return Ok(());
     };
@@ -705,9 +706,8 @@ pub(in crate::service::registry) fn validate_configuration_result(
     Ok(())
 }
 
-/// Pin only still-pending accepted source jobs. Called by bounded job receipt
-/// pruning, never by evidence reads or a source-directory scanner.
-pub(in crate::service::registry) fn pinned_jobs(db: &Connection) -> Result<BTreeSet<Sha256Digest>> {
+/// Only source-change lineage belongs in native source-completion recovery.
+fn pending_source_jobs(db: &Connection) -> Result<BTreeSet<Sha256Digest>> {
     if !live(db)? {
         return Ok(BTreeSet::new());
     }
@@ -717,6 +717,28 @@ pub(in crate::service::registry) fn pinned_jobs(db: &Connection) -> Result<BTree
         .collect::<rusqlite::Result<Vec<_>>>()?;
     ensure!(rows.len() <= 1024, "pending source work capacity exceeded");
     rows.into_iter().map(|row| row.parse()).collect()
+}
+
+/// Preserve pending source work and the current policy's status receipt. A
+/// completed policy remains active until superseded, including after cleanup.
+pub(in crate::service::registry) fn pinned_jobs(db: &Connection) -> Result<BTreeSet<Sha256Digest>> {
+    let mut jobs = pending_source_jobs(db)?;
+    if !live(db)? {
+        return Ok(jobs);
+    }
+    if super::state(db)?.policy_contract == 1 {
+        let mut statement = db.prepare(
+            "SELECT json_extract(payload,'$.job') FROM index_source_policies LIMIT 1025",
+        )?;
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ensure!(rows.len() <= 1024, "current policy job capacity exceeded");
+        for row in rows {
+            jobs.insert(row.parse()?);
+        }
+    }
+    Ok(jobs)
 }
 
 fn require_no_native_fence(db: &Connection) -> Result<()> {
@@ -742,6 +764,7 @@ pub(in crate::service::registry) fn require_success_result(
         ProjectConfiguration::AddRoot { .. }
             | ProjectConfiguration::RemoveRoot { .. }
             | ProjectConfiguration::Unregister
+            | ProjectConfiguration::ApplySourcePolicy { .. }
     ) {
         let result = super::super::configuration::result(db, job)?
             .context("native source result must be saved before successful completion")?;
@@ -765,6 +788,23 @@ pub(in crate::service::registry) fn require_ready_registration(
         ready,
         "registration requires ready canonical source authority"
     );
+    if super::state(db)?.policy_contract == 1 {
+        let id: Option<String> = db
+            .query_row(
+                "SELECT id FROM index_definitions WHERE active_registration=?1",
+                [project.to_string()],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = id
+            && let Some(policy) = super::policy::snapshot(db, id.parse()?)?
+        {
+            ensure!(
+                policy.application.is_some(),
+                "source policy removal remains pending"
+            );
+        }
+    }
     Ok(())
 }
 /// Called before legacy retirement or derived purge; the catalog mutation must
@@ -881,7 +921,7 @@ impl ServiceRegistry {
             return Ok(Vec::new());
         }
         let mut result = Vec::new();
-        for job in pinned_jobs(&self.connection)? {
+        for job in pending_source_jobs(&self.connection)? {
             let record = super::super::jobs::record(&self.connection, job)?;
             if record.project != lease.binding
                 || record.kind != JobKind::Configure
@@ -1197,6 +1237,10 @@ pub(in crate::service::registry) fn mutate(
             expected_source_revision,
             plan,
         } => {
+            ensure!(
+                super::operations::index_record(db, *id)?.policy.is_none(),
+                "source policy mutation requires its qualified policy adapter"
+            );
             plan.validate()?;
             let (saved, _, revision, tombstone, import) = registration(db, *id)?;
             ensure!(
@@ -1271,6 +1315,10 @@ pub(in crate::service::registry) fn mutate(
             expected_source_revision,
             effect_digest,
         } => {
+            ensure!(
+                super::operations::index_record(db, *id)?.policy.is_none(),
+                "source policy mutation requires its qualified policy adapter"
+            );
             let begin = begin_receipt(db, *begin_operation)?;
             let CatalogOperation::BeginIndexSourceChange {
                 id: source,

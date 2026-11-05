@@ -23,7 +23,27 @@ pub fn scoped_error_result(
     kernel: &airk_kernel::Kernel,
     error: &anyhow::Error,
 ) -> rmcp::model::CallToolResult {
-    with_scope(kernel, error_result(error))
+    let mut result = error_result(error);
+    if error.is::<airk_kernel::SourcePolicyReadUnavailable>()
+        && let Ok(Some(observation)) = kernel.source_policy_observation()
+        && let Ok(mut wire) = serde_json::to_value(&result)
+    {
+        if let Some(content) = wire.get_mut("content").and_then(Value::as_array_mut) {
+            for block in content {
+                if let Some(text) = block.get("text").and_then(Value::as_str)
+                    && let Ok(mut body) = serde_json::from_str::<Value>(text)
+                    && body.is_object()
+                {
+                    body["source_policy"] = observation.clone();
+                    block["text"] = body.to_string().into();
+                }
+            }
+        }
+        if let Ok(annotated) = serde_json::from_value(wire) {
+            result = annotated;
+        }
+    }
+    with_scope(kernel, result)
 }
 pub(crate) fn with_scope(
     kernel: &airk_kernel::Kernel,
@@ -97,6 +117,11 @@ fn with_scope_observation(
     serde_json::from_value(wire).unwrap_or_else(|_| failure(required_bytes))
 }
 fn bare_error_result(error: &anyhow::Error) -> rmcp::model::CallToolResult {
+    if let Some(refusal) = error.downcast_ref::<airk_kernel::SourcePolicyReadUnavailable>() {
+        return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
+            refusal.receipt().to_string(),
+        )]);
+    }
     if let Some(budget) = error.downcast_ref::<airk_core::scoped_reads::ScopeReplyBudget>() {
         return rmcp::model::CallToolResult::error(vec![rmcp::model::ContentBlock::text(
             budget.receipt().to_string(),

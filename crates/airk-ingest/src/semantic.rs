@@ -7,8 +7,6 @@ use scip::types::{Document, Metadata, Occurrence, occurrence::Typed_range};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs::File,
-    io::Read,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -20,12 +18,9 @@ pub fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 pub fn read_bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    File::open(path)?
-        .take((limit + 1) as u64)
-        .read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= limit, "input exceeds {limit} bytes");
-    Ok(bytes)
+    // The owning kernel authorizes this spelling before import. Never resolve
+    // it again: a replacement link must refuse rather than capture its target.
+    super::source_read::read_protected_path(&std::path::absolute(path)?, limit, false)
 }
 
 pub fn source_inventory(snapshot: &Snapshot) -> BTreeMap<String, String> {

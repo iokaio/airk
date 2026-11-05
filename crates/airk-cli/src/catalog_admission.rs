@@ -152,7 +152,8 @@ impl ScopeTarget {
     pub fn for_operation(operation: &CatalogOperation) -> Result<Self> {
         Ok(match operation {
             CatalogOperation::BeginIndexSourceChange { id, .. }
-            | CatalogOperation::RetireIndex { id, .. } => Self::Index(*id),
+            | CatalogOperation::RetireIndex { id, .. }
+            | CatalogOperation::ChangeIndexPolicy { id, .. } => Self::Index(*id),
             CatalogOperation::DeleteProject { id, .. } => Self::Project(*id),
             CatalogOperation::SetMembership { membership, .. } => Self::Membership {
                 project_id: membership.project_id,
@@ -794,7 +795,7 @@ impl NativeCatalogAdmission {
         self.close_admission_with_census(
             FenceKey::new(request)?,
             ScopeTarget::for_operation(&request.operation)?,
-            matches!(request.operation, CatalogOperation::RetireIndex { .. }),
+            request.operation.requires_worker_drain(),
             None,
             Some(request),
         )
@@ -804,10 +805,7 @@ impl NativeCatalogAdmission {
         request: &CatalogRequest,
         backing: ProjectBinding,
     ) -> Result<FencePlan> {
-        ensure!(
-            matches!(request.operation, CatalogOperation::RetireIndex { .. }),
-            ScopeReadRefused
-        );
+        ensure!(request.operation.requires_worker_drain(), ScopeReadRefused);
         self.close_admission_with_census(
             FenceKey::new(request)?,
             ScopeTarget::for_operation(&request.operation)?,

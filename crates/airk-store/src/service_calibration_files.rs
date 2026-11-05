@@ -6,7 +6,7 @@ const CALIBRATION_OWNER: &[u8] = b"airk-service-calibration-files-v1\n";
 const MAX_DEFINITION: u64 = 1 << 20;
 const MAX_TOKENIZER: u64 = 32 << 20;
 
-fn read_definition(path: &Path) -> Result<Vec<u8>> {
+fn read_calibration_input(path: &Path, maximum: u64) -> Result<Vec<u8>> {
     directories(
         path.parent().context("calibration input parent missing")?,
         false,
@@ -14,15 +14,15 @@ fn read_definition(path: &Path) -> Result<Vec<u8>> {
     let metadata = fs::symlink_metadata(path)?;
     reject_file_aliases(path, &metadata)?;
     ensure!(
-        metadata.len() <= MAX_DEFINITION,
+        metadata.len() <= maximum,
         "calibration definition exceeds bound"
     );
     let mut bytes = Vec::new();
     File::open(path)?
-        .take(MAX_DEFINITION + 1)
+        .take(maximum + 1)
         .read_to_end(&mut bytes)?;
     ensure!(
-        bytes.len() as u64 <= MAX_DEFINITION,
+        bytes.len() as u64 <= maximum,
         "calibration definition grew beyond bound"
     );
     Ok(bytes)
@@ -90,22 +90,39 @@ impl ServiceModelFiles {
     /// The trusted adapter submits an explicitly selected local definition. No
     /// sample text, project state or usage ledger is copied into the global store.
     pub fn retain_calibration(&mut self, source: &Path) -> Result<PathBuf> {
+        self.retain_calibration_readers(source, read_calibration_input)
+    }
+
+    /// The native input adapter supplies protected captures of the exact
+    /// authorized definition and its fixed sibling tokenizer asset.
+    pub fn retain_calibration_readers(
+        &mut self,
+        source: &Path,
+        read: impl Fn(&Path, u64) -> Result<Vec<u8>>,
+    ) -> Result<PathBuf> {
         ensure!(
             source.is_absolute() && source.to_str().is_some_and(|s| s.len() <= 4096),
             "calibration source must be a bounded absolute path"
         );
-        let bytes = read_definition(source)?;
+        let bytes = read(source, MAX_DEFINITION)?;
+        ensure!(
+            bytes.len() as u64 <= MAX_DEFINITION,
+            "calibration definition exceeds bound"
+        );
         let (name, digest) = input_name(&bytes)?;
         let source_asset = source.parent().unwrap().join(&name);
-        let metadata = fs::symlink_metadata(&source_asset)?;
-        reject_file_aliases(&source_asset, &metadata)?;
+        let source_bytes = read(&source_asset, MAX_TOKENIZER)?;
         ensure!(
-            metadata.len() > 0 && metadata.len() <= MAX_TOKENIZER,
+            !source_bytes.is_empty() && source_bytes.len() as u64 <= MAX_TOKENIZER,
             "calibration tokenizer exceeds bound"
+        );
+        ensure!(
+            Sha256Digest::from_bytes(Sha256::digest(&source_bytes).into()) == digest,
+            "calibration tokenizer digest mismatch"
         );
         let reference = ModelObjectRef {
             sha256: digest,
-            bytes: metadata.len(),
+            bytes: source_bytes.len() as u64,
         };
         let key = framed_digest(b"airk-shared-calibration/1.4", &[&bytes]);
         let root = self.root.join("calibration");
@@ -180,7 +197,6 @@ impl ServiceModelFiles {
             Ok(())
         };
         if entry_exists(&target)? {
-            verify_asset(&source_asset, &reference)?;
             validate(&target, false)?;
             return Ok(target.join("assets").join(manifest));
         }
@@ -231,7 +247,7 @@ impl ServiceModelFiles {
                 );
             }
             reservation.charge(reference.bytes)?;
-            let mut input = File::open(&source_asset)?.take(reference.bytes + 1);
+            let mut input = std::io::Cursor::new(&source_bytes).take(reference.bytes + 1);
             let mut output = OpenOptions::new()
                 .write(true)
                 .create(true)
@@ -287,6 +303,33 @@ mod tests {
         )?;
         Ok(path)
     }
+    #[test]
+    fn supplied_calibration_captures_are_not_reopened_after_admission() -> Result<()> {
+        use std::cell::Cell;
+        let root = tempfile::tempdir()?;
+        let source = fixture(root.path(), "selected-reader")?;
+        let asset = source.parent().unwrap().join("tokenizer.json");
+        let original = fs::read(&asset)?;
+        let reads = Cell::new(0);
+        let mut files = ServiceModelFiles::open(root.path())?;
+        let installed = files.retain_calibration_readers(&source, |path, maximum| {
+            let bytes = fs::read(path)?;
+            ensure!(bytes.len() as u64 <= maximum, "reader budget");
+            reads.set(reads.get() + 1);
+            if path == asset.as_path() {
+                fs::remove_file(path)?;
+            }
+            Ok(bytes)
+        })?;
+        assert_eq!(reads.get(), 2);
+        assert!(!asset.exists());
+        assert_eq!(
+            fs::read(installed.parent().unwrap().join("tokenizer.json"))?,
+            original
+        );
+        Ok(())
+    }
+
     #[test]
     fn exact_global_capture_reuses_after_restart_and_preserves_selected_inputs() -> Result<()> {
         let root = tempfile::tempdir()?;

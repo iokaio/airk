@@ -1,5 +1,14 @@
 # Workspace indexing coverage
 
+P9 coverage refresh uses the same permanent source predicate as indexing, before
+source capture or hashing. Its private cache also binds the policy digest, so a
+pre-trim cache cannot return excluded paths or counts. Unknown naming equivalence
+and excluded ignore controls refuse explicitly. Permanently pruned paths are not
+a complete inventory of blocked files; ordinary cached/status reads do not scan
+them to estimate counts. Managed rebuild validation retains these restrictions.
+See [permanent exclusions](source-policy.md) and the
+[qualification ledger](research/implementation-v190.md).
+
 **1.8.8 P4 development:** [Saved-source verification](source-verification.md) defaults to Report for evidence reads, with bounded native checks and explicit Off/Require choices. CLI, MCP, Workbench and Inspector/Checker retain dated outcomes and uncertainty. Phase acceptance and performance qualification remain in the [ledger](research/implementation-v190.md).
 
 AIRK measures how much of a folder's eligible saved content matches its indexed revision. The VS Code footer displays that measurement for the active folder; clicking it queues **Index Now**. Coverage measures freshness and eligibility, not retrieval relevance or token savings.

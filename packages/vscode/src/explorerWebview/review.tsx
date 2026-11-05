@@ -5,7 +5,7 @@ import { shortToken } from './format';
 import type { ScreenProps } from './workspaces';
 
 // Shapes returned by the host's review module (explorerReview.ts); rendered as text only.
-interface ChangedFile { path: string; change: string; staged: boolean; workingTree?: boolean; originalPath?: string; indexed: boolean; live: string; language?: string }
+interface ChangedFile { path: string; change: string; staged: boolean; workingTree?: boolean; originalPath?: string; indexed: boolean; live: string; language?: string;nativeResult?:Record<string,unknown> }
 interface Changes { git: 'available' | 'unavailable' | 'no_repository'; files: ChangedFile[]; truncated: boolean; publication?: string; notes: string[]; offset: number; total: number; limit: number; snapshot: string }
 interface ImpactItem { name: string; kind: string; path: string; line?: number; references: number; referenceFiles: string[]; testReferences: number; truncated: boolean }
 interface Impact { items: ImpactItem[]; files: number; truncated: boolean; publication?: string; notes: string[] }
@@ -67,6 +67,7 @@ export function ReviewChangesScreen(props: ScreenProps) {
                         ))}</tbody>
                     </table></div>
                 )}
+                <details><summary>Complete changed-file report and dated native source checks</summary><pre>{JSON.stringify(data,null,2)}</pre></details>
             </>}
         </Frame>
     );

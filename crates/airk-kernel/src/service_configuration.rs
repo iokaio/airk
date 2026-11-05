@@ -9,66 +9,78 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::path::Path;
 
+/// Protected exact-path capture for native adapters that already hold input
+/// authorization. This never canonicalizes or follows replacement links.
+pub use airk_ingest::read_protected_path as read_protected_input;
+
+/// Fixed model asset adapter for an already authorized canonical directory.
+/// Every capture retains that spelling and refuses redirected components.
+pub struct ProtectedModelInput<'a>(pub &'a Path);
+
+impl airk_core::model_objects::ModelAssetSource for ProtectedModelInput<'_> {
+    fn read_asset(
+        &self,
+        name: airk_core::model_objects::ModelAssetName,
+        maximum: u64,
+    ) -> Result<Vec<u8>> {
+        airk_ingest::read_protected_path(
+            &self.0.join(name.filename()),
+            usize::try_from(maximum.min(name.maximum_bytes()))?,
+            false,
+        )
+    }
+}
+
+impl ProtectedModelInput<'_> {
+    pub fn inspect_plan(&self) -> Result<airk_core::model_objects::ModelObjectSet> {
+        use airk_core::model_objects::{ModelAssetName, ModelAssetSource};
+        let manifest = self.read_asset(ModelAssetName::ModelJson, 16_384)?;
+        if serde_json::from_slice::<Value>(&manifest)?["schema"].as_u64() == Some(2) {
+            let definition = serde_json::from_slice(&manifest)?;
+            airk_retrieval::model_catalog::approved_manifest(&definition)?;
+            ensure!(
+                definition == airk_retrieval::model_catalog::selected_profile()?.manifest,
+                "model selection differs from the bundled INT8 profile for this CPU; use bundled model setup"
+            );
+        }
+        let set = airk_retrieval::model::inspect_asset_plan(self)?;
+        use sha2::{Digest, Sha256};
+        ensure!(
+            set.assets
+                .get(&ModelAssetName::ModelJson)
+                .is_some_and(|reference| {
+                    reference.sha256
+                        == airk_core::identity::Sha256Digest::from_bytes(
+                            Sha256::digest(&manifest).into(),
+                        )
+                }),
+            "model manifest changed during protected planning"
+        );
+        Ok(set)
+    }
+}
+
 /// Canonical preparation shared with explicit administrative configuration.
 /// File-intent native reads must pass their installed-scope guard before calling.
 pub fn prepare_input(
     path: &Path,
     limit: u64,
 ) -> Result<airk_core::service_configuration::InputFile> {
+    prepare_input_authorized(path, limit, &|_| Ok(()))
+}
+
+fn prepare_input_authorized(
+    path: &Path,
+    limit: u64,
+    authorize: &dyn Fn(&Path) -> Result<()>,
+) -> Result<airk_core::service_configuration::InputFile> {
     use sha2::{Digest, Sha256};
-    use std::io::Read;
     let text = path.to_str().context("configuration input must be UTF-8")?;
     ensure!(
         path.is_absolute() && text.len() <= 4096 && !text.chars().any(char::is_control),
         "configuration input requires a bounded absolute path"
     );
-    let path = path.canonicalize()?;
-    let metadata = std::fs::symlink_metadata(&path)?;
-    ensure!(
-        metadata.is_file() && !metadata.file_type().is_symlink(),
-        "runtime file is not a regular unlinked file"
-    );
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        ensure!(metadata.nlink() == 1, "aliased runtime file");
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::{fs::MetadataExt, io::AsRawHandle};
-        use windows_sys::Win32::Storage::FileSystem::{
-            BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
-        };
-        ensure!(
-            metadata.file_attributes() & 0x400 == 0,
-            "redirected runtime file"
-        );
-        let file = std::fs::File::open(&path)?;
-        // SAFETY: this Win32 metadata output struct admits all-zero initialization.
-        let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-        // SAFETY: the owned read-only file handle and initialized output remain
-        // alive through this fixed native metadata call.
-        ensure!(
-            unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut information) }
-                != 0,
-            "cannot inspect runtime file aliases"
-        );
-        ensure!(information.nNumberOfLinks == 1, "aliased runtime file");
-    }
-    let mut file = std::fs::File::open(&path)?;
-    let before = file.metadata()?;
-    ensure!(
-        before.is_file() && before.len() <= limit,
-        "configuration input exceeds budget"
-    );
-    let mut bytes = Vec::new();
-    (&mut file).take(limit + 1).read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() as u64 <= limit
-            && bytes.len() as u64 == before.len()
-            && file.metadata()?.len() == before.len(),
-        "configuration input changed during preparation"
-    );
+    let (path, bytes) = airk_ingest::capture_input(path, usize::try_from(limit)?, true, authorize)?;
     let reference = airk_core::service_configuration::InputFile {
         path: path
             .to_str()
@@ -85,7 +97,7 @@ pub fn verified_input(
 ) -> Result<Vec<u8>> {
     input.validate()?;
     use sha2::{Digest, Sha256};
-    let bytes = crate::usage::read_usage_input(input_path(&input.path)?, limit)?;
+    let bytes = airk_ingest::read_protected_path(input_path(&input.path)?, limit, false)?;
     ensure!(
         airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(&bytes).into())
             == input.sha256,
@@ -113,6 +125,62 @@ fn input_path(value: &str) -> Result<&Path> {
     Ok(value)
 }
 impl Kernel {
+    pub(crate) fn capture_source_input(&self, path: &Path, limit: usize) -> Result<Vec<u8>> {
+        Ok(self.capture_source_input_with_path(path, limit)?.1)
+    }
+
+    pub(crate) fn capture_source_input_with_path(
+        &self,
+        path: &Path,
+        limit: usize,
+    ) -> Result<(std::path::PathBuf, Vec<u8>)> {
+        self.require_unrestricted_read()?;
+        let epoch = self.source_policy_input_epoch()?;
+        let captured =
+            airk_ingest::capture_input(&std::path::absolute(path)?, limit, false, &|canonical| {
+                self.require_source_policy_capture_path(canonical)
+            })?;
+        epoch.validate()?;
+        Ok(captured)
+    }
+
+    pub fn verified_source_input(
+        &self,
+        input: &airk_core::service_configuration::InputFile,
+        limit: usize,
+    ) -> Result<Vec<u8>> {
+        use sha2::{Digest, Sha256};
+        self.require_unrestricted_read()?;
+        input.validate()?;
+        let epoch = self.source_policy_input_epoch()?;
+        self.require_source_policy_capture_path(input_path(&input.path)?)?;
+        let bytes = airk_ingest::read_protected_path(input_path(&input.path)?, limit, false)?;
+        ensure!(
+            airk_core::identity::Sha256Digest::from_bytes(Sha256::digest(&bytes).into())
+                == input.sha256,
+            "configuration input changed since preparation"
+        );
+        epoch.validate()?;
+        Ok(bytes)
+    }
+
+    pub fn prepare_source_input(
+        &self,
+        path: &Path,
+        limit: u64,
+    ) -> Result<airk_core::service_configuration::InputFile> {
+        self.require_unrestricted_read()?;
+        ensure!(
+            (1..=1_048_576).contains(&limit),
+            "source input pin byte limit must be 1..=1048576"
+        );
+        let epoch = self.source_policy_input_epoch()?;
+        let input = prepare_input_authorized(path, limit, &|canonical| {
+            self.require_source_policy_capture_path(canonical)
+        })?;
+        epoch.validate()?;
+        Ok(input)
+    }
     /// Normalize explicit file intents only after refusing installed read scopes.
     /// Existing pinned requests and their canonical validation/report bodies are
     /// unchanged; no frontend opens an input merely to obtain a scoped refusal.
@@ -129,6 +197,7 @@ impl Kernel {
                 max_bytes,
             } => {
                 self.require_unrestricted_read()?;
+                self.require_source_policy_input(Path::new(&path))?;
                 ensure!(
                     matches!(
                         view,
@@ -141,7 +210,7 @@ impl Kernel {
                 );
                 Ok(NativeRead::ValidateSettings {
                     view,
-                    input: prepare_input(Path::new(&path), 131_072)?,
+                    input: self.prepare_source_input(Path::new(&path), 131_072)?,
                     cursor,
                     max_bytes,
                 })
@@ -154,6 +223,7 @@ impl Kernel {
                 format,
             } => {
                 self.require_unrestricted_read()?;
+                self.require_source_policy_input(Path::new(&price_scenario_path))?;
                 ensure!((1..=30).contains(&days), "usage report days must be 1..30");
                 ensure!(
                     price_scenario_path.len() <= 4096
@@ -161,7 +231,7 @@ impl Kernel {
                     "invalid usage price scenario input path"
                 );
                 let price: airk_core::usage::PriceScenario = serde_json::from_slice(
-                    &crate::usage::read_usage_input(input_path(&price_scenario_path)?, 16_384)?,
+                    &self.capture_source_input(input_path(&price_scenario_path)?, 16_384)?,
                 )?;
                 price.validate()?;
                 Ok(NativeRead::UsageReport {
@@ -171,6 +241,12 @@ impl Kernel {
                     format,
                     price: Some(price),
                 })
+            }
+            request @ NativeRead::ValidateSettings { .. } => {
+                if let NativeRead::ValidateSettings { input, .. } = &request {
+                    self.require_source_policy_input(Path::new(&input.path))?;
+                }
+                Ok(request)
             }
             request => Ok(request),
         }
@@ -216,7 +292,30 @@ impl Kernel {
     ) -> Result<Value> {
         self.validate_service_configuration(project, request)?;
         crate::service_execution::checkpoint()?;
+        match &request.configuration {
+            ProjectConfiguration::ImportUsage { input }
+            | ProjectConfiguration::ExtractionPolicy { input }
+            | ProjectConfiguration::ScanLimits { input }
+            | ProjectConfiguration::QuotaPolicy { input, .. } => {
+                self.require_source_policy_input(Path::new(&input.path))?
+            }
+            ProjectConfiguration::Calibrate {
+                tokenizer,
+                baseline,
+                returned,
+                ..
+            } => {
+                for input in [tokenizer, baseline, returned] {
+                    self.require_source_policy_input(Path::new(&input.path))?;
+                }
+            }
+            _ => (),
+        }
         let result = match &request.configuration {
+            ProjectConfiguration::ApplySourcePolicy {
+                policy,
+                operation_id,
+            } => serde_json::to_value(self.apply_source_policy(policy, *operation_id)?)?,
             // Native registry completion performs the actual unregister and
             // writes its final receipt atomically. This only validates the guard.
             ProjectConfiguration::Unregister => json!({"unregistration_requested":true}),
@@ -272,16 +371,17 @@ impl Kernel {
                 usefulness,
             } => self.usage_feedback(request_id, *usefulness)?,
             ProjectConfiguration::ImportUsage { input } => {
-                let measurement = serde_json::from_slice(&verified_input(input, 65_536)?)?;
+                let measurement =
+                    serde_json::from_slice(&self.verified_source_input(input, 65_536)?)?;
                 self.usage_import(&measurement)?
             }
             ProjectConfiguration::ExtractionPolicy { input } => {
-                let policy = serde_json::from_slice(&verified_input(input, 131_072)?)?;
+                let policy = serde_json::from_slice(&self.verified_source_input(input, 131_072)?)?;
                 let configured = self.configure_extraction_policy(policy)?;
                 json!({"extraction_policy_digest":configured.digest,"source_pass_requested":true})
             }
             ProjectConfiguration::ScanLimits { input } => {
-                let limits = serde_json::from_slice(&verified_input(input, 65_536)?)?;
+                let limits = serde_json::from_slice(&self.verified_source_input(input, 65_536)?)?;
                 serde_json::to_value(self.configure_scan_limits(limits)?)?
             }
             ProjectConfiguration::ResetScanLimits => {
@@ -292,7 +392,7 @@ impl Kernel {
                 expected_policy_digest,
             } => {
                 use sha2::{Digest, Sha256};
-                let policy = serde_json::from_slice(&verified_input(input, 16_384)?)?;
+                let policy = serde_json::from_slice(&self.verified_source_input(input, 16_384)?)?;
                 let current = self.quota_policy()?;
                 ensure!(
                     airk_core::identity::Sha256Digest::from_bytes(

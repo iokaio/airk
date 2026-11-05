@@ -32,7 +32,7 @@ pub(super) struct DrainAdmission<'a> {
     pub(super) deadline: Option<std::time::Instant>,
 }
 
-pub(super) fn now_unix_ms() -> Result<u64> {
+pub(crate) fn now_unix_ms() -> Result<u64> {
     Ok(u64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
@@ -204,6 +204,38 @@ pub(super) fn read_work(read: &CurrentRead, store: &FileStore) -> Result<Option<
         .map(SemanticWork::from_bytes)
         .transpose()
         .context("read current semantic work")
+}
+
+/// Preserve only admitted pending semantic work across a source-only removal.
+/// Artifact counts remain exact; unit counts cannot be subtracted from shared
+/// vector nodes and therefore remain explicitly unknown after the policy change.
+pub(crate) fn trim_work_resource(
+    read: &CurrentRead,
+    store: &FileStore,
+    writer: &airk_store::WriterLock,
+    reservation: &Reservation,
+    removed: &std::collections::BTreeSet<String>,
+    selected_artifacts: u64,
+) -> Result<Option<ResourceChange>> {
+    let Some(mut work) = read_work(read, store)? else {
+        return Ok(None);
+    };
+    work.pending.retain(|item| !removed.contains(&item.path));
+    ensure!(
+        selected_artifacts >= work.pending.len() as u64,
+        "policy semantic work exceeds retained eligible files"
+    );
+    work.selected_artifacts = selected_artifacts;
+    work.completed_artifacts = selected_artifacts - work.pending.len() as u64;
+    work.selected_units = None;
+    work.completed_units = 0;
+    work.all_units_countable = false;
+    work.fully_ready_unix_ms = if work.pending.is_empty() {
+        Some(now_unix_ms()?)
+    } else {
+        None
+    };
+    Ok(Some(work.resource_change(store, writer, reservation)?))
 }
 
 pub(crate) fn readiness(read: &CurrentRead, store: &FileStore) -> Result<SemanticReadiness> {
@@ -382,6 +414,7 @@ impl Kernel {
     /// one publication: text/facts survive; the old graph and embedding cache
     /// are retired together before any new vectors are admitted.
     pub fn upgrade_service_semantics(&self) -> Result<bool> {
+        self.source_policy_for_work()?;
         ensure!(
             self.is_service_collection(),
             "service project owner required"
@@ -751,6 +784,7 @@ impl Kernel {
     /// Resume retained semantic inputs without reading live workspace files.
     /// Each batch publishes its vectors and reduced pending set in one transaction.
     pub fn resume_current_enrichment(&self) -> Result<Option<u64>> {
+        self.source_policy_for_work()?;
         crate::service_execution::checkpoint()?;
         let scope = self.current_scope()?.context("workspace is not indexed")?;
         super::recover_current(&self.store, &self.collection_quota()?, &scope)
@@ -822,6 +856,7 @@ impl Kernel {
         max_batches: usize,
         budget: Option<std::time::Duration>,
     ) -> Result<(Option<u64>, airk_ingest::IndexReport)> {
+        self.source_policy_for_work()?;
         ensure!(
             max_batches > 0 && max_batches <= 8,
             "semantic batch limit exceeded"

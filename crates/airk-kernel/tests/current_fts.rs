@@ -148,6 +148,16 @@ fn explicit_full_rebuild_replaces_tantivy_state_and_preserves_source_and_setting
     assert_eq!(fs::read(&owner)?, bytes.as_bytes());
     let rebuilding =
         Kernel::open_collection_for_diagnostics(root.path(), Some(state.path().into()), "default")?;
+    assert!(
+        rebuilding
+            .prepare_full_rebuild()
+            .unwrap_err()
+            .is::<airk_kernel::SourcePolicyReadUnavailable>()
+    );
+    assert_eq!(fs::read(&owner)?, bytes.as_bytes());
+    // The isolated fixture created an empty-policy index. Its native owner
+    // supplies that authority; damaged metadata alone cannot establish absence.
+    let rebuilding = rebuilding.with_expected_source_policy(None)?;
     assert!(rebuilding.prepare_full_rebuild()?);
     assert!(!rebuilding.vector_status()?.enabled);
     assert!(!rebuilding.prepare_full_rebuild()?);
@@ -220,6 +230,13 @@ fn interrupted_fts_rebuild_resumes_with_or_without_an_owner_header() -> Result<(
             Some(state.path().into()),
             "default",
         )?;
+        assert!(
+            rebuilding
+                .prepare_full_rebuild()
+                .unwrap_err()
+                .is::<airk_kernel::SourcePolicyReadUnavailable>()
+        );
+        let rebuilding = rebuilding.with_expected_source_policy(None)?;
         rebuilding.scheduled_index(true, false)?;
         assert_eq!(rebuilding.status()?.files, 1);
         assert!(!directory.join("fts5-rebuild.json").exists());

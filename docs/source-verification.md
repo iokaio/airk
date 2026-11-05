@@ -74,15 +74,24 @@ does not promote a subset of a failed/partial request into a successful check.
 Inspector and Checker also reuse native observations, retaining an independent
 unsaved-editor observation instead of hashing the file a second time.
 
+The P9 candidate applies the same native ownership boundary to explicit Strategy
+saved-source checks, Review Changes and source-open observations. The persisted
+`host.hashSavedFiles` operator name remains compatible, but verification runs
+through the native owner. The extension observes dirty buffers separately and
+does not perform a parallel saved-file hash. Fresh native checks retain their
+own dates, complete receipts and aggregate budgets; they do not relabel an old
+snippet or session as currently verified. See [permanent exclusions](source-policy.md)
+and the phase ledger for qualification.
+
 ## Reading the receipt
 
 `source_verification` uses schema `airk.saved-source-verification/1` and method
 `sha256-full-saved-source/1`. It retains original publications, source roots and
 relative paths, expected/observed hashes, extraction profile identity, exact
 reference associations, observation intervals, requested/effective limits and
-counts. Future Project/index identity slots remain nullable until those features
-are implemented; current single-index binding and collection identities remain
-explicit.
+counts. Combined reads retain each source's originating index/member identity.
+Unavailable legacy identities remain explicitly unknown rather than being
+guessed; single-index binding and collection identities remain explicit.
 
 Per-source outcomes distinguish `matched`, `mismatch`, `missing`, `unreadable`,
 `out_of_scope`, `changed_during_check`, `budget_exhausted`, `publication_expired`
@@ -111,6 +120,13 @@ reported size equals the remaining budget is unchecked. An empty file can be
 checked with one byte of available budget without charging a successful EOF as
 data. Attempted data reads, including detected growth, are charged. Policy/index
 metadata reads are separate from the raw-source byte count.
+
+For P9 indexes with active permanent restrictions, ignore configuration uses
+separate protected snapshots: 64 KiB per control and 1 MiB charged input per
+matcher, with a fresh snapshot for final revalidation. These bytes are separate
+from `source_verification.counts.bytes_read`, which counts saved documents.
+Unavailable or redirected configuration leaves the source unchecked; it cannot
+authorize a read from an excluded path. See [permanent exclusions](source-policy.md).
 
 Native capture checks no-follow containment, current source eligibility, handle
 identity and detectable changes before/after reading. Historical publications

@@ -108,10 +108,10 @@ test('a runnable strategy produces a verified snapshot from real AIRK replies an
         await fixture.job(spec);
         client = new EvidenceClient(spec, 'native-test', { timeout: 60000 });
         const facts = new FactHandles(new RefRegistry());
-        const live = async (root: string, relative: string, hash: string) => liveCheck(await sourceFile(root, relative), hash, false);
+        const dirty=async()=>false;
         const strategy = CORE_PACK.find(entry => entry.strategy.id === 'airk.core/bug')!.strategy;
         const request = { strategy, params: { query: 'refreshSession', symbol: 'refreshSession' }, scope: {} };
-        const result = await runStrategy(request, { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', live });
+        const result = await runStrategy(request, { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', dirty });
         assert.equal(result.manifest.outcome, 'verified_snapshot', result.manifest.reasons.join('; '));
         assert.ok(result.records.length > 0 && result.records.every(record => record.path === 'session.ts'));
         assert.equal(result.manifest.publication, String(record((await client.call('airk_status', {}, { timeout: 60000 })).payload.publication).token));
@@ -119,12 +119,12 @@ test('a runnable strategy produces a verified snapshot from real AIRK replies an
         for (const id of ['api', 'explain']) {
             const other = CORE_PACK.find(entry => entry.strategy.id === `airk.core/${id}`)!.strategy;
             const run = await runStrategy({ strategy: other, params: Object.fromEntries(other.params.map(param => [param.name, 'refreshSession'])), scope: {} },
-                { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', live });
+                { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', dirty });
             assert.deepEqual(run.manifest.steps.filter(step => step.outcome !== 'ok').map(step => `${step.id}: ${step.message}`), [], `${id} steps succeed on real replies`);
             assert.ok(run.records.length > 0, `${id} collects evidence: ${JSON.stringify(run.manifest.steps)} ${run.manifest.reasons.join("; ")}`);
         }
         await fs.appendFile(path.join(spec.root, 'session.ts'), '// edited after indexing\n');
-        const edited = await runStrategy(request, { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', live });
+        const edited = await runStrategy(request, { session: client, facts, project: spec.service!.project, extensionVersion: 'native-test', dirty });
         assert.equal(edited.manifest.outcome, 'partial');
         assert.ok(edited.manifest.reasons.some(reason => /session\.ts is changed since index/.test(reason)), edited.manifest.reasons.join('; '));
     } finally {

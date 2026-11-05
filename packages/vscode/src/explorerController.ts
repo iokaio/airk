@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import * as nodePath from 'node:path';
+import {randomUUID} from 'node:crypto';
 import * as vscode from 'vscode';
 import { ABOUT_LINKS, EngineHelpView, ExplorerViewState, HostMessage, MESSAGE_VERSION, SearchSessionView, StatusSummary, WebviewMessage, WebviewMessageOf } from './explorerContracts';
 import { ControlSource, ExplorerControl } from './explorerControl';
@@ -14,8 +15,8 @@ import { managementView, panelDetails } from './explorerManagement';
 import { originArgs, originatingResult, passageView, RefRegistry, searchArgs, searchView } from './explorerSearch';
 import { headline, statusSummary, scalarWithRetainedDetails } from './explorerStatus';
 import { displayPath } from './explorerSource';
-import { exportStrategy, importPlan, importRecipe, importStrategy, listWorkspaceFiles, loadWorkspaceFile, liveAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
-import { renderPlan, SearchRecipe, validatePlan, validateRecipe, validateStrategy } from './explorerStrategies';
+import { exportStrategy, importPlan, importRecipe, importStrategy, listWorkspaceFiles, loadWorkspaceFile, dirtyAt, openPlanDraft, openSource, savePlanInWorkspace } from './explorerWorkspaceIO';
+import { renderPlan, RunResult, SearchRecipe, validatePlan, validateRecipe, validateStrategy } from './explorerStrategies';
 import { runStrategy } from './explorerStrategyRunner';
 import { SuggestionStore, suggestionsView } from './explorerSuggestions';
 import { ReviewContext, reviewChanges, reviewImpact, reviewTests } from './explorerReview';
@@ -31,7 +32,7 @@ import { MANAGE_WORKSPACE_TRUST_COMMAND } from './explorerCommands';
 import { NativeExecutionDisabled } from './nativeGate';
 import type { AssistanceWindowStatus } from './explorerContracts';
 import type { SearchDraft } from './explorerDrafts';
-import { readResultBody } from './sourceVerification';
+import { nativeSavedSourceState, readResultBody, verificationLabel } from './sourceVerification';
 
 /** The narrow surface of the service extension that the Explorer may use. */
 export interface ExplorerHost {
@@ -95,6 +96,7 @@ export class ExplorerController implements vscode.Disposable {
     private readonly snapshotListeners = new Set<ExplorerSnapshotListener>();
     private readonly refs = new RefRegistry();
     private readonly facts = new FactHandles(this.refs);
+    private lastStrategyRun?:{project:string;selection:number;result:RunResult};
     private evidence?: EvidenceClient;
     private selected?: string;
     private selectedSpecIdentity?:string;
@@ -482,6 +484,8 @@ export class ExplorerController implements vscode.Disposable {
             case 'indexing.source.draft':return this.indexing.sourceDraft(message.change,message.generation);
             case 'indexing.source.read':return this.indexing.sourceRead(message.begin,message.generation);
             case 'indexing.source.pending':return this.indexing.sourcePending(message.generation);
+            case 'indexing.policy.read':return this.indexing.policyRead(message.generation);
+            case 'indexing.policy.resume':return this.indexing.policyResume(message.generation);
             case 'indexing.retirement.read':return this.indexing.retirementRead(message.id,message.generation);
             case 'indexing.retirement.stopTracking':return this.indexing.stopTracking(message.generation);
             case 'indexing.source.resolve':return this.indexing.sourceResolve(message.generation);
@@ -659,12 +663,15 @@ export class ExplorerController implements vscode.Disposable {
                 const project = this.requireProject();
                 const ref = this.refs.get(typed.ref, project);
                 // The location on disk comes from AIRK's own file record, never from the webview.
-                const info = originatingResult((await this.session().call('airk_file_info', { path: ref.path, ...originArgs(ref.origin) }, { timeout: 30000 })).payload, ref.origin).payload;
+                const native=await this.session().call('airk_file_info', { path: ref.path, ...originArgs(ref.origin) }, { timeout: 30000 });
+                const selected=originatingResult(native.payload,ref.origin),info=selected.payload;
                 const source = info.source as Record<string, unknown> | undefined;
                 if (!source || typeof source.root !== 'string' || typeof source.relative_path !== 'string') {
                     throw new EvidenceFailure(explorerError('TOOL_ERROR', 'AIRK did not report a source location for this file.'));
                 }
                 return openSource({ root: source.root, relative: source.relative_path, contentHash: ref.contentHash, startLine: ref.startLine,
+                    savedState:nativeSavedSourceState(info,ref.contentHash,selected.publication??native.publication),nativeResult:native.rawPayload??native.payload,
+                    nativeMessage:info.content_hash!==ref.contentHash?'The indexed hash changed since this citation; a saved-source comparison for that older hash is unavailable.':verificationLabel(info.source_verification),
                     ...(typeof info.line_basis === 'string' ? { lineBasis: info.line_basis } : {}) });
             }
             case 'code.symbols': {
@@ -730,11 +737,21 @@ export class ExplorerController implements vscode.Disposable {
                 return continueFacts(this.session(), this.facts, this.requireProject(), typed.more);
             }
             case 'strategy.run': {
-                const typed = message as WebviewMessageOf<'strategy.run'>, project = this.requireProject();
+                const typed = message as WebviewMessageOf<'strategy.run'>, project = this.requireProject(),selection=this.selectionEpoch;
                 const checked = validateStrategy(typed.strategy);
                 if (!checked.ok) { throw new EvidenceFailure(explorerError('INVALID_SCHEMA', checked.errors.slice(0, 5).join('; '))); }
-                return runStrategy({ strategy: checked.strategy, params: textRecord(typed.params, 8), scope: textRecord(typed.scope, 1) },
-                    { session: this.session(), facts: this.facts, project, extensionVersion: this.host.version, live: liveAt });
+                const result=await runStrategy({ strategy: checked.strategy, params: textRecord(typed.params, 8), scope: textRecord(typed.scope, 1) },
+                    { session: this.session(), facts: this.facts, project, extensionVersion: this.host.version, dirty: dirtyAt });
+                if(!this.host.trusted()||selection!==this.selectionEpoch||this.requireProject()!==project)throw new EvidenceFailure(explorerError('STALE_BINDING'));
+                const captured={...result,hostRunId:randomUUID().replaceAll('-','')};this.lastStrategyRun={project,selection,result:structuredClone(captured)};return captured;
+            }
+            case 'strategy.run.export':{
+                const saved=this.lastStrategyRun,typed=message as WebviewMessageOf<'strategy.run.export'>;
+                const current=()=>{if(!this.host.trusted()||!saved||saved.project!==this.requireProject()||saved.selection!==this.selectionEpoch||saved.result.hostRunId!==typed.runId||saved.result.manifest.evidenceDigest!==typed.digest)throw new EvidenceFailure(explorerError('STALE_BINDING'));};current();
+                const text=JSON.stringify(saved!.result,null,2)+'\n';
+                if(typed.format==='copy'){await vscode.env.clipboard.writeText(text);current();return {copied:true};}
+                const target=await vscode.window.showSaveDialog({title:'Export complete strategy run and native source checks',filters:{JSON:['json']}});if(!target)return {saved:false};current();
+                await vscode.workspace.fs.writeFile(target,new TextEncoder().encode(text));return {saved:true};
             }
             case 'strategy.export': {
                 const checked = validateStrategy((message as WebviewMessageOf<'strategy.export'>).strategy);

@@ -34,6 +34,20 @@ pub(crate) trait CatalogControl {
     fn finish_worker_drains(&self, _: &FencedReceipt) -> Result<()> {
         Ok(())
     }
+    fn fence_source_policy(
+        &self,
+        _: airk_core::service::ProjectBinding,
+        _: airk_core::identity::Incarnation,
+    ) -> Result<()> {
+        anyhow::bail!("native source policy watcher fence unavailable")
+    }
+    fn release_source_policy(
+        &self,
+        _: airk_core::service::ProjectBinding,
+        _: airk_core::identity::Incarnation,
+    ) -> Result<()> {
+        anyhow::bail!("native source policy watcher release unavailable")
+    }
 }
 #[derive(Debug)]
 pub(crate) struct CatalogRevisionChanged;
@@ -62,7 +76,7 @@ pub(crate) fn refresh_catalog_clock(
         .map_err(|e| e.context(CatalogClockPending))?
         .ok_or(CatalogClockPending)?;
     ensure!(
-        state.activated && state.authority_contract == 1 && state.policy_contract == 0,
+        state.activated && state.authority_contract == 1 && state.policy_contract <= 1,
         CatalogClockPending
     );
     let before = gate.catalog_clock().ok_or(CatalogClockPending)?;
@@ -93,7 +107,7 @@ impl KnownUnprepared {
                 && state.revision == request.expected_catalog_revision
                 && state.activated
                 && state.authority_contract == 1
-                && state.policy_contract == 0,
+                && state.policy_contract <= 1,
             "catalog preparation observation changed"
         );
         Ok(Self {
@@ -303,6 +317,18 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
     fn finish_provider_cleanup(&mut self, receipt: &FencedReceipt) -> Result<()> {
         self.cleanup = Some(receipt.clone());
         self.control.finish_worker_drains(receipt)?;
+        if matches!(
+            receipt.request.operation,
+            airk_core::catalog_management::CatalogOperation::ChangeIndexPolicy { .. }
+        ) {
+            let obligation = receipt
+                .proof
+                .worker_obligation
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("source policy worker census missing"))?;
+            self.control
+                .release_source_policy(obligation.backing, receipt.metadata.operation_id)?;
+        }
         self.cleanup = None;
         Ok(())
     }
@@ -447,7 +473,7 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
         ensure!(
             current.activated
                 && current.authority_contract == 1
-                && current.policy_contract == 0
+                && current.policy_contract <= 1
                 && current.namespace == request.key.namespace,
             "native catalog authority contract unavailable"
         );
@@ -458,23 +484,25 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
             self.gate
                 .reconcile_catalog_snapshot(current.namespace, current.revision)?;
         }
-        let retirement_backing =
-            if let airk_core::catalog_management::CatalogOperation::RetireIndex { id, .. } =
-                request.operation
-                && pending.is_none()
-            {
-                let detail = registry.catalog_detail(
-                    &airk_core::catalog_management::CatalogEntity::Index { id },
-                    Some(request.expected_catalog_revision),
-                )?;
-                let Some(airk_core::catalog_management::CatalogItem::Index(index)) = detail.item
-                else {
-                    anyhow::bail!("native retirement index unavailable");
-                };
-                Some((id, index.backing.binding))
-            } else {
-                None
+        let retirement_backing = if pending.is_none() && request.operation.requires_worker_drain() {
+            let id = match request.operation {
+                airk_core::catalog_management::CatalogOperation::RetireIndex { id, .. }
+                | airk_core::catalog_management::CatalogOperation::ChangeIndexPolicy {
+                    id, ..
+                } => id,
+                _ => unreachable!("worker-draining operation lacks an index"),
             };
+            let detail = registry.catalog_detail(
+                &airk_core::catalog_management::CatalogEntity::Index { id },
+                Some(request.expected_catalog_revision),
+            )?;
+            let Some(airk_core::catalog_management::CatalogItem::Index(index)) = detail.item else {
+                anyhow::bail!("native retirement index unavailable");
+            };
+            Some((id, index.backing.binding))
+        } else {
+            None
+        };
         let mut plan = match (&pending, self.gate.matching_plan(request)?) {
             (_, Some(plan)) => plan,
             (Some(intent), None) => self.gate.restore_pending_fence(intent)?,
@@ -486,7 +514,35 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
         if let Some((id, backing)) = retirement_backing {
             self.gate
                 .bind_retirement_backing(&plan.ticket, id, backing)?;
+            if matches!(
+                request.operation,
+                airk_core::catalog_management::CatalogOperation::ChangeIndexPolicy { .. }
+            ) {
+                self.control.fence_source_policy(
+                    backing,
+                    airk_core::catalog_management::catalog_operation_id(
+                        request.caller,
+                        &request.key,
+                    )?,
+                )?;
+            }
             plan = self.control.capture_workers(&plan.ticket, backing)?;
+        }
+        if pending.is_some()
+            && matches!(
+                request.operation,
+                airk_core::catalog_management::CatalogOperation::ChangeIndexPolicy { .. }
+            )
+        {
+            let obligation = plan
+                .durable
+                .worker_obligation
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("source policy worker census missing"))?;
+            self.control.fence_source_policy(
+                obligation.backing,
+                airk_core::catalog_management::catalog_operation_id(request.caller, &request.key)?,
+            )?;
         }
         before_prepare();
         let prepared = registry.catalog_prepare_fence(request, preview_digest, &plan.durable);
@@ -505,6 +561,11 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
                     && let Ok(proof) = ReconciledUnprepared::observe(registry, request)
                     && self.gate.abort_reconciled_unprepared(&plan.ticket, proof).is_ok()
                 {
+                    if matches!(request.operation, airk_core::catalog_management::CatalogOperation::ChangeIndexPolicy { .. }) {
+                        let obligation = plan.durable.worker_obligation.as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("source policy worker census missing"))?;
+                        self.control.release_source_policy(obligation.backing, airk_core::catalog_management::catalog_operation_id(request.caller,&request.key)?)?;
+                    }
                     return Err(error.context(CatalogApplyRejectedNoEffects));
                 }
                 return Err(error);
@@ -752,6 +813,18 @@ impl<C: CatalogControl> CatalogCoordinator<C> {
             Some(plan) => plan,
             None => self.gate.restore_pending_fence(&intent)?,
         };
+        if matches!(
+            intent.request.operation,
+            airk_core::catalog_management::CatalogOperation::ChangeIndexPolicy { .. }
+        ) {
+            let obligation = plan
+                .durable
+                .worker_obligation
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("source policy worker census missing"))?;
+            self.control
+                .fence_source_policy(obligation.backing, intent.operation_id)?;
+        }
         for target in &plan.targets {
             if self.control.confirm_reaped(target.worker)? {
                 self.gate.observe_worker_reaped(target.worker)?;

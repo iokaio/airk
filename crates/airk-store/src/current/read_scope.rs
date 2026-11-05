@@ -45,6 +45,7 @@ impl CurrentRead {
     }
 
     pub(crate) fn require_read_scope_live(&self) -> Result<()> {
+        self.require_source_policy_live()?;
         ensure!(
             !self
                 .read_scope_fence
@@ -83,6 +84,7 @@ impl CurrentRead {
 
     pub fn accepts_path(&self, path: &str) -> bool {
         self.require_read_scope_live().is_ok()
+            && self.source_policy_allows_path(path)
             && (!self.restricts_paths()
                 || self
                     .read_scope
@@ -92,12 +94,15 @@ impl CurrentRead {
     /// Retains authority identity/revocation while avoiding a path roster walk
     /// for a frozen scope covering every source of this exact publication.
     pub fn restricts_paths(&self) -> bool {
-        self.read_scope.get().is_some()
-            && self
-                .read_scope_restricts_paths
-                .get()
-                .copied()
-                .unwrap_or(true)
+        self.source_policy
+            .get()
+            .is_some_and(|policy| policy.restricts)
+            || self.read_scope.get().is_some()
+                && self
+                    .read_scope_restricts_paths
+                    .get()
+                    .copied()
+                    .unwrap_or(true)
     }
 
     pub fn require_path(&self, path: &str) -> Result<()> {

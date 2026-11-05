@@ -266,7 +266,7 @@ fn first_settled_new_or_legacy_write_records_the_no_restore_barrier() -> Result<
 }
 
 #[test]
-fn unknown_authority_or_policy_contract_is_not_treated_as_compatible_schema_12() -> Result<()> {
+fn uninstalled_authority_or_policy_layout_is_not_treated_as_compatible_schema_12() -> Result<()> {
     for column in ["authority_contract", "policy_contract"] {
         let (_root, mut registry) = registry()?;
         install(&mut registry)?;
@@ -304,8 +304,8 @@ fn ordinary_opens_refuse_pending_or_unknown_catalogs_without_mutating_them() -> 
             .activated
     );
     registry.connection.execute(
-        "UPDATE index_catalog_meta SET policy_contract=1 WHERE id=1",
-        [],
+        "UPDATE index_catalog_meta SET policy_contract=?1 WHERE id=1",
+        [SUPPORTED_POLICY_CONTRACT + 1],
     )?;
     let before = std::fs::read(&path)?;
     assert!(

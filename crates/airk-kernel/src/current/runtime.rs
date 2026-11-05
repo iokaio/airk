@@ -62,6 +62,13 @@ impl Kernel {
     /// A readiness check reads the published scalar metadata, never imported fact
     /// payloads, model files, source files, or the vector graph itself.
     pub fn status_summary(&self) -> Result<serde_json::Value> {
+        self.require_source_policy_scope()?;
+        let source_policy = self.source_policy_observation()?;
+        if self.source_policy_for_work().is_err() {
+            return Ok(
+                serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":"needs_attention","index_state":"unavailable","collection":self.collection,"generation":null,"publication":null,"files":null,"chunks":null,"indexed_vectors":null,"source_policy":source_policy,"freshness":{"state":"blocked","live_source_verified":false},"discovery_readiness":{"state":"unknown"},"semantic_readiness":{"state":"unknown"},"error":crate::SourcePolicyReadUnavailable.receipt()["error"]}),
+            );
+        }
         let read = self.current_reader()?;
         self.require_index_metadata(&read)?;
         let state = read
@@ -101,13 +108,15 @@ impl Kernel {
                 }
             }
         };
-        Ok(
-            serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":health,"index_state":"available","collection":self.collection,
+        let mut result = serde_json::json!({"version":env!("CARGO_PKG_VERSION"),"health":health,"index_state":"available","collection":self.collection,
             "generation":read.head().sequence,"publication":{"token":envelope(&read)?.token},"files":state.counts.files,
             "chunks":state.counts.chunks,"indexed_vectors":if pending {0}else{read.head().graph_head.live_nodes},
             "freshness":{"state":freshness.state,"live_source_verified":freshness.live_source_verified},
-            "discovery_readiness":{"state":discovery.state},"semantic_readiness":{"state":semantic.state,"completed_artifacts":semantic.completed_artifacts,"selected_artifacts":semantic.selected_artifacts}}),
-        )
+            "discovery_readiness":{"state":discovery.state},"semantic_readiness":{"state":semantic.state,"completed_artifacts":semantic.completed_artifacts,"selected_artifacts":semantic.selected_artifacts}});
+        if let Some(source_policy) = source_policy {
+            result["source_policy"] = source_policy;
+        }
+        Ok(result)
     }
 
     pub fn maintain_current(&self) -> Result<airk_store::current::maintenance::ReclamationReport> {
@@ -184,6 +193,7 @@ impl Kernel {
         let semantic_readiness = super::enrichment::readiness(&read, &self.store)?;
         let discovery_readiness = super::progress::readiness(&read, &self.store)?;
         Ok(Status {
+            source_policy: self.source_policy_observation()?,
             source_availability: self.service_source_observation(),
             execution: self.execution_status()?,
             indexing: c.index_detail.into(),

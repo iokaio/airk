@@ -2362,7 +2362,7 @@
       ]
     },
     "host.hashSavedFiles": {
-      "title": "Compare saved file hashes with the index",
+      "title": "Verify saved sources through the native owner",
       "stage": "host",
       "args": {},
       "input": "locations"

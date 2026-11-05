@@ -18,6 +18,13 @@ pub struct InventoryLimits {
     pub read_bytes: usize,
     pub duration: Duration,
 }
+
+/// Native policy and liveness remain independent from ordinary scan budgets.
+pub struct InventoryPolicy<'a> {
+    pub scan_limits: super::ScanLimits,
+    pub source_policy: Option<&'a airk_core::source_policy::SourcePolicy>,
+    pub checkpoint: &'a dyn Fn() -> Result<()>,
+}
 impl Default for InventoryLimits {
     fn default() -> Self {
         Self {
@@ -96,6 +103,32 @@ pub fn scan_roots_with_policy(
     limits: InventoryLimits,
     policy: super::ScanLimits,
 ) -> Result<Inventory> {
+    scan_roots_with_source_policy(
+        root,
+        data_dir,
+        previous,
+        roots,
+        cached,
+        limits,
+        InventoryPolicy {
+            scan_limits: policy,
+            source_policy: None,
+            checkpoint: &|| Ok(()),
+        },
+    )
+}
+
+pub fn scan_roots_with_source_policy(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    cached: Option<&Inventory>,
+    limits: InventoryLimits,
+    options: InventoryPolicy<'_>,
+) -> Result<Inventory> {
+    let policy = options.scan_limits;
+    (options.checkpoint)()?;
     policy.validate()?;
     let limits = InventoryLimits {
         candidates: limits.candidates.min(policy.discovery_entries),
@@ -121,11 +154,18 @@ pub fn scan_roots_with_policy(
             .map(|(alias, path)| (format!("@{alias}/"), std::path::PathBuf::from(path))),
     );
     'sources: for (prefix, source_root) in sources {
+        (options.checkpoint)()?;
         ensure!(
             source_root.canonicalize()? == source_root && source_root.is_dir(),
             "source root identity changed during inventory"
         );
-        for entry in super::discovery(&source_root, &data_dir) {
+        for entry in super::discovery_selected_with_policy(
+            &source_root,
+            &data_dir,
+            None,
+            options.source_policy.cloned(),
+        ) {
+            (options.checkpoint)()?;
             if candidates >= limits.candidates
                 || read_bytes >= limits.read_bytes
                 || start.elapsed() >= limits.duration
@@ -137,6 +177,11 @@ pub fn scan_roots_with_policy(
             candidates += 1;
             let entry = match entry {
                 Ok(entry) => entry,
+                Err(error)
+                    if error.is::<crate::native_name_boundary::NativeNameBoundaryUnavailable>() =>
+                {
+                    return Err(error);
+                }
                 Err(_) => {
                     result.unreadable += 1;
                     result.complete = false;
@@ -261,5 +306,6 @@ pub fn scan_roots_with_policy(
             );
         }
     }
+    (options.checkpoint)()?;
     Ok(result)
 }

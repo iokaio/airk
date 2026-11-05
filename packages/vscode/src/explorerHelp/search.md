@@ -24,6 +24,6 @@ Results display twenty at a time with **Previous** and **Next**. The limit contr
 - Lexical results are ordered by index identity, not relevance.
 - Semantic and hybrid results are similarity candidates, not proof of meaning. Enable vectors in Management to use these modes. Building, partial or failed semantic coverage can mean empty, unavailable or incomplete results; readiness appears alongside the results.
 - "N returned · limit L · more may exist" means the limit cut the list; raise it or narrow the query.
-- Open source compares the saved bytes with the indexed hash and warns when the file changed.
+- Open source requests a dated native saved-source check against the citation and current source policy, then observes unsaved editor state. A past match does not establish continued freshness. Workbench retains the complete source-open observation separately from the original query and offers JSON copy/export.
 
 Page changes announce the retained result range. Previous/Next use the same controls as Review Changes.

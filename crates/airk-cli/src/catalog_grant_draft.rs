@@ -168,6 +168,7 @@ pub(crate) fn build_reviewed_grant_draft(
         let Some(CatalogItem::Index(index)) = detail(registry, CatalogEntity::Index { id })? else {
             return Err(ScopeReadRefused.into());
         };
+        crate::catalog_authority::require_policy_ready(registry, &index)?;
         snapshot.indexes.push(index);
     }
     let source_ids = snapshot
@@ -202,8 +203,8 @@ fn validate_fence(
             && state.namespace == host.namespace
             && state.revision == selection.expected_catalog_revision
             && state.authority_contract == 1
-            && state.policy_contract == 0
-            && capabilities.supports(state.schema, 1, 0),
+            && state.policy_contract <= 1
+            && capabilities.supports(state.schema, 1, state.policy_contract),
         ScopeReadRefused
     );
     Ok(())
@@ -268,9 +269,7 @@ impl Snapshot {
             let index = indexes.get(&member.index_id).ok_or(ScopeReadRefused)?;
             index.validate()?;
             ensure!(
-                !index.tombstone
-                    && index.source_import == SourceImportState::Complete
-                    && index.policy.is_none(),
+                !index.tombstone && index.source_import == SourceImportState::Complete,
                 ScopeReadRefused
             );
             let mut roots = BTreeSet::new();
@@ -294,8 +293,8 @@ impl Snapshot {
             memberships.push(GrantedMembership {
                 membership: member.clone(),
                 source_revision: index.source_revision,
-                policy_epoch: 0,
-                policy_digest: None,
+                policy_epoch: index.policy.as_ref().map_or(0, |policy| policy.epoch.get()),
+                policy_digest: index.policy.as_ref().map(|policy| policy.digest),
             });
         }
         ensure!(
@@ -562,28 +561,45 @@ mod tests {
     #[test]
     fn index_readiness_policy_and_source_ownership_fail_closed() -> Result<()> {
         let f = Fixture::new()?;
-        for n in 0..7 {
+        for n in 0..6 {
             let mut invalid = f.clone();
             match n {
                 0 => invalid.snapshot.indexes[0].tombstone = true,
                 1 => invalid.snapshot.indexes[0].source_import = SourceImportState::PendingMetadata,
-                2 => {
-                    invalid.snapshot.indexes[0].policy =
-                        Some(airk_core::index_catalog::PolicyReference {
-                            epoch: CatalogRevision::INITIAL,
-                            digest: f.host.host,
-                        })
-                }
-                3 => invalid.snapshot.sources[0].enabled = false,
-                4 => {
+                2 => invalid.snapshot.sources[0].enabled = false,
+                3 => {
                     invalid.snapshot.sources[0].index_id =
                         IndexId::from_identity(Incarnation::from_bytes([8; 16]))
                 }
-                5 => invalid.snapshot.sources.clear(),
+                4 => invalid.snapshot.sources.clear(),
                 _ => invalid.snapshot.indexes.clear(),
             }
             assert!(invalid.request().is_err(), "case {n}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn reviewed_draft_freezes_exact_policy_without_changing_membership_scope() -> Result<()> {
+        let mut f = Fixture::new()?;
+        let baseline = f.request()?;
+        let epoch = CatalogRevision::INITIAL.next()?;
+        let digest = Sha256Digest::from_bytes([8; 32]);
+        f.snapshot.indexes[0].policy =
+            Some(airk_core::index_catalog::PolicyReference { epoch, digest });
+        let reviewed = f.request()?;
+        let member = &grant(&reviewed).memberships[0];
+        assert_eq!(member.policy_epoch, epoch.get());
+        assert_eq!(member.policy_digest, Some(digest));
+        assert_eq!(
+            member.membership,
+            grant(&baseline).memberships[0].membership
+        );
+        assert_eq!(
+            member.source_revision,
+            grant(&baseline).memberships[0].source_revision
+        );
+        assert_ne!(reviewed.identity()?, baseline.identity()?);
         Ok(())
     }
 
@@ -665,6 +681,16 @@ mod tests {
         let mut unsupported = capabilities;
         unsupported.authority_contract = 0;
         assert!(validate_fence(&state, &unsupported, &f.host, &f.selection).is_err());
+        let mut policy = state;
+        policy.policy_contract = 1;
+        let qualified = CatalogCapabilities {
+            authority_contract: 1,
+            policy_contract: 1,
+            ..unsupported
+        };
+        validate_fence(&policy, &qualified, &f.host, &f.selection)?;
+        policy.policy_contract = 2;
+        assert!(validate_fence(&policy, &qualified, &f.host, &f.selection).is_err());
         Ok(())
     }
 
@@ -740,6 +766,7 @@ mod tests {
             )],
             authority_fence_required: false,
             file_data_changes: false,
+            source_policy_impact: None,
         };
         let draft = ReviewedGrantDraft::new(request.clone(), preview.clone())?;
         assert_eq!(draft.preview_digest, preview.identity()?);
@@ -763,6 +790,7 @@ mod tests {
             request_digest: request.identity()?,
             operation: request.operation.clone(),
             after: Vec::new(),
+            source_policy_impact: None,
             ..preview
         };
         // Each piece fits by itself; duplicating them in the review reply cannot

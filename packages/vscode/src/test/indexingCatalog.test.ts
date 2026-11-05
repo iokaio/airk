@@ -117,6 +117,13 @@ function nativeSourceOperation(){
         configuration:{incarnation:'da'.repeat(16),settings:'db'.repeat(32),configuration:{operation:'add_root',alias:'extra',path:'/extra'}},before:{primary_root:'/source',aliases:{}},after:{primary_root:'/source',aliases:{extra:'/extra'}},
         sources:[{id:source,canonical_path:'/source',aliases:[],owner:true},{id:'src_'+'91'.repeat(16),canonical_path:'/extra',aliases:['extra'],owner:false}]}};
 }
+function nativePolicyOperation(){
+    const change={operation:'trim',rule_id:'deny_'+'12'.repeat(16),selector:{source_root_id:source,kind:'subtree',path:'private'}};
+    const policy={schema:'airk.source-policy/1',index_id:index,owner_binding:digest,namespace:'collections-1.4',collection:'fixture',epoch:1,roots:[{id:source,canonical_path:'/source',aliases:[],owner:true}],positive_includes:null,
+        denies:[{...change.selector,rule_id:change.rule_id,reason:'trim',created_epoch:1}]};
+    return {operation:'change_index_policy',id:index,expected_source_revision:1,expected_policy_epoch:0,expected_policy_digest:null,change,
+        configuration:{incarnation:'da'.repeat(16),settings:'db'.repeat(32),configuration:{operation:'apply_source_policy',policy,operation_id:'90'.repeat(16)}},engine_identity:'21'.repeat(32)};
+}
 function nativeSourceFixture(retire=false){
     const operation:CatalogObject=retire?{operation:'retire_index',id:index,expected_definition_revision:1,expected_source_revision:1,reason:{reason:'explicit'}}:nativeSourceOperation();
     const nativeRequest:CatalogRequest={...request,caller:'9a'.repeat(16),operation},metadata={schema:1,operation_id:'90'.repeat(16),caller:nativeRequest.caller,key:nativeRequest.key,request_digest:requestDigest,catalog_revision:2,authority_fence_required:true};
@@ -159,12 +166,33 @@ test('native source draft preserves exact frozen inputs and rejects changed sele
     const changed=structuredClone(f.response);catalogObjectForTest(changed.draft.request.operation.plan).after={primary_root:'/source',aliases:{other:'/extra'}};assert.throws(()=>validateNativeSourceDraft(changed,selection),/plan|alias/);
     assert.match(catalogExport({generation:1,busy:false,review:reviewed}),/future_draft/);
     const core=readFileSync(resolve(__dirname,'../../../..','crates/airk-core/src/catalog_source_draft.rs'),'utf8');
-    for(const [native,choice] of [['AddRoot',{operation:'add_root',alias:'extra',path:'/extra'}],['RemoveRoot',{operation:'remove_root',alias:'extra'}]] as const){
+    for(const [native,choice] of [['AddRoot',{operation:'add_root',alias:'extra',path:'/extra'}],['RemoveRoot',{operation:'remove_root',alias:'extra'}],['TrimPath',{operation:'trim_path',source_root_id:source,kind:'subtree',path:'private'}],['UnblockPath',{operation:'unblock_path',rule_id:'deny_'+'12'.repeat(16)}]] as const){
         const fields=new RegExp(`    ${native} \\{([\\s\\S]*?)^    \\}`, 'm').exec(core);assert.ok(fields);assert.deepEqual(Object.keys(validateSourceMutationSelection(choice)).filter(key=>key!=='operation').sort(),[...fields![1].matchAll(/^        ([a-z_]+):/gm)].map(value=>value[1]).sort());
     }
     assert.ok(parseWebviewMessage({v:1,type:'indexing.source.draft',requestId:'source',generation:1,change:{operation:'retire_index'}}));
     assert.equal(parseWebviewMessage({v:1,type:'indexing.source.resolve',requestId:'resolve',generation:1,proof:{frontend:true}}),undefined);
     assert.equal(parseWebviewMessage({v:1,type:'indexing.setup.resume',requestId:'resume',generation:1,id:nonce,draft:f.response.draft}),undefined);
+});
+
+test('permanent policy drafts bind explicit selectors to native plans and require complete worker fences',async()=>{
+    const f=nativeSourceFixture(true),operation=nativePolicyOperation();
+    const impact={target:operation.change.selector,canonical_root:'/source',affected_artifacts:null,affected_vectors:null,affected_facts:null,affected_relationships:null,counts_basis:'Unknown; no retained-evidence scan.',affected_source_root_ids:[source],affected_project_ids:[project],other_covering_index_ids:[],overlap_basis:'Configured source roots only; eligibility and aliases are not certified.'};
+    const response={...f.response,draft:{...f.response.draft,request:{...f.nativeRequest,operation},preview:{...f.response.draft.preview,operation,file_data_changes:true,source_policy_impact:impact}}};
+    const selection={key:request.key,expected_catalog_revision:1,index_id:index,change:{operation:'trim_path',source_root_id:source,kind:'subtree',path:'private'}};
+    const native=validateNativeSourceDraft(response,selection);assert.equal(native.response,response);
+    assert.throws(()=>validateNativeSourceDraft(response,{...selection,change:{...selection.change,path:'other'}}),/selection/);
+    assert.throws(()=>validateNativeSourceDraft(response,{...selection,change:{operation:'unblock_path',rule_id:operation.change.rule_id}}),/selection/);
+    assert.throws(()=>validateNativeSourceDraft({...response,draft:{...response.draft,preview:{...response.draft.preview,file_data_changes:false}}},selection),/crossed_native_source_draft/);
+    assert.throws(()=>validateSourceMutationSelection({...selection.change,rule_id:operation.change.rule_id}),/fields/);
+    assert.throws(()=>validateCatalogOperation({...operation,expected_policy_epoch:1}),/revision/);
+    const changed=structuredClone(operation);changed.configuration.configuration.policy.index_id='idx_'+'91'.repeat(16);assert.throws(()=>validateCatalogOperation(changed),/configuration/);
+    const client=new ServiceClient({dispose(){},async request(){throw new Error('read validation has no transport effects');}});
+    const fenced={...f.begin,request:{...f.nativeRequest,operation}};
+    client.validateCatalogReceipt({receipt:f.metadata,fenced_receipt:fenced},fenced.request,requestDigest,digest);
+    const incomplete=structuredClone(fenced);delete (incomplete.proof as CatalogObject).worker_obligation;
+    assert.throws(()=>client.validateCatalogReceipt({receipt:f.metadata,fenced_receipt:incomplete},fenced.request,requestDigest,digest),/obligation/);
+    const controllerFixture=controller();controllerFixture.control.catalogRead=async()=>({status:'catalog_detail',detail:{namespace,revision:1,item:{kind:'index',value:{id:index,name:'Index',definition_revision:1,source_revision:1,backing:{binding:digest}}}}});
+    await controllerFixture.value.detail('index',index);await assert.rejects(controllerFixture.value.preview(operation,controllerFixture.value.snapshot().generation),/native_source_draft_required/);
 });
 
 test('concrete native source configuration keeps collection incarnation and settings independent from registry and backing selectors',()=>{
@@ -276,6 +304,16 @@ function controller(initialDescriptor?:WindowContextDescriptor){
     const value=new IndexingCatalogController({control,identity:()=>identity,authorized:()=>trusted,windowContext:()=>descriptor,changed(){}});
     return {value,control,calls,trust:(next:boolean)=>{trusted=next;},replace:()=>{identity+='next';},descriptor:(next:WindowContextDescriptor|undefined)=>{descriptor=next;}};
 }
+
+test('policy status is an explicit owner-fenced read retained completely in catalog exports',async()=>{
+    const f=controller(),status={status:'catalog_policy_status',index_id:index,snapshot:null,job:null,future_native_status:{retained:true}};let reads=0,resolve!:(value:CatalogObject)=>void;
+    f.control.catalogRead=async()=>({status:'catalog_detail',detail:{namespace,revision:1,item:{kind:'index',value:{id:index,name:'Index',definition_revision:1,source_revision:1,backing:{binding:digest}}}}});
+    f.control.catalogPolicyStatus=async()=>{reads++;return status;};
+    await f.value.detail('index',index);assert.equal(reads,0);await f.value.policyRead(f.value.snapshot().generation);assert.equal(reads,1);assert.equal(f.value.snapshot().policyStatus,status);assert.match(catalogExport(f.value.snapshot()),/future_native_status/);
+    f.control.catalogPolicyStatus=()=>new Promise(done=>{resolve=done;});const late=f.value.policyRead(f.value.snapshot().generation);f.replace();resolve(status);await assert.rejects(late,/stale/);assert.equal(f.value.snapshot().policyStatus,undefined);
+    assert.ok(parseWebviewMessage({v:1,type:'indexing.policy.read',requestId:'policy',generation:1}));
+    assert.equal(parseWebviewMessage({v:1,type:'indexing.policy.resume',requestId:'policy',generation:1,operation_id:nonce}),undefined,'frontend cannot inject its own resume proof');
+});
 test('catalog UI preserves complete native pages, details, preview and exports',async()=>{
     const f=controller();const rich=page({future_receipt:{coverage:['all native fields'],readiness:'retained'},continuation:{kind:'projects',namespace,revision:1,after:project,index_id:null,project_id:null}});
     f.control.catalogRead=async method=>{f.calls.push(method);return 'catalog_detail' in method?{status:'catalog_detail',detail:{namespace,revision:1,item:{kind:'project',value:{...projectValue,native_provenance:{kept:true}}},additional_native_field:'retained'}}:rich;};
@@ -392,6 +430,7 @@ test('UI operation subset and serialized field catalogs agree with native Core c
         {operation:'revoke_grant',id:'grt_'+'11'.repeat(16),expected_revision:1},
         nativeSourceOperation(),
         {operation:'retire_index',id:index,expected_definition_revision:1,expected_source_revision:1,reason:{reason:'explicit'}},
+        nativePolicyOperation(),
     ];
     assert.deepEqual(supported.map(value=>value.operation).sort(),[...CATALOG_UI_OPERATIONS].sort());
     for(const value of supported){

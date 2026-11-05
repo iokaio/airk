@@ -56,7 +56,9 @@ impl ServiceRegistry {
         super::super::validate_existing(&read)?;
         let catalog = super::super::state(&read)?;
         ensure!(
-            catalog.activated && catalog.authority_contract == 1 && catalog.policy_contract == 0,
+            catalog.activated
+                && catalog.authority_contract == 1
+                && catalog.policy_contract <= super::super::SUPPORTED_POLICY_CONTRACT,
             "source recovery discovery requires the active native catalog"
         );
         let exists: bool = read.query_row(

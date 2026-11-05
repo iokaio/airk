@@ -329,6 +329,62 @@ impl SessionScope {
     }
 }
 impl Kernel {
+    pub(crate) fn require_scoped_policy_binding(
+        &self,
+        policy: Option<&airk_core::source_policy::SourcePolicy>,
+    ) -> Result<()> {
+        let Some(session) = &self.read_scope else {
+            return Ok(());
+        };
+        session.live()?;
+        let expected_digest = policy.map(|policy| policy.identity()).transpose()?;
+        let expected_epoch = policy.map_or(0, |policy| policy.epoch.get());
+        ensure!(
+            policy.is_none_or(|policy| policy.index_id == session.authority.index_id),
+            ScopeReadRefused
+        );
+        ensure!(
+            session
+                .authority
+                .grant
+                .memberships
+                .iter()
+                .filter(
+                    |member| member.membership.index_id == session.authority.index_id
+                        && session
+                            .authority
+                            .project_ids
+                            .contains(&member.membership.project_id)
+                )
+                .all(|member| member.policy_epoch == expected_epoch
+                    && member.policy_digest == expected_digest),
+            ScopeReadRefused
+        );
+        Ok(())
+    }
+    pub(crate) fn policy_observation_has_full_scope(
+        &self,
+        policy: &airk_core::source_policy::SourcePolicy,
+    ) -> bool {
+        let Some(session) = &self.read_scope else {
+            return true;
+        };
+        let aliases: BTreeMap<_, _> = policy
+            .roots
+            .iter()
+            .filter(|root| !root.owner)
+            .flat_map(|root| {
+                root.aliases
+                    .iter()
+                    .map(|alias| (alias.clone(), root.canonical_path.clone()))
+            })
+            .collect();
+        self.require_scoped_policy_binding(Some(policy)).is_ok()
+            && session
+                .authority
+                .compile(&self.root_id(), &aliases)
+                .is_ok_and(|scope| scope.covers_sources(&self.root_id(), &aliases))
+    }
     /// Read only the selected authority's source-name projection from the exact
     /// retained publication. This never consults current source configuration,
     /// enumerates files, opens live sources or hashes their bytes.

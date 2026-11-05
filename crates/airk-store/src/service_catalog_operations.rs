@@ -336,6 +336,7 @@ fn target(op: &CatalogOperation) -> (CatalogKind, String) {
         | CatalogOperation::RenameProject { id, .. }
         | CatalogOperation::DeleteProject { id, .. } => (CatalogKind::Projects, id.to_string()),
         CatalogOperation::RenameIndex { id, .. }
+        | CatalogOperation::ChangeIndexPolicy { id, .. }
         | CatalogOperation::BeginIndexSourceChange { id, .. }
         | CatalogOperation::CompleteIndexSourceChange { id, .. }
         | CatalogOperation::RetireIndex { id, .. } => (CatalogKind::Indexes, id.to_string()),
@@ -440,6 +441,7 @@ fn put_scopes(db: &Connection, m: &Membership, grant: Option<GrantId>) -> Result
 fn mutate(db: &Connection, request: &CatalogRequest, runtime: &std::path::Path) -> Result<()> {
     let op = &request.operation;
     match op {
+        CatalogOperation::ChangeIndexPolicy { .. } => super::policy::mutate(db,request)?,
         CatalogOperation::BeginIndexSourceChange {..}
         | CatalogOperation::CompleteIndexSourceChange {..}
         | CatalogOperation::RetireIndex {..} => super::source_change::mutate(db,request,runtime)?,
@@ -502,6 +504,9 @@ fn mutate(db: &Connection, request: &CatalogRequest, runtime: &std::path::Path) 
                 ensure!(current.revision==m.revision && m.scope_is_subset_of(&current),"grant membership review stale or scope widened");
                 let index=index_ready(db,m.index_id)?;
                 ensure!(index.source_revision==frozen.source_revision && index.policy.as_ref().map_or(0,|p|p.epoch.get())==frozen.policy_epoch && index.policy.as_ref().map(|p|p.digest)==frozen.policy_digest,"grant source or policy review stale");
+                if index.policy.is_some() {
+                    ensure!(super::policy::snapshot(db,m.index_id)?.is_some_and(|policy|policy.application.is_some()),"grant awaits the admitted source policy removal publication");
+                }
             }
             db.execute("INSERT INTO index_access_grants(id,host,revision,revoked) VALUES(?1,?2,1,0)",params![g.id.to_string(),g.host.to_string()])?;
             for f in &g.memberships {let m=&f.membership;db.execute("INSERT INTO index_access_memberships VALUES(?1,?2,?3,?4,?5,?6,?7)",params![g.id.to_string(),m.project_id.to_string(),m.index_id.to_string(),number(m.revision),number(f.source_revision),i64::try_from(f.policy_epoch)?,f.policy_digest.map(|d|d.to_string())])?;put_scopes(db,m,Some(g.id))?;}
@@ -610,6 +615,7 @@ fn preview_reserved(
         before.extend(optional_item(db, *k, id)?);
         encoded_size(&before, MAX_PAGE_BYTES)?;
     }
+    let source_policy_impact = super::policy::impact(db, r)?;
     // Savepoint rollback makes validation use the exact mutation path.
     db.execute_batch("SAVEPOINT catalog_preview")?;
     let result = (|| {
@@ -627,7 +633,8 @@ fn preview_reserved(
             before,
             after,
             authority_fence_required: fence(&r.operation),
-            file_data_changes: false,
+            file_data_changes: matches!(r.operation, CatalogOperation::ChangeIndexPolicy { .. }),
+            source_policy_impact,
         };
         result.identity()?;
         Ok(result)
@@ -679,6 +686,7 @@ impl ServiceRegistry {
                 CatalogOperation::BeginIndexSourceChange { .. }
                     | CatalogOperation::CompleteIndexSourceChange { .. }
                     | CatalogOperation::RetireIndex { .. }
+                    | CatalogOperation::ChangeIndexPolicy { .. }
             ),
             "source changes require their native fence/effect adapter"
         );

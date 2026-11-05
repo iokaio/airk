@@ -3,6 +3,7 @@ use super::*;
 
 fn binding(source: &Path, data: &Path, collection: &str) -> Result<Binding> {
     Ok(Binding {
+        source_policy: None,
         registration: ProjectRegistration::new(
             source.to_str().unwrap().into(),
             data.to_str().unwrap().into(),
@@ -15,9 +16,18 @@ fn binding(source: &Path, data: &Path, collection: &str) -> Result<Binding> {
 }
 
 fn directory_plan(root: &Path, data: &Path) -> Result<(ProjectBinding, Plan)> {
+    directory_plan_with_policy(root, data, None)
+}
+
+fn directory_plan_with_policy(
+    root: &Path,
+    data: &Path,
+    policy: Option<airk_core::source_policy::SourcePolicy>,
+) -> Result<(ProjectBinding, Plan)> {
     let project = binding(root, data, "ignore-scope")?.registration.binding;
     let mut plan = Plan {
         tasks: VecDeque::from([RootTask {
+            policy,
             project,
             index: 0,
             root: root.into(),
@@ -33,6 +43,72 @@ fn directory_plan(root: &Path, data: &Path) -> Result<(ProjectBinding, Plan)> {
     };
     while !plan.step()? {}
     Ok((project, plan))
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+#[test]
+fn permanent_watch_policy_prunes_denies_and_reports_unknown_names_and_ignore_controls() -> Result<()>
+{
+    use airk_core::{
+        identity::{Incarnation, Sha256Digest},
+        index_catalog::{CatalogRevision, DenyId, IndexId, PathScope, SourceRootId},
+        source_policy::{DenyReason, DenyRule, POLICY_SCHEMA, SourcePolicy, SourceRoot},
+    };
+    let owned = tempfile::tempdir()?;
+    let base = owned.path().canonicalize()?;
+    let root = base.join("source");
+    let data = base.join("data");
+    fs::create_dir_all(root.join("private/nested"))?;
+    fs::create_dir_all(root.join("public/nested"))?;
+    fs::create_dir_all(&data)?;
+    let source = SourceRootId::from_identity(Incarnation::from_bytes([1; 16]));
+    let mut policy = SourcePolicy {
+        schema: POLICY_SCHEMA.into(),
+        index_id: IndexId::from_identity(Incarnation::from_bytes([1; 16])),
+        owner_binding: Sha256Digest::from_bytes([1; 32]),
+        namespace: "collections-1.4".into(),
+        collection: "watch-fixture".into(),
+        epoch: CatalogRevision::INITIAL,
+        roots: vec![SourceRoot {
+            id: source,
+            canonical_path: root.to_str().unwrap().into(),
+            aliases: vec![],
+            owner: true,
+        }],
+        positive_includes: None,
+        denies: vec![DenyRule {
+            source_root_id: source,
+            kind: PathScope::Subtree,
+            path: "private".into(),
+            rule_id: DenyId::from_identity(Incarnation::from_bytes([1; 16])),
+            reason: DenyReason::Trim,
+            created_epoch: CatalogRevision::INITIAL,
+            inherited_from: None,
+        }],
+    };
+    let (project, plan) = directory_plan_with_policy(&root, &data, Some(policy.clone()))?;
+    assert_eq!(plan.failures[&project], vec![None]);
+    assert!(plan.wanted.contains(&root.join("public/nested")));
+    assert!(!plan.wanted.contains(&root.join("private")));
+    fs::create_dir(root.join("pr\u{ed}vate"))?;
+    let (project, plan) = directory_plan_with_policy(&root, &data, Some(policy.clone()))?;
+    assert_eq!(
+        plan.failures[&project],
+        vec![Some(WatchFailure::MetadataUnavailable)]
+    );
+    policy.denies[0].path = ".airkignore".into();
+    policy.denies[0].kind = PathScope::Exact;
+    fs::write(root.join(".airkignore"), "# preserved control input\n")?;
+    let (project, plan) = directory_plan_with_policy(&root, &data, Some(policy))?;
+    assert_eq!(
+        plan.failures[&project],
+        vec![Some(WatchFailure::MetadataUnavailable)]
+    );
+    assert_eq!(
+        fs::read_to_string(root.join(".airkignore"))?,
+        "# preserved control input\n"
+    );
+    Ok(())
 }
 
 #[test]
@@ -239,6 +315,7 @@ fn traversal_reports_a_disappeared_subdirectory_and_clears_on_the_next_successfu
         walk: Some(Walk {
             ignores: airk_ingest::source_scope::DirectoryIgnore::new(&root),
             task: RootTask {
+                policy: None,
                 project,
                 index: 0,
                 root: root.clone(),
@@ -273,6 +350,7 @@ fn traversal_reports_a_disappeared_subdirectory_and_clears_on_the_next_successfu
     plan.usage.clear();
     plan.failures.insert(project, vec![None]);
     plan.tasks.push_back(RootTask {
+        policy: None,
         project,
         index: 0,
         root,
@@ -345,6 +423,7 @@ fn directory_budget_degrades_one_scope_without_adding_unbounded_native_registrat
     let project = registration.binding;
     let mut plan = Plan {
         tasks: VecDeque::from([RootTask {
+            policy: None,
             project,
             index: 0,
             root: source,
@@ -398,6 +477,7 @@ fn four_project_plans_exceed_old_directory_limit_and_keep_scope_budgets_independ
             .registration
             .binding;
         plan.tasks.push_back(RootTask {
+            policy: None,
             project,
             index: 0,
             root,
@@ -423,6 +503,7 @@ fn four_project_plans_exceed_old_directory_limit_and_keep_scope_budgets_independ
         let root = base.join(format!("extra-{id}"));
         fs::create_dir(&root)?;
         plan.tasks.push_back(RootTask {
+            policy: None,
             project: id,
             index: 0,
             root,

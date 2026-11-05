@@ -7,6 +7,7 @@ pub mod binding;
 pub mod catalog_fences;
 pub mod catalog_host;
 pub mod catalog_management;
+pub mod catalog_policy;
 pub mod catalog_setup;
 pub mod catalog_source_change;
 pub mod catalog_source_draft;

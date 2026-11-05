@@ -85,6 +85,8 @@ pub(super) fn scoped_import_test_reader(
         })?,
     };
     Ok(CurrentRead {
+        source_policy_fence: Default::default(),
+        source_policy: Default::default(),
         read_scope: Default::default(),
         read_scope_fence: Default::default(),
         read_scope_restricts_paths: Default::default(),
@@ -105,6 +107,8 @@ pub(super) fn scoped_import_test_reader(
 /// The connection/read transaction drops before the gate. Providers may clone
 /// the Arc for one request, but neither a kernel cache nor a sealed delta owns it.
 pub struct CurrentRead {
+    pub(super) source_policy_fence: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>>,
+    pub(super) source_policy: std::sync::OnceLock<super::source_policy::ReadPolicy>,
     pub(super) read_scope: std::sync::OnceLock<Arc<airk_core::scoped_reads::CompiledReadScope>>,
     pub(super) read_scope_fence: std::sync::OnceLock<Arc<std::sync::atomic::AtomicBool>>,
     pub(super) read_scope_restricts_paths: std::sync::OnceLock<bool>,
@@ -530,6 +534,8 @@ impl FileStore {
         );
         let head = decode_head(&bytes, scope)?;
         Ok(Arc::new(CurrentRead {
+            source_policy_fence: Default::default(),
+            source_policy: Default::default(),
             read_scope: std::sync::OnceLock::new(),
             read_scope_fence: std::sync::OnceLock::new(),
             read_scope_restricts_paths: std::sync::OnceLock::new(),
@@ -648,6 +654,8 @@ mod scope_tests {
             })?,
         };
         let read = CurrentRead {
+            source_policy_fence: Default::default(),
+            source_policy: Default::default(),
             connection: Mutex::new(connection),
             head,
             query_projection_version: None,

@@ -63,7 +63,7 @@ impl CatalogFenceUnpreparedAbsence {
                 && self.state.revision >= request.expected_catalog_revision
                 && self.state.activated
                 && self.state.authority_contract == 1
-                && self.state.policy_contract == 0,
+                && self.state.policy_contract <= super::super::SUPPORTED_POLICY_CONTRACT,
             "catalog unprepared absence observation changed"
         );
         Ok(())
@@ -231,7 +231,7 @@ impl ServiceRegistry {
             current.namespace == request.key.namespace
                 && current.revision >= request.expected_catalog_revision
                 && current.authority_contract == 1
-                && current.policy_contract == 0,
+                && current.policy_contract <= super::super::SUPPORTED_POLICY_CONTRACT,
             "catalog unprepared absence namespace, revision or contract changed"
         );
         let exists: bool = tx.query_row(

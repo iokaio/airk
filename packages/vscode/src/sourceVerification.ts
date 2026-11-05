@@ -38,6 +38,20 @@ export function verificationLabel(raw:unknown):string {
     return `Saved-source check at ${date}: ${matched} of ${total} referenced sources matched; verification incomplete.`;
 }
 
+/** Classify only a source bound to this exact native file-info result. No host bytes are read. */
+export function nativeSavedSourceState(raw:unknown,expectedHash:string,publication:string|undefined):'matches_index'|'changed_since_index'|'missing'|'unchecked'{
+    const info=object(raw),location=object(info.source),receipt=nativeVerification(info.source_verification);
+    if(!receipt||!publication||info.content_hash!==expectedHash||!/^[0-9a-f]{64}$/.test(expectedHash)||typeof location.root!=='string'||typeof location.relative_path!=='string')return 'unchecked';
+    const origins=(receipt.origins as unknown[]).map(object),sources=(receipt.sources as unknown[]).map(object);
+    const targets=sources.filter(source=>source.expected_hash===expectedHash&&source.original_root===location.root&&source.source_relative_path===location.relative_path
+        &&origins.some(origin=>origin.id===source.origin_id&&origin.publication===publication));
+    if(targets.length!==1)return 'unchecked';
+    const target=targets[0];
+    if(target.state==='matched'&&verificationLabel(receipt).startsWith('Saved sources verified at '))return 'matches_index';
+    if(target.state==='mismatch')return 'changed_since_index';
+    return target.state==='missing'?'missing':'unchecked';
+}
+
 /** Unwrap actual native structured responses; parse text only in error envelopes. */
 export function readResultBody(raw:unknown):Value {
     const value=object(raw);

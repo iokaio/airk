@@ -66,6 +66,7 @@ export class ServiceConsoleController {
     private readonly nativeSetupReviews=new WeakMap<IndexSetupReview,{client:ServiceClient;identity:string;review:IndexSetupReview}>();
     private readonly nativeSourceReviews=new WeakMap<CatalogReview,{client:ServiceClient;identity:string;review:CatalogReview}>();
     private readonly nativeSourceObservations=new WeakMap<CatalogObject,{client:ServiceClient;identity:string;response:CatalogObject;namespace:string}>();
+    private readonly nativePolicyObservations=new WeakMap<CatalogObject,{client:ServiceClient;identity:string;response:CatalogObject;namespace:string}>();
     private nativeSourceCaller?:{identity:string;caller:string};
     private readonly setupResumeReceipts=new Map<string,{client:ServiceClient;identity:string;intent:ConsoleIntent;response:RecordValue}>();
     private readonly retirementReviews=new WeakMap<CatalogRetirementReview,{client:ServiceClient;identity:string;journal:IntentJournal;original:unknown;response:RecordValue}>();
@@ -146,7 +147,7 @@ export class ServiceConsoleController {
         if(!client||!this.journal||this.registryObservationSuspended)throw new ServiceError('catalog_control_connection_unavailable');
         validateCatalogOperation(operation);catalogRevision(revision);
         if(operation.operation==='create_grant')throw new ServiceError('native_grant_draft_required');
-        if(['begin_index_source_change','retire_index'].includes(String(operation.operation)))throw new ServiceError('native_source_draft_required');
+        if(['begin_index_source_change','retire_index','change_index_policy'].includes(String(operation.operation)))throw new ServiceError('native_source_draft_required');
         const request=await client.prepareCatalog(operation,revision);
         const current=()=>{this.authorized();if(client!==this.client||identity!==this.observationIdentity||request.key.namespace!==this.registryNamespace)throw new ServiceError('stale_catalog_client');};
         current();const response=await client.rpc({catalog_preview:{request}},'catalog_preview');current();catalogBound(response,65536);catalogBound(response.preview);
@@ -184,7 +185,7 @@ export class ServiceConsoleController {
                 ||!host||host.observation!==identity||host.key!==frozen.contextKey||host.revision!==review.request.expected_catalog_revision)throw new ServiceError('stale_or_changed_native_grant_review');
             this.nativeGrantReviews.delete(review);
         }
-        if(['begin_index_source_change','retire_index'].includes(String(review.request.operation.operation))){
+        if(['begin_index_source_change','retire_index','change_index_policy'].includes(String(review.request.operation.operation))){
             if(journal.list().length&&(review.request.operation.operation!=='retire_index'||!this.retirementPendingAllowed(String(review.request.operation.id),review.request.key.namespace)))throw new ServiceError('catalog_outcome_unconfirmed_reconcile_first');
             const frozen=this.nativeSourceReviews.get(review);if(!frozen||frozen.client!==client||frozen.identity!==identity||!sameCatalogValue(review,frozen.review))throw new ServiceError('stale_or_changed_native_source_review');this.nativeSourceReviews.delete(review);
         }
@@ -238,6 +239,35 @@ export class ServiceConsoleController {
         if(!client||namespace!==this.registryNamespace||this.registryObservationSuspended)throw new ServiceError('catalog_control_connection_unavailable');
         const response=await client.catalogPendingSource(index,namespace);this.authorized();if(client!==this.client||identity!==this.observationIdentity||namespace!==this.registryNamespace||this.registryObservationSuspended)throw new ServiceError('stale_catalog_client');
         if(sourceChangeObservation(response))this.nativeSourceObservations.set(response,{client,identity,response:structuredClone(response),namespace});return response;
+    }
+    async catalogPolicyStatus(index:string):Promise<RecordValue>{
+        this.authorized();const client=this.client,identity=this.observationIdentity,namespace=this.registryNamespace;
+        if(!client||!namespace||this.registryObservationSuspended)throw new ServiceError('catalog_control_connection_unavailable');
+        const response=await client.catalogPolicyStatus(index);this.authorized();
+        if(client!==this.client||identity!==this.observationIdentity||namespace!==this.registryNamespace||this.registryObservationSuspended)throw new ServiceError('stale_catalog_client');
+        this.nativePolicyObservations.set(response,{client,identity,response:structuredClone(response),namespace});return response;
+    }
+    async catalogPolicyResume(observation:CatalogObject,valid:()=>boolean):Promise<RecordValue>{
+        this.authorized();const client=this.client,journal=this.journal,identity=this.observationIdentity,frozen=this.nativePolicyObservations.get(observation);
+        if(!client||!journal||!frozen||frozen.client!==client||frozen.identity!==identity||frozen.namespace!==this.registryNamespace||!sameCatalogValue(observation,frozen.response))throw new ServiceError('read_current_native_policy_observation');
+        const snapshot=record(frozen.response.snapshot),policy=record(snapshot.policy),job=record(frozen.response.job);
+        const application=snapshot.application===null?undefined:record(snapshot.application),cleanupPending=application?.physical_cleanup_pending===true;
+        if(!['failed','canceled'].includes(String(job.state))&&!(job.state==='succeeded'&&cleanupPending))throw new ServiceError('native_failed_or_pending_policy_cleanup_required');
+        if(this.catalogApplyInFlight||journal.list().length)throw new ServiceError('catalog_outcome_unconfirmed_reconcile_first');
+        const check=()=>{this.authorized();if(!valid()||client!==this.client||journal!==this.journal||identity!==this.observationIdentity||frozen.namespace!==this.registryNamespace||this.registryObservationSuspended)throw new ServiceError('stale_policy_resume');};check();
+        if(!await this.host.confirm(`Resume the recorded permanent-exclusion cleanup for index ${String(policy.index_id)}? The existing policy remains active. This retries only native operation ${String(snapshot.operation_id)}; source files are preserved.`,'Resume recorded cleanup'))return frozen.response;
+        check();const intent=await client.preparePolicyResume(String(policy.index_id),String(snapshot.operation_id),String(policy.owner_binding));check();this.catalogApplyInFlight=true;
+        try{
+            const id=await journal.prepare('Resume permanent-exclusion cleanup',intent,frozen.response);
+            try{check();}catch(error){await journal.forget(id);this.pending();throw error;}
+            this.nativePolicyObservations.delete(observation);this.pending();this.publish();let received=false;
+            try{const response=await client.submitPolicyResume(intent);received=true;await journal.observeCatalog(id,response);check();await journal.forget(id);this.pending();return response;}
+            catch(error){
+                if(error instanceof ServiceError&&error.nativeResponse?.status==='failure')await journal.observeCatalog(id,error.nativeResponse);
+                if(!received&&error instanceof ServiceError&&!error.outcomeUnknown)await journal.forget(id);
+                this.pending();this.logReceipt(id,error);throw error;
+            }
+        }finally{this.catalogApplyInFlight=false;}
     }
     async catalogSourceResolve(observation:CatalogObject,valid:()=>boolean):Promise<RecordValue>{
         this.authorized();const client=this.client,journal=this.journal,identity=this.observationIdentity,frozen=this.nativeSourceObservations.get(observation);
@@ -346,14 +376,27 @@ export class ServiceConsoleController {
         const ids=new Set(this.journal?.list().map(entry=>entry.id)??[]);
         for(const [id,value] of this.setupResumeReceipts)if(!ids.has(id)||value.client!==this.client||value.identity!==this.observationIdentity)this.setupResumeReceipts.delete(id);
     }
-    catalogPending(): readonly string[] { this.pruneSetupResumeReceipts();return this.journal?.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent).map(entry=>entry.id)??[]; }
-    catalogPendingDetails():readonly CatalogObject[]{return this.journal?.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent).map(entry=>({id:entry.id,intent:entry.value.intent,...(entry.value.nativeObservation?{native_observation:entry.value.nativeObservation}:{}),...(entry.value.nativeFenceObservation?{native_fence_observation:entry.value.nativeFenceObservation}:{}),...(entry.value.nativeSetupObservation?{native_setup_observation:entry.value.nativeSetupObservation}:{}),...(entry.value.nativeSourceObservation?{native_source_observation:entry.value.nativeSourceObservation}:{}),local_dispatch_state:entry.value.localDispatchState,can_resume_setup:this.setupResumeReceipts.get(entry.id)?.client===this.client&&this.setupResumeReceipts.get(entry.id)?.identity===this.observationIdentity&&entry.value.localDispatchState==='known_receipt'}))??[];}
+    catalogPending(): readonly string[] { this.pruneSetupResumeReceipts();return this.journal?.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent||'catalog_policy_resume' in entry.value.intent).map(entry=>entry.id)??[]; }
+    catalogPendingDetails():readonly CatalogObject[]{return this.journal?.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent||'catalog_policy_resume' in entry.value.intent).map(entry=>({id:entry.id,intent:entry.value.intent,...(entry.value.nativeObservation?{native_observation:entry.value.nativeObservation}:{}),...(entry.value.nativeFenceObservation?{native_fence_observation:entry.value.nativeFenceObservation}:{}),...(entry.value.nativeSetupObservation?{native_setup_observation:entry.value.nativeSetupObservation}:{}),...(entry.value.nativeSourceObservation?{native_source_observation:entry.value.nativeSourceObservation}:{}),local_dispatch_state:entry.value.localDispatchState,can_resume_setup:this.setupResumeReceipts.get(entry.id)?.client===this.client&&this.setupResumeReceipts.get(entry.id)?.identity===this.observationIdentity&&entry.value.localDispatchState==='known_receipt'}))??[];}
     async catalogReconcile(): Promise<RecordValue[]> {
         this.pruneSetupResumeReceipts();
         this.authorized();const client=this.client,journal=this.journal,identity=this.observationIdentity;
         if(!client||!journal||this.registryObservationSuspended)throw new ServiceError('catalog_control_connection_unavailable');
         const results:RecordValue[]=[];
-        for(const saved of journal.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent).slice(0,8)){
+        for(const saved of journal.list().filter(entry=>'catalog_apply' in entry.value.intent||'catalog_index_setup_apply' in entry.value.intent||'catalog_source_change_resolve' in entry.value.intent||'catalog_policy_resume' in entry.value.intent).slice(0,8)){
+            if('catalog_policy_resume' in saved.value.intent){
+                const intent=saved.value.intent,request=intent.catalog_policy_resume;
+                const response=await client.catalogPolicyResumeReceipt(intent);
+                this.authorized();if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
+                if(response.receipt===null){await journal.observeCatalog(saved.id,response);results.push(response);continue;}
+                const receipt=record(response.receipt),job=record(receipt.job);
+                if(saved.value.nativeObservation?.accepted_job_id!==undefined&&saved.value.nativeObservation.accepted_job_id!==job.id)throw new ServiceError('crossed_policy_resume_receipt',true,response);
+                // Persist accepted proof before another independent current-state read.
+                await journal.observeCatalog(saved.id,response);
+                const status=await this.catalogPolicyStatus(request.index_id);
+                this.authorized();if(client!==this.client||journal!==this.journal||identity!==this.observationIdentity)throw new ServiceError('stale_catalog_client');
+                const observation={...status,accepted_job_id:job.id,status_basis:'current_policy',resume_receipt:response};await journal.observeCatalog(saved.id,observation);results.push(observation);await journal.forget(saved.id);continue;
+            }
             if('catalog_source_change_resolve' in saved.value.intent){
                 const intent=saved.value.intent,prior=sourceChangeObservation(saved.value.nativeObservation??{})?saved.value.nativeObservation:saved.value.nativeSourceObservation;
                 const response=await this.catalogSourceObservation(intent.catalog_source_change_resolve.begin_operation,intent.namespace,prior);
@@ -819,7 +862,7 @@ export class ServiceConsoleController {
             }
             if(action.action==='forgetIntent'){
                 const saved=this.journal?.list().find(entry=>entry.id===action.id),intent=saved?.value.intent;
-                if(intent&&('catalog_apply' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent))throw new ServiceError('catalog_reconciliation_required');
+                if(intent&&('catalog_apply' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent||'catalog_policy_resume' in intent))throw new ServiceError('catalog_reconciliation_required');
                 if(await this.host.confirm('Forget this local request key? Native work and native lifecycle intent continue. Its outcome may remain unknown.'))await this.journal?.forget(action.id!);
                 return;
             }

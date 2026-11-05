@@ -90,7 +90,7 @@ fn read_snapshot(
     ensure!(
         state.activated
             && state.authority_contract == 1
-            && state.policy_contract == 0
+            && state.policy_contract <= 1
             && state.namespace == session.namespace
             && state.revision >= session.expected_catalog_revision,
         ScopeReadRefused

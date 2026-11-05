@@ -46,7 +46,7 @@ pub(crate) fn builder(root: &Path) -> WalkBuilder {
 /// Rules are cached by parent directory and reloaded by constructing a new plan.
 /// No source document or derived index is opened by this adapter.
 pub struct DirectoryIgnore {
-    matcher: IncrementalIgnore,
+    matcher: SourceMatcher,
 }
 
 /// One request's direct-path policy checks. Loads only ancestor ignore metadata;
@@ -55,7 +55,7 @@ pub struct DirectoryIgnore {
 pub struct SelectedSourcePolicy {
     root: std::path::PathBuf,
     data: std::path::PathBuf,
-    matcher: IncrementalIgnore,
+    matcher: SourceMatcher,
     credentials: CredentialDefaults,
 }
 
@@ -64,9 +64,26 @@ impl SelectedSourcePolicy {
         Self {
             root: root.into(),
             data: data.into(),
-            matcher: builder(root).build_matchers().remove(0),
+            matcher: SourceMatcher::ordinary(root),
             credentials: CredentialDefaults::new(root),
         }
+    }
+
+    pub fn with_source_policy(
+        root: &Path,
+        data: &Path,
+        policy: Option<&airk_core::source_policy::SourcePolicy>,
+    ) -> Result<Self> {
+        Ok(Self {
+            root: root.into(),
+            data: data.into(),
+            matcher: SourceMatcher::new(root, policy)?,
+            credentials: if policy.is_some_and(crate::permanent_policy::restricts) {
+                CredentialDefaults::guarded(root)
+            } else {
+                CredentialDefaults::new(root)
+            },
+        })
     }
 
     pub fn allows(&mut self, logical: &str) -> Result<bool> {
@@ -91,11 +108,14 @@ impl SelectedSourcePolicy {
                 return Ok(false);
             }
             let is_dir = index + 1 != parts.len();
-            let (matched, error) = self.matcher.matched_with_errors(&relative, is_dir);
-            if let Some(error) = error {
-                return Err(error.into());
-            }
-            if matched.is_ignore() || self.credentials.excluded(&relative, is_dir) {
+            let matched = self.matcher.decision(&relative, is_dir)?;
+            if matched == crate::policy_ignore::Decision::Ignore
+                || self.credentials.excluded_with_whitelist(
+                    &relative,
+                    is_dir,
+                    matched == crate::policy_ignore::Decision::Whitelist,
+                )
+            {
                 return Ok(false);
             }
         }
@@ -106,26 +126,76 @@ impl SelectedSourcePolicy {
 impl DirectoryIgnore {
     pub fn new(root: &Path) -> Self {
         Self {
-            matcher: builder(root).build_matchers().remove(0),
+            matcher: SourceMatcher::ordinary(root),
         }
+    }
+
+    pub fn with_source_policy(
+        root: &Path,
+        policy: Option<&airk_core::source_policy::SourcePolicy>,
+    ) -> Result<Self> {
+        Ok(Self {
+            matcher: SourceMatcher::new(root, policy)?,
+        })
     }
 
     /// Match a potential directory against its parents' rules before accessing it.
     /// Callers may query only direct children of already admitted directories;
     /// this keeps matcher caches inside their existing directory-plan budget.
     pub fn ignored(&mut self, path: &Path) -> Result<bool> {
-        let relative = path.strip_prefix(self.matcher.root())?;
+        let relative = path.strip_prefix(self.matcher.root())?.to_path_buf();
         ensure!(
             relative
                 .components()
                 .all(|part| matches!(part, Component::Normal(_))),
             "watch ignore path is outside its source root"
         );
-        let (matched, error) = self.matcher.matched_with_errors(relative, true);
-        if let Some(error) = error {
-            return Err(error.into());
+        Ok(self.matcher.decision(&relative, true)? == crate::policy_ignore::Decision::Ignore)
+    }
+}
+
+enum SourceMatcher {
+    Ordinary(IncrementalIgnore),
+    Protected(crate::policy_ignore::ProtectedIgnore),
+}
+impl SourceMatcher {
+    fn ordinary(root: &Path) -> Self {
+        Self::Ordinary(builder(root).build_matchers().remove(0))
+    }
+    fn new(root: &Path, policy: Option<&airk_core::source_policy::SourcePolicy>) -> Result<Self> {
+        Ok(
+            match policy.filter(|policy| crate::permanent_policy::restricts(policy)) {
+                Some(policy) => {
+                    Self::Protected(crate::policy_ignore::ProtectedIgnore::new(root, policy)?)
+                }
+                None => Self::ordinary(root),
+            },
+        )
+    }
+    fn root(&self) -> &Path {
+        match self {
+            Self::Ordinary(matcher) => matcher.root(),
+            Self::Protected(matcher) => matcher.root(),
         }
-        Ok(matched.is_ignore())
+    }
+    fn decision(&mut self, path: &Path, directory: bool) -> Result<crate::policy_ignore::Decision> {
+        use crate::policy_ignore::Decision;
+        match self {
+            Self::Protected(matcher) => matcher.decision(path, directory),
+            Self::Ordinary(matcher) => {
+                let (matched, error) = matcher.matched_with_errors(path, directory);
+                if let Some(error) = error {
+                    return Err(error.into());
+                }
+                Ok(if matched.is_ignore() {
+                    Decision::Ignore
+                } else if matched.is_whitelist() {
+                    Decision::Whitelist
+                } else {
+                    Decision::None
+                })
+            }
+        }
     }
 }
 
@@ -133,11 +203,17 @@ impl DirectoryIgnore {
 /// explicit whitelist rule for the same path takes precedence.
 pub(crate) struct CredentialDefaults {
     defaults: Gitignore,
-    user: IncrementalIgnore,
+    user: Option<IncrementalIgnore>,
 }
 
 impl CredentialDefaults {
     pub(crate) fn new(root: &Path) -> Self {
+        let mut value = Self::guarded(root);
+        value.user = Some(builder(root).build_matchers().remove(0));
+        value
+    }
+
+    pub(crate) fn guarded(root: &Path) -> Self {
         let mut defaults = GitignoreBuilder::new(root);
         for pattern in CREDENTIAL_DEFAULTS {
             defaults
@@ -148,14 +224,26 @@ impl CredentialDefaults {
             defaults: defaults
                 .build()
                 .expect("built-in credential patterns compile"),
-            user: builder(root).build_matchers().remove(0),
+            user: None,
         }
     }
 
     /// `relative` is root-relative, as produced by the source walk.
     pub(crate) fn excluded(&mut self, relative: &Path, is_dir: bool) -> bool {
         self.defaults.matched(relative, is_dir).is_ignore()
-            && !self.user.matched(relative, is_dir).is_whitelist()
+            && !self
+                .user
+                .as_mut()
+                .is_some_and(|user| user.matched(relative, is_dir).is_whitelist())
+    }
+
+    pub(crate) fn excluded_with_whitelist(
+        &mut self,
+        relative: &Path,
+        is_dir: bool,
+        whitelist: bool,
+    ) -> bool {
+        !whitelist && self.excluded(relative, is_dir)
     }
 }
 

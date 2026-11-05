@@ -58,8 +58,9 @@ pub(super) fn require_request_capacity(connection: &Connection) -> Result<()> {
 }
 
 // Unregister changes registration metadata only. It must not require resuming
-// source work to remove a paused project. No other configuration bypasses pause.
-const RUN_WHILE_PAUSED: &str = "(j.kind IN('inspect','plan_inspect') OR (j.kind='configure' AND EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('unregister','prepare_derived_cleanup','delete_derived'))))";
+// source work to remove a paused project. Reviewed retained-only source policy
+// removal also runs while paused; it never captures or indexes source bytes.
+const RUN_WHILE_PAUSED: &str = "(j.kind IN('inspect','plan_inspect') OR (j.kind='configure' AND EXISTS(SELECT 1 FROM service_configuration c WHERE c.job=j.id AND json_extract(CAST(c.payload AS TEXT),'$.request.configuration.operation') IN('unregister','prepare_derived_cleanup','delete_derived','apply_source_policy'))))";
 
 pub(super) const SCHEMA: &str = "
     CREATE TABLE IF NOT EXISTS service_jobs(
@@ -89,6 +90,15 @@ pub(super) const SCHEMA: &str = "
 const MAX_JOBS: i64 = 1024;
 const MAX_REQUESTS: i64 = 4096;
 
+fn job_eligibility(connection: &Connection) -> Result<String> {
+    Ok(format!(
+        "({}) AND {} AND {}",
+        super::maintenance::ELIGIBLE,
+        super::recovery::ELIGIBLE,
+        super::catalog::policy::job_eligibility(connection)?
+    ))
+}
+
 /// Source priority applies to semantic-only work, regardless of who requested
 /// it. The legacy registry does not persist automatic/manual Vector provenance.
 /// Preserve the relative order of all other accepted jobs.
@@ -97,13 +107,12 @@ fn pending_source_work(connection: &Connection, project: ProjectBinding) -> Resu
         &format!(
             "SELECT EXISTS(SELECT 1 FROM service_jobs j JOIN projects p ON p.binding=j.project
           WHERE j.project=?1 AND p.registered=1 AND j.state='pending'
-          AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND ({}) AND {}
+          AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}
           AND EXISTS(SELECT 1 FROM service_job_source source WHERE source.job=j.id)
           AND NOT EXISTS(SELECT 1 FROM service_job_cancellation canceled WHERE canceled.job=j.id))
           OR EXISTS(SELECT 1 FROM service_background b JOIN projects p ON p.binding=b.project
             WHERE b.project=?1 AND b.source_pending=1 AND p.registered=1 AND p.paused=0)",
-            super::maintenance::ELIGIBLE,
-            super::recovery::ELIGIBLE
+            job_eligibility(connection)?
         ),
         [project.to_string()],
         |row| row.get(0),
@@ -242,6 +251,7 @@ impl ServiceRegistry {
             || job.kind == JobKind::Configure
                 && super::configuration::work(&self.connection, id)?.is_some_and(|work| {
                     work.request.configuration.is_derived_cleanup()
+                        || matches!(work.request.configuration, airk_core::service_configuration::ProjectConfiguration::ApplySourcePolicy { .. })
                         || work.request.configuration
                             == airk_core::service_configuration::ProjectConfiguration::Unregister
                 }))
@@ -253,7 +263,7 @@ impl ServiceRegistry {
             "invalid pending project page bound"
         );
         let mut statement = self.connection.prepare(
-            &format!("SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)))?;
+            &format!("SELECT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project WHERE j.state='running' OR (j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}) GROUP BY j.project ORDER BY min(j.seq) LIMIT ?1",job_eligibility(&self.connection)?))?;
         let rows = statement.query_map([limit as i64], |row| row.get::<_, String>(0))?;
         rows.map(|row| row?.parse()).collect()
     }
@@ -270,7 +280,7 @@ impl ServiceRegistry {
         let mut statement = self.connection.prepare(
             &format!("SELECT DISTINCT j.project FROM service_jobs j JOIN projects p ON p.binding=j.project
              WHERE (j.state='running' OR (j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {}))
-             AND (?1 IS NULL OR j.project>?1) ORDER BY j.project LIMIT ?2",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)),
+             AND (?1 IS NULL OR j.project>?1) ORDER BY j.project LIMIT ?2",job_eligibility(&self.connection)?),
         )?;
         let rows = statement.query_map(
             params![after.map(|id| id.to_string()), limit as i64],
@@ -283,7 +293,7 @@ impl ServiceRegistry {
             .connection
             .query_row(
                 &format!("SELECT j.id FROM service_jobs j JOIN projects p ON p.binding=j.project
-             WHERE j.project=?1 AND j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)),
+             WHERE j.project=?1 AND j.state='pending' AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",job_eligibility(&self.connection)?),
                 [project.to_string()],
                 |row| row.get(0),
             )
@@ -302,9 +312,8 @@ impl ServiceRegistry {
                     &format!(
                         "SELECT j.id FROM service_jobs j JOIN projects p ON p.binding=j.project
                     WHERE j.project=?1 AND j.state='pending' AND j.kind<>'vectors'
-                    AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND ({}) AND {} ORDER BY j.seq LIMIT 1",
-                        super::maintenance::ELIGIBLE,
-                        super::recovery::ELIGIBLE
+                    AND (p.paused=0 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",
+                        job_eligibility(&self.connection)?
                     ),
                     [project.to_string()],
                     |row| row.get(0),
@@ -1116,7 +1125,7 @@ impl ServiceRegistry {
         }
         transaction.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND state='running' AND epoch<>?3 AND attempts>=2 AND id IN(SELECT job FROM service_progress WHERE json_extract(CAST(observation AS TEXT),'$.progress.stalled')=1) AND NOT EXISTS(SELECT 1 FROM service_job_cancellation WHERE job=service_jobs.id)",params![stalled,lease.binding.to_string(),i64::try_from(epoch)?])?;
         super::catalog::source_change::recover_pending_jobs(&transaction, lease, epoch)?;
-        transaction.execute("UPDATE service_jobs SET state='pending' WHERE project=?1 AND kind='configure' AND state='running' AND epoch<>?2 AND attempts<3 AND id IN(SELECT job FROM service_configuration WHERE json_extract(CAST(payload AS TEXT),'$.request.prepare')=1 OR json_extract(CAST(payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived'))",
+        transaction.execute("UPDATE service_jobs SET state='pending' WHERE project=?1 AND kind='configure' AND state='running' AND epoch<>?2 AND attempts<3 AND id IN(SELECT job FROM service_configuration WHERE json_extract(CAST(payload AS TEXT),'$.request.prepare')=1 OR json_extract(CAST(payload AS TEXT),'$.request.configuration.operation') IN('prepare_derived_cleanup','delete_derived','apply_source_policy'))",
             params![lease.binding.to_string(),i64::try_from(epoch)?])?;
         transaction.execute("UPDATE service_jobs SET state='failed',outcome=?1 WHERE project=?2 AND kind='configure' AND state='running' AND epoch<>?3",
             params![uncertain,lease.binding.to_string(),i64::try_from(epoch)?])?;
@@ -1180,7 +1189,7 @@ impl ServiceRegistry {
         if running {
             return Ok(None);
         }
-        let candidate: Option<(String, bool)> = transaction.query_row(&format!("SELECT j.id,j.kind='vectors' FROM service_jobs j WHERE j.project=?1 AND j.state='pending' AND (?2 IS NULL OR j.id=?2) AND (NOT ?3 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",format_args!("({}) AND {}",super::maintenance::ELIGIBLE,super::recovery::ELIGIBLE)), params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
+        let candidate: Option<(String, bool)> = transaction.query_row(&format!("SELECT j.id,j.kind='vectors' FROM service_jobs j WHERE j.project=?1 AND j.state='pending' AND (?2 IS NULL OR j.id=?2) AND (NOT ?3 OR {RUN_WHILE_PAUSED}) AND {} ORDER BY j.seq LIMIT 1",job_eligibility(&transaction)?), params![lease.binding.to_string(), selected.map(|id|id.to_string()),paused], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
         let Some((mut id, mut vector)) = candidate else {
             return Ok(None);
         };
@@ -1194,10 +1203,9 @@ impl ServiceRegistry {
                 .query_row(
                     &format!(
                         "SELECT j.id FROM service_jobs j WHERE j.project=?1 AND j.state='pending'
-                    AND j.kind<>'vectors' AND (NOT ?2 OR {RUN_WHILE_PAUSED}) AND ({}) AND {}
+                    AND j.kind<>'vectors' AND (NOT ?2 OR {RUN_WHILE_PAUSED}) AND {}
                     ORDER BY j.seq LIMIT 1",
-                        super::maintenance::ELIGIBLE,
-                        super::recovery::ELIGIBLE
+                        job_eligibility(&transaction)?
                     ),
                     params![lease.binding.to_string(), paused],
                     |row| row.get(0),

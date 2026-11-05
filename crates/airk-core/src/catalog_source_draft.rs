@@ -4,7 +4,9 @@
 use crate::{
     catalog_management::{CatalogOperation, CatalogPreview, CatalogRequest, MAX_PAGE_BYTES},
     identity::Sha256Digest,
-    index_catalog::{CatalogRevision, IndexId, encoded_size},
+    index_catalog::{
+        CatalogRevision, DenyId, IndexId, PathScope, ScopeAtom, SourceRootId, encoded_size,
+    },
     service::RequestKey,
     source_policy::validate_root_path,
 };
@@ -20,6 +22,14 @@ pub enum SourceMutationSelection {
     },
     RemoveRoot {
         alias: String,
+    },
+    TrimPath {
+        source_root_id: SourceRootId,
+        kind: PathScope,
+        path: String,
+    },
+    UnblockPath {
+        rule_id: DenyId,
     },
     /// Explicit user retirement only. Confirmed-missing observations use a
     /// separate native event path and cannot be asserted by this public input.
@@ -49,7 +59,22 @@ impl SourceMutationDraftSelection {
                 Some(alias)
             }
             SourceMutationSelection::RemoveRoot { alias } => Some(alias),
-            SourceMutationSelection::RetireIndex => None,
+            SourceMutationSelection::TrimPath {
+                source_root_id,
+                kind,
+                path,
+            } => {
+                ScopeAtom {
+                    source_root_id: *source_root_id,
+                    kind: *kind,
+                    path: path.clone(),
+                }
+                .validate()?;
+                None
+            }
+            SourceMutationSelection::UnblockPath { .. } | SourceMutationSelection::RetireIndex => {
+                None
+            }
         };
         if let Some(alias) = alias {
             ensure!(
@@ -79,9 +104,10 @@ impl SourceMutationDraft {
             matches!(
                 self.request.operation,
                 CatalogOperation::BeginIndexSourceChange { .. }
+                    | CatalogOperation::ChangeIndexPolicy { .. }
                     | CatalogOperation::RetireIndex { .. }
             ),
-            "source draft requires a root change or index retirement"
+            "source draft requires a root change, policy change or index retirement"
         );
         ensure!(
             self.preview.request_digest == self.request.identity()?
@@ -89,11 +115,63 @@ impl SourceMutationDraft {
                 && self.preview.catalog_revision == self.request.expected_catalog_revision
                 && self.preview.next_revision == self.request.expected_catalog_revision.next()?
                 && self.preview.authority_fence_required
-                && !self.preview.file_data_changes
+                && self.preview.file_data_changes
+                    == matches!(
+                        self.request.operation,
+                        CatalogOperation::ChangeIndexPolicy { .. }
+                    )
                 && self.preview.identity()? == self.preview_digest,
             "source draft review identity changed"
         );
         encoded_size(self, MAX_PAGE_BYTES)?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod policy_selection_tests {
+    use super::*;
+    use crate::identity::Incarnation;
+
+    #[test]
+    fn trim_selection_is_root_relative_and_full_root_requires_subtree() -> Result<()> {
+        let identity = Incarnation::from_bytes([71; 16]);
+        let source = SourceRootId::from_identity(identity);
+        let mut selection = SourceMutationDraftSelection {
+            key: RequestKey {
+                namespace: identity,
+                epoch: 1,
+                nonce: identity,
+            },
+            expected_catalog_revision: CatalogRevision::INITIAL,
+            index_id: IndexId::from_identity(identity),
+            change: SourceMutationSelection::TrimPath {
+                source_root_id: source,
+                kind: PathScope::Subtree,
+                path: String::new(),
+            },
+        };
+        selection.validate()?;
+        selection.change = SourceMutationSelection::TrimPath {
+            source_root_id: source,
+            kind: PathScope::Exact,
+            path: String::new(),
+        };
+        assert!(selection.validate().is_err());
+        for path in [
+            "../private",
+            "private/../other",
+            "/private",
+            "private\\other",
+            "private//other",
+        ] {
+            selection.change = SourceMutationSelection::TrimPath {
+                source_root_id: source,
+                kind: PathScope::Subtree,
+                path: path.into(),
+            };
+            assert!(selection.validate().is_err(), "{path}");
+        }
         Ok(())
     }
 }

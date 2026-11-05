@@ -81,6 +81,7 @@ pub fn run() -> Result<()> {
         (u64, Option<airk_core::identity::Sha256Digest>, bool),
     > = BTreeMap::new();
     let mut missing = BTreeMap::new();
+    let mut policy_fences = BTreeMap::new();
     let mut last_pulse = Instant::now();
     while !closing.load(Ordering::Acquire) {
         for _ in 0..32 {
@@ -90,6 +91,75 @@ pub fn run() -> Result<()> {
                 Err(mpsc::TryRecvError::Disconnected) => return Ok(()),
             };
             match command {
+                Command::FencePolicy {
+                    service,
+                    worker,
+                    project,
+                    operation_id,
+                    nonce,
+                } => {
+                    ensure!(
+                        service == init.service && worker == init.worker,
+                        "policy watcher fence has a foreign native owner"
+                    );
+                    ensure!(
+                        policy_fences.contains_key(&project) || policy_fences.len() < 1024,
+                        "policy watcher fence capacity exhausted"
+                    );
+                    if let Some(existing) = policy_fences.get(&project) {
+                        ensure!(
+                            *existing == (operation_id, nonce),
+                            "policy watcher fence changed"
+                        );
+                    }
+                    policy_fences.insert(project, (operation_id, nonce));
+                    watcher.remove(project);
+                    missing.remove(&project);
+                    epochs.remove(&project);
+                    if pending
+                        .as_ref()
+                        .is_some_and(|binding| binding.registration.binding == project)
+                    {
+                        pending = None;
+                    }
+                    // This synchronous owner turn has discarded its retained
+                    // traversal plan before it acknowledges the exact fence.
+                    reply(&Reply::PolicyFenced {
+                        service,
+                        worker,
+                        project,
+                        operation_id,
+                        nonce,
+                    })?;
+                }
+                Command::ReleasePolicy {
+                    service,
+                    worker,
+                    project,
+                    operation_id,
+                    nonce,
+                } => {
+                    ensure!(
+                        service == init.service && worker == init.worker,
+                        "policy watcher release has a foreign native owner"
+                    );
+                    if let Some(existing) = policy_fences.get(&project) {
+                        ensure!(
+                            *existing == (operation_id, nonce),
+                            "policy watcher release changed"
+                        );
+                        policy_fences.remove(&project);
+                    }
+                    // No retained configuration is restored here. Only a new
+                    // native registry observation may install another binding.
+                    reply(&Reply::PolicyReleased {
+                        service,
+                        worker,
+                        project,
+                        operation_id,
+                        nonce,
+                    })?;
+                }
                 Command::CleanupRemoved { project } => {
                     watcher.remove(project);
                     missing.remove(&project);
@@ -115,6 +185,9 @@ pub fn run() -> Result<()> {
                 } => {
                     registration.validate()?;
                     let project = registration.binding;
+                    if policy_fences.contains_key(&project) {
+                        continue;
+                    }
                     let stamp = (registration_epoch, configuration_epoch);
                     if confirmed_absent(std::path::Path::new(&registration.root)) {
                         let now = Instant::now();
@@ -196,6 +269,9 @@ pub fn run() -> Result<()> {
                             )? == pending.digest,
                         "watcher binding digest or identity mismatch"
                     );
+                    if policy_fences.contains_key(&project) {
+                        continue;
+                    }
                     if epochs
                         .get(&project)
                         .is_some_and(|(epoch, _, _)| *epoch > configuration_epoch)
@@ -218,11 +294,34 @@ pub fn run() -> Result<()> {
                         }
                     }
                     let digest = pending.digest;
+                    // Source policy is native catalog authority, not a source
+                    // root supplied by the watcher protocol. An unreadable or
+                    // changed binding leaves traversal explicitly unqualified.
+                    let policy = (|| -> Result<_> {
+                        let registry = airk_store::service::registry::ServiceRegistry::open(
+                            &init.runtime,
+                            init.service,
+                        )?;
+                        if registry
+                            .catalog_state()?
+                            .is_some_and(|state| state.authority_contract >= 1)
+                        {
+                            registry
+                                .catalog_index_for_binding(project)?
+                                .map(|index| registry.catalog_source_policy(index.id))
+                                .transpose()
+                                .map(Option::flatten)
+                        } else {
+                            Ok(None)
+                        }
+                    })();
+                    let configuration_observed = pending.observed && policy.is_ok();
                     let installed = watcher.install(Binding {
                         registration: pending.registration,
                         epoch: pending.epoch,
-                        configuration_observed: pending.observed,
+                        configuration_observed,
                         additional_roots: pending.roots,
+                        source_policy: policy.unwrap_or(None),
                     })?;
                     epochs.insert(project, (configuration_epoch, Some(digest), installed));
                 }

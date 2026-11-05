@@ -21,6 +21,13 @@ impl ReportFormat {
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum NativeRead {
+    /// Pin an explicit bounded administrative input under the native owner's
+    /// permanent-source policy and delivery fence. This is not an MCP tool or
+    /// an evidence-scope permission to open arbitrary files.
+    PrepareInputFile {
+        path: String,
+        max_source_bytes: u64,
+    },
     /// Protected exact-publication source identity for combined composition.
     /// Administrative/legacy readers cannot obtain an installed scoped proof.
     SourceProjection {

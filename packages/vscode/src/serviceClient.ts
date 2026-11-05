@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import { requireNativeExecution } from './nativeGate';
 import { CatalogApplyIntent, CatalogObject, CatalogRequest, CatalogReview, IndexSetupApplyIntent, IndexSetupReview, catalogBound, catalogFenceObservation, catalogHex, catalogObject, catalogRevision, sameCatalogValue, CATALOG_RECEIPT_BYTES, validateCatalogApply, validateGrantSelection, validateNativeGrantDraft, validateNativeHostContext, validateIndexSetupSelection, validateIndexSetupApply, validateNativeIndexSetupDraft, validateIndexSetupReceipt, indexSetupObservation, validateNativeLegacyBinding } from './indexingCatalog';
-import { SourceResolveIntent, validateNativeSourceDraft, validateSourceMutationSelection, validateSourceResolveIntent, sourceChangeObservation, validateNativeRetirementRequest } from './indexingCatalog';
+import { SourceResolveIntent, PolicyResumeIntent, validatePolicyResumeIntent, validateNativeSourceDraft, validateSourceMutationSelection, validateSourceResolveIntent, sourceChangeObservation, validateNativeRetirementRequest } from './indexingCatalog';
+import { validatePolicyStatus, validateNativePolicyConfiguration } from './indexingCatalog';
 
 export type RecordValue = Record<string, unknown>;
 export function record(value: unknown): RecordValue {
@@ -197,7 +198,7 @@ export class ServiceClient {
     constructor(readonly transport: ControlTransport) {}
     async rpc(method: unknown, expected?: string): Promise<RecordValue> {
         const name=typeof method==='string'?method:method&&typeof method==='object'?Object.keys(method)[0]:undefined;
-        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change'].includes(String(name));
+        const readOnly=['health','resources','embedding_status','source_status','workers','worker','console','inactive_console','projects','job','configuration_result','request_receipt','inspection','watch','progress','events','plan','plan_items','maintenance','catalog_page','catalog_detail','catalog_context','catalog_receipt','catalog_host_context','catalog_grant_draft','catalog_index_setup_draft','catalog_index_setup_receipt','catalog_legacy_binding','catalog_source_mutation_draft','catalog_source_change_observation','catalog_pending_source_change','catalog_policy_status','catalog_policy_resume_receipt'].includes(String(name));
         let response = await this.transport.request(method);
         for(let attempt=0;(readOnly||name==='catalog_index_retirement_evidence')&&response.status==='failure'&&response.code==='registry_busy'&&attempt<2;attempt++){
             await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
@@ -207,7 +208,7 @@ export class ServiceClient {
             const code = typeof response.code === 'string' && /^[a-z0-9_]{1,128}$/.test(response.code) ? response.code : 'invalid_service_failure';
             // Older catalog handlers can collapse a post-prepare failure into this generic code.
             // Its absence of a receipt does not establish that an accepted apply had no effect.
-            const error = new ServiceError(code, code.endsWith('_outcome_unknown') || code === 'registry_response_unknown_retry_with_key'||['catalog_apply','catalog_index_setup_apply','catalog_source_change_resolve'].includes(String(name))&&code==='invalid_registry_request',response);
+            const error = new ServiceError(code, code.endsWith('_outcome_unknown') || code === 'registry_response_unknown_retry_with_key'||['catalog_apply','catalog_index_setup_apply','catalog_source_change_resolve','catalog_policy_resume'].includes(String(name))&&code==='invalid_registry_request',response);
             if(code==='invalid_service_failure')error.cause=new Error(`Invalid native failure code: ${String(JSON.stringify(response.code)).slice(0,2048)}`);
             throw error;
         }
@@ -289,6 +290,35 @@ export class ServiceClient {
         const observed=sourceChangeObservation(response);
         if(observed){const begin=record(observed.begin),id=identifier(record(begin.metadata).operation_id,16);this.validateSourceObservation(response,id,namespace);if(record(begin.request).operation&&record(record(begin.request).operation).id!==index)throw new ServiceError('crossed_pending_source_begin',true,response);}
         else if(response.observation!==null)throw new ServiceError('invalid_pending_source_observation',true,response);
+        return response;
+    }
+    async catalogPolicyStatus(index:string):Promise<RecordValue>{
+        if(!/^idx_[0-9a-f]{32}$/.test(index))throw new ServiceError('invalid_source_policy_index');
+        const response=await this.rpc({catalog_policy_status:{index_id:index}},'catalog_policy_status');
+        return validatePolicyStatus(response,index);
+    }
+    async catalogPolicyResumeReceipt(input:PolicyResumeIntent):Promise<RecordValue>{
+        const intent=validatePolicyResumeIntent(structuredClone(input)),request=intent.catalog_policy_resume;
+        const response=await this.rpc({catalog_policy_resume_receipt:request},'catalog_policy_resume_receipt');
+        catalogBound(response,65536);
+        if(response.index_id!==request.index_id||response.operation_id!==request.operation_id||response.caller!==request.caller||!sameCatalogValue(response.key,request.key)||typeof response.expired!=='boolean')throw new ServiceError('crossed_policy_resume_receipt',true,response);
+        if(response.receipt===null)return response;
+        const receipt=record(response.receipt),job=record(receipt.job),work=record(receipt.configuration);
+        catalogHex(receipt.source_job,64);catalogHex(job.id,64);catalogHex(work.engine,64);
+        const policy=validateNativePolicyConfiguration(work.request),configuration=record(record(work.request).configuration);
+        if(configuration.operation_id!==request.operation_id||policy.index_id!==request.index_id||policy.owner_binding!==intent.project||job.project!==intent.project||job.kind!=='configure'||!['pending','running','succeeded','failed','canceled'].includes(String(job.state))||response.expired)throw new ServiceError('crossed_policy_resume_receipt',true,response);
+        if(receipt.result!==null){const result=record(receipt.result);if(result.operation_id!==request.operation_id)throw new ServiceError('crossed_policy_resume_result',true,response);catalogHex(result.policy_digest,64);}
+        return response;
+    }
+    async preparePolicyResume(index:string,operation:string,project:string):Promise<PolicyResumeIntent>{
+        return validatePolicyResumeIntent({catalog_policy_resume:{index_id:index,operation_id:operation,caller:this.caller,key:await this.key()},project});
+    }
+    async submitPolicyResume(input:PolicyResumeIntent):Promise<RecordValue>{
+        const intent=validatePolicyResumeIntent(structuredClone(input)),request=intent.catalog_policy_resume;
+        const response=await this.rpc({catalog_policy_resume:request},'catalog_policy_resumed');
+        validatePolicyStatus(response,request.index_id,'catalog_policy_resumed');
+        const snapshot=record(response.snapshot);
+        if(snapshot.operation_id!==request.operation_id||record(snapshot.policy).owner_binding!==intent.project)throw new ServiceError('crossed_policy_resume',true,response);
         return response;
     }
     async catalogRetirementEvidence(index:string,namespace:string,backing:string,minimumRevision:number,registration?:CatalogObject):Promise<RecordValue>{
@@ -384,7 +414,7 @@ export class ServiceClient {
             || receipt.schema !== 1 || !Number.isSafeInteger(receipt.catalog_revision) || receipt.catalog_revision !== request.expected_catalog_revision+1 || receipt.request_digest!==requestDigest||typeof receipt.authority_fence_required!=='boolean') {
             throw new ServiceError('crossed_catalog_receipt', true);
         }
-        if(['delete_project','set_membership','remove_membership','revoke_grant','begin_index_source_change','retire_index'].includes(String(request.operation.operation))&&receipt.authority_fence_required!==true)throw new ServiceError('complete_catalog_fence_required',true);
+        if(['delete_project','set_membership','remove_membership','revoke_grant','begin_index_source_change','retire_index','change_index_policy'].includes(String(request.operation.operation))&&receipt.authority_fence_required!==true)throw new ServiceError('complete_catalog_fence_required',true);
         return receipt;
     }
     private validateFencedReceipt(input:unknown,receipt:RecordValue,request:CatalogRequest,previewDigest:string):void{
@@ -462,8 +492,8 @@ export class ServiceClient {
         identifier(worker.worker,16);identifier(worker.project,32);return worker;
     }
     private validateWorkerObligation(input:unknown,service:string,request:CatalogRequest):RecordValue[]{
-        if(input==null){if(request.operation.operation==='retire_index')throw new ServiceError('native_retirement_worker_obligation_required',true);return [];}
-        if(request.operation.operation!=='retire_index')throw new ServiceError('unexpected_catalog_worker_obligation',true);
+        if(input==null){if(['retire_index','change_index_policy'].includes(String(request.operation.operation)))throw new ServiceError('native_retirement_worker_obligation_required',true);return [];}
+        if(!['retire_index','change_index_policy'].includes(String(request.operation.operation)))throw new ServiceError('unexpected_catalog_worker_obligation',true);
         const obligation=record(input),backing=identifier(obligation.backing,32);
         if(obligation.index_id!==request.operation.id||!Array.isArray(obligation.workers)||obligation.workers.length>128)throw new ServiceError('crossed_catalog_worker_obligation',true);
         const workers=obligation.workers.map(input=>this.validateWorkerIdentity(input,service,backing));

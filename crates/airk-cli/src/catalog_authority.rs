@@ -135,6 +135,7 @@ fn build_catalog_read_authority_kind(
     else {
         return Err(ScopeReadRefused.into());
     };
+    require_policy_ready(registry, &index)?;
     // Validate the frozen grant before using it to bound any further lookups.
     grant.validate()?;
     ensure!(
@@ -189,6 +190,33 @@ fn build_catalog_read_authority_kind(
     )
 }
 
+/// Empty-policy indexes retain the existing metadata-only fast path. A policy
+/// reference is usable only after its native removal report binds the exact
+/// saved policy. Physical reclamation may continue without reviving evidence.
+pub(crate) fn require_policy_ready(
+    registry: &ServiceRegistry,
+    index: &IndexDefinition,
+) -> Result<()> {
+    let Some(reference) = &index.policy else {
+        return Ok(());
+    };
+    let snapshot = registry
+        .catalog_policy_status(index.id)?
+        .ok_or(ScopeReadRefused)?;
+    ensure!(
+        snapshot.policy.index_id == index.id
+            && snapshot.policy.owner_binding == index.backing.binding
+            && snapshot.policy.epoch == reference.epoch
+            && snapshot.policy.identity()? == reference.digest
+            && snapshot.application.as_ref().is_some_and(|report| {
+                report.policy_digest == reference.digest
+                    && report.operation_id == snapshot.operation_id
+            }),
+        ScopeReadRefused
+    );
+    Ok(())
+}
+
 fn validate_catalog_fence(
     state: &catalog::CatalogState,
     selection: &NativeCatalogAuthoritySelection,
@@ -199,8 +227,8 @@ fn validate_catalog_fence(
             && state.namespace == selection.namespace
             && state.revision == selection.catalog_revision
             && state.authority_contract == 1
-            && state.policy_contract == 0
-            && capabilities.supports(state.schema, 1, 0),
+            && state.policy_contract <= 1
+            && capabilities.supports(state.schema, 1, state.policy_contract),
         ScopeReadRefused
     );
     Ok(())
@@ -219,12 +247,14 @@ fn validate_snapshot(
     let PersistedGrant { grant, provenance } = persisted;
     index.validate()?;
     ensure!(
-        grant.id == selection.grant_id && !grant.revoked
-            && grant.host == selection.host && grant.revision == selection.grant_revision
-            && index.id == selection.index_id && index.backing.binding == selection.backing
-            && !index.tombstone && index.source_import == SourceImportState::Complete
-            // Policy ledgers are not qualified by authority contract 1.
-            && index.policy.is_none()
+        grant.id == selection.grant_id
+            && !grant.revoked
+            && grant.host == selection.host
+            && grant.revision == selection.grant_revision
+            && index.id == selection.index_id
+            && index.backing.binding == selection.backing
+            && !index.tombstone
+            && index.source_import == SourceImportState::Complete
             && projects.len() == selection.project_ids.len()
             && memberships.len() == selection.project_ids.len(),
         ScopeReadRefused
@@ -249,8 +279,9 @@ fn validate_snapshot(
             frozen.membership.revision == current.revision
                 && frozen.membership.scope_is_subset_of(current)
                 && frozen.source_revision == index.source_revision
-                && frozen.policy_epoch == 0
-                && frozen.policy_digest.is_none(),
+                && frozen.policy_epoch
+                    == index.policy.as_ref().map_or(0, |policy| policy.epoch.get())
+                && frozen.policy_digest == index.policy.as_ref().map(|policy| policy.digest),
             ScopeReadRefused
         );
     }
@@ -440,6 +471,26 @@ mod tests {
             f.sources.clone(),
         )?;
         assert_eq!(authority.provenance, provenance);
+        let mut changed_policy = f.index.clone();
+        changed_policy.policy = Some(PolicyReference {
+            epoch: CatalogRevision::INITIAL,
+            digest: Sha256Digest::from_bytes([7; 32]),
+        });
+        assert!(
+            validate_snapshot(
+                &f.selection,
+                PersistedGrant {
+                    grant: f.grant.clone(),
+                    provenance: provenance.clone()
+                },
+                changed_policy,
+                &f.projects,
+                &f.members,
+                f.sources.clone(),
+            )
+            .is_err(),
+            "an imported epoch-zero snapshot cannot renew itself after trim"
+        );
         f.grant.revoked = true;
         assert!(
             validate_snapshot(
@@ -509,9 +560,36 @@ mod tests {
             epoch: CatalogRevision::INITIAL,
             digest: Sha256Digest::from_bytes([8; 32]),
         });
-        policy.grant.memberships[0].policy_epoch = 1;
-        policy.grant.memberships[0].policy_digest = policy.index.policy.as_ref().map(|p| p.digest);
         assert!(policy.build().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn reviewed_policy_authority_requires_the_exact_frozen_epoch_and_digest() -> Result<()> {
+        let mut f = Fixture::new()?;
+        let digest = Sha256Digest::from_bytes([8; 32]);
+        let epoch = CatalogRevision::INITIAL.next()?;
+        f.index.policy = Some(PolicyReference { epoch, digest });
+        f.grant.memberships[0].policy_epoch = epoch.get();
+        f.grant.memberships[0].policy_digest = Some(digest);
+        let expected = f.grant.clone();
+        assert_eq!(f.clone().build()?.grant, expected);
+        for changed in 0..4 {
+            let mut stale = f.clone();
+            match changed {
+                0 => stale.grant.memberships[0].policy_epoch = 1,
+                1 => {
+                    stale.grant.memberships[0].policy_digest =
+                        Some(Sha256Digest::from_bytes([9; 32]))
+                }
+                2 => stale.index.policy = None,
+                _ => {
+                    stale.grant.memberships[0].policy_epoch = 0;
+                    stale.grant.memberships[0].policy_digest = None;
+                }
+            }
+            assert!(stale.build().is_err(), "policy case {changed}");
+        }
         Ok(())
     }
 
@@ -661,6 +739,13 @@ mod tests {
         let mut policy = state.clone();
         policy.policy_contract = 1;
         assert!(validate_catalog_fence(&policy, &f.selection, &capabilities).is_err());
+        let policy_capabilities = CatalogCapabilities {
+            policy_contract: 1,
+            ..capabilities.clone()
+        };
+        validate_catalog_fence(&policy, &f.selection, &policy_capabilities)?;
+        policy.policy_contract = 2;
+        assert!(validate_catalog_fence(&policy, &f.selection, &policy_capabilities).is_err());
         let mut inactive = state.clone();
         inactive.activated = false;
         assert!(validate_catalog_fence(&inactive, &f.selection, &capabilities).is_err());

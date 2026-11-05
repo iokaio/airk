@@ -173,14 +173,23 @@ struct CatalogRuntime {
     gate: crate::catalog_admission::NativeCatalogAdmission,
     control: crate::project_supervisor::CatalogControlHandle,
     coordinator: crate::catalog_coordinator::NativeCatalogCoordinator,
+    policy_completions_pending: bool,
 }
 impl CatalogRuntime {
-    fn initialize(binding: CatalogBinding, registry: &ServiceRegistry) -> Result<Self> {
+    fn initialize(
+        mut binding: CatalogBinding,
+        registry: &mut ServiceRegistry,
+        source: crate::source_supervisor::SourceWake,
+    ) -> Result<Self> {
+        binding.control = binding.control.with_source_wake(source);
         let state = registry
             .catalog_state()?
             .ok_or_else(|| anyhow::anyhow!("native catalog unavailable"))?;
         anyhow::ensure!(
-            state.activated && state.authority_contract == 1 && state.policy_contract == 0,
+            state.activated
+                && state.authority_contract == 1
+                && state.policy_contract
+                    <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT,
             "native catalog authority unavailable"
         );
         binding.gate.begin_issue(state.namespace, state.revision)?;
@@ -189,11 +198,23 @@ impl CatalogRuntime {
             binding.control.clone(),
         )?;
         coordinator.restore_pending(registry)?;
+        let policy_completions_pending =
+            registry.catalog_reconcile_policy_completions(16)?.len() == 16;
         Ok(Self {
             gate: binding.gate,
             control: binding.control,
             coordinator,
+            policy_completions_pending,
         })
+    }
+    /// Native accepted-result bookkeeping belongs to the existing metadata
+    /// owner, never a status read or a replayed frontend mutation. A failed turn
+    /// retains ownership until exact saved results can be reconciled.
+    fn reconcile_policy_completions(&mut self, registry: &mut ServiceRegistry) -> Result<bool> {
+        self.policy_completions_pending = true;
+        let completed = registry.catalog_reconcile_policy_completions(16)?;
+        self.policy_completions_pending = completed.len() == 16;
+        Ok(!completed.is_empty())
     }
     fn connect(
         &self,
@@ -251,7 +272,10 @@ impl CatalogRuntime {
             .catalog_state()?
             .ok_or_else(|| anyhow::anyhow!("native catalog unavailable"))?;
         anyhow::ensure!(
-            state.activated && state.authority_contract == 1 && state.policy_contract == 0,
+            state.activated
+                && state.authority_contract == 1
+                && state.policy_contract
+                    <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT,
             "native catalog authority changed"
         );
         self.gate
@@ -290,6 +314,8 @@ fn execute_request(registry: &mut ServiceRegistry, method: ControlMethod) -> Con
             | ControlMethod::CatalogSourceMutationDraft { .. }
             | ControlMethod::CatalogSourceChangeObservation { .. }
             | ControlMethod::CatalogPendingSourceChange { .. }
+            | ControlMethod::CatalogPolicyStatus { .. }
+            | ControlMethod::CatalogPolicyResumeReceipt { .. }
             | ControlMethod::CatalogIndexRetirementEvidence { .. }
             | ControlMethod::CatalogReceipt { .. }
             | ControlMethod::Job { .. }
@@ -343,7 +369,14 @@ fn failure_response(error: anyhow::Error, read_only: bool) -> ControlResponse {
             .into(),
         };
     }
-    let code = if read_only && airk_store::service::registry::is_read_contention(&error) {
+    // Source reviews can meet a short collection writer handoff before preview.
+    // Only a known read may acquire this retry contract, never a mutation.
+    let code = if read_only
+        && (airk_store::service::registry::is_read_contention(&error)
+            || matches!(
+                error.downcast_ref::<std::fs::TryLockError>(),
+                Some(std::fs::TryLockError::WouldBlock)
+            )) {
         "registry_busy".into()
     } else {
         error
@@ -376,6 +409,63 @@ fn catalog_request(
     catalog: Option<&mut CatalogRuntime>,
 ) -> Result<Option<ControlResponse>> {
     match method {
+        ControlMethod::CatalogPolicyResume {
+            index_id,
+            operation_id,
+            caller,
+            key,
+        } => {
+            let snapshot =
+                registry.catalog_resume_policy_job(*index_id, *operation_id, *caller, key)?;
+            // An old resume key may be replayed after another deliberate retry.
+            // Its exact receipt remains the accepted identity; the accompanying
+            // snapshot and job describe current policy state, not that old job.
+            let (accepted, _) = registry.request_receipt(*caller, key)?;
+            let accepted = accepted
+                .ok_or_else(|| anyhow::anyhow!("accepted policy resume receipt unavailable"))?;
+            anyhow::ensure!(
+                accepted.kind == airk_core::service::JobKind::Configure
+                    && accepted.project == snapshot.policy.owner_binding,
+                "accepted policy resume receipt binding changed"
+            );
+            let job = registry.job(snapshot.job)?;
+            Ok(Some(ControlResponse::CatalogPolicyResumed {
+                index_id: *index_id,
+                accepted_job_id: accepted.id,
+                status_basis: airk_core::service::PolicyStatusBasis::CurrentPolicy,
+                snapshot,
+                job,
+            }))
+        }
+        ControlMethod::CatalogPolicyResumeReceipt {
+            index_id,
+            operation_id,
+            caller,
+            key,
+        } => {
+            let (receipt, expired) =
+                registry.catalog_policy_resume_receipt(*index_id, *operation_id, *caller, key)?;
+            Ok(Some(ControlResponse::CatalogPolicyResumeReceipt {
+                index_id: *index_id,
+                operation_id: *operation_id,
+                caller: *caller,
+                key: key.clone(),
+                receipt,
+                expired,
+            }))
+        }
+        ControlMethod::CatalogPolicyStatus { index_id } => {
+            let snapshot = registry.catalog_policy_status(*index_id)?;
+            let job = snapshot
+                .as_ref()
+                .map(|snapshot| registry.job(snapshot.job))
+                .transpose()?;
+            Ok(Some(ControlResponse::CatalogPolicyStatus {
+                index_id: *index_id,
+                snapshot,
+                job,
+            }))
+        }
         ControlMethod::CatalogIndexRetirementEvidence { index_id } => {
             Ok(Some(ControlResponse::CatalogIndexRetirementEvidence {
                 index_id: *index_id,
@@ -445,6 +535,7 @@ fn catalog_request(
             if matches!(
                 request.operation,
                 airk_core::catalog_management::CatalogOperation::BeginIndexSourceChange { .. }
+                    | airk_core::catalog_management::CatalogOperation::ChangeIndexPolicy { .. }
                     | airk_core::catalog_management::CatalogOperation::CompleteIndexSourceChange { .. }
                     | airk_core::catalog_management::CatalogOperation::RetireIndex { .. }
             ) =>
@@ -464,6 +555,7 @@ fn catalog_request(
             if matches!(
                 request.operation,
                 airk_core::catalog_management::CatalogOperation::BeginIndexSourceChange { .. }
+                    | airk_core::catalog_management::CatalogOperation::ChangeIndexPolicy { .. }
                     | airk_core::catalog_management::CatalogOperation::CompleteIndexSourceChange { .. }
                     | airk_core::catalog_management::CatalogOperation::RetireIndex { .. }
             ) && matches!(
@@ -863,6 +955,9 @@ fn execute(registry: &mut ServiceRegistry, method: ControlMethod) -> Result<Cont
         | ControlMethod::CatalogSourceMutationDraft { .. }
         | ControlMethod::CatalogSourceChangeObservation { .. }
         | ControlMethod::CatalogPendingSourceChange { .. }
+        | ControlMethod::CatalogPolicyStatus { .. }
+        | ControlMethod::CatalogPolicyResumeReceipt { .. }
+        | ControlMethod::CatalogPolicyResume { .. }
         | ControlMethod::CatalogIndexRetirementEvidence { .. }
         | ControlMethod::CatalogSourceChangeResolve { .. }
         | ControlMethod::CatalogIndexSetupApply { .. }
@@ -1078,8 +1173,8 @@ impl Management {
                     });
                 let (mut catalog, bootstrap) = match catalog_binding {
                     None => (None, Ok(())),
-                    Some(binding) => match registry.as_ref() {
-                        Ok(registry) => match CatalogRuntime::initialize(binding, registry) {
+                    Some(binding) => match registry.as_mut() {
+                        Ok(registry) => match CatalogRuntime::initialize(binding, registry, source.clone()) {
                             Ok(native) => (Some(native), Ok(())),
                             Err(_) => (None, Err("catalog_bootstrap_unavailable".into())),
                         },
@@ -1112,13 +1207,16 @@ impl Management {
                         metadata_failed = running.is_none();
                         // Unknown metadata state retains service ownership until a
                         // later bounded turn can establish whether work remains.
-                        let fence_pending=catalog.as_ref().is_some_and(|native|native.coordinator.has_pending_cleanup()||native.gate.pending_fence_key().map_or(true,|key|key.is_some()));
+                        let fence_pending=catalog.as_ref().is_some_and(|native|native.policy_completions_pending||native.coordinator.has_pending_cleanup()||native.gate.pending_fence_key().map_or(true,|key|key.is_some()));
                         runnable_plans.store(running.unwrap_or(true)||fence_pending, Ordering::Release);
                         next_tick = std::time::Instant::now()
                             + Duration::from_millis(if running.is_some() { 250 } else { 1000 });
                         if std::time::Instant::now()>=next_catalog_resume {
                             let progressed=match (registry.as_mut(),catalog.as_mut()) {
-                                (Ok(registry),Some(native))=>native.coordinator.resume_pending(registry),
+                                (Ok(registry),Some(native))=>native.coordinator.resume_pending(registry).and_then(|progressed| {
+                                    native.reconcile_policy_completions(registry)?;
+                                    Ok(progressed)
+                                }),
                                 _=>Ok(None),
                             };
                             next_catalog_resume=std::time::Instant::now()+Duration::from_millis(if progressed.is_err(){1000}else{250});
@@ -1239,7 +1337,7 @@ impl Management {
                                     Ok(None) => execute_request(registry, method),
                                     Err(error) => {
                                         let error=match &method {ControlMethod::CatalogApply{request,..}=>crate::catalog_coordinator::CatalogApplyOutcomeUnknown::capture(registry,request,error),_=>error};
-                                        failure_response(error,matches!(&method,ControlMethod::CatalogSourceMutationDraft {..}|ControlMethod::CatalogSourceChangeObservation {..}|ControlMethod::CatalogPendingSourceChange {..}|ControlMethod::CatalogIndexRetirementEvidence {..}))
+                                        failure_response(error,matches!(&method,ControlMethod::CatalogSourceMutationDraft {..}|ControlMethod::CatalogSourceChangeObservation {..}|ControlMethod::CatalogPendingSourceChange {..}|ControlMethod::CatalogPolicyStatus {..}|ControlMethod::CatalogPolicyResumeReceipt {..}|ControlMethod::CatalogIndexRetirementEvidence {..}))
                                     },
                                 };
                                 if !matches!(
@@ -1273,7 +1371,7 @@ impl Management {
                     }
                     // A timed-out/disconnected caller cannot release this charge
                     // while its accepted metadata operation can still commit.
-                    if catalog.as_ref().is_some_and(|native|native.coordinator.has_pending_cleanup()||native.gate.pending_fence_key().map_or(true,|key|key.is_some())) {runnable_plans.store(true,Ordering::Release);}
+                    if catalog.as_ref().is_some_and(|native|native.policy_completions_pending||native.coordinator.has_pending_cleanup()||native.gate.pending_fence_key().map_or(true,|key|key.is_some())) {runnable_plans.store(true,Ordering::Release);}
                     active.fetch_sub(1, Ordering::AcqRel);
                     let _ = reply.send(response);
                 }
@@ -1432,6 +1530,23 @@ mod tests {
                 rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), None).into();
             assert!(!airk_store::service::registry::is_read_contention(&error));
         }
+        // The source-review adapter can contend with the collection writer
+        // before reaching SQL. Retry remains limited to an established read.
+        let locks = tempfile::tempdir()?;
+        let file = std::fs::File::create(locks.path().join("native-writer"))?;
+        file.try_lock()?;
+        let second = std::fs::File::open(locks.path().join("native-writer"))?;
+        let error = second.try_lock().unwrap_err();
+        assert!(
+            matches!(failure_response(anyhow::Error::new(error),true),ControlResponse::Failure{code} if code=="registry_busy")
+        );
+        let error = second.try_lock().unwrap_err();
+        assert!(
+            matches!(failure_response(anyhow::Error::new(error),false),ControlResponse::Failure{code} if code=="invalid_registry_request")
+        );
+        assert!(
+            matches!(failure_response(std::io::Error::from(std::io::ErrorKind::PermissionDenied).into(),true),ControlResponse::Failure{code} if code=="invalid_registry_request")
+        );
         let owner = tempfile::tempdir()?;
         let root = owner.path().join("runtime");
         crate::local_ipc::prepare_root(&root)?;

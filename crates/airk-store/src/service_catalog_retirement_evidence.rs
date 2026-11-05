@@ -24,7 +24,9 @@ impl ServiceRegistry {
         validate_existing(&read)?;
         let catalog = state(&read)?;
         ensure!(
-            catalog.activated && catalog.authority_contract == 1 && catalog.policy_contract == 0,
+            catalog.activated
+                && catalog.authority_contract == 1
+                && catalog.policy_contract <= super::SUPPORTED_POLICY_CONTRACT,
             "native retirement evidence requires the active native catalog"
         );
         let row: Option<(String, Option<String>)> = read

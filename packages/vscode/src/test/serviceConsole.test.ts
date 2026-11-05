@@ -10,6 +10,115 @@ const shown = (state: ServiceConsoleState): string => JSON.stringify(managementV
 import { record, RecordValue, ServiceClient, ServiceError } from '../serviceClient';
 import { IntentJournal } from '../serviceIntents';
 const project='12'.repeat(32),namespace='34'.repeat(16),instance='56'.repeat(16),job='78'.repeat(32);
+
+function nativePolicyStatus():RecordValue{
+    const index='idx_'+'91'.repeat(16),root='src_'+'92'.repeat(16);
+    return {status:'catalog_policy_status',index_id:index,snapshot:{schema:1,operation_id:instance,job,application:null,application_job:null,last_error:'disk_full',policy:{schema:'airk.source-policy/1',index_id:index,owner_binding:project,namespace:'collections-1.4',collection:'fixture',epoch:1,
+        roots:[{id:root,canonical_path:'/source',aliases:[],owner:true}],positive_includes:null,denies:[{source_root_id:root,kind:'subtree',path:'private',rule_id:'deny_'+'93'.repeat(16),reason:'trim',created_epoch:1}]}},
+        job:{id:job,project,kind:'configure',state:'failed',fencing_generation:1,attempts:1,outcome:{state:'failed',code:'disk_full'},future_job:'retained'},future_policy_status:'retained'};
+}
+
+test('policy cleanup resume keeps the exact durable key through uncertainty and requires receipt plus matching native status',async()=>{
+    const f=fixture(),base=f.host.runtime.client({} as any),status=nativePolicyStatus(),resumedJob='94'.repeat(32);let dispatches=0,receiptState='missing',sentRequest:RecordValue|undefined;
+    f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+        const name=typeof method==='string'?method:Object.keys(record(method))[0];
+        if(name==='catalog_policy_status')return structuredClone(status);
+        if(name==='catalog_policy_resume'){
+            dispatches++;sentRequest=record(record(method).catalog_policy_resume);assert.equal([...f.values.keys()].filter(key=>key.startsWith('airk.service.intent.')).length,1);
+            record(status.snapshot).job=resumedJob;status.job={...record(status.job),id:resumedJob,state:'pending',outcome:null};throw new ServiceError('console_transport_closed',true);
+        }
+        if(name==='catalog_policy_resume_receipt'){
+            const request=record(record(method).catalog_policy_resume_receipt);assert.equal(request.caller,sentRequest!.caller);assert.deepEqual(request.key,sentRequest!.key);
+            return {status:'catalog_policy_resume_receipt',...request,receipt:receiptState==='missing'?null:{source_job:job,job:{...record(status.job),id:resumedJob,project:receiptState==='crossed'?'95'.repeat(32):project},configuration:{engine:'98'.repeat(32),request:{incarnation:namespace,settings:project,prepare:false,configuration:{operation:'apply_source_policy',operation_id:instance,policy:record(status.snapshot).policy}}},result:null},expired:false,future_receipt:'retained'};
+        }
+        return base.transport.request(method);
+    }});
+    let reopened:ServiceConsoleController|undefined;
+    try{
+        await f.controller.refresh();const observed=await f.controller.catalogPolicyStatus(String(status.index_id));assert.equal(dispatches,0);
+        await assert.rejects(f.controller.catalogPolicyResume(observed,()=>true),/console_transport_closed/);assert.equal(dispatches,1);assert.equal(f.controller.catalogPending().length,1);
+        f.controller.dispose();reopened=new ServiceConsoleController(f.host);await reopened.refresh();
+        assert.equal(reopened.catalogPending().length,1);await reopened.catalogReconcile();assert.equal(reopened.catalogPending().length,1,'a missing receipt never establishes another resume');
+        receiptState='crossed';await assert.rejects(reopened.catalogReconcile(),/crossed_policy_resume_receipt/);assert.equal(reopened.catalogPending().length,1);
+        record(status.snapshot).job='96'.repeat(32);record(status.job).id='96'.repeat(32);
+        receiptState='matched';const outcomes=await reopened.catalogReconcile();assert.equal(outcomes[0].accepted_job_id,resumedJob);assert.equal(record(outcomes[0].job).id,'96'.repeat(32));assert.equal(record(outcomes[0].resume_receipt).future_receipt,'retained');assert.equal(record(outcomes[0].job).future_job,'retained');assert.deepEqual(reopened.catalogPending(),[]);assert.equal(dispatches,1);
+    }finally{f.controller.dispose();reopened?.dispose();}
+});
+
+test('lost resume replies reconcile exact old configuration after another client replaces policy',async()=>{
+    for(const terminal of ['failed','canceled','succeeded'] as const){
+        const f=fixture(),base=f.host.runtime.client({} as any),status=nativePolicyStatus(),oldPolicy=structuredClone(record(status.snapshot).policy),resumedJob='94'.repeat(32);let sends=0;
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            const name=typeof method==='string'?method:Object.keys(record(method))[0];
+            if(name==='catalog_policy_status')return structuredClone(status);
+            if(name==='catalog_policy_resume'){sends++;throw new ServiceError('console_transport_closed',true);}
+            if(name==='catalog_policy_resume_receipt')return {status:name,...record(record(method)[name]),receipt:{source_job:job,job:{...record(status.job),id:resumedJob,state:terminal,outcome:{state:terminal},future_accepted_job:true},configuration:{engine:'98'.repeat(32),request:{incarnation:namespace,settings:project,configuration:{operation:'apply_source_policy',operation_id:instance,policy:oldPolicy}}},result:null,future_proof:true},expired:false,future_receipt:true};
+            return base.transport.request(method);
+        }});
+        let reopened:ServiceConsoleController|undefined;
+        try{
+            await f.controller.refresh();const observed=await f.controller.catalogPolicyStatus(String(status.index_id));
+            await assert.rejects(f.controller.catalogPolicyResume(observed,()=>true),/console_transport_closed/);
+            record(status.snapshot).operation_id='99'.repeat(16);record(status.snapshot).job='96'.repeat(32);status.job={...record(status.job),id:'96'.repeat(32),state:'pending',outcome:null};record(record(status.snapshot).policy).epoch=2;record(record(status.snapshot).policy).denies=[];
+            f.controller.dispose();reopened=new ServiceConsoleController(f.host);await reopened.refresh();
+            const results=await reopened.catalogReconcile();assert.equal(record(results[0].snapshot).operation_id,'99'.repeat(16));
+            const proof=record(record(results[0].resume_receipt).receipt);assert.equal(record(proof.job).state,terminal);assert.equal(record(record(record(proof.configuration).request).configuration).operation_id,instance);assert.equal(proof.future_proof,true);assert.equal(record(proof.job).future_accepted_job,true);assert.deepEqual(reopened.catalogPending(),[]);assert.equal(sends,1);
+        }finally{f.controller.dispose();reopened?.dispose();}
+    }
+});
+
+test('exact resume receipt refuses crossed configuration and preserves absent or expired evidence',async()=>{
+    const status=nativePolicyStatus(),intent={catalog_policy_resume:{index_id:String(status.index_id),operation_id:instance,caller:instance,key:{namespace,epoch:1,nonce:instance}},project};
+    for(const situation of ['missing','expired','operation','index','configuration','caller','key'] as const){
+        const response:RecordValue={status:'catalog_policy_resume_receipt',...intent.catalog_policy_resume,expired:situation==='expired',receipt:null};
+        if(situation!=='missing'&&situation!=='expired'){
+            const policy=structuredClone(record(status.snapshot).policy);
+            response.receipt={source_job:job,job:status.job,configuration:{engine:'98'.repeat(32),request:{incarnation:namespace,settings:project,configuration:{operation:'apply_source_policy',operation_id:situation==='operation'?'99'.repeat(16):instance,policy}}},result:null};
+            if(situation==='index')record(policy).index_id='idx_'+'99'.repeat(16);
+            if(situation==='configuration')record(record(record(response.receipt).configuration).request).configuration={operation:'vectors',enabled:false};
+            if(situation==='caller')response.caller='99'.repeat(16);
+            if(situation==='key')response.key={...intent.catalog_policy_resume.key,nonce:'99'.repeat(16)};
+        }
+        const client=new ServiceClient({dispose(){},async request(){return structuredClone(response);}});
+        if(situation==='missing'||situation==='expired'){const observed=await client.catalogPolicyResumeReceipt(intent);assert.equal(observed.receipt,null);assert.equal(observed.expired,situation==='expired');}
+        else await assert.rejects(client.catalogPolicyResumeReceipt(intent));
+    }
+});
+
+test('policy cleanup resume consumes a native failed-job observation and rechecks trust after confirmation',async()=>{
+    for(const situation of ['changed','running','trust'] as const){
+        const f=fixture(),base=f.host.runtime.client({} as any),status=nativePolicyStatus();let dispatches=0;
+        if(situation==='running')record(status.job).state='running';
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){const name=typeof method==='string'?method:Object.keys(record(method))[0];if(name==='catalog_policy_status')return structuredClone(status);if(name==='catalog_policy_resume'){dispatches++;return {...status,status:'catalog_policy_resumed',accepted_job_id:job,status_basis:'current_policy'};}return base.transport.request(method);}});
+        try{
+            await f.controller.refresh();const observation=await f.controller.catalogPolicyStatus(String(status.index_id));
+            if(situation==='changed')record(observation.snapshot).operation_id='96'.repeat(16);
+            if(situation==='trust')f.host.confirm=async()=>{f.setTrusted(false);return true;};
+            await assert.rejects(f.controller.catalogPolicyResume(observation,()=>true));assert.equal(dispatches,0);assert.deepEqual(f.controller.catalogPending(),[]);
+        }finally{f.controller.dispose();}
+    }
+});
+
+test('explicit physical cleanup continuation preserves the completed removal receipt and never reapplies policy',async()=>{
+    for(const pending of [true,false]){
+        const f=fixture(),base=f.host.runtime.client({} as any),status=nativePolicyStatus(),report={policy_digest:'97'.repeat(32),operation_id:instance,observed_unix_ms:1793858000000,removal_publication:`airk-r1:${instance}:2:${'98'.repeat(32)}`,no_index:false,removed_artifacts:2,physical_cleanup_pending:pending,reclaimed_files:1,reclaimed_bytes:null,retired_components:['analysis']};let resumes=0;
+        record(status.snapshot).application=report;record(status.snapshot).application_job=job;record(status.snapshot).last_error=null;status.job={...record(status.job),state:'succeeded',outcome:{state:'succeeded',revision:report.removal_publication}};
+        f.host.runtime.client=()=>new ServiceClient({dispose(){},async request(method){
+            const name=typeof method==='string'?method:Object.keys(record(method))[0];
+            if(name==='catalog_policy_status')return structuredClone(status);
+            if(name==='catalog_policy_resume'){
+                resumes++;assert.equal([...f.values.keys()].filter(key=>key.startsWith('airk.service.intent.')).length,1);assert.equal(record(record(method).catalog_policy_resume).operation_id,instance);
+                return {...status,status:'catalog_policy_resumed',accepted_job_id:'99'.repeat(32),status_basis:'current_policy',snapshot:{...record(status.snapshot),job:'99'.repeat(32)},job:{...record(status.job),id:'99'.repeat(32),state:'pending',outcome:null}};
+            }
+            assert.notEqual(name,'catalog_apply');return base.transport.request(method);
+        }});
+        try{
+            await f.controller.refresh();const observed=await f.controller.catalogPolicyStatus(String(status.index_id));
+            if(pending){const resumed=await f.controller.catalogPolicyResume(observed,()=>true);assert.deepEqual(record(resumed.snapshot).application,report);assert.equal(resumes,1);assert.deepEqual(f.controller.catalogPending(),[]);}
+            else {await assert.rejects(f.controller.catalogPolicyResume(observed,()=>true),/native_failed_or_pending_policy_cleanup_required/);assert.equal(resumes,0);}
+        }finally{f.controller.dispose();}
+    }
+});
 test('actual lifecycle callback retains complete historical request/result and pre-health for explicit JSON exports only',async()=>{
     const f=fixture(),opened:string[]=[],saved:string[]=[],responses:RecordValue[]=[];let lifecycleCalls=0;
     f.host.openReport=async text=>{opened.push(text);};f.host.saveReport=async text=>{saved.push(text);};

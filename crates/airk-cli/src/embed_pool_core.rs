@@ -289,16 +289,16 @@ impl Engine {
                     directory.is_absolute() && directory.to_str().is_some_and(|p| p.len() <= 4096),
                     "model source must be a bounded absolute path"
                 );
-                let directory = directory.canonicalize()?;
-                let set = model::inspect_object_plan(&directory)?;
+                let source = airk_kernel::service_configuration::ProtectedModelInput(&directory);
+                let set = source.inspect_plan()?;
                 self.model = None;
                 self.model_lease = None;
                 self.model_key = None;
-                let _lease = self
-                    .model_files
-                    .retain(&set, |name| directory.join(name.filename()))?;
-                let _installed = self.model_files.install_readers(&set, |_| {
-                    anyhow::bail!("verified model unexpectedly requires another copy")
+                let _installed = self.model_files.install_readers(&set, |name| {
+                    use airk_core::model_objects::ModelAssetSource;
+                    Ok(Box::new(std::io::Cursor::new(
+                        source.read_asset(name, name.maximum_bytes())?,
+                    )) as Box<dyn std::io::Read>)
                 })?;
                 Ok(Response::Provisioned {
                     objects: self.model_files.installed_reference(&set)?,
@@ -401,7 +401,13 @@ impl Engine {
                 );
                 // An explicitly selected calibration input is captured once in
                 // the service-owned finite cache; sessions never bind project files.
-                let path = self.model_files.retain_calibration(&path)?;
+                let path = self.model_files.retain_calibration_readers(&path, |source, maximum| {
+                    airk_kernel::service_configuration::read_protected_input(
+                        source,
+                        usize::try_from(maximum)?,
+                        true,
+                    )
+                })?;
                 // Captured bytes verify on every opening. Reuse compatible
                 // native state and drop incompatible state before loading more.
                 self.select_tokenizer(&path, owner)?;

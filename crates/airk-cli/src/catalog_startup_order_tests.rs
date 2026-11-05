@@ -67,6 +67,7 @@ fn owner_marker_enables_shared_recovery_but_attach_still_requires_real_project_e
     let handle = CatalogControlHandle {
         sender: Arc::downgrade(supervisor.sender.as_ref().unwrap()),
         gate: gate.clone(),
+        source: None,
     };
     let error = handle
         .call(Operation::Attach)

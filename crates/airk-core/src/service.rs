@@ -168,6 +168,22 @@ pub enum ControlMethod {
     CatalogPendingSourceChange {
         index_id: crate::index_catalog::IndexId,
     },
+    CatalogPolicyStatus {
+        index_id: crate::index_catalog::IndexId,
+    },
+    CatalogPolicyResume {
+        index_id: crate::index_catalog::IndexId,
+        operation_id: Incarnation,
+        caller: Incarnation,
+        key: RequestKey,
+    },
+    /// Read exact accepted retry evidence without replaying the mutation.
+    CatalogPolicyResumeReceipt {
+        index_id: crate::index_catalog::IndexId,
+        operation_id: Incarnation,
+        caller: Incarnation,
+        key: RequestKey,
+    },
     CatalogIndexRetirementEvidence {
         index_id: crate::index_catalog::IndexId,
     },
@@ -406,6 +422,14 @@ pub struct RuntimeProcess {
     pub metadata_error: Option<String>,
 }
 
+/// Qualifies mutable policy/job observations accompanying an exact admitted
+/// request receipt. The current job can differ from that receipt's accepted job.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PolicyStatusBasis {
+    CurrentPolicy,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlResponse {
@@ -451,6 +475,26 @@ pub enum ControlResponse {
     CatalogPendingSourceChange {
         index_id: crate::index_catalog::IndexId,
         observation: Option<crate::catalog_source_change::SourceChangeObservation>,
+    },
+    CatalogPolicyStatus {
+        index_id: crate::index_catalog::IndexId,
+        snapshot: Option<crate::catalog_policy::PolicySnapshot>,
+        job: Option<JobRecord>,
+    },
+    CatalogPolicyResumed {
+        index_id: crate::index_catalog::IndexId,
+        accepted_job_id: Sha256Digest,
+        status_basis: PolicyStatusBasis,
+        snapshot: crate::catalog_policy::PolicySnapshot,
+        job: JobRecord,
+    },
+    CatalogPolicyResumeReceipt {
+        index_id: crate::index_catalog::IndexId,
+        operation_id: Incarnation,
+        caller: Incarnation,
+        key: RequestKey,
+        receipt: Option<crate::catalog_policy::PolicyResumeReceipt>,
+        expired: bool,
     },
     CatalogIndexRetirementEvidence {
         index_id: crate::index_catalog::IndexId,

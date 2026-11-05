@@ -434,6 +434,15 @@ async fn native_settings_refuse_prefix_pending_sources_revocation_and_arbitrary_
         assert!(error.is::<ScopeReadRefused>() && error.is::<ScopeErrorObservation>());
     }
     for request in [
+        NativeRead::PrepareInputFile {
+            path: temporary
+                .path()
+                .join("never-open-ungranted-pin")
+                .to_str()
+                .unwrap()
+                .into(),
+            max_source_bytes: 16384,
+        },
         NativeRead::UsagePolicy,
         NativeRead::UsageReport {
             days: 1,
@@ -488,6 +497,58 @@ async fn native_settings_refuse_prefix_pending_sources_revocation_and_arbitrary_
             .is::<ScopeReadRefused>()
     );
     scoped.close().await?;
+    owner.close().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn administrative_input_pins_are_bounded_native_results_without_source_contents() -> Result<()>
+{
+    let (temporary, kernel) = fixture()?;
+    let binding = authority(&kernel, false, "")?.backing;
+    let path = temporary.path().join("explicit-native-input.txt");
+    std::fs::write(&path, b"abc")?;
+    let mut owner = LocalTools::new(kernel).await?;
+    let pin = owner
+        .read_native(
+            NativeRead::PrepareInputFile {
+                path: path.to_str().unwrap().into(),
+                max_source_bytes: 3,
+            },
+            binding,
+        )
+        .await?;
+    assert_eq!(
+        pin["sha256"],
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(pin["path"], path.canonicalize()?.to_str().unwrap());
+    assert_eq!(pin.as_object().unwrap().len(), 2);
+    assert!(
+        owner
+            .read_native(
+                NativeRead::PrepareInputFile {
+                    path: path.to_str().unwrap().into(),
+                    max_source_bytes: 2,
+                },
+                binding
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        owner
+            .read_native(
+                NativeRead::PrepareInputFile {
+                    path: path.to_str().unwrap().into(),
+                    max_source_bytes: 1_048_577,
+                },
+                binding
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(std::fs::read(path)?, b"abc");
     owner.close().await?;
     Ok(())
 }

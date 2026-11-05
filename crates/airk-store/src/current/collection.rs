@@ -11,9 +11,46 @@ use std::collections::BTreeMap;
 
 const KEY: &[u8] = b"collection";
 
+#[cfg(test)]
+mod policy_configuration_tests {
+    use super::*;
+    #[test]
+    fn only_policy_attestation_is_exempt_from_complete_retained_replacement() -> Result<()> {
+        let before = CollectionConfiguration {
+            source_policy_digest: None,
+            roots: Default::default(),
+            extractor_version: "fixture/1".into(),
+            extraction_policy_digest: Sha256Digest::from_bytes([1; 32]),
+            index_detail: IndexDetail::Balanced,
+            vector_selection: Default::default(),
+            model: None,
+        };
+        let mut marker = before.clone();
+        marker.source_policy_digest = Some(Sha256Digest::from_bytes([2; 32]));
+        assert!(before.retains_existing_artifacts(&marker)?);
+        let mut changed = marker.clone();
+        changed.extractor_version = "fixture/2".into();
+        assert!(!before.retains_existing_artifacts(&changed)?);
+        changed = marker.clone();
+        changed.extraction_policy_digest = Sha256Digest::from_bytes([3; 32]);
+        assert!(!before.retains_existing_artifacts(&changed)?);
+        changed = marker.clone();
+        changed.index_detail = IndexDetail::Detailed;
+        assert!(!before.retains_existing_artifacts(&changed)?);
+        changed = marker;
+        changed
+            .roots
+            .insert("other".into(), "/unrelated-root".into());
+        assert!(!before.retains_existing_artifacts(&changed)?);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CollectionConfiguration {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_policy_digest: Option<Sha256Digest>,
     pub roots: BTreeMap<String, String>,
     pub extractor_version: String,
     pub extraction_policy_digest: Sha256Digest,
@@ -23,6 +60,14 @@ pub struct CollectionConfiguration {
 }
 
 impl CollectionConfiguration {
+    /// A policy attestation fences native admission and changes no extractor,
+    /// source binding, model or retained representation. Every other serialized
+    /// field (including future additions) still requires complete replacement.
+    fn retains_existing_artifacts(&self, next: &Self) -> Result<bool> {
+        let mut before = self.clone();
+        before.source_policy_digest = next.source_policy_digest;
+        Ok(serde_json::to_vec(&before)? == serde_json::to_vec(next)?)
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.roots.len() <= 16
@@ -177,7 +222,10 @@ impl CollectionPlan {
         if let Some(configuration) = configuration {
             configuration.validate()?;
             if let Some(state) = &mut state {
-                if serde_json::to_vec(&state.configuration)? != serde_json::to_vec(configuration)? {
+                if !state
+                    .configuration
+                    .retains_existing_artifacts(configuration)?
+                {
                     required_previous = Some(state.counts.files);
                 }
                 state.configuration = configuration.clone();

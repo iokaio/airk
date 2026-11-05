@@ -33,6 +33,16 @@ changing index-v1, collection filenames or source bytes. A prepared table does
 not enable grant, trim or split enforcement; authority and source-policy contract
 versions are checked separately from the executable version.
 
+P9 adds source-policy contract **1** through reviewed permanent-exclusion
+admission. The schema-12 extension records the exact admitted policy and job;
+`source-policy.json` and the stable `service-owner.json` policy reference survive
+incarnation replacement and index retirement. The mutable reference is outside
+the original ownership digest. Missing required enforcement metadata refuses;
+ordinary retired-backing registration cannot clear it. Older owners/readers and
+same-version runtimes without the required capability refuse. This does not
+change index-v1 or lexical formats and does not enable P10 splitting. See
+[permanent source exclusions](source-policy.md) for enforcement and cleanup limits.
+
 An admitted upgrade records an owner fence, exact candidate identity and durable
 intent before using SQLite's bounded backup/migration path. Ordinary readers and
 service startup refuse that pending state. Only the matching installer resume can

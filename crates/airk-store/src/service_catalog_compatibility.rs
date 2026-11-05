@@ -595,7 +595,7 @@ impl super::super::ServiceRegistry {
         ensure!(
             state.activated
                 && state.authority_contract == 1
-                && state.policy_contract == 0
+                && state.policy_contract <= super::super::SUPPORTED_POLICY_CONTRACT
                 && state.revision == expected_catalog_revision,
             ScopeReadRefused
         );

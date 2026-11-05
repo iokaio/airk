@@ -218,7 +218,57 @@ pub fn verify_saved_source(
     })
 }
 
+/// Capture an explicit administrative input using one authorized canonical path.
+/// Authorization runs before resolution and again on the exact resolved path
+/// passed to protected traversal; no subsequent resolution may redirect capture.
+pub fn capture_input(
+    path: &Path,
+    limit: usize,
+    require_single_link: bool,
+    authorize: &dyn Fn(&Path) -> Result<()>,
+) -> Result<(std::path::PathBuf, Vec<u8>)> {
+    ensure!(path.is_absolute(), "administrative input must be absolute");
+    authorize(path)?;
+    let canonical = path.canonicalize()?;
+    authorize(&canonical)?;
+    let bytes = read_protected_path(&canonical, limit, require_single_link)?;
+    Ok((canonical, bytes))
+}
+
+/// Read an already selected absolute path without resolving any redirects.
+/// Callers authorize this exact spelling; every component is opened no-follow.
+pub fn read_protected_path(
+    path: &Path,
+    limit: usize,
+    require_single_link: bool,
+) -> Result<Vec<u8>> {
+    ensure!(path.is_absolute(), "protected input must be absolute");
+    let parent = path.parent().context("input has no parent")?;
+    let bytes = read_with_alias_policy(
+        parent,
+        path,
+        limit,
+        limit.saturating_add(1),
+        require_single_link,
+    )?;
+    ensure!(
+        bytes.len() <= limit,
+        "administrative input exceeds byte limit"
+    );
+    Ok(bytes)
+}
+
 pub(crate) fn read(root: &Path, path: &Path, limit: usize, remaining: usize) -> Result<Vec<u8>> {
+    read_with_alias_policy(root, path, limit, remaining, false)
+}
+
+fn read_with_alias_policy(
+    root: &Path,
+    path: &Path,
+    limit: usize,
+    remaining: usize,
+    require_single_link: bool,
+) -> Result<Vec<u8>> {
     let relative = path
         .strip_prefix(root)
         .context("source escaped workspace")?;
@@ -231,10 +281,13 @@ pub(crate) fn read(root: &Path, path: &Path, limit: usize, remaining: usize) -> 
     let mut held = open(root, relative)?;
     let before = held.file.metadata()?;
     ensure!(before.is_file(), "source is not a regular file");
+    if require_single_link {
+        require_unaliased(&held.file)?;
+    }
     let mut bytes = Vec::new();
     held.file
         .by_ref()
-        .take((limit + 1).min(remaining) as u64)
+        .take(limit.saturating_add(1).min(remaining) as u64)
         .read_to_end(&mut bytes)?;
     let after = held.file.metadata()?;
     ensure!(
@@ -254,6 +307,30 @@ pub(crate) fn read(root: &Path, path: &Path, limit: usize, remaining: usize) -> 
         "workspace raw source read budget exhausted; previous generation retained"
     );
     Ok(bytes)
+}
+
+#[cfg(unix)]
+fn require_unaliased(file: &File) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    ensure!(file.metadata()?.nlink() == 1, "aliased runtime file");
+    Ok(())
+}
+
+#[cfg(windows)]
+fn require_unaliased(file: &File) -> Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+    // SAFETY: this native output structure admits zero initialization.
+    let mut information: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+    // SAFETY: the owned file handle and initialized output outlive the call.
+    ensure!(
+        unsafe { GetFileInformationByHandle(file.as_raw_handle().cast(), &mut information) } != 0,
+        "cannot inspect runtime file aliases"
+    );
+    ensure!(information.nNumberOfLinks == 1, "aliased runtime file");
+    Ok(())
 }
 
 struct Opened {
@@ -419,6 +496,89 @@ fn unchanged(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn administrative_capture_keeps_exact_identity_bounds_and_link_policy() -> Result<()> {
+        use std::cell::RefCell;
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().canonicalize()?;
+        let path = root.join("input.json");
+        std::fs::write(&path, b"original input")?;
+        let admitted = RefCell::new(Vec::new());
+        let (canonical, bytes) = capture_input(&path, 14, true, &|candidate| {
+            admitted.borrow_mut().push(candidate.to_path_buf());
+            Ok(())
+        })?;
+        assert_eq!(canonical, path);
+        assert_eq!(bytes, b"original input");
+        assert_eq!(admitted.into_inner(), vec![path.clone(), path.clone()]);
+        assert!(capture_input(&path, 13, true, &|_| Ok(())).is_err());
+        let alias = root.join("alias.json");
+        std::fs::hard_link(&path, &alias)?;
+        assert!(capture_input(&path, 14, true, &|_| Ok(())).is_err());
+        assert_eq!(read_protected_path(&path, 14, false)?, b"original input");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn administrative_capture_refuses_redirects_installed_after_canonical_admission() -> Result<()>
+    {
+        use std::{cell::Cell, os::unix::fs::symlink};
+        for replace_parent in [false, true] {
+            let owner = tempfile::tempdir()?;
+            let root = owner.path().canonicalize()?;
+            let allowed = root.join("allowed");
+            let denied = root.join("denied");
+            std::fs::create_dir(&allowed)?;
+            std::fs::create_dir(&denied)?;
+            let input = allowed.join("input.json");
+            std::fs::write(&input, b"allowed input")?;
+            std::fs::write(denied.join("input.json"), b"denied content")?;
+            let checks = Cell::new(0);
+            let result = capture_input(&input, 100, false, &|candidate| {
+                ensure!(!candidate.starts_with(&denied), "denied input");
+                checks.set(checks.get() + 1);
+                if checks.get() == 2 {
+                    if replace_parent {
+                        std::fs::rename(&allowed, root.join("retained-allowed"))?;
+                        symlink(&denied, &allowed)?;
+                    } else {
+                        std::fs::remove_file(&input)?;
+                        symlink(denied.join("input.json"), &input)?;
+                    }
+                }
+                Ok(())
+            });
+            assert!(result.is_err(), "redirected parent={replace_parent}");
+            assert_eq!(checks.get(), 2);
+            assert_eq!(std::fs::read(denied.join("input.json"))?, b"denied content");
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn administrative_capture_checks_resolved_target_before_reading() -> Result<()> {
+        use std::{cell::Cell, os::unix::fs::symlink};
+        let owner = tempfile::tempdir()?;
+        let root = owner.path().canonicalize()?;
+        let denied = root.join("denied.json");
+        let allowed = root.join("allowed.json");
+        std::fs::write(&denied, b"denied content")?;
+        symlink(&denied, &allowed)?;
+        let checks = Cell::new(0);
+        assert!(
+            capture_input(&allowed, 100, false, &|candidate| {
+                checks.set(checks.get() + 1);
+                ensure!(candidate != denied.as_path(), "denied input");
+                Ok(())
+            })
+            .is_err()
+        );
+        assert_eq!(checks.get(), 2);
+        Ok(())
+    }
 
     #[test]
     fn repository_marker_reads_are_fixed_name_shallow_and_bounded() -> Result<()> {

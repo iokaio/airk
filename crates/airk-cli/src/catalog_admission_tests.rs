@@ -2,6 +2,126 @@
 use super::*;
 use airk_core::{index_catalog::*, scoped_reads::SourceDescriptor, service::ProjectBinding};
 
+fn trim_request(namespace: Incarnation, authority: &ScopedReadAuthority) -> Result<CatalogRequest> {
+    use airk_core::{
+        service_configuration::{ConfigurationRequest, ProjectConfiguration},
+        source_policy::{
+            DenyReason, DenyRule, POLICY_SCHEMA, PolicyChange, SourcePolicy, SourceRoot,
+        },
+    };
+    let mut request = request(namespace, authority);
+    let root = &authority.sources[0];
+    let rule_id = DenyId::from_identity(Incarnation::from_bytes([52; 16]));
+    let selector = ScopeAtom {
+        source_root_id: root.source_root_id,
+        kind: PathScope::Subtree,
+        path: "private".into(),
+    };
+    let policy = SourcePolicy {
+        schema: POLICY_SCHEMA.into(),
+        index_id: authority.index_id,
+        owner_binding: authority.backing.to_string().parse()?,
+        namespace: "collections-1.4".into(),
+        collection: "fixture".into(),
+        epoch: CatalogRevision::INITIAL,
+        roots: vec![SourceRoot {
+            id: root.source_root_id,
+            canonical_path: root.original_root.clone(),
+            aliases: vec![],
+            owner: true,
+        }],
+        positive_includes: None,
+        denies: vec![DenyRule {
+            source_root_id: selector.source_root_id,
+            kind: selector.kind,
+            path: selector.path.clone(),
+            rule_id,
+            reason: DenyReason::Trim,
+            created_epoch: CatalogRevision::INITIAL,
+            inherited_from: None,
+        }],
+    };
+    let operation_id =
+        airk_core::catalog_management::catalog_operation_id(request.caller, &request.key)?;
+    request.operation = CatalogOperation::ChangeIndexPolicy {
+        id: authority.index_id,
+        expected_source_revision: CatalogRevision::INITIAL,
+        expected_policy_epoch: 0,
+        expected_policy_digest: None,
+        change: PolicyChange::Trim { rule_id, selector },
+        configuration: Box::new(ConfigurationRequest {
+            prepare: false,
+            incarnation: Incarnation::from_bytes([53; 16]),
+            settings: Sha256Digest::from_bytes([54; 32]),
+            configuration: ProjectConfiguration::ApplySourcePolicy {
+                policy: Box::new(policy),
+                operation_id,
+            },
+        }),
+        engine_identity: Sha256Digest::from_bytes([55; 32]),
+    };
+    request.validate()?;
+    Ok(request)
+}
+
+#[test]
+fn permanent_trim_requires_unscoped_worker_census_and_provider_drain_before_commit() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let (gate, worker, authority, namespace) = fixture(directory.path().to_str().unwrap());
+    gate.register_worker(worker)?;
+    let request = trim_request(namespace, &authority)?;
+    let plan = gate.close_retirement_admission(&request, worker.project)?;
+    assert!(
+        plan.targets.is_empty(),
+        "unscoped worker has no Project scope entries"
+    );
+    assert!(gate.require_worker_start(worker.project).is_err());
+    assert!(
+        gate.with_administrative_worker(namespace, worker, || ())
+            .is_err()
+    );
+    assert!(gate.require_commit_ready(&plan.ticket).is_err());
+    let plan = gate.capture_retirement_workers(
+        &plan.ticket,
+        worker.project,
+        vec![worker],
+        vec![native_provider_obligation(worker, vec![])],
+    )?;
+    assert_eq!(plan.drain_workers, vec![worker]);
+    gate.begin_worker_drain(&plan.ticket, worker)?;
+    gate.observe_worker_reaped(worker)?;
+    assert!(
+        gate.require_commit_ready(&plan.ticket).is_err(),
+        "process exit alone cannot settle helper/resource work"
+    );
+    gate.observe_worker_resources_drained(worker)?;
+    gate.require_commit_ready(&plan.ticket)?;
+    Ok(())
+}
+
+#[test]
+fn permanent_trim_closes_pre_persistence_combined_and_administrative_delivery() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let (gate, worker, authority, namespace) = fixture(directory.path().to_str().unwrap());
+    gate.register_worker(worker)?;
+    let issue = gate.begin_issue(namespace, CatalogRevision::INITIAL)?;
+    let mut delivered = 0;
+    gate.with_issue(issue, || delivered += 1)?;
+    gate.with_administrative_worker(namespace, worker, || delivered += 1)?;
+    let request = trim_request(namespace, &authority)?;
+    let _closed = gate.close_retirement_admission(&request, worker.project)?;
+    assert!(gate.with_issue(issue, || delivered += 1).is_err());
+    assert!(
+        gate.with_administrative_worker(namespace, worker, || delivered += 1)
+            .is_err()
+    );
+    assert_eq!(
+        delivered, 2,
+        "neither retained delivery can cross the native policy close"
+    );
+    Ok(())
+}
+
 #[test]
 fn combined_delivery_poll_refuses_the_pre_persistence_pending_fence() -> Result<()> {
     let directory = tempfile::tempdir()?;

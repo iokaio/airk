@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Transformer tokenization runs in the verified helper; byte-BPE remains local.
-use crate::usage::{LocalByteBpe, read_usage_input};
+use crate::usage::LocalByteBpe;
+#[cfg(any(test, not(feature = "local-inference")))]
+use crate::usage::read_usage_input;
 use airk_core::usage::TokenizerIdentity;
 use airk_retrieval::embedding_worker::{self, RemoteSession, Request, Response};
 use anyhow::{Result, bail, ensure};
@@ -18,14 +20,24 @@ pub(crate) enum LocalTokenizer {
 }
 
 impl LocalTokenizer {
+    #[cfg(any(test, not(feature = "local-inference")))]
     pub(crate) fn open(path: &Path) -> Result<Self> {
         Self::open_checked(path, None)
     }
+    #[cfg(any(test, not(feature = "local-inference")))]
     pub(crate) fn open_checked(
         path: &Path,
         expected: Option<airk_core::identity::Sha256Digest>,
     ) -> Result<Self> {
         let bytes = read_usage_input(path, 1_048_576)?;
+        Self::open_captured(path, bytes, expected)
+    }
+
+    pub(crate) fn open_captured(
+        path: &Path,
+        bytes: Vec<u8>,
+        expected: Option<airk_core::identity::Sha256Digest>,
+    ) -> Result<Self> {
         ensure!(
             expected.is_none_or(|expected| airk_core::identity::Sha256Digest::from_bytes(
                 Sha256::digest(&bytes).into()
@@ -40,11 +52,14 @@ impl LocalTokenizer {
             value["schema"] == 2,
             "unsupported tokenizer manifest schema"
         );
-        let session = embedding_worker::connector()?.tokenizer(&path.canonicalize()?)?;
+        // The owning Kernel authorized this spelling; protected input readers
+        // and the helper must retain it instead of resolving a replacement link.
+        let path = std::path::absolute(path)?;
+        let session = embedding_worker::connector()?.tokenizer(&path)?;
         let response = session.request(Request::TokenizerOpen {
             protocol: embedding_worker::PROTOCOL,
             version: env!("CARGO_PKG_VERSION").into(),
-            path: path.canonicalize()?,
+            path,
         })?;
         match response {
             Response::TokenizerOpened {

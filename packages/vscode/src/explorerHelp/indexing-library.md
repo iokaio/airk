@@ -8,7 +8,11 @@ related_airk_help: indexing
 ---
 # Index library
 
-Refresh reads up to sixteen native catalog entries within a 48 KiB budget. Next page uses the exact native continuation and catalog revision. Filtering searches only the displayed page; it does not claim to search the entire host catalog.
+Sources offers permanent trim of an exact file or subtree under a native source root. Review its canonical target, affected Projects, overlap limitations and unknown counts, then explicitly apply. This Index's exclusion affects every member Project; source files and other indexes remain unchanged. Unblock selects a returned trim rule and restores eligibility without indexing automatically.
+
+Read permanent-exclusion status retains the policy, complete job, removal publication and dated cleanup observation. Entire-index imported analysis/cache retirement is disclosed without automatic regeneration. Logical removal and physical reclamation finish separately. Explicit continuation handles failed/canceled work or remaining physical cleanup; uncertainty requires the exact request receipt, without automatic replay. Delivered results, exports and backups cannot be recalled; reclamation is not secure erasure.
+
+Refresh reads up to sixteen native entries within 48 KiB. Next page preserves the native continuation and revision. Filtering searches only the displayed page.
 
 Inspect an index to read its complete definition, Sources and paged Project memberships. Source IDs and canonical locations remain attached. Metadata listing grants no evidence access. Rename uses an exact native preview followed by an explicit Apply reviewed changes action. A changed client, trust state, namespace or revision invalidates stale reviews.
 
@@ -16,7 +20,7 @@ Set up a new index accepts an explicit primary source location, index-storage lo
 
 Resume saved native setup is a separate explicit recovery action. It is available only after this connected client has just read a matching native reserved or prepared receipt. Review the saved draft and receipt first. Resume sends the original immutable draft, key and digest. An interrupted Resume or a missing receipt disables the action until another matching native receipt is read; no startup or polling path repeats it. A retired setup stays tracked until matching native terminal proof can settle it. Missing receipts do not prove retirement, and choosing a new key is not recovery.
 
-Opening folders, reconnecting and installing the runtime do not create or restore missing indexes. Existing native registrations can be adopted, and removed registrations remain removed. Set up index in Management and the historical storage command open this explicit native review flow.
+Opening folders, reconnecting and installing do not restore indexes. Existing registrations can be adopted. Management's Set up index and the historical storage command open this explicit review flow.
 
 Explicit Use Grant selects the reviewed Workbench session and offers its first opening. If opening fails, the next explicit selection can retry; a successful first opening preserves a subsequently hidden Workbench during later selections or reconnects. A newly ready index does not trigger this opening before Use Grant. Existing legacy connections retain their first opening only after native compatibility is positively confirmed.
 

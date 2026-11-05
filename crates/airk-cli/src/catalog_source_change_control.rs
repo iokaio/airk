@@ -14,9 +14,9 @@ use airk_core::{
         SourceMutationDraft, SourceMutationDraftSelection, SourceMutationSelection,
     },
     identity::{Incarnation, Sha256Digest},
-    index_catalog::{IndexDefinition, MAX_SOURCE_ROOTS, SourceImportState},
+    index_catalog::{DenyId, IndexDefinition, MAX_SOURCE_ROOTS, ScopeAtom, SourceImportState},
     service_configuration::{ConfigurationRequest, ProjectConfiguration},
-    source_policy::SourceRoot,
+    source_policy::{PolicyChange, SourcePolicy, SourceRoot},
 };
 use airk_store::{
     roots::RootConfig,
@@ -62,7 +62,8 @@ fn read_index(
     ensure!(
         state.activated
             && state.authority_contract == 1
-            && state.policy_contract == 0
+            && state.policy_contract
+                <= airk_store::service::registry::catalog::SUPPORTED_POLICY_CONTRACT
             && state.namespace == selection.key.namespace
             && state.revision == selection.expected_catalog_revision,
         "source review catalog changed"
@@ -84,8 +85,7 @@ fn read_index(
     ensure!(
         detail.namespace == selection.key.namespace
             && detail.revision == selection.expected_catalog_revision
-            && !index.tombstone
-            && index.policy.is_none(),
+            && !index.tombstone,
         "source index is not ready for reviewed mutation"
     );
     ensure!(
@@ -233,8 +233,10 @@ fn inspect_configuration(
                 alias: alias.clone(),
             }
         }
-        SourceMutationSelection::RetireIndex => {
-            anyhow::bail!("retirement does not require RootConfig inspection")
+        SourceMutationSelection::RetireIndex
+        | SourceMutationSelection::TrimPath { .. }
+        | SourceMutationSelection::UnblockPath { .. } => {
+            anyhow::bail!("this mutation does not change RootConfig")
         }
     };
     airk_store::roots::validate_sources(
@@ -311,6 +313,174 @@ fn desired_sources(
     Ok(sources)
 }
 
+fn policy_rule_id(operation: Incarnation) -> Result<DenyId> {
+    let digest =
+        airk_core::identity::framed_digest(b"airk/native-trim-rule/1", &[operation.as_bytes()])
+            .to_string();
+    Ok(DenyId::from_identity(digest[..32].parse()?))
+}
+
+/// Resolve existing components read-only before review. Missing suffixes are
+/// intentional future selectors, not permission to follow a redirected parent.
+/// Native policy matching supplies the platform's case equivalence separately.
+fn policy_selector(source: &CatalogSource, selector: &ScopeAtom) -> Result<ScopeAtom> {
+    selector.validate()?;
+    ensure!(
+        selector.path.split('/').count() <= 256,
+        "policy selector exceeds native component review budget"
+    );
+    ensure!(
+        source.id == selector.source_root_id && source.enabled,
+        "policy selector requires an enabled source identity"
+    );
+    let root = Path::new(&source.canonical_path);
+    let canonical_root = root
+        .canonicalize()
+        .context("policy source root is unavailable")?;
+    let same_root = canonical_root == root;
+    #[cfg(windows)]
+    let same_root = same_root
+        || match (canonical_root.to_str(), root.to_str()) {
+            (Some(canonical), Some(saved)) => {
+                canonical.strip_prefix(r"\\?\").unwrap_or(canonical)
+                    == saved.strip_prefix(r"\\?\").unwrap_or(saved)
+            }
+            _ => false,
+        };
+    ensure!(same_root, "policy source root binding changed");
+    let mut path = canonical_root.clone();
+    let mut missing = false;
+    for component in selector
+        .path
+        .split('/')
+        .filter(|component| !component.is_empty())
+    {
+        path.push(component);
+        if !missing {
+            match std::fs::symlink_metadata(&path) {
+                Ok(metadata) => {
+                    ensure!(
+                        !metadata.file_type().is_symlink(),
+                        "policy selector crosses a link"
+                    );
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::fs::MetadataExt;
+                        ensure!(
+                            metadata.file_attributes() & 0x400 == 0,
+                            "policy selector crosses a reparse point"
+                        );
+                    }
+                    path = path.canonicalize()?;
+                    ensure!(
+                        path.starts_with(&canonical_root),
+                        "policy selector escapes its source root"
+                    );
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => missing = true,
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    if !missing {
+        let metadata = std::fs::symlink_metadata(&path)?;
+        ensure!(
+            match selector.kind {
+                airk_core::index_catalog::PathScope::Exact => metadata.is_file(),
+                airk_core::index_catalog::PathScope::Subtree => metadata.is_dir(),
+            },
+            "policy selector kind differs from its source object"
+        );
+    }
+    let relative = path
+        .strip_prefix(&canonical_root)
+        .context("policy selector source binding changed")?;
+    let path = relative
+        .components()
+        .map(|part| {
+            part.as_os_str()
+                .to_str()
+                .context("non-UTF-8 policy selector is unsupported")
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join("/");
+    let canonical = ScopeAtom {
+        source_root_id: source.id,
+        kind: selector.kind,
+        path,
+    };
+    canonical.validate()?;
+    Ok(canonical)
+}
+
+fn inspect_policy_configuration(
+    registry: &ServiceRegistry,
+    control: &Path,
+    namespace: Incarnation,
+    review: &IndexReview,
+    change: &PolicyChange,
+    operation_id: Incarnation,
+) -> Result<ConfigurationRequest> {
+    let registration = &review.index.backing;
+    airk_kernel::service_projects::validate_retained(registration)?;
+    data_scope::check(Path::new(&registration.data_root), control, namespace)?;
+    let selected = Collection::existing(
+        Path::new(&registration.data_root),
+        &registration.root,
+        &registration.collection,
+    )?
+    .select()?;
+    let settings = settings_digest(&selected.store, &registration.root)?;
+    let incarnation = selected
+        .store
+        .service_incarnation()?
+        .context("selected policy collection has no incarnation")?;
+    let configured = RootConfig::load(selected.store.directory(), &registration.root)?;
+    ensure!(
+        SourceConfigurationSnapshot {
+            primary_root: registration.root.clone(),
+            aliases: configured.roots
+        } == catalog_snapshot(&review.index, &review.sources)?,
+        "catalog differs from actual native RootConfig"
+    );
+    let after = if let Some(policy) = registry.catalog_source_policy(review.index.id)? {
+        policy
+            .preview_change(policy.identity()?, change.clone())?
+            .after
+    } else {
+        let PolicyChange::Trim { rule_id, selector } = change else {
+            anyhow::bail!("unblock requires an existing permanent rule");
+        };
+        let roots = review
+            .sources
+            .iter()
+            .filter(|source| source.enabled)
+            .map(|source| SourceRoot {
+                id: source.id,
+                canonical_path: source.canonical_path.clone(),
+                aliases: source.aliases.clone(),
+                owner: source.owner,
+            })
+            .collect();
+        SourcePolicy::initial_trim(&review.index, roots, *rule_id, selector.clone())?
+    };
+    let request = ConfigurationRequest {
+        prepare: false,
+        incarnation,
+        settings,
+        configuration: ProjectConfiguration::ApplySourcePolicy {
+            policy: Box::new(after),
+            operation_id,
+        },
+    };
+    request.validate()?;
+    ensure!(
+        settings_digest(&selected.store, &registration.root)? == settings,
+        "source settings changed during native policy review"
+    );
+    Ok(request)
+}
+
 pub(crate) fn draft(
     registry: &mut ServiceRegistry,
     control: &Path,
@@ -332,8 +502,81 @@ fn draft_native(
     caller: Incarnation,
     engine: Sha256Digest,
 ) -> Result<SourceMutationDraft> {
-    let review = read_index(registry, selection)?;
+    let review = read_index(registry, selection).context("native source draft index review")?;
     let operation = match &selection.change {
+        SourceMutationSelection::TrimPath {
+            source_root_id,
+            kind,
+            path,
+        } => {
+            let operation_id = catalog_operation_id(caller, &selection.key)?;
+            let source = review
+                .sources
+                .iter()
+                .find(|source| source.id == *source_root_id)
+                .context("selected policy source is unavailable")?;
+            let selector = policy_selector(
+                source,
+                &ScopeAtom {
+                    source_root_id: *source_root_id,
+                    kind: *kind,
+                    path: path.clone(),
+                },
+            )
+            .context("native trim selector review")?;
+            let change = PolicyChange::Trim {
+                rule_id: policy_rule_id(operation_id)?,
+                selector,
+            };
+            let configuration = inspect_policy_configuration(
+                registry,
+                control,
+                selection.key.namespace,
+                &review,
+                &change,
+                operation_id,
+            )
+            .context("native trim configuration review")?;
+            CatalogOperation::ChangeIndexPolicy {
+                id: review.index.id,
+                expected_source_revision: review.index.source_revision,
+                expected_policy_epoch: review
+                    .index
+                    .policy
+                    .as_ref()
+                    .map_or(0, |policy| policy.epoch.get()),
+                expected_policy_digest: review.index.policy.as_ref().map(|policy| policy.digest),
+                change,
+                configuration: Box::new(configuration),
+                engine_identity: engine,
+            }
+        }
+        SourceMutationSelection::UnblockPath { rule_id } => {
+            let operation_id = catalog_operation_id(caller, &selection.key)?;
+            let change = PolicyChange::Unblock { rule_id: *rule_id };
+            let configuration = inspect_policy_configuration(
+                registry,
+                control,
+                selection.key.namespace,
+                &review,
+                &change,
+                operation_id,
+            )
+            .context("native unblock configuration review")?;
+            CatalogOperation::ChangeIndexPolicy {
+                id: review.index.id,
+                expected_source_revision: review.index.source_revision,
+                expected_policy_epoch: review
+                    .index
+                    .policy
+                    .as_ref()
+                    .map_or(0, |policy| policy.epoch.get()),
+                expected_policy_digest: review.index.policy.as_ref().map(|policy| policy.digest),
+                change,
+                configuration: Box::new(configuration),
+                engine_identity: engine,
+            }
+        }
         SourceMutationSelection::RetireIndex => CatalogOperation::RetireIndex {
             id: review.index.id,
             expected_definition_revision: review.index.definition_revision,
@@ -367,7 +610,9 @@ fn draft_native(
         expected_catalog_revision: selection.expected_catalog_revision,
         operation,
     };
-    let preview = registry.catalog_preview(&request)?;
+    let preview = registry
+        .catalog_preview(&request)
+        .context("canonical native source draft preview")?;
     let preview_digest = preview.identity()?;
     let draft = SourceMutationDraft {
         request,
@@ -408,6 +653,28 @@ fn review_request_native(
     request.validate()?;
     ensure!(request.caller == caller, "foreign source draft caller");
     let (index_id, change) = match &request.operation {
+        CatalogOperation::ChangeIndexPolicy {
+            id,
+            change,
+            engine_identity,
+            ..
+        } => {
+            ensure!(
+                *engine_identity == engine,
+                "policy draft runtime engine changed"
+            );
+            let selection = match change {
+                PolicyChange::Trim { selector, .. } => SourceMutationSelection::TrimPath {
+                    source_root_id: selector.source_root_id,
+                    kind: selector.kind,
+                    path: selector.path.clone(),
+                },
+                PolicyChange::Unblock { rule_id } => {
+                    SourceMutationSelection::UnblockPath { rule_id: *rule_id }
+                }
+            };
+            (*id, selection)
+        }
         CatalogOperation::BeginIndexSourceChange { id, plan, .. } => {
             ensure!(
                 plan.engine_identity == engine,

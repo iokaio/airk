@@ -4,6 +4,23 @@ use super::{ResponseMode, Session};
 use serde_json::{Value, json};
 
 #[test]
+fn permanent_policy_refusal_retains_the_canonical_typed_receipt_through_context() {
+    let refusal = airk_kernel::SourcePolicyReadUnavailable;
+    let error = anyhow::Error::new(refusal).context("retained native request refused");
+    let reply = super::error_result(&error);
+    assert_eq!(reply.is_error, Some(true));
+    let bodies: Vec<Value> = reply
+        .content
+        .iter()
+        .filter_map(|block| block.as_text())
+        .map(|text| serde_json::from_str(&text.text).unwrap())
+        .collect();
+    assert_eq!(bodies, vec![refusal.receipt()]);
+    assert_eq!(bodies[0]["error"]["code"], "source_policy_unavailable");
+    assert_eq!(bodies[0]["error"]["retryable"], false);
+}
+
+#[test]
 fn status_receipts_do_not_cross_frozen_authority() {
     use airk_core::identity::Sha256Digest;
     let first = Session::for_scope(Some(Sha256Digest::from_bytes([1; 32])));

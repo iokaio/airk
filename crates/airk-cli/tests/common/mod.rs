@@ -9,7 +9,7 @@ use airk_core::service::{
 use anyhow::Context;
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader},
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{Arc, Mutex, OnceLock, Weak},
@@ -461,16 +461,33 @@ impl Service {
     }
     pub fn configure(&self, draft: airk_cli::service_configuration::Draft) {
         self.job(JobKind::Inspect);
-        let request = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
-            .block_on(airk_cli::service_configuration::prepare(
-                &self.control,
-                self.project.binding,
-                draft,
-            ))
+        // The service authenticates the native engine image. The test harness
+        // has a different image, so exercise the actual CLI preparation path
+        // rather than weakening that identity check for in-process fixtures.
+        let mut child = native_command()
+            .args(["service", "prepare-configuration", "--runtime-dir"])
+            .arg(&self.control)
+            .arg("--project")
+            .arg(self.project.binding.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&serde_json::to_vec(&draft).unwrap())
+            .unwrap();
+        let prepared = child.wait_with_output().unwrap();
+        assert!(
+            prepared.status.success(),
+            "native configuration preparation failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&prepared.stdout),
+            String::from_utf8_lossy(&prepared.stderr)
+        );
+        let request = serde_json::from_slice(&prepared.stdout).unwrap();
         let request = Method::ConfigureProject {
             project: self.project.binding,
             caller: airk_kernel::service_broker::new_instance_id().unwrap(),

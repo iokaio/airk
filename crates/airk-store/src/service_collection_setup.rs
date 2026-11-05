@@ -15,6 +15,7 @@ pub(super) fn initial_owner(data_root: &Path, root: &str, collection: &str) -> R
         data_root: data_root.to_str().context("non-UTF-8 data root")?.into(),
         collection: collection.into(),
         identity_data_root: None,
+        required_source_policy: None,
     })
 }
 

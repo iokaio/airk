@@ -692,7 +692,7 @@ impl Kernel {
         // prefix if the complete associations cannot fit; never certify it.
         trim_metadata(&mut receipt, receipt_bytes_budget)?;
         let mut policies =
-            BTreeMap::<String, airk_ingest::source_scope::SelectedSourcePolicy>::new();
+            BTreeMap::<String, Result<airk_ingest::source_scope::SelectedSourcePolicy>>::new();
         let mut attempted = 0;
         let allocation_exhausted =
             budget.max_sources == 0 || budget.max_bytes == 0 || budget.deadline_ms == 0;
@@ -751,12 +751,22 @@ impl Kernel {
                         "source_alias_changed",
                     ));
                 }
-                let policy = policies.entry(location.root.clone()).or_insert_with(|| {
-                    airk_ingest::source_scope::SelectedSourcePolicy::new(
-                        Path::new(&location.root),
-                        &self.data_root,
-                    )
-                });
+                if self
+                    .require_source_policy_source(&location.root, &location.relative_path)
+                    .is_err()
+                {
+                    return Ok(SourceCheck::unchecked(
+                        SourceCheckState::OutOfScope,
+                        0,
+                        "permanent_source_policy",
+                    ));
+                }
+                let policy = policies
+                    .entry(location.root.clone())
+                    .or_insert_with(|| self.selected_source_policy(&location.root));
+                let policy = policy
+                    .as_mut()
+                    .map_err(|_| anyhow::anyhow!("source ignore controls unavailable"))?;
                 if !policy.allows(&location.relative_path)? {
                     return Ok(SourceCheck::unchecked(
                         SourceCheckState::OutOfScope,
@@ -818,7 +828,7 @@ impl Kernel {
             // Ignore metadata may change without an index publication. Recheck
             // selected paths against a fresh policy before delivering matches.
             let mut final_policies =
-                BTreeMap::<String, airk_ingest::source_scope::SelectedSourcePolicy>::new();
+                BTreeMap::<String, Result<airk_ingest::source_scope::SelectedSourcePolicy>>::new();
             for source in &mut receipt.sources {
                 if !matches!(
                     source.state,
@@ -851,16 +861,19 @@ impl Kernel {
                         .ok()
                     })
                     .is_some_and(|location| {
+                        if self
+                            .require_source_policy_source(&location.root, &location.relative_path)
+                            .is_err()
+                        {
+                            return false;
+                        }
                         final_policies
                             .entry(location.root.clone())
-                            .or_insert_with(|| {
-                                airk_ingest::source_scope::SelectedSourcePolicy::new(
-                                    Path::new(&location.root),
-                                    &self.data_root,
-                                )
+                            .or_insert_with(|| self.selected_source_policy(&location.root))
+                            .as_mut()
+                            .is_ok_and(|policy| {
+                                policy.allows(&location.relative_path).unwrap_or(false)
                             })
-                            .allows(&location.relative_path)
-                            .unwrap_or(false)
                     });
                 if !allowed {
                     source.state = SourceCheckState::OutOfScope;

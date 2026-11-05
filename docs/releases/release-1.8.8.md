@@ -1,10 +1,17 @@
 # AIRK 1.8.8 manual-test working build
 
+P9 adds [permanent source exclusions](../source-policy.md)
+through reviewed native management. Native policy fences precede removal;
+logical removal and physical reclamation have separate resumable observations.
+Windows workspace/runtime and focused Mac ARM checks passed with the limits in
+the [ledger](../research/implementation-v190.md). P10–P14 acceptance remains pending;
+this working build is unpublished.
+
 P8 adds [Recommendations and copied agent scope instructions](../recommendations.md)
 through the canonical native `query_scope` read, CLI/MCP aliases and Workbench
 plans/forms. Indexing renders available/selected/omitted scope, explicit temporary
 selection and separately reviewed defaults. Missing observations remain unknown;
-split/trim actions remain pending. [Validation and limits](../research/implementation-v190.md#p8--recommendations-and-harness-guidance)
+split actions remain pending P10; permanent exclusions use reviewed P9 management. [Validation and limits](../research/implementation-v190.md#p8--recommendations-and-harness-guidance)
 are recorded separately from release qualification. The working version remains 1.8.8.
 
 P7 implements [combined Project reads](../combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](../research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
@@ -37,7 +44,7 @@ P5's foundation passed local isolated qualification: normalized catalog metadata
 backup/migration/import/recovery, candidate-process handoff and a gated installer
 coordinator. P6f's working candidate activates only qualified authority-1 catalogs
 with reviewed Indexing/setup/grant consumers. P7 adds combined reads and P8 adds
-Recommendations; trim and split remain pending P9/P10. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
+Recommendations; trim qualification and split implementation remain pending P9/P10. See the [storage boundary](../storage-formats.md#development-catalog-boundary).
 
 Complete implementation and local gates, then manually test the identified 1.8.8
 native pair and VSIX before the CI/release handoff. Use explicit isolated testing

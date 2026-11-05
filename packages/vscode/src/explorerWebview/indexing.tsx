@@ -3,6 +3,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { CatalogObject, CatalogScopeAtom, CatalogView, catalogExport, catalogItems, catalogMembershipDraft, catalogObject, catalogReviewPreview, catalogWindowAssociation, sourceChangeObservation, validateCatalogScope } from '../indexingCatalog';
 import type { ScreenProps } from './workspaces';
 import { request } from './api';
+import { canReviewPolicyUnblock, policyStatusLabels, validatePolicyImpact } from '../indexingCatalog';
 
 /** Native metadata is rendered as escaped Preact text; complete replies stay available in details/export. */
 export function IndexingScreen(props: ScreenProps) {
@@ -17,9 +18,10 @@ export function IndexingScreen(props: ScreenProps) {
     const [setupName,setSetupName]=useState(''),[setupPrimary,setSetupPrimary]=useState(''),[setupData,setSetupData]=useState(''),[setupCollection,setSetupCollection]=useState(''),[setupWatch,setSetupWatch]=useState(false);
     const [setupRoots,setSetupRoots]=useState<{alias:string;path:string}[]>([]);
     const [useIndex,setUseIndex]=useState(''),[useProjects,setUseProjects]=useState('');
-    const actionLabels:Record<string,string>={keep_layout:'Keep this layout',review_reuse:'Review reuse',use_query_scope:'Choose a query scope',split_pending:'Split unavailable until P10',removal_pending:'Permanent removal unavailable until P9',manual_selection:'Choose manually while observations are unknown'};
+    const actionLabels:Record<string,string>={keep_layout:'Keep this layout',review_reuse:'Review reuse',use_query_scope:'Choose a query scope',split_pending:'Split unavailable until P10',removal_pending:'Review permanent exclusions in Sources',manual_selection:'Choose manually while observations are unknown'};
     const [adviceProjects,setAdviceProjects]=useState(''),[adviceIndexes,setAdviceIndexes]=useState(''),[situation,setSituation]=useState('keep');
     const [sourceAlias,setSourceAlias]=useState(''),[sourcePath,setSourcePath]=useState(''),[removeAlias,setRemoveAlias]=useState(''),[beginOperation,setBeginOperation]=useState('');
+    const [policyRoot,setPolicyRoot]=useState(''),[policyKind,setPolicyKind]=useState<'exact'|'subtree'>('exact'),[policyPath,setPolicyPath]=useState(''),[unblockRule,setUnblockRule]=useState('');
     const savedContext=catalogWindowAssociation(view);
     const contextToken=view.hostContext?JSON.stringify([catalogObject(view.hostContext.descriptor).namespace,catalogObject(view.hostContext.descriptor).catalog_revision,savedContext?.id,savedContext?.revision]):view.context?JSON.stringify([catalogObject(view.context.detail).namespace,catalogObject(view.context.detail).revision,savedContext?.id,savedContext?.revision]):'';
     useEffect(()=>{setWindowProjects(Array.isArray(savedContext?.project_ids)?savedContext.project_ids.join(', '):'');setWindowIndexes(Array.isArray(savedContext?.index_ids)?savedContext.index_ids.join(', '):'');},[contextToken]);
@@ -28,6 +30,12 @@ export function IndexingScreen(props: ScreenProps) {
     const disabled=view.busy||!props.state.trusted||props.state.nativeExecutionEnabled===false;
     const rows=catalogItems(view.page), detail=catalogItems(view.detail,'detail')[0];
     const project=detail?.kind==='project'?detail.value:undefined, selectedIndex=detail?.kind==='index'?detail.value:undefined;
+    useEffect(()=>{setPolicyRoot('');setPolicyPath('');setUnblockRule('');},[selectedIndex?.id]);
+    const policySnapshot=view.policyStatus?.snapshot?catalogObject(view.policyStatus.snapshot):undefined;
+    const policy=policySnapshot?catalogObject(policySnapshot.policy):undefined;
+    const policyApplication=policySnapshot?.application?catalogObject(policySnapshot.application):undefined;
+    const policyDenies=Array.isArray(policy?.denies)?policy.denies.map(catalogObject):[];
+    const policyImpact=view.review?.request.operation.operation==='change_index_policy'?validatePolicyImpact(catalogReviewPreview(view.review).source_policy_impact):undefined;
     const adviceSelection=view.recommendations?.schema==='airk.recommendations/1'?catalogObject(view.recommendations.selected):undefined;
     const canSaveAdviceDefault=project&&Array.isArray(adviceSelection?.project_ids)&&adviceSelection.project_ids.length===1&&adviceSelection.project_ids[0]===project.id;
     const grantRow=catalogItems(view.grantDetail,'detail')[0],selectedGrant=grantRow?catalogObject(grantRow.value.grant):undefined;
@@ -63,7 +71,7 @@ export function IndexingScreen(props: ScreenProps) {
                 <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.copy',{}))}>Copy agent scope instructions</button>
                 <p>Use this query scope prefills a temporary Workbench form. Review it before running. It does not change an agent connection or replace saved session choices automatically.</p>
                 {canSaveAdviceDefault&&<button disabled={disabled} onClick={()=>void preview({operation:'set_project_defaults',project_id:project!.id,expected_defaults_revision:project!.defaults_revision,index_ids:adviceSelection!.index_ids})}>Review saving as Project default</button>}
-                <p>To save a single-Project scope, inspect that Project and review its native defaults change. For a combined scope, use each Project's defaults form below; a query index may belong to only one selected Project. Reuse opens existing membership review. Split and permanent-removal actions remain unavailable until P10 and P9 respectively.</p>
+                <p>To save a single-Project scope, inspect that Project and review its native defaults change. For a combined scope, use each Project's defaults form below; a query index may belong to only one selected Project. Reuse opens existing membership review. Split recommendations remain unavailable until P10. Recommendations do not prefill permanent-removal jobs; open index Sources and prepare an explicit native review below.</p>
                 <button disabled={disabled} onClick={()=>props.go({workspace:'indexing',tab:'projects'})}>Review reuse or Project defaults</button>
                 <details><summary>Complete Recommendations response</summary><pre>{JSON.stringify(view.recommendations,null,2)}</pre></details>
             </>:<p>Recommendations unavailable on this connection. Review the complete native response: <code>{JSON.stringify(view.recommendations)}</code></p>)}
@@ -155,6 +163,28 @@ export function IndexingScreen(props: ScreenProps) {
                 </form>
                 <p>Retirement waits for native evidence and background work to stop, including embedding providers. Review the complete native receipt; source files are not deleted.</p>
                 <button disabled={disabled||selectedIndex.tombstone===true} onClick={()=>void run(()=>request('indexing.source.draft',{generation:view.generation,change:{operation:'retire_index'}}))}>Prepare native index-retirement review</button>
+                {view.canReadPolicy&&<article><h3>Permanent path exclusions</h3>
+                    <p>Block an exact file or a directory and its future descendants in this index. Every Project using this index is affected. Other indexes covering the same source remain separate. Source files are preserved.</p>
+                    <button disabled={disabled} onClick={()=>void run(()=>request('indexing.policy.read',{generation:view.generation}))}>Read permanent exclusions and cleanup status</button>
+                    <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.source.draft',{generation:view.generation,change:{operation:'trim_path',source_root_id:policyRoot,kind:policyKind,path:policyPath}}));}}>
+                        <label>Source root<select required value={policyRoot} onChange={event=>setPolicyRoot(event.currentTarget.value)}><option value="">Read Sources, then choose a root</option>{catalogItems(view.sources).filter(row=>row.value.index_id===selectedIndex.id&&row.value.enabled===true).map(row=><option key={String(row.value.id)} value={String(row.value.id)}>{String(row.value.canonical_path)}</option>)}</select></label>
+                        <label>Block<select value={policyKind} onChange={event=>setPolicyKind(event.currentTarget.value as 'exact'|'subtree')}><option value="exact">Exact file</option><option value="subtree">Directory and descendants</option></select></label>
+                        <label>Path relative to the selected root<input required={policyKind==='exact'} value={policyPath} onInput={event=>setPolicyPath(event.currentTarget.value)} placeholder="private/notes.md" /></label>
+                        {policyKind==='subtree'&&<p>A blank directory path blocks the entire selected source root.</p>}
+                        <button disabled={disabled||!policyRoot||selectedIndex.tombstone===true}>Prepare permanent-block review</button>
+                    </form>
+                    {view.policyStatus&&<><p>{policyStatusLabels(view.policyStatus).join(' ')}</p>
+                        {view.policyStatus.job&&<p>Recorded cleanup job: {String(catalogObject(view.policyStatus.job).state)}.</p>}
+                        {policySnapshot?.last_error!==null&&policySnapshot?.last_error!==undefined&&<p class="notice">{String(policySnapshot.last_error)}</p>}
+                        {view.canResumePolicy&&selectedIndex.tombstone!==true&&view.policyStatus.job&&(['failed','canceled'].includes(String(catalogObject(view.policyStatus.job).state))||catalogObject(view.policyStatus.job).state==='succeeded'&&policyApplication?.physical_cleanup_pending===true)&&<button disabled={disabled||!!view.pending?.length} onClick={()=>void run(()=>request('indexing.policy.resume',{generation:view.generation}))}>Review resuming recorded cleanup</button>}
+                        {!!policyDenies.length&&<form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.source.draft',{generation:view.generation,change:{operation:'unblock_path',rule_id:unblockRule}}));}}>
+                            <label>Exclusion to unblock<select required value={unblockRule} onChange={event=>setUnblockRule(event.currentTarget.value)}><option value="">Choose a recorded exclusion</option>{policyDenies.filter(rule=>rule.reason==='trim').map(rule=><option key={String(rule.rule_id)} value={String(rule.rule_id)}>{String(rule.kind)}: {String(rule.path)||'(entire source root)'} · {String(rule.source_root_id)}</option>)}</select></label>
+                            <button disabled={disabled||!unblockRule||selectedIndex.tombstone===true||!canReviewPolicyUnblock(view.policyStatus)}>Prepare unblock review</button>
+                        </form>}
+                        <details><summary>Complete native policy and cleanup response</summary><pre>{JSON.stringify(view.policyStatus,null,2)}</pre></details>
+                    </>}
+                    <p>Preparing a review changes nothing. A completed native policy receipt establishes the exclusion; removal and physical cleanup are reported separately. Cleanup states retain their observation time; later background cleanup is not inferred. Previously delivered results, exports and upgrade backups cannot be recalled. Physical cleanup is not secure erasure.</p>
+                </article>}
             </article>:<p>Native source mutation and retirement review are unavailable on this connection.</p>)}
             <button disabled={disabled} onClick={()=>void page('memberships',false,selectedIndex?String(selectedIndex.id):undefined,project?String(project.id):undefined)}>Read memberships</button>
             {project&&<>
@@ -201,6 +231,15 @@ export function IndexingScreen(props: ScreenProps) {
         {view.canReviewRetirement&&view.pendingDetails?.filter(row=>{const intent=catalogObject(row.intent);return 'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent;}).map(row=><article class="card" key={`retirement-${String(row.id)}`}><h3>Check retirement recovery</h3><p>If this index was explicitly retired, read its full native retirement proof before stopping local tracking. This does not complete setup, resolve the failed job, or remove files. A missing proof keeps the original request tracked.</p><button disabled={disabled} onClick={()=>void run(()=>request('indexing.retirement.read',{id:String(row.id),generation:view.generation}))}>Read native retirement evidence</button></article>)}
         {view.retirementReview&&<article class="card"><h2>Review native retirement evidence</h2><pre>{JSON.stringify(view.retirementReview,null,2)}</pre>{view.retirementReview.response.evidence===null?<p>No matching native retirement evidence was returned. The original request remains tracked.</p>:<><p>Stop tracking only this superseded local request. Its original setup or source resolution is not reported as successful. No native work or file cleanup is issued.</p><button disabled={disabled} onClick={()=>void run(()=>request('indexing.retirement.stopTracking',{generation:view.generation}))}>Stop local tracking after verified retirement</button></>}</article>}
         {view.review&&<article class="card"><h2>Review native changes</h2><p>Review the complete native preview, including before/after state, file-data effects and authority fences.</p><pre>{JSON.stringify(view.review.response,null,2)}</pre>
+            {policyImpact&&<article><h3>Permanent-exclusion impact</h3>
+                <p>Reviewed source root: <code>{String(policyImpact.canonical_root)}</code>. Path: <code>{String(catalogObject(policyImpact.target).path)||'(entire source root)'}</code> · {catalogObject(policyImpact.target).kind==='exact'?'Exact file':'Directory and descendants'}.</p>
+                <dl>{[['affected_artifacts','Artifacts'],['affected_vectors','Vectors'],['affected_facts','Facts'],['affected_relationships','Relationships']].map(([key,label])=><><dt>{label}</dt><dd>{policyImpact[key]===null?'Unknown':String(policyImpact[key])}</dd></>)}</dl>
+                <p>{String(policyImpact.counts_basis)}</p>
+                <p>Affected source roots: {(policyImpact.affected_source_root_ids as string[]).join(', ')||'None'}. Affected Projects: {(policyImpact.affected_project_ids as string[]).join(', ')||'None'}.</p>
+                <p>Other indexes with configured-root overlap: {(policyImpact.other_covering_index_ids as string[]).join(', ')||'None returned'}. {String(policyImpact.overlap_basis)}</p>
+                <p>These observations do not certify effective eligibility in another index. The change applies only to the reviewed index. Counts remain unknown when native review has not scanned retained evidence.</p>
+                <p>When present, imported analysis and the embedding cache are retired for the entire index. Imported analysis is not automatically regenerated. The native outcome lists the components actually retired.</p>
+            </article>}
             {catalogReviewPreview(view.review).authority_fence_required===true&&<p>Native access changes require a complete delivery-fence receipt. Incomplete preparation remains an unconfirmed outcome; metadata alone does not establish completion.</p>}
             <button disabled={disabled} onClick={()=>void run(()=>request('indexing.apply',{generation:view.generation}))}>{view.review.request.operation.operation==='create_grant'?'Persist reviewed grant':'Apply reviewed changes'}</button></article>}
         {view.submittedReview&&<details class="card"><summary>Last submitted native review</summary><pre>{JSON.stringify(view.submittedReview,null,2)}</pre></details>}
@@ -210,6 +249,7 @@ export function IndexingScreen(props: ScreenProps) {
         {view.outcome&&<article class="card"><h2>Native outcome</h2>{view.outcome.status==='source_change_busy'&&<p>{String(catalogObject(view.outcome.busy).pending_jobs)} queued and {String(catalogObject(view.outcome.busy).running_jobs)} running accepted jobs. Finish or explicitly cancel them in Management before preparing another source change. No jobs were canceled or reordered by this request.</p>}
             {Array.isArray(view.outcome.receipts)&&view.outcome.receipts.some(value=>catalogObject(value).status==='catalog_receipt_unprepared')&&<p>Native reconciliation proved that the exact catalog request was not prepared. Its local uncertain intent is retired; this is not a completed mutation receipt. Prepare and review any desired change explicitly. No Apply or new key was submitted automatically.</p>}
             {view.submittedReview?.request.operation.operation==='begin_index_source_change'&&view.outcome.status==='catalog_applied'&&<p>The native source-change begin was accepted. Read its source-change observation for the recorded configuration job and actual metadata completion.</p>}
+            {view.submittedReview?.request.operation.operation==='change_index_policy'&&view.outcome.status==='catalog_applied'&&<p>The reviewed policy change was accepted. Read permanent exclusions and cleanup status for the recorded removal publication and physical cleanup outcome.</p>}
             <pre>{JSON.stringify(view.outcome,null,2)}</pre></article>}
         <article class="card"><h2>Complete catalog details</h2><p>Includes the complete retained native page, detail, window association, Sources, memberships, preview and outcome. Each page replaces the previously displayed page; exports describe only retained pages.</p>
             <button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'copy'}))}>Copy complete JSON</button><button disabled={disabled} onClick={()=>void run(()=>request('indexing.export',{format:'json'}))}>Export JSON…</button>

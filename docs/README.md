@@ -1,5 +1,10 @@
 # AIRK documentation
 
+[Permanent source exclusions](source-policy.md) describes P9's reviewed deny,
+native enforcement, removal and separate cleanup observations. Windows workspace/
+runtime and focused Mac ARM checks passed; qualification and pending-phase limits
+are in the [implementation ledger](research/implementation-v190.md).
+
 [Recommendations and agent query scope](recommendations.md) explains P8's bounded
 metadata-only advice, temporary selections, reviewed defaults and copied harness
 instructions in the unpublished 1.8.8 working build.

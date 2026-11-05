@@ -486,6 +486,10 @@ pub(crate) enum LocalTokenizer {
 impl LocalTokenizer {
     pub(crate) fn open(path: &Path) -> Result<Self> {
         let bytes = read_usage_input(path, 1_048_576)?;
+        Self::open_captured(path, bytes)
+    }
+
+    pub(crate) fn open_captured(path: &Path, bytes: Vec<u8>) -> Result<Self> {
         let value: Value = serde_json::from_slice(&bytes)?;
         if value["schema"] == 1 {
             return Ok(Self::Byte(LocalByteBpe::parse(&bytes)?));

@@ -64,6 +64,8 @@ struct CachedCoverage {
     inventory: Inventory,
     #[serde(default)]
     roots: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source_policy_digest: Option<airk_core::identity::Sha256Digest>,
 }
 
 impl Kernel {
@@ -79,6 +81,12 @@ impl Kernel {
         limits: InventoryLimits,
     ) -> Result<CoverageReport> {
         self.require_unrestricted_read()?;
+        let policy_epoch = self.source_policy_input_epoch()?;
+        let source_policy = self.source_policy_for_work()?;
+        let source_policy_digest = source_policy
+            .as_deref()
+            .map(airk_core::source_policy::SourcePolicy::identity)
+            .transpose()?;
         let snapshot = self.load_optional()?;
         let configured_roots = self.configured_roots()?;
         let scan_limits = self.scan_limits()?;
@@ -100,6 +108,7 @@ impl Kernel {
                     && cache.report.policy_version == POLICY_VERSION
                     && cache.report.extractor_version == EXTRACTOR_VERSION
                     && cache.roots == configured_roots
+                    && cache.source_policy_digest == source_policy_digest
                     && cache.report.scan_limits == scan_limits
             });
         if !refresh && let Some(cache) = &cached {
@@ -108,6 +117,7 @@ impl Kernel {
                 report.scan_complete = false;
                 report.percent = None;
             }
+            policy_epoch.validate()?;
             return Ok(report);
         }
         let mut report = CoverageReport {
@@ -146,6 +156,7 @@ impl Kernel {
             largest_sources: vec![],
         };
         if !refresh {
+            policy_epoch.validate()?;
             return Ok(report);
         }
         // Establish and validate the managed directory; release the writer before hashing.
@@ -157,14 +168,21 @@ impl Kernel {
             );
         }
         let previous = snapshot.unwrap_or_else(|| self.empty_snapshot());
-        let inventory = airk_ingest::inventory::scan_roots_with_policy(
+        let inventory = airk_ingest::inventory::scan_roots_with_source_policy(
             &self.root,
             &self.data_root,
             &previous,
             &configured_roots,
             cached.as_ref().map(|cache| &cache.inventory),
             limits,
-            scan_limits,
+            airk_ingest::inventory::InventoryPolicy {
+                scan_limits,
+                source_policy: source_policy.as_deref(),
+                checkpoint: &|| {
+                    policy_epoch.validate()?;
+                    crate::service_execution::checkpoint()
+                },
+            },
         )?;
         report.inventory_revision = report
             .inventory_revision
@@ -270,7 +288,9 @@ impl Kernel {
             report: report.clone(),
             inventory,
             roots: configured_roots,
+            source_policy_digest,
         })?;
+        policy_epoch.validate()?;
         ensure!(
             bytes.len() as u64 <= CACHE_LIMIT,
             "coverage cache exceeds bounded size"
@@ -299,6 +319,7 @@ impl Kernel {
             let _ = fs::remove_file(temporary);
         }
         persisted?;
+        policy_epoch.validate()?;
         Ok(report)
     }
 }

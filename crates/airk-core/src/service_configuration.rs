@@ -49,6 +49,12 @@ pub enum ProjectConfiguration {
     RemoveRoot {
         alias: String,
     },
+    /// Constructed only from an accepted native catalog policy receipt. Public
+    /// configuration admission must refuse this operation without that receipt.
+    ApplySourcePolicy {
+        policy: Box<crate::source_policy::SourcePolicy>,
+        operation_id: Incarnation,
+    },
     InstallModel {
         directory: String,
         manifest_sha256: Sha256Digest,
@@ -119,6 +125,7 @@ impl ProjectConfiguration {
                 path(value)?;
             }
             Self::RemoveRoot { alias: name } => alias(name)?,
+            Self::ApplySourcePolicy { policy, .. } => policy.validate()?,
             Self::InstallModel { directory, .. } => path(directory)?,
             Self::Calibrate {
                 tokenizer,

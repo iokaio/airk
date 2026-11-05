@@ -157,8 +157,8 @@ pub fn project(
         Situation::NeverIndexPath => (
             "You explicitly identified evidence that should never be indexed.",
             "removal_pending",
-            "A reviewed permanent exclusion would apply to every user of this index.",
-            "Permanent removal is unavailable until P9. Review all affected Projects and other indexes; exclusion, cleanup and unblock are separate. Source files are never removed.",
+            "A reviewed permanent exclusion applies to every user of this index.",
+            "Use the selected index's Sources controls to review permanent exclusion. Advice-linked management previews remain pending P10. Review all affected Projects and other indexes; exclusion, cleanup and unblock are separate. Source files are never removed.",
         ),
     };
     let selected_scope = selected

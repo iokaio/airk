@@ -613,7 +613,10 @@ mod tests {
         // original stand-in rather than the grammar-heavy debug test binary.
         let provider = tempfile::NamedTempFile::new()?;
         std::fs::write(provider.path(), b"original provider identity fixture\n")?;
-        let (root, snapshot, request) = fixture(provider.path().to_path_buf())?;
+        // Close the writable Windows handle before protected identity capture;
+        // the path owner still removes this original fixture on drop.
+        let provider = provider.into_temp_path();
+        let (root, snapshot, request) = fixture(provider.to_path_buf())?;
         let root = root.path().canonicalize()?;
         let mut excessive = snapshot.clone();
         let mut empty = snapshot.artifacts["src/lib.rs"].clone();

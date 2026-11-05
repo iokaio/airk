@@ -375,6 +375,7 @@ impl Kernel {
             .map(|objects| self.open_configured_model(objects))
             .transpose()?;
         let configuration = CollectionConfiguration {
+            source_policy_digest: self.source_policy_digest()?,
             roots: self.configured_roots()?,
             extractor_version: airk_core::EXTRACTOR_VERSION.into(),
             extraction_policy_digest: crate::extraction::policy_digest(&policy)?,
@@ -584,6 +585,7 @@ impl Kernel {
     /// Discard obsolete derived index state, including retained copies, before model setup.
     /// Current-format collections are unchanged; explicit full indexing follows.
     pub fn prepare_full_rebuild(&self) -> Result<bool> {
+        self.source_policy_for_work()?;
         let writer = self.store.lock()?;
         self.store.rebuild_obsolete_index(
             &writer,
@@ -601,6 +603,7 @@ impl Kernel {
         paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<airk_ingest::IndexReport> {
         use crate::diagnostics::IndexFailureStage as Stage;
+        self.source_policy_for_work()?;
         self.require_service_sources()
             .context(Stage("source_access"))?;
         let execution_lease =
@@ -701,6 +704,7 @@ impl Kernel {
             .context(Stage("open_model"))?;
         let model_load_us = u64::try_from(model_started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let configuration = CollectionConfiguration {
+            source_policy_digest: self.source_policy_digest()?,
             roots: roots.clone(),
             extractor_version: airk_core::EXTRACTOR_VERSION.into(),
             extraction_policy_digest: crate::extraction::policy_digest(&policy)?,
@@ -858,8 +862,9 @@ impl Kernel {
                 ))
                 .or_insert(artifact);
         }
+        let permanent_policy = self.source_policy_for_work()?;
         let scan_started = std::time::Instant::now();
-        let scan_result = airk_ingest::scan_payloads_with_execution_paths(
+        let scan_result = airk_ingest::scan_payloads_with_execution_source_policy(
             &self.root,
             &self.data_root,
             &previous,
@@ -869,6 +874,7 @@ impl Kernel {
             full,
             execution.execution,
             paths,
+            permanent_policy.as_deref(),
             |request| {
                 let same = previous
                     .artifacts

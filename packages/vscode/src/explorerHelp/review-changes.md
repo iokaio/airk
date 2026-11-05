@@ -10,7 +10,9 @@ related_airk_help: workflows
 
 Review › Changes lists the selected project's saved changes from the editor's Git extension (staged, unstaged, untracked and merge changes against HEAD) and joins each file with its indexed record.
 
-For every changed file it shows the change kind, whether AIRK has indexed it, and whether the saved bytes still match the indexed bytes. A changed file whose bytes differ from the index is described by the indexed version until you index again.
+For every changed file it shows the change kind, whether AIRK has indexed it, and a dated native observation of whether saved bytes matched the indexed bytes. The native owner checks current source policy before source capture; the extension observes unsaved editor state without reading source bytes. A changed file whose bytes differ from the index is described by the indexed version until you index again. A past match does not establish continued freshness or authorize an edit.
+
+Complete changed-file JSON retains each native response. Verification shares a total 512 MiB source-byte budget, an 8 MiB response budget and the action's deadline across files and any bounded restart. Missing accounting or exhausted source-byte budgets leave later checks explicitly unknown.
 
 ## Steps
 

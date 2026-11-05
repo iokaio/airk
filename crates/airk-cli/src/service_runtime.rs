@@ -89,6 +89,44 @@ struct State {
     native_caller: airk_core::identity::Incarnation,
 }
 
+/// The real outer NativeRead seam. A fixture may supply the producer for race
+/// tests, but admission, framing and byte delivery use the native gate. Only a
+/// failure before protected bytes may return to the ordinary failure writer.
+async fn deliver_native_read<S, F>(
+    stream: &mut S,
+    gate: &crate::catalog_admission::NativeCatalogAdmission,
+    produce: F,
+) -> Result<Option<ControlResponse>>
+where
+    S: tokio::io::AsyncWrite + Unpin,
+    F: std::future::Future<Output = Result<serde_json::Value>>,
+{
+    let unavailable = || {
+        Some(ControlResponse::Failure {
+            code: "native_administrative_connection_rebind".into(),
+        })
+    };
+    let Some(ticket) = gate
+        .catalog_clock()
+        .and_then(|clock| gate.begin_issue(clock.namespace, clock.revision).ok())
+    else {
+        return Ok(unavailable());
+    };
+    let Ok(result) = produce.await else {
+        return Ok(unavailable());
+    };
+    // A completed worker reply may be retained here while a policy fence
+    // begins. Each resumed write rechecks the original admission clock.
+    gate.deliver_issue(
+        ticket,
+        stream,
+        &ControlResponse::NativeRead { result },
+        Duration::from_secs(5),
+    )
+    .await?;
+    Ok(None)
+}
+
 async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
     let Some(request): Option<ControlRequest> =
         local_ipc::read_message(&mut stream, Duration::from_secs(5)).await?
@@ -236,23 +274,25 @@ async fn connection(mut stream: Stream, state: Arc<State>) -> Result<()> {
                 request,
                 usage_client,
             } => match state.catalog_gate.as_ref() {
-                Some(gate) => match state
-                    .native_administrative
-                    .read(
-                        &state.management,
+                Some(gate) => {
+                    match deliver_native_read(
+                        &mut stream,
                         gate,
-                        state.native_caller,
-                        project,
-                        request,
-                        usage_client,
+                        state.native_administrative.read(
+                            &state.management,
+                            gate,
+                            state.native_caller,
+                            project,
+                            request,
+                            usage_client,
+                        ),
                     )
-                    .await
-                {
-                    Ok(result) => ControlResponse::NativeRead { result },
-                    Err(_) => ControlResponse::Failure {
-                        code: "native_administrative_connection_rebind".into(),
-                    },
-                },
+                    .await?
+                    {
+                        None => return Ok(()),
+                        Some(failure) => failure,
+                    }
+                }
                 None => ControlResponse::Failure {
                     code: "native_administrative_admission_unavailable".into(),
                 },
@@ -384,12 +424,16 @@ pub async fn serve_with_idle(root: &Path, idle_grace: Option<Duration>) -> Resul
                 );
                 match catalog.authority_contract {
                     0 => {
+                        ensure!(
+                            catalog.policy_contract == 0,
+                            "catalog_authority_contract_unsupported"
+                        );
                         legacy_connections = true;
                         None
                     }
                     1 => {
                         ensure!(
-                            catalog.activated && catalog.policy_contract == 0,
+                            catalog.activated && catalog.policy_contract <= 1,
                             "catalog_authority_not_ready"
                         );
                         Some(crate::catalog_admission::NativeCatalogAdmission::new(
@@ -578,6 +622,169 @@ async fn request_scoped(
 
 #[cfg(test)]
 mod connection_failure_tests {
+    use super::*;
+    use airk_core::{
+        catalog_management::{CatalogOperation, CatalogRequest},
+        identity::Incarnation,
+        index_catalog::{CatalogRevision, GrantId},
+        service::RequestKey,
+    };
+    use tokio::io::AsyncReadExt;
+
+    fn native_read_gate() -> Result<(
+        crate::catalog_admission::NativeCatalogAdmission,
+        Incarnation,
+    )> {
+        let namespace = Incarnation::from_bytes([61; 16]);
+        let gate = crate::catalog_admission::NativeCatalogAdmission::new(
+            Incarnation::from_bytes([62; 16]),
+            namespace,
+            CatalogRevision::INITIAL,
+            1,
+        )?;
+        Ok((gate, namespace))
+    }
+
+    fn close_native_read_gate(
+        gate: &crate::catalog_admission::NativeCatalogAdmission,
+        namespace: Incarnation,
+    ) -> Result<()> {
+        // Close the real admission gate before persistence. This test focuses
+        // on the shared delivery boundary; subprocess tests cover trim itself.
+        gate.close_request_admission(&CatalogRequest {
+            caller: Incarnation::from_bytes([63; 16]),
+            key: RequestKey {
+                namespace,
+                epoch: 1,
+                nonce: Incarnation::from_bytes([64; 16]),
+            },
+            expected_catalog_revision: CatalogRevision::INITIAL,
+            operation: CatalogOperation::RevokeGrant {
+                id: GrantId::from_identity(Incarnation::from_bytes([65; 16])),
+                expected_revision: CatalogRevision::INITIAL,
+            },
+        })?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn outer_native_read_preserves_the_complete_native_envelope() -> Result<()> {
+        let (gate, _) = native_read_gate()?;
+        let result = serde_json::json!({
+            "value":"original café source",
+            "publication":{"token":"fixture-revision"},
+            "coverage":{"complete":false,"unknown":["physical_cleanup"]},
+            "cursor":"fixture-continuation",
+            "policy":{"epoch":4,"physical_cleanup_pending":true},
+            "retry":{"code":"fixture","details":{"retained":true}}
+        });
+        let mut expected = Vec::new();
+        crate::service_ipc::write_frame(
+            &mut expected,
+            &ControlResponse::NativeRead {
+                result: result.clone(),
+            },
+        )?;
+        let (mut reader, mut writer) = tokio::io::duplex(16);
+        let writing = tokio::spawn(async move {
+            let outcome = deliver_native_read(&mut writer, &gate, async { Ok(result) }).await;
+            drop(writer);
+            outcome
+        });
+        let mut actual = Vec::new();
+        tokio::time::timeout(Duration::from_secs(2), reader.read_to_end(&mut actual)).await??;
+        assert!(writing.await??.is_none());
+        assert_eq!(actual, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn outer_native_read_refuses_a_completed_producer_after_native_admission_close()
+    -> Result<()> {
+        let (gate, namespace) = native_read_gate()?;
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let (complete, released) = tokio::sync::oneshot::channel();
+        let (mut reader, mut writer) = tokio::io::duplex(16);
+        let owner = gate.clone();
+        let writing = tokio::spawn(async move {
+            // The producer is controlled fixture work; the outer handler seam,
+            // native ticket, framing and byte transport are production code.
+            let outcome = deliver_native_read(&mut writer, &owner, async {
+                let _ = started.send(());
+                released.await?;
+                Ok(serde_json::json!({"forbidden":"old worker result"}))
+            })
+            .await;
+            drop(writer);
+            outcome
+        });
+        ready.await?;
+        close_native_read_gate(&gate, namespace)?;
+        complete
+            .send(())
+            .map_err(|_| anyhow::anyhow!("producer fixture disappeared"))?;
+        let outcome = writing.await?;
+        assert!(
+            outcome.is_err(),
+            "a post-production fence cannot become an unguarded fallback"
+        );
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        assert!(bytes.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn outer_native_read_stops_backpressured_bytes_without_fallback_after_gate_close()
+    -> Result<()> {
+        let (gate, namespace) = native_read_gate()?;
+        let (mut reader, mut writer) = tokio::io::duplex(1);
+        let owner = gate.clone();
+        let writing = tokio::spawn(async move {
+            let outcome = deliver_native_read(&mut writer, &owner, async {
+                Ok(serde_json::json!({"forbidden":"old worker result".repeat(64)}))
+            })
+            .await;
+            drop(writer);
+            outcome
+        });
+        let mut prefix = [0; 1];
+        reader.read_exact(&mut prefix).await?;
+        close_native_read_gate(&gate, namespace)?;
+        // Releasing actual channel capacity wakes the pending write. Its next
+        // poll must recheck the close without appending a fallback frame.
+        let mut remainder = Vec::new();
+        tokio::time::timeout(Duration::from_secs(2), reader.read_to_end(&mut remainder)).await??;
+        assert!(writing.await?.is_err());
+        assert!(
+            prefix.len() + remainder.len() < 4,
+            "even the old frame header must remain incomplete"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn outer_native_read_does_not_poll_a_producer_under_closed_admission() -> Result<()> {
+        let (gate, namespace) = native_read_gate()?;
+        close_native_read_gate(&gate, namespace)?;
+        let (mut reader, mut writer) = tokio::io::duplex(16);
+        let called = std::sync::atomic::AtomicBool::new(false);
+        let fallback = deliver_native_read(&mut writer, &gate, async {
+            called.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(serde_json::json!({"forbidden":"unadmitted result"}))
+        })
+        .await?;
+        assert!(!called.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(
+            matches!(fallback, Some(ControlResponse::Failure { code }) if code == "native_administrative_connection_rebind")
+        );
+        drop(writer);
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await?;
+        assert!(bytes.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn authority_refusal_remains_permanent_across_both_connection_routes() {
         let error = anyhow::Error::new(airk_core::scoped_reads::ScopeReadRefused)

@@ -921,7 +921,8 @@ impl AirkServer {
     async fn status(&self, Parameters(args): Parameters<StatusArgs>) -> CallToolResult {
         self.execute_response_policy(UsageOperation::Status,args.response,false,move|kernel|{
             let mut status = kernel.status_summary().or_else(|error| {
-                if error.downcast_ref::<airk_core::scoped_reads::ScopeReadRefused>().is_some() {
+                if error.downcast_ref::<airk_core::scoped_reads::ScopeReadRefused>().is_some()
+                    || error.is::<airk_kernel::SourcePolicyReadUnavailable>() {
                     return Err(error);
                 }
                 if airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() {
@@ -962,6 +963,7 @@ impl AirkServer {
                     if error
                         .downcast_ref::<airk_core::scoped_reads::ScopeReadRefused>()
                         .is_some()
+                        || error.is::<airk_kernel::SourcePolicyReadUnavailable>()
                         || airk_kernel::retrieval_retry::read_retry_hint(&error).is_some() =>
                 {
                     return Err(error);

@@ -2,7 +2,7 @@
 //! Immutable collection-local model assets. Mutations require the collection writer.
 use airk_core::{
     identity::Sha256Digest,
-    model_objects::{ModelObjectRef, ModelObjectSet},
+    model_objects::{ModelAssetSource, ModelObjectRef, ModelObjectSet},
 };
 use anyhow::{Context, Result, ensure};
 use sha2::{Digest, Sha256};
@@ -189,7 +189,23 @@ pub fn install_input_model(
     quota: &crate::quota::Quota,
     collection: &str,
 ) -> Result<()> {
-    install_input_model_inner(source, set, quota, collection, false).map(|_| ())
+    install_input_model_inner(InputModel::Directory(source), set, quota, collection, false)
+        .map(|_| ())
+}
+
+/// Install from the owning adapter's protected, bounded asset captures.
+pub fn install_input_model_assets(
+    source: &dyn ModelAssetSource,
+    set: &ModelObjectSet,
+    quota: &crate::quota::Quota,
+    collection: &str,
+) -> Result<()> {
+    install_input_model_inner(InputModel::Assets(source), set, quota, collection, false).map(|_| ())
+}
+
+enum InputModel<'a> {
+    Directory(&'a Path),
+    Assets(&'a dyn ModelAssetSource),
 }
 
 /// Idempotent default setup. The caller validates preserved custom inputs.
@@ -199,18 +215,20 @@ pub fn install_input_model_if_missing(
     quota: &crate::quota::Quota,
     collection: &str,
 ) -> Result<bool> {
-    install_input_model_inner(source, set, quota, collection, true)
+    install_input_model_inner(InputModel::Directory(source), set, quota, collection, true)
 }
 
 fn install_input_model_inner(
-    source: &Path,
+    source: InputModel<'_>,
     set: &ModelObjectSet,
     quota: &crate::quota::Quota,
     collection: &str,
     preserve_existing: bool,
 ) -> Result<bool> {
     set.validate()?;
-    directory_ancestors(source, false)?;
+    if let InputModel::Directory(directory) = &source {
+        directory_ancestors(directory, false)?;
+    }
     let parent = quota.root().join("models");
     directory_ancestors(&parent, true)?;
     let bytes = set.assets.values().map(|reference| reference.bytes).sum();
@@ -256,15 +274,23 @@ fn install_input_model_inner(
     let reservation = quota.reserve(collection, bytes)?;
     let staging = tempfile::tempdir_in(reservation.staging_directory()?)?;
     for (name, reference) in &set.assets {
-        let input_path = source.join(name.filename());
-        verify_file(&input_path, reference)?;
+        let input: Box<dyn Read> = match &source {
+            InputModel::Directory(directory) => {
+                let input_path = directory.join(name.filename());
+                verify_file(&input_path, reference)?;
+                Box::new(File::open(input_path)?)
+            }
+            InputModel::Assets(source) => Box::new(std::io::Cursor::new(
+                source.read_asset(*name, reference.bytes)?,
+            )),
+        };
         reservation.charge(reference.bytes)?;
         let target = staging.path().join(name.filename());
         let mut output = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
             .open(&target)?;
-        let mut input = File::open(input_path)?.take(reference.bytes);
+        let mut input = input.take(reference.bytes);
         ensure!(
             std::io::copy(&mut input, &mut output)? == reference.bytes,
             "model input shortened during install"

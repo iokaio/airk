@@ -211,7 +211,7 @@ export interface PassageView {
     readonly truncated: boolean;
     readonly publication?: string;
 }
-export interface OpenSourceResult { readonly live: LiveCheck; readonly opened: boolean; readonly message: string }
+export interface OpenSourceResult { readonly live: LiveCheck; readonly opened: boolean; readonly message: string;readonly nativeResult?:Record<string,unknown> }
 
 /** Who produced a fact and what that producer covers (verbatim from AIRK). */
 export interface ProvenanceView { readonly producer: string; readonly basis?: string; readonly coverage?: string }
@@ -669,6 +669,8 @@ export const WEBVIEW_MESSAGES = {
     'indexing.source.draft': { change:{kind:'json',max:16384},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
     'indexing.source.read': { begin:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
     'indexing.source.pending': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.policy.read': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
+    'indexing.policy.resume': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
     'indexing.retirement.read': { id:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
     'indexing.retirement.stopTracking': { generation:{kind:'int',min:0,max:Number.MAX_SAFE_INTEGER} },
     'indexing.source.resolve': { generation: { kind:'int', min:0, max:Number.MAX_SAFE_INTEGER } },
@@ -688,6 +690,7 @@ export const WEBVIEW_MESSAGES = {
     'manage.command': { command: { kind: 'enum', values: MANAGE_COMMANDS } },
     'manage.observe': { open: { kind: 'bool' } },
     'strategy.run': { strategy: { kind: 'json', max: 32768 }, params: { kind: 'json', max: 8192 }, scope: { kind: 'json', max: 2048 } },
+    'strategy.run.export':{runId:{kind:'string',min:32,max:32,pattern:/^[0-9a-f]{32}$/},digest:{kind:'string',min:64,max:64,pattern:/^[0-9a-f]{64}$/},format:{kind:'enum',values:['copy','json']}},
     'strategy.export': { strategy: { kind: 'json', max: 32768 } },
     'studio.save': { document: { kind: 'json', max: 393216 }, name: { kind: 'string', min: 1, max: 64, pattern: /^[a-z][a-z0-9-]*$/ },
         revision: { kind: 'int', min: 0, max: 1_000_000_000 }, expectedHash: { kind: 'string', min: 64, max: 64, pattern: /^[a-f0-9]{64}$/, optional: true } },

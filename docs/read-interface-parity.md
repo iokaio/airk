@@ -1,5 +1,21 @@
 # CLI, MCP and Workbench read parity
 
+P9's [permanent exclusions](source-policy.md) apply to canonical native handlers
+and delivery fences across CLI tool calls/shell/convenience commands, MCP aliases
+and Workbench plans, details and copies/exports. Full status and refusal responses
+retain the policy observation, dated application, cleanup uncertainty and exact
+job data. Narrow scope omits index-wide application details explicitly. Native
+policy status/resume management responses distinguish the exact accepted retry
+job from current policy status; evidence MCP remains read-only. Actual native,
+CLI and MCP regressions compare complete results, including status after the last
+Unblock; the [ledger](research/implementation-v190.md) records source-bound evidence.
+
+The native management exact resume-receipt read returns the complete accepted
+job, configuration and result, independently of current policy status. CLI and
+Workbench preserve these fields and validate index/operation/caller/key identity.
+This management response is outside the evidence MCP catalog; no evidence alias
+acquires mutation authority. Missing/expired receipts remain explicit unknowns.
+
 P7 adds explicit reviewed combined sessions, unique-index execution, shared
 budgets and complete member-qualified results. [Combined-read contracts](combined-reads.md)
 record selectors, discovery, publication vectors, plan verification and the

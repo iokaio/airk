@@ -36,8 +36,9 @@ pub(crate) fn legacy_binding(
     if let Some(state) = &state {
         ensure!(
             state.namespace == namespace
-                && state.policy_contract == 0
-                && state.authority_contract <= 1,
+                && state.policy_contract <= 1
+                && state.authority_contract <= 1
+                && (state.authority_contract == 1 || state.policy_contract == 0),
             "unsupported legacy eligibility contract"
         );
         ensure!(

@@ -21,6 +21,28 @@ use std::{
     time::{Duration, Instant},
 };
 
+fn policy_directory_allows(
+    policy: &airk_core::source_policy::SourcePolicy,
+    root: &Path,
+    path: &Path,
+    qualify: bool,
+) -> Result<bool> {
+    let root_text = root
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF-8 watcher root"))?;
+    let relative = path
+        .strip_prefix(root)?
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("non-UTF-8 watcher path"))?
+        .replace('\\', "/");
+    let allowed =
+        airk_ingest::permanent_policy::allows_checked(policy, root_text, &relative, true)?;
+    if allowed && qualify {
+        airk_ingest::permanent_policy::qualify_discovery_directory(policy, root_text, &relative)?;
+    }
+    Ok(allowed)
+}
+
 const MAX_PROJECTS: usize = 1024;
 const MAX_BINDING_BYTES: usize = 8 * 1024 * 1024;
 const MAX_DIRECTORIES: usize = airk_core::service_watch::MAX_WATCH_DIRECTORIES as usize;
@@ -36,6 +58,7 @@ pub fn memory_allowance() -> u64 {
 }
 
 pub struct Binding {
+    pub source_policy: Option<airk_core::source_policy::SourcePolicy>,
     pub registration: ProjectRegistration,
     pub epoch: u64,
     pub configuration_observed: bool,
@@ -52,6 +75,7 @@ impl Binding {
             self.epoch,
             self.configuration_observed,
             &self.additional_roots,
+            &self.source_policy,
         ))?
         .len())
     }
@@ -82,6 +106,7 @@ struct Entry {
     periodic: Instant,
 }
 struct RootTask {
+    policy: Option<airk_core::source_policy::SourcePolicy>,
     project: ProjectBinding,
     index: usize,
     root: PathBuf,
@@ -181,6 +206,14 @@ impl SourceWatcher {
     }
     pub fn install(&mut self, binding: Binding) -> Result<bool> {
         binding.registration.validate()?;
+        if let Some(policy) = &binding.source_policy {
+            policy.validate()?;
+            ensure!(
+                policy.owner_binding == binding.registration.binding
+                    && policy.collection == binding.registration.collection,
+                "watch policy belongs to another native index"
+            );
+        }
         ensure!(binding.additional_roots.len() <= 16, "too many watch roots");
         let mut roots = BTreeSet::new();
         for root in binding.roots() {
@@ -316,7 +349,20 @@ impl SourceWatcher {
                             &path,
                             Path::new(root),
                             Path::new(&entry.binding.registration.data_root),
-                        )
+                        ) && entry.binding.source_policy.as_ref().is_none_or(|policy| {
+                            path.strip_prefix(root)
+                                .ok()
+                                .and_then(Path::to_str)
+                                .is_some_and(|relative| {
+                                    airk_ingest::permanent_policy::allows_checked(
+                                        policy,
+                                        root,
+                                        &relative.replace('\\', "/"),
+                                        false,
+                                    )
+                                    .unwrap_or(true)
+                                })
+                        })
                     }) {
                         Self::dirty(entry, now);
                         if self.root_index.contains_key(&normalized) {
@@ -347,6 +393,7 @@ impl SourceWatcher {
                     );
                     for (index, root) in entry.binding.roots().enumerate() {
                         tasks.push_back(RootTask {
+                            policy: entry.binding.source_policy.clone(),
                             project: *project,
                             index,
                             root: PathBuf::from(root),
@@ -616,8 +663,19 @@ impl Plan {
                 };
                 let root = task.root.clone();
                 let bytes = root.as_os_str().len();
+                let ignores = match airk_ingest::source_scope::DirectoryIgnore::with_source_policy(
+                    &root,
+                    task.policy.as_ref(),
+                ) {
+                    Ok(ignores) => ignores,
+                    Err(_) => {
+                        self.failures.get_mut(&task.project).unwrap()[task.index] =
+                            Some(WatchFailure::MetadataUnavailable);
+                        continue;
+                    }
+                };
                 self.walk = Some(Walk {
-                    ignores: airk_ingest::source_scope::DirectoryIgnore::new(&root),
+                    ignores,
                     task,
                     pending: vec![(root, 0)],
                     queued_bytes: bytes,
@@ -642,6 +700,16 @@ impl Plan {
                     Some(Ok(entry)) => {
                         self.usage.entry(project).or_default().entries += 1;
                         let path = entry.path();
+                        if let Some(policy) = &walk.task.policy {
+                            match policy_directory_allows(policy, &walk.task.root, &path, false) {
+                                Ok(true) => (),
+                                Ok(false) => continue,
+                                Err(_) => {
+                                    self.fail(WatchFailure::MetadataUnavailable);
+                                    continue;
+                                }
+                            }
+                        }
                         if !relevant(&path, &walk.task.root, &walk.task.data) {
                             continue;
                         }
@@ -695,6 +763,16 @@ impl Plan {
                     }
                 }
             } else if let Some((path, depth)) = walk.pending.pop() {
+                if let Some(policy) = &walk.task.policy {
+                    match policy_directory_allows(policy, &walk.task.root, &path, true) {
+                        Ok(true) => (),
+                        Ok(false) => continue,
+                        Err(_) => {
+                            self.fail(WatchFailure::MetadataUnavailable);
+                            continue;
+                        }
+                    }
+                }
                 walk.queued_bytes = walk.queued_bytes.saturating_sub(path.as_os_str().len());
                 let bytes = path.as_os_str().len();
                 let usage = self.usage.entry(project).or_default();

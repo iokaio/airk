@@ -629,20 +629,7 @@ pub fn render_report(view: &UsageView, format: &str) -> Result<String> {
 
 /// Reads are bounded even if a file grows between metadata lookup and reading.
 pub fn read_usage_input(path: &std::path::Path, maximum: usize) -> Result<Vec<u8>> {
-    use std::io::Read;
-    ensure!(
-        std::fs::metadata(path)?.is_file(),
-        "usage input must be a regular file"
-    );
-    let file = std::fs::File::open(path)?;
-    ensure!(
-        file.metadata()?.is_file(),
-        "usage input must be a regular file"
-    );
-    let mut bytes = Vec::new();
-    file.take(maximum as u64 + 1).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= maximum, "usage input exceeds bounded size");
-    Ok(bytes)
+    airk_ingest::read_protected_path(&std::path::absolute(path)?, maximum, false)
 }
 
 /// Logical managed index sizes, not physical disk allocation or bytes actually read.
@@ -707,6 +694,7 @@ enum CalibrationTokenizer {
     Local(crate::tokenization::LocalTokenizer),
 }
 impl CalibrationTokenizer {
+    #[cfg(test)]
     fn open(shared: bool, path: &std::path::Path) -> Result<Self> {
         #[cfg(feature = "local-inference")]
         if !shared {
@@ -718,6 +706,20 @@ impl CalibrationTokenizer {
         let _ = shared;
         Ok(Self::Shared(
             crate::remote_tokenization::LocalTokenizer::open(path)?,
+        ))
+    }
+
+    fn open_captured(shared: bool, path: &std::path::Path, bytes: Vec<u8>) -> Result<Self> {
+        #[cfg(feature = "local-inference")]
+        if !shared {
+            return Ok(Self::Local(
+                crate::tokenization::LocalTokenizer::open_captured(path, bytes)?,
+            ));
+        }
+        #[cfg(not(feature = "local-inference"))]
+        let _ = shared;
+        Ok(Self::Shared(
+            crate::remote_tokenization::LocalTokenizer::open_captured(path, bytes, None)?,
         ))
     }
     fn identity(&self) -> &TokenizerIdentity {
@@ -798,8 +800,17 @@ impl crate::Kernel {
                 "usage recording is disabled"
             );
         }
-        let baseline = String::from_utf8(read_usage_input(request.baseline, 262_144)?)?;
-        let returned = String::from_utf8(read_usage_input(request.returned, 262_144)?)?;
+        let baseline = String::from_utf8(self.capture_source_input(request.baseline, 262_144)?)?;
+        let returned = String::from_utf8(self.capture_source_input(request.returned, 262_144)?)?;
+        let (tokenizer_path, tokenizer_definition) =
+            self.capture_source_input_with_path(request.tokenizer, 1_048_576)?;
+        if serde_json::from_slice::<Value>(&tokenizer_definition)?["schema"].as_u64() == Some(2) {
+            self.require_source_policy_directory_capture_path(
+                tokenizer_path
+                    .parent()
+                    .context("tokenizer definition has no parent")?,
+            )?;
+        }
         if let Some(hashes) = hashes {
             ensure!(
                 airk_core::identity::Sha256Digest::from_bytes(
@@ -812,14 +823,16 @@ impl crate::Kernel {
             );
         }
         let tokenizer = if let Some(hashes) = hashes {
-            CalibrationTokenizer::Shared(crate::remote_tokenization::LocalTokenizer::open_checked(
-                request.tokenizer,
+            CalibrationTokenizer::Shared(crate::remote_tokenization::LocalTokenizer::open_captured(
+                &tokenizer_path,
+                tokenizer_definition,
                 Some(hashes[0]),
             )?)
         } else {
-            CalibrationTokenizer::open(
+            CalibrationTokenizer::open_captured(
                 self.store.shared_model_runtime().is_some(),
-                request.tokenizer,
+                &tokenizer_path,
+                tokenizer_definition,
             )?
         };
         // The explicit inputs are logical JSON results; framing cannot be silently mixed.
@@ -1392,7 +1405,9 @@ mod tests {
 
     #[test]
     fn shared_calibration_uses_helper_even_with_local_inference_compiled() -> Result<()> {
-        let directory = tempfile::tempdir()?;
+        // The private helper takes an already selected canonical path. macOS
+        // commonly exposes its default temporary directory through /var.
+        let directory = tempfile::tempdir_in(std::env::temp_dir().canonicalize()?)?;
         let bytes = serde_json::to_vec(
             &serde_json::json!({"version":"1.0","truncation":null,"padding":null,
             "added_tokens":[],"normalizer":null,"pre_tokenizer":{"type":"Whitespace"},
@@ -1417,7 +1432,10 @@ mod tests {
             Ok(_) => anyhow::bail!("service bypassed absent helper"),
             Err(error) => error,
         };
-        assert!(format!("{error:#}").contains("native adapter not installed"));
+        assert!(
+            format!("{error:#}").contains("native adapter not installed"),
+            "{error:#}"
+        );
         Ok(())
     }
 

@@ -151,7 +151,8 @@ pub(crate) fn activated_identity(
             && current.namespace == original.namespace
             && current.upgrade_id == original.upgrade_id
             && current.authority_contract == 1
-            && current.policy_contract == 0
+            && current.policy_contract <= super::super::SUPPORTED_POLICY_CONTRACT
+            && (fence_cleared || current.policy_contract == 0)
             && current.legacy_schema_digest == original.legacy_schema_digest
             && current.backup_digest == original.backup_digest
             && current.revision >= original.revision,

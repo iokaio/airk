@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
-import {nativeVerification,selectedVerification,verificationLabel} from '../sourceVerification';
+import {nativeSavedSourceState,nativeVerification,selectedVerification,verificationLabel} from '../sourceVerification';
 import {discoveryDetails,evidenceCards,markdown,renderExport} from '../workbenchRender';
 import {Value,WorkbenchSession,WorkbenchTurn,toolFormArguments,toolFormFields} from '../workbenchContracts';
 
@@ -17,6 +17,21 @@ function turn(check:Value):WorkbenchTurn {
     return {id:'checked',at:1000,input:'Read saved evidence',format:'structured',envelope:{status:'complete',executed:true,publication:origin.publication,
         plan:{path_prefix:''},evidence,steps:[{id:'query',tool:'search',status:'complete',result:{hits:evidence}}],source_verification:check}};
 }
+
+test('explicit native file checks require exact source, expected hash and publication bindings',()=>{
+    const check=receipt(),source=(check.sources as Value[])[0],origin=(check.origins as Value[])[0];
+    const info={content_hash:source.expected_hash,source:{root:source.original_root,relative_path:source.source_relative_path},source_verification:check};
+    assert.equal(nativeSavedSourceState(info,String(source.expected_hash),String(origin.publication)),'matches_index');
+    for(const changed of [undefined,'airk-r1:wrong'])assert.equal(nativeSavedSourceState(info,String(source.expected_hash),changed),'unchecked');
+    assert.equal(nativeSavedSourceState(info,'b'.repeat(64),String(origin.publication)),'unchecked');
+    assert.equal(nativeSavedSourceState({...info,source:{...info.source,root:'/different'}},String(source.expected_hash),String(origin.publication)),'unchecked');
+    const ambiguous=structuredClone(check);(ambiguous.sources as Value[]).push(structuredClone(source));
+    assert.equal(nativeSavedSourceState({...info,source_verification:ambiguous},String(source.expected_hash),String(origin.publication)),'unchecked');
+    for(const [state,expected] of [['mismatch','changed_since_index'],['missing','missing']] as const){
+        const failed=structuredClone(check);(failed.sources as Value[])[0].state=state;
+        assert.equal(nativeSavedSourceState({...info,source_verification:failed},String(source.expected_hash),String(origin.publication)),expected);
+    }
+});
 
 test('dated verification display keeps zero, partial, malformed and historical observations distinct',()=>{
     const check=receipt();

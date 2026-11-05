@@ -81,6 +81,8 @@ export class ExplorerControl {
             ...(controller.catalogIndexSetupDraft?{catalogIndexSetupDraft:controller.catalogIndexSetupDraft.bind(controller)}:{}),...(controller.catalogIndexSetupApply?{catalogIndexSetupApply:controller.catalogIndexSetupApply.bind(controller)}:{}),
             ...(controller.catalogSetupResume?{catalogSetupResume:controller.catalogSetupResume.bind(controller)}:{}),...(controller.catalogSourceDraft?{catalogSourceDraft:controller.catalogSourceDraft.bind(controller)}:{}),...(controller.catalogSourceObservation?{catalogSourceObservation:controller.catalogSourceObservation.bind(controller)}:{}),...(controller.catalogSourceResolve?{catalogSourceResolve:controller.catalogSourceResolve.bind(controller)}:{}),
             ...(controller.catalogPendingSource?{catalogPendingSource:controller.catalogPendingSource.bind(controller)}:{}),
+            ...(controller.catalogPolicyStatus?{catalogPolicyStatus:controller.catalogPolicyStatus.bind(controller)}:{}),
+            ...(controller.catalogPolicyResume?{catalogPolicyResume:controller.catalogPolicyResume.bind(controller)}:{}),
             ...(controller.catalogCanRetire?{catalogCanRetire:controller.catalogCanRetire.bind(controller)}:{}),
             ...(controller.catalogRetirementReview?{catalogRetirementReview:controller.catalogRetirementReview.bind(controller)}:{}),
             ...(controller.catalogStopTracking?{catalogStopTracking:controller.catalogStopTracking.bind(controller)}:{}),

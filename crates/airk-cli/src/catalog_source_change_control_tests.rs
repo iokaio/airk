@@ -8,6 +8,461 @@ use airk_core::{
 };
 use std::path::PathBuf;
 
+fn assert_wrong_file_change_flag_refused(draft: &SourceMutationDraft) -> Result<()> {
+    let mut changed = draft.clone();
+    changed.preview.file_data_changes = !changed.preview.file_data_changes;
+    // Rebind the representation digest so this exercises the operation's exact
+    // effect contract, rather than merely detecting altered serialized bytes.
+    changed.preview_digest = changed.preview.identity()?;
+    assert!(
+        changed.validate().is_err(),
+        "source draft accepted a misrepresented derived-file effect"
+    );
+    Ok(())
+}
+
+fn policy_registry_fixture() -> Result<(
+    tempfile::TempDir,
+    PathBuf,
+    ServiceRegistry,
+    IndexDefinition,
+    CatalogSource,
+)> {
+    use airk_store::service::registry::catalog::upgrade::CatalogUpgrade;
+    let (owner, control, review) = fixture()?;
+    let instance = Incarnation::from_bytes([1; 16]);
+    let mut registry = ServiceRegistry::open(&control, instance)?;
+    registry.register(&review.index.backing)?;
+    drop(registry);
+    let upgrade = CatalogUpgrade::acquire(&control)?;
+    airk_kernel::service_catalog_upgrade::prepare(&upgrade, Sha256Digest::from_bytes([2; 32]))?;
+    upgrade.migrate()?;
+    drop(upgrade);
+    let sql = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
+    let tx = sql.unchecked_transaction()?;
+    tx.execute_batch(include_str!(
+        "../../airk-store/src/service_catalog_authority_v1.sql"
+    ))?;
+    tx.execute(
+        "UPDATE index_catalog_meta SET activated=1,authority_contract=1",
+        [],
+    )?;
+    tx.commit()?;
+    drop(sql);
+    let owner_path = control.join("service-1.4.owner.json");
+    let mut record: serde_json::Value = serde_json::from_slice(&std::fs::read(&owner_path)?)?;
+    record.as_object_mut().unwrap().remove("catalog_upgrade");
+    std::fs::write(owner_path, serde_json::to_vec(&record)?)?;
+    let mut registry = ServiceRegistry::open(&control, instance)?;
+    let page = registry.catalog_page(&CatalogPageRequest {
+        kind: CatalogKind::Indexes,
+        index_id: None,
+        project_id: None,
+        after: None,
+        expected_catalog_revision: None,
+        limit: 2,
+        max_bytes: MAX_PAGE_BYTES,
+    })?;
+    let [CatalogItem::Index(index)] = page.items.as_slice() else {
+        anyhow::bail!("expected one imported native index");
+    };
+    let index = index.clone();
+    let sources = registry.catalog_page(&CatalogPageRequest {
+        kind: CatalogKind::Sources,
+        index_id: Some(index.id),
+        project_id: None,
+        after: None,
+        expected_catalog_revision: Some(page.revision),
+        limit: 32,
+        max_bytes: MAX_PAGE_BYTES,
+    })?;
+    let source = sources
+        .items
+        .into_iter()
+        .find_map(|item| match item {
+            CatalogItem::Source(source) if source.owner => Some(source),
+            _ => None,
+        })
+        .context("native primary source missing")?;
+    Ok((owner, control, registry, index, source))
+}
+
+fn apply_policy_draft_fixture(
+    registry: &mut ServiceRegistry,
+    draft: &SourceMutationDraft,
+    index: &IndexDefinition,
+) -> Result<()> {
+    use airk_core::catalog_fences::{FencePlan, FencePreparation, WorkerDrainObligation};
+    let plan = FencePlan::new(Incarnation::from_bytes([87; 16]), 1, vec![])?
+        .with_worker_obligation(WorkerDrainObligation {
+            index_id: index.id,
+            backing: index.backing.binding,
+            workers: vec![],
+            providers: vec![],
+        })?;
+    let FencePreparation::Prepared(intent) =
+        registry.catalog_prepare_fence(&draft.request, draft.preview_digest, &plan)?
+    else {
+        anyhow::bail!("fresh native policy fixture fence expected");
+    };
+    registry.catalog_record_fence_confirmations(
+        draft.request.caller,
+        &draft.request.key,
+        intent.prepared_digest,
+        &[],
+    )?;
+    registry.catalog_apply_fenced(&draft.request, draft.preview_digest, intent.prepared_digest)?;
+    Ok(())
+}
+
+#[test]
+fn native_unblock_review_recovers_terminal_pending_trim_without_requalifying_removed_selector()
+-> Result<()> {
+    use airk_core::{
+        index_catalog::PathScope,
+        service::{JobState, RequestKey},
+    };
+    let (_owner, control, mut registry, index, source) = policy_registry_fixture()?;
+    let caller = Incarnation::from_bytes([1; 16]);
+    let engine = Sha256Digest::from_bytes([2; 32]);
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let mut selection = SourceMutationDraftSelection {
+        key: RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([84; 16]),
+        },
+        expected_catalog_revision: registry.catalog_state()?.unwrap().revision,
+        index_id: index.id,
+        change: SourceMutationSelection::TrimPath {
+            source_root_id: source.id,
+            kind: PathScope::Exact,
+            path: "original.txt".into(),
+        },
+    };
+    let initial = draft_native(&mut registry, &control, &selection, caller, engine)?;
+    apply_policy_draft_fixture(&mut registry, &initial, &index)?;
+    let pending = registry
+        .catalog_policy_status(index.id)?
+        .context("admitted native policy missing")?;
+    assert!(pending.application.is_none());
+    let rule_id = pending.policy.denies[0].rule_id;
+    selection.key.nonce = Incarnation::from_bytes([85; 16]);
+    selection.expected_catalog_revision = registry.catalog_state()?.unwrap().revision;
+    selection.change = SourceMutationSelection::UnblockPath { rule_id };
+    assert!(
+        draft_native(&mut registry, &control, &selection, caller, engine).is_err(),
+        "unblock cannot supersede an accepted pending/running cleanup job"
+    );
+    assert_eq!(
+        registry.cancel_pending(pending.job)?.state,
+        JobState::Canceled
+    );
+
+    // The original selector can no longer be qualified as an exact file. A
+    // separately reviewed unblock validates the remaining policy, not the
+    // selector being removed, and never opens the old indexed payload.
+    let original_path = Path::new(&source.canonical_path).join("original.txt");
+    let preserved_path = Path::new(&source.canonical_path).join("preserved.txt");
+    std::fs::rename(&original_path, &preserved_path)?;
+    std::fs::create_dir(&original_path)?;
+    let old_selector = pending.policy.denies[0].atom();
+    assert!(policy_selector(&source, &old_selector).is_err());
+    let unblock = draft_native(&mut registry, &control, &selection, caller, engine)
+        .context("reviewed unblock escape after terminal native trim")?;
+    unblock.validate()?;
+    let CatalogOperation::ChangeIndexPolicy {
+        change,
+        configuration,
+        expected_policy_epoch,
+        ..
+    } = &unblock.request.operation
+    else {
+        anyhow::bail!("unblock omitted canonical policy operation");
+    };
+    assert_eq!(*change, PolicyChange::Unblock { rule_id });
+    assert_eq!(*expected_policy_epoch, pending.policy.epoch.get());
+    let ProjectConfiguration::ApplySourcePolicy { policy, .. } = &configuration.configuration
+    else {
+        anyhow::bail!("unblock omitted exact after-policy configuration");
+    };
+    assert!(policy.denies.is_empty());
+    assert_eq!(policy.epoch, pending.policy.epoch.next()?);
+    assert_eq!(policy.roots, pending.policy.roots);
+    assert_eq!(
+        registry.catalog_source_policy(index.id)?.unwrap(),
+        pending.policy,
+        "review itself must retain the active deny"
+    );
+    apply_policy_draft_fixture(&mut registry, &unblock, &index)?;
+    let after = registry.catalog_policy_status(index.id)?.unwrap();
+    assert!(after.policy.denies.is_empty());
+    assert!(after.application.is_none());
+    assert_ne!(after.job, pending.job);
+    let retry_key = RequestKey {
+        namespace,
+        epoch,
+        nonce: Incarnation::from_bytes([86; 16]),
+    };
+    assert!(
+        registry
+            .catalog_resume_policy_job(index.id, pending.operation_id, caller, &retry_key)
+            .is_err(),
+        "an explicit unblock must not revive the old failed trim lineage"
+    );
+    assert_eq!(std::fs::read(preserved_path)?, b"original source bytes");
+    assert!(original_path.is_dir());
+    Ok(())
+}
+
+#[test]
+fn policy_selectors_preserve_sources_and_reject_wrong_roots_kinds_and_traversal() -> Result<()> {
+    use airk_core::index_catalog::PathScope;
+    let (_owner, _control, review) = fixture()?;
+    let source = &review.sources[0];
+    let original = std::fs::read(Path::new(&source.canonical_path).join("original.txt"))?;
+    let exact = ScopeAtom {
+        source_root_id: source.id,
+        kind: PathScope::Exact,
+        path: "original.txt".into(),
+    };
+    assert_eq!(policy_selector(source, &exact)?, exact);
+    let mut subtree = exact.clone();
+    subtree.kind = PathScope::Subtree;
+    assert!(policy_selector(source, &subtree).is_err());
+    subtree.path.clear();
+    assert_eq!(policy_selector(source, &subtree)?, subtree);
+    let mut wrong = exact.clone();
+    wrong.source_root_id = review.sources[1].id;
+    assert!(policy_selector(source, &wrong).is_err());
+    for path in [
+        "../secret",
+        "a/../secret",
+        "/secret",
+        "a\\secret",
+        "a//secret",
+        "C:secret",
+    ] {
+        wrong = exact.clone();
+        wrong.path = path.into();
+        assert!(policy_selector(source, &wrong).is_err(), "{path}");
+    }
+    let future = ScopeAtom {
+        source_root_id: source.id,
+        kind: PathScope::Subtree,
+        path: "future/private".into(),
+    };
+    assert_eq!(policy_selector(source, &future)?, future);
+    assert!(!Path::new(&source.canonical_path).join("future").exists());
+    assert_eq!(
+        std::fs::read(Path::new(&source.canonical_path).join("original.txt"))?,
+        original
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn policy_selectors_refuse_redirected_existing_parents() -> Result<()> {
+    let (owner, _control, review) = fixture()?;
+    let source = &review.sources[0];
+    std::os::unix::fs::symlink(
+        owner.path().join("support"),
+        Path::new(&source.canonical_path).join("redirect"),
+    )?;
+    let selector = ScopeAtom {
+        source_root_id: source.id,
+        kind: airk_core::index_catalog::PathScope::Subtree,
+        path: "redirect/new-child".into(),
+    };
+    assert!(policy_selector(source, &selector).is_err());
+    assert!(!owner.path().join("support/new-child").exists());
+    Ok(())
+}
+
+#[test]
+fn native_trim_rule_identity_is_stable_and_does_not_accept_frontend_rule_ids() -> Result<()> {
+    let operation = Incarnation::from_bytes([17; 16]);
+    assert_eq!(policy_rule_id(operation)?, policy_rule_id(operation)?);
+    assert_ne!(
+        policy_rule_id(operation)?,
+        policy_rule_id(Incarnation::from_bytes([18; 16]))?
+    );
+    let value = serde_json::json!({"operation":"trim_path","source_root_id":SourceRootId::from_identity(operation),
+        "kind":"subtree","path":"private","rule_id":policy_rule_id(operation)?});
+    assert!(serde_json::from_value::<SourceMutationSelection>(value).is_err());
+    Ok(())
+}
+
+#[test]
+fn complete_native_trim_draft_binds_canonical_policy_configuration_and_review_without_writes()
+-> Result<()> {
+    use airk_core::{index_catalog::PathScope, service::RequestKey};
+    use airk_store::service::registry::catalog::upgrade::CatalogUpgrade;
+    let (_owner, control, review) = fixture()?;
+    let instance = Incarnation::from_bytes([1; 16]);
+    let engine = Sha256Digest::from_bytes([2; 32]);
+    let mut registry = ServiceRegistry::open(&control, instance)?;
+    registry.register(&review.index.backing)?;
+    drop(registry);
+    let upgrade = CatalogUpgrade::acquire(&control)?;
+    airk_kernel::service_catalog_upgrade::prepare(&upgrade, engine)?;
+    upgrade.migrate()?;
+    drop(upgrade);
+    let sql = rusqlite::Connection::open(control.join("service-1.4.sqlite3"))?;
+    let tx = sql.unchecked_transaction()?;
+    tx.execute_batch(include_str!(
+        "../../airk-store/src/service_catalog_authority_v1.sql"
+    ))?;
+    tx.execute(
+        "UPDATE index_catalog_meta SET activated=1,authority_contract=1",
+        [],
+    )?;
+    tx.commit()?;
+    drop(sql);
+    let owner_path = control.join("service-1.4.owner.json");
+    let mut owner: serde_json::Value = serde_json::from_slice(&std::fs::read(&owner_path)?)?;
+    owner.as_object_mut().unwrap().remove("catalog_upgrade");
+    std::fs::write(owner_path, serde_json::to_vec(&owner)?)?;
+    let mut registry = ServiceRegistry::open(&control, instance)?;
+    let page = registry.catalog_page(&CatalogPageRequest {
+        kind: CatalogKind::Indexes,
+        index_id: None,
+        project_id: None,
+        after: None,
+        expected_catalog_revision: None,
+        limit: 2,
+        max_bytes: MAX_PAGE_BYTES,
+    })?;
+    let [CatalogItem::Index(index)] = page.items.as_slice() else {
+        anyhow::bail!("expected one imported native index");
+    };
+    let index = index.clone();
+    let sources = registry.catalog_page(&CatalogPageRequest {
+        kind: CatalogKind::Sources,
+        index_id: Some(index.id),
+        project_id: None,
+        after: None,
+        expected_catalog_revision: Some(page.revision),
+        limit: 32,
+        max_bytes: MAX_PAGE_BYTES,
+    })?;
+    let source = sources
+        .items
+        .iter()
+        .find_map(|item| match item {
+            CatalogItem::Source(source) if source.owner => Some(source.clone()),
+            _ => None,
+        })
+        .context("native primary source missing")?;
+    let (namespace, epoch) = registry.saved_request_epoch()?;
+    let selection = SourceMutationDraftSelection {
+        key: RequestKey {
+            namespace,
+            epoch,
+            nonce: Incarnation::from_bytes([83; 16]),
+        },
+        expected_catalog_revision: page.revision,
+        index_id: index.id,
+        change: SourceMutationSelection::TrimPath {
+            source_root_id: source.id,
+            kind: PathScope::Exact,
+            path: "original.txt".into(),
+        },
+    };
+    let settings = Collection::existing(
+        Path::new(&index.backing.data_root),
+        &index.backing.root,
+        &index.backing.collection,
+    )?
+    .select()?;
+    let original_settings = settings_digest(&settings.store, &index.backing.root)?;
+    let original_source = std::fs::read(Path::new(&source.canonical_path).join("original.txt"))?;
+    let draft = draft_native(&mut registry, &control, &selection, instance, engine)
+        .context("complete positive native trim draft")?;
+    draft.validate()?;
+    let CatalogOperation::ChangeIndexPolicy {
+        id,
+        expected_source_revision,
+        expected_policy_epoch,
+        expected_policy_digest,
+        change,
+        configuration,
+        engine_identity,
+    } = &draft.request.operation
+    else {
+        anyhow::bail!("native trim omitted canonical policy operation");
+    };
+    assert_eq!(*id, index.id);
+    assert_eq!(*expected_source_revision, index.source_revision);
+    assert_eq!(*expected_policy_epoch, 0);
+    assert!(expected_policy_digest.is_none());
+    assert_eq!(*engine_identity, engine);
+    let operation_id = catalog_operation_id(instance, &selection.key)?;
+    let PolicyChange::Trim { rule_id, selector } = change else {
+        anyhow::bail!("native trim omitted deny selector");
+    };
+    assert_eq!(*rule_id, policy_rule_id(operation_id)?);
+    assert_eq!(selector.source_root_id, source.id);
+    assert_eq!(selector.path, "original.txt");
+    let ProjectConfiguration::ApplySourcePolicy {
+        policy,
+        operation_id: queued_operation,
+    } = &configuration.configuration
+    else {
+        anyhow::bail!("native trim omitted exact policy configuration");
+    };
+    assert_eq!(*queued_operation, operation_id);
+    assert_eq!(policy.epoch, CatalogRevision::INITIAL);
+    assert!(!policy.allows_canonical(source.id, "original.txt"));
+    assert_eq!(configuration.settings, original_settings);
+    assert!(draft.preview.authority_fence_required && draft.preview.file_data_changes);
+    assert_wrong_file_change_flag_refused(&draft)?;
+    let impact = draft
+        .preview
+        .source_policy_impact
+        .as_ref()
+        .context("native trim omitted reviewed impact")?;
+    assert_eq!(&impact.target, selector);
+    assert_eq!(impact.canonical_root, source.canonical_path);
+    assert_eq!(impact.affected_source_root_ids, vec![source.id]);
+    assert!(!impact.affected_project_ids.is_empty());
+    assert!(impact.other_covering_index_ids.is_empty());
+    assert!(
+        impact.affected_artifacts.is_none()
+            && impact.affected_vectors.is_none()
+            && impact.affected_facts.is_none()
+            && impact.affected_relationships.is_none(),
+        "metadata-only review cannot manufacture evidence counts"
+    );
+    let rebuilt = review_request_native(
+        &mut registry,
+        &control,
+        &draft.request,
+        Some(draft.preview_digest),
+        instance,
+        engine,
+    )?;
+    assert_eq!(rebuilt, draft);
+    assert_eq!(registry.catalog_state()?.unwrap().revision, page.revision);
+    assert!(registry.catalog_source_policy(index.id)?.is_none());
+    assert!(
+        registry
+            .request_receipt(instance, &selection.key)?
+            .0
+            .is_none()
+    );
+    assert_eq!(
+        settings_digest(&settings.store, &index.backing.root)?,
+        original_settings
+    );
+    assert_eq!(
+        std::fs::read(Path::new(&source.canonical_path).join("original.txt"))?,
+        original_source
+    );
+    Ok(())
+}
+
 #[test]
 fn native_retirement_draft_remains_available_after_accepted_source_change() -> Result<()> {
     use airk_core::{
@@ -72,6 +527,8 @@ fn native_retirement_draft_remains_available_after_accepted_source_change() -> R
         instance,
         Sha256Digest::from_bytes([2; 32]),
     )?;
+    assert!(!begin.preview.file_data_changes);
+    assert_wrong_file_change_flag_refused(&begin)?;
     let plan = FencePlan::new(Incarnation::from_bytes([81; 16]), 1, vec![])?;
     let FencePreparation::Prepared(intent) =
         registry.catalog_prepare_fence(&begin.request, begin.preview_digest, &plan)?
@@ -103,6 +560,8 @@ fn native_retirement_draft_remains_available_after_accepted_source_change() -> R
         instance,
         Sha256Digest::from_bytes([2; 32]),
     )?;
+    assert!(!retirement.preview.file_data_changes);
+    assert_wrong_file_change_flag_refused(&retirement)?;
     assert!(
         matches!(retirement.request.operation,CatalogOperation::RetireIndex {expected_source_revision,..} if expected_source_revision==CatalogRevision::INITIAL.next()?)
     );

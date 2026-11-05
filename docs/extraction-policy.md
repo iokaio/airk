@@ -1,5 +1,11 @@
 # Collection extraction policy
 
+[Permanent source exclusions](source-policy.md) are a separate index-owned
+policy. Changing extraction detail or overrides, reindexing or rebuilding cannot
+unblock a source. Configuration inputs inside an excluded source scope also
+require the native source-policy check before capture; selecting a different
+extraction policy does not bypass that check.
+
 Extraction policy selects an existing native adapter for each eligible source file and, in version 3, the collection’s indexing detail. It is persisted in collection state, separately from source files and editor settings. It does not install parsers, execute build files, follow imports, or enable an external producer.
 
 ## Inspect, validate and save

@@ -46,6 +46,16 @@ libc = "=0.2.190"
 windows-sys = "=0.61.2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "signal", "time"] }
 
+# Keep routine local builds small on Windows, macOS and Linux. Enable debug
+# information explicitly for a debugger session; release settings stay separate.
+[profile.dev]
+debug = 0
+incremental = false
+
+[profile.test]
+debug = 0
+incremental = false
+
 [profile.release]
 lto = "thin"
 strip = "symbols"

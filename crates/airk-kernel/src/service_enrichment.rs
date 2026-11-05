@@ -51,6 +51,7 @@ impl Kernel {
     /// An admitted source hint yields before model admission or after the current
     /// atomic batch, retaining the saved semantic watermark and pending inputs.
     pub fn service_enrichment_turn(&self) -> Result<airk_ingest::IndexReport> {
+        self.source_policy_for_work()?;
         ensure!(
             self.is_service_collection(),
             "service enrichment requires its project owner"

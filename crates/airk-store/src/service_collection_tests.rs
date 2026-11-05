@@ -2282,6 +2282,7 @@ fn publish_projection_fixture_with_native_mode(
         roots: Default::default(),
         extractor_version: "projection-test/1".into(),
         extraction_policy_digest: Sha256Digest::from_bytes([67; 32]),
+        source_policy_digest: None,
         index_detail: Default::default(),
         vector_selection: Default::default(),
         model: None,
@@ -4781,5 +4782,122 @@ fn manual_legacy_optional_failure_retains_periodic_declared_audit_for_every_coho
             100
         );
     }
+    Ok(())
+}
+
+#[test]
+fn permanent_policy_survives_owned_purge_and_corruption_never_authorizes_deletion() -> Result<()> {
+    use crate::current::policy_capsule::PolicyCapsule;
+    use airk_core::{
+        index_catalog::{CatalogRevision, DenyId, IndexId, PathScope, SourceRootId},
+        source_policy::{DenyReason, DenyRule, POLICY_SCHEMA, SourcePolicy, SourceRoot},
+    };
+    let (_temporary, collection, registry, _bound, lease, _store, _scope) = integrity_fixture()?;
+    let registration = registry.get(lease.identity().0)?.registration;
+    let source = Path::new(&registration.root).join("policy-source-stays.txt");
+    fs::write(&source, b"original policy source")?;
+    let root_id = SourceRootId::from_identity(Incarnation::from_bytes([69; 16]));
+    let mut capsule = PolicyCapsule {
+        schema: 1,
+        operation_id: Incarnation::from_bytes([70; 16]),
+        application: None,
+        planned_removal: None,
+        policy: SourcePolicy {
+            schema: POLICY_SCHEMA.into(),
+            index_id: IndexId::from_identity(Incarnation::from_bytes([71; 16])),
+            owner_binding: registration.binding,
+            namespace: "collections-1.4".into(),
+            collection: registration.collection.clone(),
+            epoch: CatalogRevision::INITIAL,
+            roots: vec![SourceRoot {
+                id: root_id,
+                canonical_path: registration.root.clone(),
+                aliases: vec![],
+                owner: true,
+            }],
+            positive_includes: None,
+            denies: vec![DenyRule {
+                source_root_id: root_id,
+                kind: PathScope::Exact,
+                path: "policy-source-stays.txt".into(),
+                rule_id: DenyId::from_identity(Incarnation::from_bytes([72; 16])),
+                reason: DenyReason::Trim,
+                created_epoch: CatalogRevision::INITIAL,
+                inherited_from: None,
+            }],
+        },
+    };
+    let owner_path = collection.directory.join("service-owner.json");
+    let original_binding = collection.binding;
+    collection.retain_source_policy(&capsule.policy)?;
+    assert_eq!(
+        owner_digest(&json::<Owner>(&owner_path)?)?,
+        original_binding,
+        "policy marker changed immutable ownership"
+    );
+    let marker_bytes = fs::read(&owner_path)?;
+    let mut conflicting = capsule.policy.clone();
+    conflicting.denies[0].path = "different-file.txt".into();
+    assert!(collection.retain_source_policy(&conflicting).is_err());
+    assert_eq!(fs::read(&owner_path)?, marker_bytes);
+    let previous = capsule.policy.clone();
+    capsule.policy.epoch = capsule.policy.epoch.next()?;
+    collection.retain_source_policy(&capsule.policy)?;
+    assert!(collection.retain_source_policy(&previous).is_err());
+    let fresh = Collection::existing(
+        Path::new(&registration.data_root),
+        &registration.root,
+        &registration.collection,
+    )?;
+    assert_eq!(fresh.binding, original_binding);
+    assert_eq!(
+        fresh.required_source_policy(),
+        Some(airk_core::index_catalog::PolicyReference {
+            epoch: capsule.policy.epoch,
+            digest: capsule.policy.identity()?
+        })
+    );
+    capsule.save(&collection.directory)?;
+    let path = collection.directory.join("source-policy.json");
+    let valid = fs::read(&path)?;
+    let active = fs::read(collection.directory.join("active.json"))?;
+    fs::write(&path, b"corrupt permanent enforcement copy")?;
+    assert!(Collection::purge_removed_turn(&registration, &lease).is_err());
+    assert_eq!(fs::read(collection.directory.join("active.json"))?, active);
+    let mut foreign = capsule.clone();
+    foreign.policy.owner_binding = Sha256Digest::from_bytes([73; 32]);
+    fs::write(&path, serde_json::to_vec(&foreign)?)?;
+    assert!(Collection::purge_removed_turn(&registration, &lease).is_err());
+    assert_eq!(fs::read(collection.directory.join("active.json"))?, active);
+    fs::write(&path, &valid)?;
+    let mut complete = false;
+    for _ in 0..8 {
+        if Collection::purge_removed_turn(&registration, &lease)? {
+            complete = true;
+            break;
+        }
+    }
+    assert!(
+        complete,
+        "permanent enforcement copy stranded owned cleanup"
+    );
+    assert_eq!(fs::read(&path)?, valid);
+    assert!(!collection.directory.join("incarnations").exists());
+    assert!(collection.directory.join("service-owner.json").is_file());
+    assert!(Collection::purge_removed_turn(&registration, &lease)?);
+    // A preserved capsule alone is still enforcement state, never a new empty collection.
+    fs::remove_file(collection.directory.join("service-owner.json"))?;
+    assert!(Collection::purge_removed_turn(&registration, &lease)?);
+    assert!(
+        Collection::initialize(
+            Path::new(&registration.data_root),
+            &registration.root,
+            &registration.collection,
+            Incarnation::from_bytes([74; 16])
+        )
+        .is_err()
+    );
+    assert_eq!(fs::read(&path)?, valid);
+    assert_eq!(fs::read(&source)?, b"original policy source");
     Ok(())
 }

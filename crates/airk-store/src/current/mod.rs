@@ -15,6 +15,7 @@ pub mod map;
 pub mod metadata;
 pub mod native_projection;
 pub mod native_range;
+pub mod policy_capsule;
 pub mod postings;
 #[cfg(test)]
 mod publication_spike_tests;
@@ -28,6 +29,7 @@ pub mod relationships;
 pub mod resources;
 #[cfg(test)]
 mod scoped_import_tests;
+pub mod source_policy;
 pub mod text_range;
 pub mod vector_map;
 mod wal;

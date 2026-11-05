@@ -8,12 +8,10 @@ use airk_core::{
     vector_selection::VectorSelectionPolicy,
 };
 use anyhow::{Context, Result, ensure};
-use serde::Deserialize;
-#[cfg(test)]
-use sha2::{Digest, Sha256};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Draft {
     Unregister,
@@ -80,8 +78,54 @@ fn selected(path: &Path) -> Result<PathBuf> {
     );
     Ok(path.canonicalize()?)
 }
-pub fn input(path: &Path, limit: u64) -> Result<InputFile> {
+#[cfg(test)]
+pub(crate) fn input(path: &Path, limit: u64) -> Result<InputFile> {
     airk_kernel::service_configuration::prepare_input(path, limit)
+}
+
+/// Source-bearing preparation runs inside the same native owner as other
+/// administrative reads. A local hash before admission could outlive a trim
+/// fence and capture a permanently excluded source.
+async fn native_input(
+    runtime: &Path,
+    project: ProjectBinding,
+    path: &Path,
+    limit: u64,
+) -> Result<InputFile> {
+    let path = path.to_str().context("configuration input must be UTF-8")?;
+    ensure!(
+        Path::new(path).is_absolute()
+            && path.len() <= 4096
+            && !path.chars().any(char::is_control)
+            && (1..=1_048_576).contains(&limit),
+        "invalid bounded native configuration input"
+    );
+    let result = crate::service_runtime::administrative_read(
+        runtime,
+        project,
+        airk_core::native_reads::NativeRead::PrepareInputFile {
+            path: path.into(),
+            max_source_bytes: limit,
+        },
+        airk_core::usage::ClientFamily::Unknown,
+    )
+    .await?;
+    let input: InputFile = serde_json::from_value(result)
+        .context("native input preparation omitted its complete pin")?;
+    input.validate()?;
+    Ok(input)
+}
+
+fn usage_import(
+    input: InputFile,
+    expected: Option<airk_core::identity::Sha256Digest>,
+) -> Result<ProjectConfiguration> {
+    input.validate()?;
+    ensure!(
+        expected.is_none_or(|expected| expected == input.sha256),
+        "measurement changed since preview"
+    );
+    Ok(ProjectConfiguration::ImportUsage { input })
 }
 impl Draft {
     pub fn prepare(self) -> Result<ProjectConfiguration> {
@@ -97,18 +141,6 @@ impl Draft {
                     .into(),
             },
             Self::RemoveRoot { alias } => ProjectConfiguration::RemoveRoot { alias },
-            Self::InstallModel { directory } => {
-                let directory = selected(&directory)?;
-                ensure!(directory.is_dir(), "selected model must be a directory");
-                let manifest = input(&directory.join("model.json"), 16_384)?;
-                ProjectConfiguration::InstallModel {
-                    directory: directory
-                        .to_str()
-                        .context("model directory must be UTF-8")?
-                        .into(),
-                    manifest_sha256: manifest.sha256,
-                }
-            }
             Self::Unregister => ProjectConfiguration::Unregister,
             Self::ResetScanLimits => ProjectConfiguration::ResetScanLimits,
             Self::PrepareDerivedCleanup => ProjectConfiguration::PrepareDerivedCleanup,
@@ -123,41 +155,14 @@ impl Draft {
                 request_id,
                 usefulness,
             },
-            Self::ImportUsage {
-                path,
-                expected_sha256,
-            } => {
-                let input = input(&path, 65_536)?;
-                ensure!(
-                    expected_sha256.is_none_or(|expected| expected == input.sha256),
-                    "measurement changed since preview"
-                );
-                ProjectConfiguration::ImportUsage { input }
+            Self::InstallModel { .. }
+            | Self::ImportUsage { .. }
+            | Self::ExtractionPolicy { .. }
+            | Self::ScanLimits { .. }
+            | Self::QuotaPolicy { .. }
+            | Self::Calibrate { .. } => {
+                anyhow::bail!("source-bearing preparation requires its native administrative owner")
             }
-            Self::ExtractionPolicy { path } => ProjectConfiguration::ExtractionPolicy {
-                input: input(&path, 131_072)?,
-            },
-            Self::ScanLimits { path } => ProjectConfiguration::ScanLimits {
-                input: input(&path, 65_536)?,
-            },
-            Self::QuotaPolicy { .. } => {
-                anyhow::bail!("quota preparation requires native project inspection")
-            }
-            Self::Calibrate {
-                tokenizer,
-                baseline,
-                returned,
-                generation,
-                content_kind,
-                record,
-            } => ProjectConfiguration::Calibrate {
-                tokenizer: input(&tokenizer, 1_048_576)?,
-                baseline: input(&baseline, 262_144)?,
-                returned: input(&returned, 262_144)?,
-                generation,
-                content_kind,
-                record,
-            },
         };
         configuration.validate()?;
         Ok(configuration)
@@ -194,12 +199,56 @@ pub async fn prepare(
         "configuration inspection belongs to another project"
     );
     let configuration = match draft {
+        Draft::InstallModel { directory } => {
+            // Preserve the user's original path until the native policy guard
+            // has checked both its spelling and resolved source location.
+            let manifest =
+                native_input(runtime, project, &directory.join("model.json"), 16_384).await?;
+            let directory = Path::new(&manifest.path)
+                .parent()
+                .context("native model manifest has no directory")?
+                .to_str()
+                .context("model directory must be UTF-8")?
+                .to_owned();
+            ProjectConfiguration::InstallModel {
+                directory,
+                manifest_sha256: manifest.sha256,
+            }
+        }
+        Draft::ImportUsage {
+            path,
+            expected_sha256,
+        } => {
+            let input = native_input(runtime, project, &path, 65_536).await?;
+            usage_import(input, expected_sha256)?
+        }
+        Draft::ExtractionPolicy { path } => ProjectConfiguration::ExtractionPolicy {
+            input: native_input(runtime, project, &path, 131_072).await?,
+        },
+        Draft::ScanLimits { path } => ProjectConfiguration::ScanLimits {
+            input: native_input(runtime, project, &path, 65_536).await?,
+        },
         Draft::QuotaPolicy { path } => ProjectConfiguration::QuotaPolicy {
-            input: input(&path, 16_384)?,
+            input: native_input(runtime, project, &path, 16_384).await?,
             expected_policy_digest: observation
                 .snapshot
                 .quota_policy_digest
                 .context("inspect the current storage quota policy before changing it")?,
+        },
+        Draft::Calibrate {
+            tokenizer,
+            baseline,
+            returned,
+            generation,
+            content_kind,
+            record,
+        } => ProjectConfiguration::Calibrate {
+            tokenizer: native_input(runtime, project, &tokenizer, 1_048_576).await?,
+            baseline: native_input(runtime, project, &baseline, 262_144).await?,
+            returned: native_input(runtime, project, &returned, 262_144).await?,
+            generation,
+            content_kind,
+            record,
         },
         draft => draft.prepare()?,
     };
@@ -220,27 +269,45 @@ pub async fn prepare(
 mod tests {
     use super::*;
     #[test]
-    fn preparation_pins_bounded_files_without_returning_their_contents() -> Result<()> {
+    fn source_bearing_drafts_cannot_bypass_the_native_preparation_owner() -> Result<()> {
         let directory = tempfile::tempdir()?;
-        let sample = directory.path().join("sample.json");
-        let text = b"{\"private\":\"Original silver sample, never forward this input\"}";
-        std::fs::write(&sample, text)?;
-        let configuration = Draft::Calibrate {
-            tokenizer: sample.clone(),
-            baseline: sample.clone(),
-            returned: sample.clone(),
-            generation: 1,
-            content_kind: ContentKind::PlainText,
-            record: false,
+        let sample = directory.path().join("never-open.json");
+        for draft in [
+            Draft::Calibrate {
+                tokenizer: sample.clone(),
+                baseline: sample.clone(),
+                returned: sample.clone(),
+                generation: 1,
+                content_kind: ContentKind::PlainText,
+                record: false,
+            },
+            Draft::ImportUsage {
+                path: sample.clone(),
+                expected_sha256: None,
+            },
+            Draft::ExtractionPolicy {
+                path: sample.clone(),
+            },
+            Draft::ScanLimits {
+                path: sample.clone(),
+            },
+            Draft::QuotaPolicy {
+                path: sample.clone(),
+            },
+            Draft::InstallModel {
+                directory: directory.path().into(),
+            },
+        ] {
+            assert!(
+                draft
+                    .prepare()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("native administrative owner")
+            );
         }
-        .prepare()?;
-        let bytes = serde_json::to_string(&configuration)?;
-        assert!(!bytes.contains("Original silver sample"));
-        assert!(bytes.contains(&format!("{:x}", Sha256::digest(text))));
-        assert_eq!(std::fs::read(&sample)?, text);
-        std::fs::write(&sample, vec![b'x'; 262145])?;
-        assert!(input(&sample, 262144).is_err());
-        assert!(input(Path::new("relative.json"), 262144).is_err());
+        assert!(!sample.exists());
+        assert!(std::fs::read_dir(directory.path())?.next().is_none());
         Ok(())
     }
     #[test]
@@ -249,23 +316,12 @@ mod tests {
         let sample = directory.path().join("measurement.json");
         std::fs::write(&sample, b"{\"original\":true}")?;
         let expected = input(&sample, 65_536)?.sha256;
-        let prepared = Draft::ImportUsage {
-            path: sample.clone(),
-            expected_sha256: Some(expected),
-        }
-        .prepare()?;
+        let prepared = usage_import(input(&sample, 65_536)?, Some(expected))?;
         assert!(
             matches!(prepared, ProjectConfiguration::ImportUsage { input } if input.sha256 == expected)
         );
         std::fs::write(&sample, b"{\"changed\":true}")?;
-        assert!(
-            Draft::ImportUsage {
-                path: sample.clone(),
-                expected_sha256: Some(expected)
-            }
-            .prepare()
-            .is_err()
-        );
+        assert!(usage_import(input(&sample, 65_536)?, Some(expected)).is_err());
         assert_eq!(std::fs::read(&sample)?, b"{\"changed\":true}");
         Ok(())
     }

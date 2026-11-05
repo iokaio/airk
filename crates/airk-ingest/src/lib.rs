@@ -31,8 +31,11 @@ mod languages_b_data;
 mod languages_b_functional;
 mod languages_b_r_perl_groovy;
 mod msbuild;
+pub mod native_name_boundary;
 mod notebook;
 pub mod observations;
+pub mod permanent_policy;
+mod policy_ignore;
 pub mod priority;
 mod project_build;
 mod project_schemas;
@@ -42,7 +45,7 @@ mod repository_syntax;
 mod scss;
 mod semantic_projection;
 mod source_read;
-pub use source_read::{read_git_marker, verify_saved_source};
+pub use source_read::{capture_input, read_git_marker, read_protected_path, verify_saved_source};
 pub mod source_scope;
 mod specialist_business;
 mod specialist_gpu;
@@ -525,6 +528,7 @@ fn scan_streaming_profiled(
         full_reindex,
         ExtractionExecution::default(),
         None,
+        None,
         |request| {
             Ok(
                 lookup(request.path, request.source_hash, request.profile)?.map(|artifact| {
@@ -570,6 +574,7 @@ pub fn scan_observed_v2_with_budgets(
         full_reindex,
         ExtractionExecution::default(),
         None,
+        None,
         lookup,
         |profile, artifact, bytes, _| emit(profile, artifact, bytes),
     )
@@ -604,6 +609,7 @@ pub fn scan_payloads_with_budgets(
         policy,
         full_reindex,
         ExtractionExecution::default(),
+        None,
         None,
         lookup,
         emit,
@@ -665,6 +671,44 @@ pub fn scan_payloads_with_execution_paths(
         Option<&airk_core::extraction::ExtractionPayload>,
     ) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
+    scan_payloads_with_execution_source_policy(
+        root,
+        data_dir,
+        previous,
+        roots,
+        limits,
+        policy,
+        full_reindex,
+        execution,
+        paths,
+        None,
+        lookup,
+        emit,
+    )
+}
+
+/// Canonical scanner with a separately admitted permanent native source policy.
+/// Filtering occurs before directory traversal, header capture or source hashing.
+#[allow(clippy::too_many_arguments)]
+pub fn scan_payloads_with_execution_source_policy(
+    root: &Path,
+    data_dir: &Path,
+    previous: &Snapshot,
+    roots: &BTreeMap<String, String>,
+    limits: ScanLimits,
+    policy: &adapters::profile::ExtractionPolicy,
+    full_reindex: bool,
+    execution: ExtractionExecution,
+    paths: Option<&std::collections::BTreeSet<String>>,
+    source_policy: Option<&airk_core::source_policy::SourcePolicy>,
+    lookup: impl FnMut(observations::ReuseRequest<'_>) -> Result<Option<observations::VerifiedReuse>>,
+    emit: impl FnMut(
+        &airk_core::extraction::ExtractionProfile,
+        &Artifact,
+        &[u8],
+        Option<&airk_core::extraction::ExtractionPayload>,
+    ) -> Result<Artifact>,
+) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
     limits.validate()?;
     execution.validate()?;
     scan_observed_profiled(
@@ -677,6 +721,7 @@ pub fn scan_payloads_with_execution_paths(
         full_reindex,
         execution,
         paths,
+        source_policy,
         lookup,
         emit,
     )
@@ -693,6 +738,7 @@ fn scan_observed_profiled(
     full_reindex: bool,
     execution: ExtractionExecution,
     paths: Option<&std::collections::BTreeSet<String>>,
+    source_policy: Option<&airk_core::source_policy::SourcePolicy>,
     mut lookup: impl FnMut(
         observations::ReuseRequest<'_>,
     ) -> Result<Option<observations::VerifiedReuse>>,
@@ -703,6 +749,9 @@ fn scan_observed_profiled(
         Option<&airk_core::extraction::ExtractionPayload>,
     ) -> Result<Artifact>,
 ) -> Result<(Snapshot, IndexReport, observations::ScanObservation)> {
+    if let Some(source_policy) = source_policy {
+        source_policy.validate()?;
+    }
     use observations::DisappearanceCause;
     let mut observation = observations::ScanObservation::default();
     let registry = adapters::registry::AdapterRegistry::baseline();
@@ -747,17 +796,28 @@ fn scan_observed_profiled(
         limits,
         &mut observation.usage,
         &mut read_bytes,
+        source_policy,
     )?;
-    let walker = sources.iter().flat_map(|(prefix, source)| {
-        let selected = paths.map(|paths| {
-            paths
-                .iter()
-                .filter_map(|path| path.strip_prefix(prefix.as_str()))
-                .map(str::to_owned)
-                .collect()
+    let walker = sources
+        .iter()
+        .filter(|(_, source)| {
+            source_policy.is_none_or(|policy| {
+                source
+                    .to_str()
+                    .is_some_and(|root| permanent_policy::allows(policy, root, "", true))
+            })
+        })
+        .flat_map(|(prefix, source)| {
+            let selected = paths.map(|paths| {
+                paths
+                    .iter()
+                    .filter_map(|path| path.strip_prefix(prefix.as_str()))
+                    .map(str::to_owned)
+                    .collect()
+            });
+            discovery_selected_with_policy(source, &data_dir, selected, source_policy.cloned())
+                .map(move |entry| (prefix, source, entry))
         });
-        discovery_selected(source, &data_dir, selected).map(move |entry| (prefix, source, entry))
-    });
     let scanned = (|| -> Result<()> {
         for (prefix, source, entry) in walker {
             ensure!(
@@ -1133,6 +1193,7 @@ fn capture_header_inputs(
     limits: ScanLimits,
     usage: &mut observations::ScanUsage,
     read_bytes: &mut usize,
+    source_policy: Option<&airk_core::source_policy::SourcePolicy>,
 ) -> Result<(header_context::CapturedMap, BTreeMap<String, Vec<u8>>)> {
     let mut wanted: std::collections::BTreeSet<_> =
         policy.declared_configurations().into_iter().collect();
@@ -1142,12 +1203,20 @@ fn capture_header_inputs(
         return Ok((captured, bytes_by_path));
     }
     for (prefix, root) in sources {
+        if source_policy.is_some_and(|policy| {
+            root.to_str()
+                .is_none_or(|root| !permanent_policy::allows(policy, root, "", true))
+        }) {
+            continue;
+        }
         let selected = wanted
             .iter()
             .filter_map(|path| path.strip_prefix(prefix))
             .map(str::to_owned)
             .collect();
-        for entry in discovery_selected(root, data_dir, Some(selected)) {
+        for entry in
+            discovery_selected_with_policy(root, data_dir, Some(selected), source_policy.cloned())
+        {
             ensure!(
                 usage.charged_entries() < limits.discovery_entries,
                 "header configuration discovery budget exhausted; previous generation retained"
@@ -1194,22 +1263,81 @@ fn capture_header_inputs(
     Ok((captured, bytes_by_path))
 }
 
-fn discovery(root: &Path, data_dir: &Path) -> ignore::Walk {
-    discovery_selected(root, data_dir, None)
-}
-
-fn discovery_selected(root: &Path, data_dir: &Path, selected: Option<Vec<String>>) -> ignore::Walk {
+fn discovery_selected_with_policy(
+    root: &Path,
+    data_dir: &Path,
+    selected: Option<Vec<String>>,
+    policy: Option<airk_core::source_policy::SourcePolicy>,
+) -> impl Iterator<Item = Result<ignore::DirEntry>> {
     let data_dir = data_dir.to_path_buf();
     let ordering_root = root.to_path_buf();
     let credential_root = root.to_path_buf();
-    let credentials = std::sync::Mutex::new(source_scope::CredentialDefaults::new(root));
+    let policy_root = root.to_path_buf();
+    // ignore's filter is boolean. Retain an unsupported comparison/probe and
+    // surface it through the iterator; pruning cannot become a successful scan.
+    // Walk exempts its root from filter_entry and reads that root's ignore
+    // controls before yielding it. Qualify it before the first call to next.
+    let initial = (|| -> Result<bool> {
+        let Some(policy) = &policy else {
+            return Ok(true);
+        };
+        let root_text = root.to_str().context("non-UTF-8 policy root")?;
+        if !permanent_policy::allows_checked(policy, root_text, "", true)? {
+            return Ok(false);
+        }
+        permanent_policy::qualify_discovery_directory(policy, root_text, "")?;
+        Ok(true)
+    })();
+    let root_blocked = matches!(initial, Ok(false));
+    let failure = std::sync::Arc::new(std::sync::Mutex::new(initial.err()));
+    let filter_failure = failure.clone();
+    let restricted = policy.as_ref().is_some_and(permanent_policy::restricts);
+    let protected = if restricted
+        && !root_blocked
+        && failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_none()
+    {
+        match policy_ignore::ProtectedIgnore::new(root, policy.as_ref().unwrap()) {
+            Ok(matcher) => Some(std::sync::Mutex::new(matcher)),
+            Err(error) => {
+                *failure
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let credentials = std::sync::Mutex::new(if restricted {
+        source_scope::CredentialDefaults::guarded(root)
+    } else {
+        source_scope::CredentialDefaults::new(root)
+    });
     let selected = selected.map(|paths| {
         paths
             .into_iter()
             .map(|path| root.join(path))
             .collect::<Vec<_>>()
     });
-    source_scope::builder(root)
+    let mut base = if restricted {
+        let mut builder = ignore::WalkBuilder::new(root);
+        builder
+            .require_git(false)
+            .hidden(false)
+            .follow_links(false)
+            .parents(false)
+            .ignore(false)
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false);
+        builder
+    } else {
+        source_scope::builder(root)
+    };
+    let mut walk = base
         .sort_by_file_path(move |left, right| {
             let rank = |path: &Path| {
                 priority::agent_path_priority(
@@ -1223,6 +1351,49 @@ fn discovery_selected(root: &Path, data_dir: &Path, selected: Option<Vec<String>
             rank(left).cmp(&rank(right)).then_with(|| left.cmp(right))
         })
         .filter_entry(move |entry| {
+            if let Some(policy) = &policy {
+                let invalid = |reason: &'static str| {
+                    *filter_failure
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(
+                        native_name_boundary::NativeNameBoundaryUnavailable::new(reason).into(),
+                    );
+                    false
+                };
+                let Some(root) = policy_root.to_str() else {
+                    return invalid("non_utf8_root");
+                };
+                let Ok(relative) = entry.path().strip_prefix(&policy_root) else {
+                    return invalid("outside_source_root");
+                };
+                let Some(relative) = relative.to_str() else {
+                    return invalid("non_utf8_locator");
+                };
+                let relative = relative.replace('\\', "/");
+                let directory = entry.file_type().is_some_and(|kind| kind.is_dir());
+                let decision = (|| -> Result<bool> {
+                    let allowed =
+                        permanent_policy::allows_checked(policy, root, &relative, directory)?;
+                    if allowed {
+                        if directory {
+                            permanent_policy::qualify_discovery_directory(policy, root, &relative)?;
+                        } else {
+                            permanent_policy::qualify(policy, root, &relative, false)?;
+                        }
+                    }
+                    Ok(allowed)
+                })();
+                match decision {
+                    Ok(true) => (),
+                    Ok(false) => return false,
+                    Err(error) => {
+                        *filter_failure
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(error);
+                        return false;
+                    }
+                }
+            }
             let name = entry.file_name().to_string_lossy();
             entry.depth() == 0
                 || (!excluded(&name)
@@ -1234,16 +1405,64 @@ fn discovery_selected(root: &Path, data_dir: &Path, selected: Option<Vec<String>
                         .path()
                         .strip_prefix(&credential_root)
                         .is_ok_and(|relative| {
-                            !credentials
+                            let directory = entry.file_type().is_some_and(|kind| kind.is_dir());
+                            let mut credentials = credentials
                                 .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .excluded(
-                                    relative,
-                                    entry.file_type().is_some_and(|kind| kind.is_dir()),
-                                )
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            if let Some(protected) = &protected {
+                                match protected
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .decision(relative, directory)
+                                {
+                                    Ok(policy_ignore::Decision::Ignore) => false,
+                                    Ok(decision) => !credentials.excluded_with_whitelist(
+                                        relative,
+                                        directory,
+                                        decision == policy_ignore::Decision::Whitelist,
+                                    ),
+                                    Err(error) => {
+                                        *filter_failure
+                                            .lock()
+                                            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                                            Some(error);
+                                        false
+                                    }
+                                }
+                            } else {
+                                !restricted && !credentials.excluded(relative, directory)
+                            }
                         }))
         })
-        .build()
+        .build();
+    let mut stopped = root_blocked;
+    let mut first = true;
+    std::iter::from_fn(move || {
+        if stopped {
+            return None;
+        }
+        if first {
+            first = false;
+            if let Some(error) = failure
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .take()
+            {
+                stopped = true;
+                return Some(Err(error));
+            }
+        }
+        let next = walk.next();
+        if let Some(error) = failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            stopped = true;
+            return Some(Err(error));
+        }
+        next.map(|entry| entry.map_err(Into::into))
+    })
 }
 
 fn read_source(root: &Path, path: &Path) -> Result<Vec<u8>> {
@@ -1252,11 +1471,35 @@ fn read_source(root: &Path, path: &Path) -> Result<Vec<u8>> {
 
 /// Explicit extraction still respects normal ignore rules and source boundaries.
 pub fn read_selected_source(root: &Path, data_dir: &Path, relative: &str) -> Result<Vec<u8>> {
+    read_selected_source_with_policy(root, data_dir, relative, None)
+}
+
+pub fn read_selected_source_with_policy(
+    root: &Path,
+    data_dir: &Path,
+    relative: &str,
+    policy: Option<&airk_core::source_policy::SourcePolicy>,
+) -> Result<Vec<u8>> {
     semantic::validate_path(relative)?;
     let root = root.canonicalize()?;
+    if let Some(policy) = policy {
+        let native_root = root.to_str().context("non-UTF-8 policy root")?;
+        ensure!(
+            permanent_policy::allows_checked(policy, native_root, relative, false)?,
+            "selected source is permanently excluded"
+        );
+        permanent_policy::qualify_source_access(policy, native_root, relative)?;
+    }
     let data_dir = data_dir.canonicalize()?;
     let expected = root.join(relative);
-    for (visited, entry) in discovery(&root, &data_dir).enumerate() {
+    for (visited, entry) in discovery_selected_with_policy(
+        &root,
+        &data_dir,
+        Some(vec![relative.into()]),
+        policy.cloned(),
+    )
+    .enumerate()
+    {
         ensure!(
             visited < MAX_DISCOVERY_ENTRIES,
             "selected source discovery budget exhausted"

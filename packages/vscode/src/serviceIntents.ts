@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { identifier, MutationIntent, record, RequestKey, ServiceClient, ServiceError, validateMutationIntent, count } from './serviceClient';
-import { CatalogApplyIntent, IndexSetupApplyIntent, SourceResolveIntent, catalogFenceObservation, indexSetupObservation, sourceChangeObservation, validateCatalogApply, validateIndexSetupApply, validateSourceResolveIntent } from './indexingCatalog';
+import { CatalogApplyIntent, IndexSetupApplyIntent, SourceResolveIntent, PolicyResumeIntent, validatePolicyResumeIntent, catalogFenceObservation, indexSetupObservation, sourceChangeObservation, validateCatalogApply, validateIndexSetupApply, validateSourceResolveIntent } from './indexingCatalog';
 
 export interface IntentStorage {
     keys(): readonly string[];
@@ -10,10 +10,11 @@ export interface IntentStorage {
     update(key: string, value: unknown): Thenable<void>;
 }
 export interface LifecycleIntent { lifecycle:{caller:string;key:RequestKey;action:'stop'|'restart';expected_instance:string;runtime:string} }
-export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent;
+export type ConsoleIntent=MutationIntent|LifecycleIntent|CatalogApplyIntent|IndexSetupApplyIntent|SourceResolveIntent|PolicyResumeIntent;
 export interface SavedIntent { schema: 1; scope: string; title: string; intent: ConsoleIntent; nativeObservation?:Record<string,unknown>; nativeFenceObservation?:Record<string,unknown>; nativeSetupObservation?:Record<string,unknown>; nativeSourceObservation?:Record<string,unknown>; localDispatchState?:'submitted'|'known_receipt' }
 function validate(input:unknown):ConsoleIntent {
     const object=record(input);
+    if('catalog_policy_resume' in object)return validatePolicyResumeIntent(input);
     if('catalog_source_change_resolve' in object)return validateSourceResolveIntent(input);
     if('catalog_index_setup_apply' in object)return validateIndexSetupApply(input);
     if('catalog_apply' in object)return validateCatalogApply(input);
@@ -27,6 +28,7 @@ function validate(input:unknown):ConsoleIntent {
     return input as LifecycleIntent;
 }
 function identity(intent:ConsoleIntent):{namespace:string;id:string}{
+    if('catalog_policy_resume' in intent)return {namespace:intent.catalog_policy_resume.key.namespace,id:intent.catalog_policy_resume.key.nonce};
     if('catalog_source_change_resolve' in intent)return {namespace:intent.namespace,id:intent.catalog_source_change_resolve.begin_operation};
     if('catalog_index_setup_apply' in intent){const key=record(record(intent.catalog_index_setup_apply.draft.request).key);return {namespace:identifier(key.namespace,16),id:identifier(key.nonce,16)};}
     const request='catalog_apply' in intent?intent.catalog_apply.request:'enqueue' in intent?intent.enqueue:'retry' in intent?intent.retry:'plan_create' in intent?intent.plan_create:'configure_project' in intent?intent.configure_project:intent.lifecycle;
@@ -78,6 +80,11 @@ export class IntentJournal {
             const begin=record(observed.begin),metadata=record(begin.metadata),request=record(begin.request);
             if(metadata.operation_id!==copied.catalog_source_change_resolve.begin_operation||record(request.key).namespace!==copied.namespace)throw new ServiceError('crossed_local_source_begin');
             value.nativeObservation=structuredClone(nativeObservation);
+        }else if('catalog_policy_resume' in copied){
+            if(!nativeObservation)throw new ServiceError('native_policy_observation_required');
+            const snapshot=record(nativeObservation.snapshot),policy=record(snapshot.policy);
+            if(nativeObservation.status!=='catalog_policy_status'||nativeObservation.index_id!==copied.catalog_policy_resume.index_id||snapshot.operation_id!==copied.catalog_policy_resume.operation_id||policy.owner_binding!==copied.project)throw new ServiceError('crossed_local_policy_resume');
+            value.nativeObservation=structuredClone(nativeObservation);
         }else if(nativeObservation!==undefined)throw new ServiceError('unexpected_local_native_observation');
         return this.serialize(async()=>{
             if(!title||title.length>160||Buffer.byteLength(JSON.stringify(value))>MAX_BYTES)throw new ServiceError('local_intent_record_oversize');
@@ -100,7 +107,7 @@ export class IntentJournal {
     observeCatalog(id:string,response:Record<string,unknown>):Promise<void>{
         const copied=structuredClone(response);
         return this.serialize(async()=>{
-            const saved=this.list().find(entry=>entry.id===id);if(!saved||!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent))throw new ServiceError('local_catalog_intent_not_found',true);
+            const saved=this.list().find(entry=>entry.id===id);if(!saved||!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent))throw new ServiceError('local_catalog_intent_not_found',true);
             const typedFence=['catalog_applied','catalog_receipt','catalog_outcome_unknown'].includes(String(copied.status));
             const priorFence=saved.value.nativeFenceObservation,observed=typedFence?catalogFenceObservation(copied):undefined,prior=priorFence?catalogFenceObservation(priorFence):undefined,observedFence=typedFence&&(copied.fenced_receipt!=null||observed!==undefined);
             const wasApplied=!!priorFence&&(priorFence.fenced_receipt!=null||prior?.state==='applied');
@@ -124,14 +131,14 @@ export class IntentJournal {
         });
     }
     async reconcile(client:ServiceClient,onReceipt:(response:Record<string,unknown>)=>Promise<void>,onRemoved?:(project:string)=>Promise<void>,onFailure?:(id:string,error:unknown)=>void):Promise<void>{
-        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent));
+        const candidates=this.list().filter(saved=>!('lifecycle' in saved.value.intent)&&!('plan_create' in saved.value.intent)&&!('catalog_apply' in saved.value.intent)&&!('catalog_index_setup_apply' in saved.value.intent)&&!('catalog_source_change_resolve' in saved.value.intent)&&!('catalog_policy_resume' in saved.value.intent));
         const after=this.reconcileAfter??'';
         const batch=[...candidates.filter(saved=>saved.id>after),...candidates.filter(saved=>saved.id<=after)].slice(0,8);
         for(const saved of batch){
             this.reconcileAfter=saved.id;
             try{
                 const intent=saved.value.intent;
-                if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent)continue;
+                if('lifecycle' in intent||'plan_create' in intent||'catalog_index_setup_apply' in intent||'catalog_source_change_resolve' in intent||'catalog_policy_resume' in intent)continue;
                 if('catalog_apply' in intent){
                     const request=intent.catalog_apply.request;
                     const result=await client.rpc({catalog_receipt:{caller:request.caller,key:request.key}},'catalog_receipt');
@@ -164,6 +171,7 @@ export class IntentJournal {
         if('catalog_apply' in intent)throw new ServiceError('catalog_apply_requires_receipt_reconciliation');
         if('catalog_index_setup_apply' in intent)throw new ServiceError('index_setup_requires_receipt_reconciliation');
         if('catalog_source_change_resolve' in intent)throw new ServiceError('source_resolution_requires_observation');
+        if('catalog_policy_resume' in intent)throw new ServiceError('policy_resume_requires_receipt_reconciliation');
         if('lifecycle' in intent&&!lifecycle)throw new ServiceError('native_lifecycle_transport_required');
         if(!('lifecycle' in intent)&&!client)throw new ServiceError('console_not_connected');
         const response='lifecycle' in intent?await lifecycle!(intent):await client!.submitMutation(intent);

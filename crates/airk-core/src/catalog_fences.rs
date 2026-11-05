@@ -234,11 +234,18 @@ impl FencePlan {
     pub fn validate_for(&self, request: &CatalogRequest) -> Result<()> {
         self.validate()?;
         match (&request.operation, &self.worker_obligation) {
-            (CatalogOperation::RetireIndex { id, .. }, Some(obligation)) => ensure!(
+            (
+                CatalogOperation::RetireIndex { id, .. }
+                | CatalogOperation::ChangeIndexPolicy { id, .. },
+                Some(obligation),
+            ) => ensure!(
                 *id == obligation.index_id,
                 "catalog retirement worker obligation mismatch"
             ),
-            (CatalogOperation::RetireIndex { .. }, None) => {
+            (
+                CatalogOperation::RetireIndex { .. } | CatalogOperation::ChangeIndexPolicy { .. },
+                None,
+            ) => {
                 anyhow::bail!("catalog retirement worker census missing")
             }
             (_, None) => {}

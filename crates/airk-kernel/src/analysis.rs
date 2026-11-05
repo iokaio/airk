@@ -96,10 +96,12 @@ impl Kernel {
             "index pending source root changes before OCR"
         );
         let location = airk_store::roots::source_location(&baseline.root, &baseline.roots, path)?;
-        let bytes = airk_ingest::read_selected_source(
+        let permanent_policy = self.source_policy_for_work()?;
+        let bytes = airk_ingest::read_selected_source_with_policy(
             Path::new(&location.root),
             &self.data_root,
             &location.relative_path,
+            permanent_policy.as_deref(),
         )?;
         ensure!(
             bytes.len() <= limits.file_bytes,
@@ -115,10 +117,11 @@ impl Kernel {
             }
             let output = retained_output.as_ref().context("OCR output missing")?;
             ensure!(
-                airk_ingest::read_selected_source(
+                airk_ingest::read_selected_source_with_policy(
                     Path::new(&location.root),
                     &self.data_root,
-                    &location.relative_path
+                    &location.relative_path,
+                    permanent_policy.as_deref()
                 )? == bytes,
                 "OCR source changed during extraction; previous generation retained"
             );

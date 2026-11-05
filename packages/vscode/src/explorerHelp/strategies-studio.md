@@ -10,17 +10,19 @@ related_airk_help: workflows, search
 
 Strategies › Studio edits one strategy, runs it against one pinned AIRK publication, and compiles an editable prompt.
 
-Steps come from a closed operator catalog: AIRK retrieval tools, a saved-file hash check and evidence transforms. There are no shell, write, network or recursion operators, and search steps are always lexical. Arguments can bind only ${params.*} and ${scope.*}. The first step is always airk.status, which pins the publication. Editing a core template creates a fork named user/NAME, and adding, removing or reordering a step clears the run.
+Steps come from a closed operator catalog: AIRK retrieval tools, native saved-source verification and evidence transforms. The historical operator identifier host.hashSavedFiles now delegates source capture to the native owner, which checks the selected index's current source policy. The extension observes unsaved editor state without reading source bytes. There are no shell, write, network or recursion operators, and search steps are always lexical. Arguments can bind only ${params.*} and ${scope.*}. The first step is always airk.status, which pins the publication. Editing a core template creates a fork named user/NAME, and adding, removing or reordering a step clears the run.
 
 ## Steps
 
 1. Write the objective and fill in the parameters and optional path scope.
 2. Adjust the steps if needed; validation errors are listed and block Run.
 3. Choose **Run**. The run pins the publication from the first status step and stops if the index is republished.
-4. Read the outcome. A verified snapshot means every cited file's saved bytes matched the index; otherwise the run is partial and lists why (truncation, budgets, a step error or a live hash mismatch).
+4. Read the outcome. A verified snapshot records that every cited file matched during its dated native check; otherwise the run is partial and lists why (truncation, budgets, a step error, unsaved editor state or a source mismatch). A past check does not establish continued freshness or authorize an edit.
 5. Choose the prompt profile: Portable includes the excerpts and assumes no AIRK; MCP-aware also asks the agent to re-check with AIRK if it has the tools.
 6. Edit the prompt if needed, then **Copy prompt**. **Rebuild** asks before discarding edits.
 7. Or choose **Share snapshot with agent**, review the confirmation and give the ten-minute token to the agent for get_handoff. The full snapshot is capped at 24 KiB; edits, binding changes and observed evidence changes revoke the token. Read Share a reviewed snapshot for the full contract.
+
+**Copy complete run JSON** and **Export complete run JSON** retain the current run's complete native source-check responses separately from the selected evidence in its prompt. Explicit source verification shares the run's time and call limits, a total 512 MiB source-byte budget and an 8 MiB response budget. Missing accounting or exhausted budgets prevent further source capture and leave an explicit partial result. These checks require an unambiguous single-index selection.
 
 ## Save, import and export
 

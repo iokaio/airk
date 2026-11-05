@@ -20,6 +20,7 @@ export interface McpStdioOptions {
     launch?: (command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) => ChildProcessWithoutNullStreams;
 }
 interface Pending { resolve(value: any): void; reject(error: Error): void; timer?: NodeJS.Timeout }
+export const DEFAULT_MCP_MESSAGE_BYTES=1024*1024;
 
 /**
  * One bounded newline-delimited JSON-RPC stdio connection to an MCP server.
@@ -49,7 +50,7 @@ export class McpStdioSession {
         const env = { ...process.env, ...options.env };
         const child = (options.launch ?? ((command, args, launch) => spawn(command, args, { ...launch, windowsHide: true, stdio: 'pipe' })))(
             options.command, options.args, { cwd: options.cwd, env });
-        const session = new McpStdioSession(child, options.maxMessageBytes ?? 1024 * 1024);
+        const session = new McpStdioSession(child, options.maxMessageBytes ?? DEFAULT_MCP_MESSAGE_BYTES);
         try {
             const initialize = await session.request('initialize', { protocolVersion: '2025-11-25', capabilities: {},
                 clientInfo: { name: options.clientName, version: options.clientVersion } }, handshakeTimeout);

@@ -59,6 +59,16 @@ test('control actions run through the shared console controller', async () => {
     assert.equal(control.connection(), 'ready');
 });
 
+test('catalog policy read and resume retain the shared native controller owner',async()=>{
+    const index='idx_'+'78'.repeat(16),response={status:'catalog_policy_status',index_id:index,snapshot:null,job:null};let reads=0,resumes=0;
+    const shared={state:state(),catalogRead:async()=>({}),catalogPrepare:async()=>{throw new Error('No implicit review');},catalogApply:async()=>({}),catalogReconcile:async()=>[],catalogPending:()=>[],
+        async catalogPolicyStatus(selected:string){assert.equal(this,shared);assert.equal(selected,index);reads++;return response;},
+        async catalogPolicyResume(value:Record<string,unknown>,valid:()=>boolean){assert.equal(this,shared);assert.equal(value,response);assert.ok(valid());resumes++;return response;}};
+    const control=new ExplorerControl({controller:shared,run:async()=>{},retain:()=>({dispose(){}}),onDidChangeState:()=>({dispose(){}})},'1.5.0');
+    const catalog=control.catalog;assert.ok(catalog?.catalogPolicyStatus);assert.ok(catalog?.catalogPolicyResume);assert.equal(reads,0);assert.equal(resumes,0);
+    assert.equal(await catalog.catalogPolicyStatus(index),response);assert.equal(await catalog.catalogPolicyResume(response,()=>true),response);assert.equal(reads,1);assert.equal(resumes,1);
+});
+
 
 test('removed-project browsing preserves active Explorer choices and excludes removed rows', () => {
     const active = state().page!;

@@ -1,5 +1,43 @@
 # Architecture
 
+P9's working build keeps reviewed source-policy contracts in Core,
+durable admission and policy capsules in Store, discovery/name checks in Ingest,
+and enforcement/removal publication in Kernel. CLI owns native worker/watch
+drainage and guarded delivery; the extension reviews and renders complete native
+observations. Evidence MCP remains read-only. See [permanent exclusions](source-policy.md)
+and the [qualification ledger](research/implementation-v190.md).
+
+Store also binds the policy capability to the stable managed owner, excluding
+the mutable reference from the original ownership digest. Retirement preserves
+that owner, the enforcement capsule and its bounded inactive registration/current
+job while purging derived incarnations. Missing required policy fails closed;
+retirement can persist an admitted but unapplied deny without inventing a removal
+publication. Kernel checks the stable requirement independently of the retained
+publication's attestation.
+
+Coverage refresh uses Ingest's same qualified discovery predicate before source
+capture, with Kernel policy-epoch and service cancellation checkpoints. Its private
+cache binds the policy digest; cached delivery and persistence revalidate the
+epoch. Managed replacement validation uses that adapter too. Public coverage
+fields retain their existing contract; excluded-file totals are not obtained by
+scanning permanently pruned sources.
+
+Ingest also owns protected ignore-control snapshots for active source restrictions.
+Its existing no-follow reader captures bounded configuration; the dependency only
+compiles/matches supplied patterns. Discovery, coverage and the source-scope
+adapters used by Kernel watch/verification share that implementation. Failed
+verification configuration is cached per selected root for that observation,
+without retrying its input reads for every reference. This changes no public
+result schema and adds no scheduler or source mutation.
+
+Administrative source capture also belongs to Ingest: authorize the original and
+resolved paths once, then traverse that exact spelling without following links.
+Kernel owns policy checks and protected model-asset adapters; Core's asset-source
+interface keeps Retrieval independent of Ingest. Store's existing installation
+and calibration owners consume bounded captures and verify retained hashes.
+Native exact cleanup-resume receipts remain read-only registry observations,
+separate from current policy state and mutation replay admission.
+
 P8 adds a pure bounded Recommendations projection in Core over the existing
 authorized combined snapshot. CLI retains catalog/delivery fencing and obtains
 recipes from MCP's actual served catalog. Workbench plans and native aliases use

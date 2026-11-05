@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { CatalogKind, CatalogObject, CatalogReview, CatalogView, IndexSetupReview, WindowContextDescriptor, catalogBound, catalogHex, catalogId, catalogItems, catalogObject, catalogRevision, catalogWindowAssociation, CATALOG_PAGE_BYTES, validateCatalogOperation, validateGrantSelection, validateNativeHostContext, validateWindowContext, validateIndexSetupSelection, validateSourceMutationSelection, sourceChangeObservation } from './indexingCatalog';
 import { randomUUID } from 'node:crypto';
-import { CatalogRetirementReview } from './indexingCatalog';
+import { canReviewPolicyUnblock, CatalogRetirementReview } from './indexingCatalog';
 
 export interface CatalogControl {
     catalogRead(method: CatalogObject): Promise<CatalogObject>;
@@ -19,6 +19,8 @@ export interface CatalogControl {
     catalogPendingSource?(index:string,namespace:string):Promise<CatalogObject>;
     catalogSourceResolve?(observation:CatalogObject,valid:()=>boolean):Promise<CatalogObject>;
     catalogCanRetire?(index:string,backing:string,namespace:string):boolean;
+    catalogPolicyStatus?(index:string):Promise<CatalogObject>;
+    catalogPolicyResume?(observation:CatalogObject,valid:()=>boolean):Promise<CatalogObject>;
     catalogRetirementReview?(id:string):Promise<CatalogRetirementReview>;
     catalogStopTracking?(review:CatalogRetirementReview,valid:()=>boolean):Promise<CatalogObject>;
 }
@@ -35,7 +37,7 @@ export class IndexingCatalogController {
     constructor(private readonly host: CatalogHost) {}
     snapshot(): CatalogView {
         this.sync();
-        return this.host.authorized() ? { ...this.view, canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
+        return this.host.authorized() ? { ...this.view, canReadPolicy:!!this.host.control?.catalogPolicyStatus,canResumePolicy:!!this.host.control?.catalogPolicyResume,canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
     }
     /** Complete native read, retained with the same owner fence as catalog data. */
     async recommendations(read:()=>Promise<CatalogObject>):Promise<CatalogView>{
@@ -105,7 +107,7 @@ export class IndexingCatalogController {
                 const cursor=catalogObject(continuation);
                 if(cursor.namespace!==body.namespace||cursor.revision!==body.revision||cursor.kind!==kind||cursor.index_id!==request.index_id||cursor.project_id!==request.project_id)throw new Error('crossed_catalog_continuation');
             }
-            this.view = { ...this.view, [field]: response, review: undefined,setupReview:undefined, ...(field === 'page' ? { detail: undefined, sources: undefined, memberships: undefined } : {}) };
+            this.view = { ...this.view, [field]: response, review: undefined,setupReview:undefined, ...(field === 'page' ? { detail: undefined, sources: undefined, memberships: undefined,policyStatus:undefined } : {}) };
             if (field === 'page') { this.pageRequest = request; } else if (field === 'sources') { this.sourceRequest = request; } else if(field==='grants'){this.grantRequest=request;}else { this.membershipRequest = request; }
             this.view.generation++;
         });
@@ -117,7 +119,7 @@ export class IndexingCatalogController {
             const response = await control.catalogRead({ catalog_detail: { entity: { kind, id }, expected_catalog_revision: expected ?? null } });
             current(); this.accept(response, 'detail', expected);
             const item=catalogItems(response,'detail')[0];if(item&&(item.kind!==kind||(kind==='grant'?catalogObject(item.value.grant).id:item.value.id)!==id))throw new Error('crossed_catalog_detail');
-            this.view = { ...this.view, ...(kind==='grant'?{grantDetail:response}:{detail:response,sources:undefined,memberships:undefined}), review: undefined,setupReview:undefined, generation: this.view.generation + 1 };
+            this.view = { ...this.view, ...(kind==='grant'?{grantDetail:response}:{detail:response,sources:undefined,memberships:undefined,policyStatus:undefined}), review: undefined,setupReview:undefined, generation: this.view.generation + 1 };
         });
     }
     preview(operation: CatalogObject, generation: number): Promise<CatalogView> {
@@ -128,7 +130,7 @@ export class IndexingCatalogController {
             if (generation !== this.view.generation || !this.view.revision) { throw new Error('stale_catalog_view'); }
             validateCatalogOperation(operation);
             if(operation.operation==='create_grant')throw new Error('native_grant_draft_required');
-            if(['begin_index_source_change','retire_index'].includes(String(operation.operation)))throw new Error('native_source_draft_required');
+            if(['begin_index_source_change','retire_index','change_index_policy'].includes(String(operation.operation)))throw new Error('native_source_draft_required');
             if(operation.operation==='revoke_grant'&&!grantRevoke)throw new Error('inspect_native_grant_before_revocation');
             if(['set_context','delete_context'].includes(String(operation.operation))&&!contextReview)throw new Error('window_context_requires_host_review');
             if ((this.host.control?.catalogPending().length ?? 0) > 0) { throw new Error('catalog_outcome_unconfirmed_reconcile_first'); }
@@ -242,10 +244,33 @@ export class IndexingCatalogController {
             if(generation!==this.view.generation||!this.view.revision||!this.view.namespace||item?.kind!=='index')throw new Error('inspect_current_index_before_source_review');
             if(!control.catalogSourceDraft)throw new Error('native_source_draft_unavailable');
             const selection=validateSourceMutationSelection(change);
+            if(selection.operation==='unblock_path'){
+                if(!canReviewPolicyUnblock(this.view.policyStatus))throw new Error('read_terminal_policy_job_before_unblock_review');
+                const snapshot=this.view.policyStatus?.snapshot,policy=snapshot?catalogObject(catalogObject(snapshot).policy):undefined;
+                if(!policy||policy.index_id!==item.value.id||!Array.isArray(policy.denies)||!policy.denies.some(value=>{const rule=catalogObject(value);return rule.rule_id===selection.rule_id&&rule.reason==='trim';}))throw new Error('read_recorded_exclusion_before_unblock_review');
+            }
             if(control.catalogPending().length&&(selection.operation!=='retire_index'||!control.catalogCanRetire?.(String(item.value.id),String(catalogObject(item.value.backing).binding),this.view.namespace)))throw new Error('catalog_outcome_unconfirmed_reconcile_first');
             const review=await control.catalogSourceDraft(String(item.value.id),selection,this.view.revision);current();
             if(review.request.key.namespace!==this.view.namespace||review.request.expected_catalog_revision!==this.view.revision||review.request.operation.id!==item.value.id)throw new Error('crossed_native_source_review');
             this.view={...this.view,review,setupReview:undefined,outcome:undefined,submittedReview:undefined};
+        });
+    }
+    policyRead(generation:number):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            const item=catalogItems(this.view.detail,'detail')[0];
+            if(generation!==this.view.generation||!this.view.namespace||item?.kind!=='index')throw new Error('inspect_current_index_before_policy_observation');
+            if(!control.catalogPolicyStatus)throw new Error('native_policy_observation_unavailable');
+            const response=await control.catalogPolicyStatus(String(item.value.id));current();
+            if(response.status!=='catalog_policy_status'||response.index_id!==item.value.id)throw new Error('crossed_native_policy_observation');
+            this.view={...this.view,policyStatus:response,review:undefined,setupReview:undefined,generation:this.view.generation+1};
+        });
+    }
+    policyResume(generation:number):Promise<CatalogView>{
+        return this.run(async(control,current)=>{
+            const observation=this.view.policyStatus,item=catalogItems(this.view.detail,'detail')[0];
+            if(!observation||generation!==this.view.generation||item?.kind!=='index'||item.value.tombstone===true||observation.index_id!==item.value.id||!control.catalogPolicyResume)throw new Error('read_current_native_policy_observation');
+            const response=await control.catalogPolicyResume(observation,()=>{try{current();return generation===this.view.generation;}catch{return false;}});current();
+            this.view={...this.view,policyStatus:response,outcome:response,review:undefined,setupReview:undefined,generation:this.view.generation+1};
         });
     }
     sourceRead(begin:string,generation:number):Promise<CatalogView>{

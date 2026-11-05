@@ -1,6 +1,8 @@
 # AIRK: Local Search for Coding Agents
 
-The unpublished **1.8.8** P8 working build adds [Recommendations](docs/recommendations.md): review available, selected and omitted indexes, prefill a temporary query scope, review saved Project defaults and copy catalog-checked agent instructions. Advice keeps missing readiness/cost observations unknown; split and permanent-removal actions remain pending P10/P9. [Validation and limits](docs/research/implementation-v190.md#p8--recommendations-and-harness-guidance).
+The unpublished **1.8.8 P9 working build** adds reviewed [permanent source exclusions](docs/source-policy.md), native read fences, retained-evidence removal and resumable cleanup. Logical removal and physical reclamation have separate observations. Windows workspace/runtime and focused Mac ARM checks passed; qualification limits and pending P10–P14 acceptance are in the [implementation ledger](docs/research/implementation-v190.md).
+
+The unpublished **1.8.8** P8 working build adds [Recommendations](docs/recommendations.md): review available, selected and omitted indexes, prefill a temporary query scope, review saved Project defaults and copy catalog-checked agent instructions. Advice keeps missing readiness/cost observations unknown; split actions remain pending P10; permanent exclusions use reviewed P9 management. [Validation and limits](docs/research/implementation-v190.md#p8--recommendations-and-harness-guidance).
 
 P7 implements [combined Project reads](docs/combined-reads.md) across native, CLI, MCP and Workbench, including plans, sessions, verification and exports. Windows release and Apple Silicon debug native checks passed, along with all 84 unchanged legacy latency gates and 120 Windows fan-out trials. [Evidence and platform limits](docs/research/implementation-v190.md#p7--combined-retrieval-and-consumers). Working version **1.8.8** remains unpublished.
 

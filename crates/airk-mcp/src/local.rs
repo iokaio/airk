@@ -265,6 +265,13 @@ impl LocalTools {
                         )?)?);
                     }
                     match kernel.prepare_native_read(request.clone())? {
+                        NativeRead::PrepareInputFile {
+                            path,
+                            max_source_bytes,
+                        } => Ok(serde_json::to_value(kernel.prepare_source_input(
+                            std::path::Path::new(&path),
+                            max_source_bytes,
+                        )?)?),
                         NativeRead::VerifyProjection { .. }
                         | NativeRead::SourceProjection { .. } => {
                             anyhow::bail!("verification requires its scoped single-dispatch owner")

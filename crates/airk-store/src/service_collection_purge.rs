@@ -26,8 +26,21 @@ impl Collection {
             plain(&directory)?.is_dir(),
             "invalid removed collection directory"
         );
+        let policy = crate::current::policy_capsule::PolicyCapsule::load(&directory)?;
+        if let Some(policy) = &policy {
+            policy.validate_registration(registration)?;
+        }
         // Owner is deleted last. A crash after that point may leave only an empty directory.
         if !directory.join("service-owner.json").try_exists()? {
+            if policy.is_some() {
+                for entry in fs::read_dir(&directory)? {
+                    ensure!(
+                        entry?.file_name() == "source-policy.json",
+                        "unowned removal state is preserved"
+                    );
+                }
+                return Ok(true);
+            }
             ensure!(
                 fs::read_dir(&directory)?.next().is_none(),
                 "unowned removal state is preserved"
@@ -54,6 +67,10 @@ impl Collection {
                 .context("invalid removal entry")?;
             if name == "incarnations" || name == ".current-gates" {
                 ensure!(plain(&path)?.is_dir(), "invalid incarnation root");
+                continue;
+            }
+            if name == "source-policy.json" && policy.is_some() {
+                ensure!(plain(&path)?.is_file(), "invalid retained source policy");
                 continue;
             }
             ensure!(
@@ -172,9 +189,18 @@ impl Collection {
                 .is_some_and(|name| name == "service-owner.json")
         });
         for path in top {
+            if policy.is_some()
+                && path
+                    .file_name()
+                    .is_some_and(|name| name == "service-owner.json")
+            {
+                continue;
+            }
             fs::remove_file(path)?;
         }
-        fs::remove_dir(&directory)?;
+        if policy.is_none() {
+            fs::remove_dir(&directory)?;
+        }
         Ok(true)
     }
 }

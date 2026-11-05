@@ -124,6 +124,7 @@ fn publish_options(
     let connection = database::open_reader(&fixture.store.directory().join("current.sqlite3"))?;
     let mut plan = map::MapPlan::new(&connection, &fixture.scope, base.artifact_root)?;
     let configuration = collection::CollectionConfiguration {
+        source_policy_digest: None,
         roots: BTreeMap::from([("workspace".into(), fixture.scope.root.clone())]),
         extractor_version: "projection-fixture".into(),
         extraction_policy_digest: Sha256Digest::from_bytes([55; 32]),

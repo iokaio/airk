@@ -1,20 +1,30 @@
 // SPDX-License-Identifier: Apache-2.0
 import { strict as assert } from 'node:assert';
 import { test } from 'node:test';
-import { LiveCheck, parseWebviewMessage } from '../explorerContracts';
+import { parseWebviewMessage } from '../explorerContracts';
 import { EvidenceClient, EvidenceFailure, ToolResult } from '../explorerEvidence';
 import { FactHandles } from '../explorerFacts';
 import { RefRegistry } from '../explorerSearch';
 import { CORE_PACK, Strategy } from '../explorerStrategies';
 import { runStrategy } from '../explorerStrategyRunner';
+import {readFileSync} from 'node:fs';
+import {resolve} from 'node:path';
 
 const PROJECT = 'ab'.repeat(32);
 const HASH = (path: string) => (path.length.toString(16).padStart(2, '0')).repeat(32);
 const cite = (path: string, start: number, end = start) => ({ path, start_line: start, end_line: end, content_hash: HASH(path) });
 const template = (id: string) => CORE_PACK.find(entry => entry.strategy.id === `airk.core/${id}`)!.strategy;
+const nativeReceiptFixture=JSON.parse(readFileSync(resolve(__dirname,'../../../../docs/research/contracts-v190/fixtures.json'),'utf8')).receipt_cases.find((entry:any)=>entry.name==='single_index_match_and_supplement').value;
+function receipt(path:string,publication:string,state='matched'){
+    const value=structuredClone(nativeReceiptFixture),source=value.sources[0];
+    value.origins[0].publication=publication;source.path=path;source.original_root='/workspace';source.source_relative_path=path;source.expected_hash=HASH(path);source.observed_hash=state==='matched'?HASH(path):'b'.repeat(64);source.state=state;
+    value.counts.bytes_read=1;source.bytes_read=1;
+    if(state!=='matched'){value.status='partial';value.requirements_satisfied=false;value.counts.matched_sources=0;value.counts.mismatched_sources=state==='mismatch'?1:0;value.counts.unchecked_sources=state==='missing'?1:0;}
+    return value;
+}
 
 /** A scripted evidence session; `publication` may change per call to simulate a republish. */
-function fake(options: { publication?: (tool: string, call: number) => string } = {}) {
+function fake(options: { publication?: (tool: string, call: number) => string;state?:(path:string)=>string } = {}) {
     const calls: { tool: string; args: Record<string, unknown> }[] = [];
     const payloads: Record<string, (args: Record<string, unknown>) => Record<string, unknown>> = {
         airk_status: () => ({ index_state: 'available', version: '1.5.0' }),
@@ -23,20 +33,22 @@ function fake(options: { publication?: (tool: string, call: number) => string } 
         airk_symbols: () => ({ items: [{ kind: 'function', name: 'refresh', citation: cite('src/session.ts', 12, 14), symbol_id: 'syntax:refresh', basis: 'syntax' }] }),
         airk_references: () => ({ evidence: { hits: [{ citation: cite('src/auth/login.ts', 7), text: 'renew(currentToken)' }] } }),
         airk_read_file: args => ({ hits: [{ citation: cite(String(args.path), Number(args.start_line), Number(args.end_line)), text: `lines of ${args.path}`, truncated: false }] }),
-        airk_file_info: args => ({ source: { root: '/workspace', relative_path: String(args.path) } }),
+        airk_file_info: args => ({content_hash:HASH(String(args.path)),indexed_lines:100,source: { root: '/workspace', relative_path: String(args.path) } }),
     };
     const session = {
         call: async (tool: string, args: Record<string, unknown>): Promise<ToolResult> => {
             calls.push({ tool, args });
             const payload = payloads[tool];
             if (!payload) { throw new EvidenceFailure({ code: 'TOOL_ERROR', message: `unexpected ${tool}` }); }
-            return { payload: payload(args), publication: options.publication?.(tool, calls.length) ?? 'airk-r1:p:1' };
+            const publication=options.publication?.(tool,calls.length)??'airk-r1:p:1',value=payload(args);
+            if(tool==='airk_file_info'&&args.verification==='report')value.source_verification=receipt(String(args.path),publication,options.state?.(String(args.path))??'matched');
+            return {payload:value,publication};
         },
     } as unknown as EvidenceClient;
     return { session, calls };
 }
-function deps(session: EvidenceClient, live: (relative: string) => LiveCheck = () => 'matches_index') {
-    return { session, facts: new FactHandles(new RefRegistry()), project: PROJECT, extensionVersion: '1.5.0', live: async (_root: string, relative: string) => live(relative), now: () => 1000 };
+function deps(session: EvidenceClient) {
+    return { session, facts: new FactHandles(new RefRegistry()), project: PROJECT, extensionVersion: '1.5.0',dirty:async()=>false,now: () => 1000 };
 }
 
 test('a runnable template pins one publication and is a verified snapshot only when every cited file matches', async () => {
@@ -68,7 +80,7 @@ test('a republish during the run fails closed: later steps are skipped and the r
 
 test('live mismatches, budgets and unchecked files make the run partial with reasons', async () => {
     const mismatch = await runStrategy({ strategy: template('bug'), params: { query: 'renew', symbol: 'refresh' }, scope: {} },
-        deps(fake().session, relative => relative === 'src/session.ts' ? 'changed_since_index' : 'matches_index'));
+        deps(fake({state:path=>path==='src/session.ts'?'mismatch':'matched'}).session));
     assert.equal(mismatch.manifest.outcome, 'partial');
     assert.ok(mismatch.manifest.reasons.some(reason => reason === 'live check: src/session.ts is changed since index'));
 
@@ -124,4 +136,42 @@ test('a failing fan-out settles started siblings and stops admitting new items b
     assert.deepEqual(paths, ['a', 'b']);
     assert.equal(result.manifest.outcome, 'partial');
     assert.ok(result.records.some(record => record.text === 'settled'));
+});
+
+test('explicit saved-source checks bypass cached locations and never fall back to host hashing after native refusal',async()=>{
+    for(const code of ['source_policy_unavailable','scoped_read_unavailable']){
+        const base=fake(),native=base.session.call.bind(base.session);let reports=0,hostCaptures=0;
+        const refused=new EvidenceFailure({code:'TOOL_ERROR',message:'Native policy refused the source.'},{isError:true},{error:{code,retryable:false}});
+        base.session.call=async(tool,args,options)=>{if(tool==='airk_file_info'&&args.verification==='report'){reports++;throw refused;}return native(tool,args,options);};
+        const dependencies={...deps(base.session),live:async()=>{hostCaptures++;return 'matches_index';}};
+        await assert.rejects(runStrategy({strategy:template('bug'),params:{query:'renew',symbol:'refresh'},scope:{}},dependencies),error=>error===refused);
+        assert.equal(reports,1);assert.equal(hostCaptures,0);assert.ok(base.calls.some(call=>call.tool==='airk_file_info'&&call.args.verification===undefined),'a prior cached location never substitutes for native admission');
+    }
+});
+
+test('native source checks share remaining byte/time budgets and retain complete original replies',async()=>{
+    const base=fake(),native=base.session.call.bind(base.session),limits:Record<string,unknown>[]=[];let elapsed=0;
+    base.session.call=async(tool,args,options)=>{
+        const result=await native(tool,args,options);
+        if(tool==='airk_file_info'&&args.verification==='report'){
+            limits.push({...args});const check=result.payload.source_verification as any,spent=limits.length===1?300*1024*1024:1;
+            check.counts.bytes_read=spent;check.sources[0].bytes_read=spent;check.limits.max_bytes=args.verification_max_bytes;check.limits.deadline_ms=args.verification_deadline_ms;check.limits.effective_deadline_ms=args.verification_deadline_ms;
+            result.payload.future_native_verification={retained:true};elapsed+=limits.length===1?4000:1;
+        }
+        return result;
+    };
+    const strategy={...template('bug'),budgets:{...template('bug').budgets,seconds:5}};
+    const result=await runStrategy({strategy,params:{query:'renew',symbol:'refresh'},scope:{}},{...deps(base.session),now:()=>1000+elapsed});
+    assert.equal(result.manifest.outcome,'verified_snapshot',result.manifest.reasons.join('; '));assert.equal(limits.length,2);
+    assert.deepEqual(limits.map(args=>args.verification_max_bytes),[512*1024*1024,212*1024*1024]);
+    assert.deepEqual(limits.map(args=>args.verification_deadline_ms),[5000,1000]);assert.ok(limits.every(args=>args.revision==='airk-r1:p:1'&&args.known_hash===HASH(String(args.path))));
+    assert.equal(result.sourceChecks?.length,2);assert.match(JSON.stringify(result),/future_native_verification/);
+});
+
+test('missing native receipt accounting stops further capture and dirty buffers remain uncertain',async()=>{
+    const base=fake(),native=base.session.call.bind(base.session);let captures=0;
+    base.session.call=async(tool,args,options)=>{const result=await native(tool,args,options);if(tool==='airk_file_info'&&args.verification==='report'){captures++;delete result.payload.source_verification;}return result;};
+    const result=await runStrategy({strategy:template('bug'),params:{query:'renew',symbol:'refresh'},scope:{}},deps(base.session));
+    assert.equal(captures,1);assert.equal(result.manifest.outcome,'partial');assert.ok(result.manifest.reasons.some(reason=>reason.includes('accounting unavailable')));assert.ok(result.sourceChecks?.every(row=>row.live==='unchecked'));
+    const dirty=await runStrategy({strategy:template('bug'),params:{query:'renew',symbol:'refresh'},scope:{}},{...deps(fake().session),dirty:async()=>true});assert.equal(dirty.manifest.outcome,'partial');assert.ok(dirty.sourceChecks?.every(row=>row.live==='not_saved'));
 });

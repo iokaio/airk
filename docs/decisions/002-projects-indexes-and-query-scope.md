@@ -181,11 +181,13 @@ Do not store permanent blocks solely in the registry or inside deletable derived
 data. Existing [removal](../../crates/airk-store/src/service_project_removal.rs)
 purges collection settings, including ordinary extraction policy. Add a bounded
 **native per-index policy ledger** under the owned data root, outside collection
-incarnations, e.g. `source-policies-v1/<namespace>/<collection>/`. Store owns it;
-the registry holds identity/reference/expected epoch and operation metadata,
-not another independently mutable rule authority. Physical collection removal
-preserves the ledger and an index tombstone. Re-registration of that backing
-reuses the policy/identity. Missing required policy fails closed. Deliberate loss
+incarnations. P9 implements it as `source-policy.json` beside the stable collection
+owner: the native registry supplies admitted policy authority, and Store retains
+the enforcement copy with its exact identity and operation receipt. Neither copy
+can independently widen the other's scope. Physical collection removal preserves
+the enforcement copy, stable owner and index tombstone. Ordinary re-registration
+of retired backing refuses; reactivation would require a separately qualified
+reconciliation preserving policy and identity. Missing required policy fails closed. Deliberate loss
 of all private AIRK state is not a recoverable-policy or OS-sandbox guarantee.
 
 Bind policy to the stable logical collection ownership identity (including

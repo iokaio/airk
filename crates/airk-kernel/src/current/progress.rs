@@ -195,3 +195,30 @@ pub(super) fn read_work(read: &CurrentRead, store: &FileStore) -> Result<Option<
         })
         .transpose()
 }
+
+pub(crate) fn trim_work_resource(
+    read: &CurrentRead,
+    store: &FileStore,
+    writer: &airk_store::WriterLock,
+    reservation: &Reservation,
+    retained_files: u64,
+) -> Result<Option<ResourceChange>> {
+    let Some(mut work) = read_work(read, store)? else {
+        return Ok(None);
+    };
+    if work.complete() {
+        work.adjust_complete_inventory(retained_files)?;
+    } else {
+        // Existing partial coverage cannot become complete merely because its
+        // already committed subset was trimmed. Retain pause/failure history.
+        work.processed_artifacts = retained_files;
+        work.committed_artifacts = retained_files;
+        if work.failure.is_none() && !work.paused {
+            work.failure = Some(
+                "source policy changed an incomplete inventory; a source scan remains required"
+                    .into(),
+            );
+        }
+    }
+    Ok(Some(work.resource_change(store, writer, reservation)?))
+}

@@ -1,5 +1,13 @@
 # Collections and current storage
 
+For service-managed P9 indexes, [permanent exclusions](source-policy.md) also bind
+the stable owner under `collections-1.4`, outside replaceable incarnations. Index
+retirement preserves that owner, enforcement capsule and policy receipt while
+removing derived incarnations; ordinary re-registration of retired backing
+refuses. This retained metadata is separate from ordinary object reclamation and
+is not a secure-erasure guarantee. The standalone layout below does not authorize
+enabling reviewed service policy through a direct file edit.
+
 A collection binds a canonical owner root and explicit source aliases to one independent current index. See the [1.2 runtime contract](current-index-runtime.md) for exact bounds, recovery and token semantics.
 
 ## Identity and isolation

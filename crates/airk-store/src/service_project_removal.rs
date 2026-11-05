@@ -110,6 +110,7 @@ impl ServiceRegistry {
         }
         super::catalog::source_change::require_retired(&self.connection, project)?;
         let registration = self.retained_project(project)?.registration;
+        let policy = super::catalog::policy::retired_for_binding(&self.connection, project)?;
         let directory = Path::new(&registration.data_root)
             .join("collections-1.4")
             .join(&registration.collection);
@@ -119,7 +120,7 @@ impl ServiceRegistry {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
             Err(error) => return Err(error.into()),
         };
-        if present {
+        if present || policy.is_some() {
             super::super::data_scope::check(
                 Path::new(&registration.data_root),
                 &self.root,
@@ -131,6 +132,47 @@ impl ServiceRegistry {
                 let mut policy = previous.clone();
                 policy.collections.remove(&registration.collection);
                 quota.configure_if_current(policy, Some(&previous))?;
+            }
+            if let Some(snapshot) = &policy {
+                // Stable ownership must also make old readers refuse a reset
+                // collection whose inner publication has already been removed.
+                let owner_present = directory.join("service-owner.json").try_exists()?;
+                let job = self.job(snapshot.job)?;
+                ensure!(
+                    matches!(
+                        job.state,
+                        airk_core::service::JobState::Succeeded
+                            | airk_core::service::JobState::Failed
+                            | airk_core::service::JobState::Canceled
+                    ),
+                    "retirement must settle the current policy job before cleanup"
+                );
+                let copy = crate::current::policy_capsule::PolicyCapsule::retirement_copy(
+                    &directory,
+                    &registration,
+                    snapshot,
+                )?;
+                if owner_present || copy.is_some() {
+                    let bytes = u64::try_from(
+                        copy.as_ref()
+                            .map(serde_json::to_vec)
+                            .transpose()?
+                            .map_or(0, |value| value.len()),
+                    )? + 16384;
+                    let reservation = quota.reserve(&registration.collection, bytes)?;
+                    reservation.charge(bytes)?;
+                    if owner_present {
+                        crate::service::collection::Collection::existing(
+                            Path::new(&registration.data_root),
+                            &registration.root,
+                            &registration.collection,
+                        )?
+                        .retain_source_policy(&snapshot.policy)?;
+                    }
+                    if let Some(copy) = copy {
+                        copy.save(&directory)?;
+                    }
+                }
             }
             if !crate::service::collection::Collection::purge_removed_turn(&registration, &lease)? {
                 return Ok(false);
@@ -169,8 +211,11 @@ impl ServiceRegistry {
             )?;
         }
         tx.execute(
-            "DELETE FROM service_jobs WHERE project=?1",
-            [project.to_string()],
+            "DELETE FROM service_jobs WHERE project=?1 AND (?2 IS NULL OR id<>?2)",
+            params![
+                project.to_string(),
+                policy.as_ref().map(|snapshot| snapshot.job.to_string())
+            ],
         )?;
         tx.execute(
             "DELETE FROM service_events WHERE project=?1",
@@ -188,10 +233,19 @@ impl ServiceRegistry {
                 i64::try_from(super::maintenance::clock_ms()?)?
             ],
         )?;
-        tx.execute(
-            "DELETE FROM projects WHERE binding=?1",
-            [project.to_string()],
-        )?;
+        if policy.is_some() {
+            // The tombstone's exact policy job has a registration FK. Retain
+            // only that inactive identity and stop polling completed cleanup.
+            tx.execute(
+                "UPDATE projects SET cleanup_guard=NULL WHERE binding=?1 AND registered=0",
+                [project.to_string()],
+            )?;
+        } else {
+            tx.execute(
+                "DELETE FROM projects WHERE binding=?1",
+                [project.to_string()],
+            )?;
+        }
         bump(&tx)?;
         tx.commit()?;
         Ok(true)

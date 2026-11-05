@@ -7,8 +7,10 @@ import { explorerError } from './explorerErrors';
 import { EvidenceClient, EvidenceFailure, NativeTool, ToolResult } from './explorerEvidence';
 import { FactHandles, factList } from './explorerFacts';
 import { relativePrefix, searchView } from './explorerSearch';
+import { nativeSavedSourceState, nativeVerification } from './sourceVerification';
+import { DEFAULT_MCP_MESSAGE_BYTES } from './mcpStdioSession';
 import {
-    bind, clipRecords, LedgerRecord, operator, orderRecords, RUN_SCHEMA, RunResult, StepReport, Strategy, StrategyStep, unavailableReason,
+    bind, clipRecords, LedgerRecord, operator, orderRecords, RUN_SCHEMA, RunResult, StepReport, Strategy, StrategyStep, StrategySourceCheck, unavailableReason,
 } from './explorerStrategies';
 
 type Value = Record<string, unknown>;
@@ -25,8 +27,8 @@ export interface RunDependencies {
     readonly facts: FactHandles;
     readonly project: string;
     readonly extensionVersion: string;
-    /** Saved-bytes check for one indexed file, given AIRK's own source location. */
-    live(root: string, relative: string, contentHash: string): Promise<LiveCheck>;
+    /** Editor-buffer metadata only. This callback must not read saved source bytes. */
+    dirty?(root:string,relative:string):Promise<boolean>;
     readonly now?: () => number;
 }
 
@@ -49,6 +51,7 @@ export function checkRequest(request: RunRequest): void {
 
 export async function runStrategy(request: RunRequest, deps: RunDependencies): Promise<RunResult> {
     checkRequest(request);
+    if(deps.session.spec?.combinedSession)throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED','Strategies require one explicit originating index; combined paths cannot authorize saved-source checks.'));
     const { strategy } = request, budgets = strategy.budgets, now = deps.now ?? Date.now;
     const startedAt = now(), deadline = startedAt + budgets.seconds * 1000;
     const params: Record<string, string> = Object.fromEntries(strategy.params.map(param => [param.name, (request.params[param.name] ?? param.default ?? '').trim()]));
@@ -57,6 +60,10 @@ export async function runStrategy(request: RunRequest, deps: RunDependencies): P
     const sources = new Map<string, { root: string; relative: string; contentHash?: string; lines?: number }>();
     let ledger: LedgerRecord[] = [], calls = 0, publication: string | undefined, serviceVersion: string | undefined;
     const checked = new Map<string, LiveCheck>();
+    const sourceChecks:StrategySourceCheck[]=[];
+    // The former host per-file 512-MiB ceiling is one shared native byte budget
+    // for the entire explicit operator/run. File/call/deadline budgets also apply.
+    let verificationBytes=512*1024*1024,verificationReportBytes=8*1024*1024;
 
     const call = async (tool: NativeTool, args: Value): Promise<ToolResult> => {
         if (calls >= budgets.calls) { reasons.push(`call budget of ${budgets.calls} reached`); throw new Stop(); }
@@ -223,11 +230,30 @@ export async function runStrategy(request: RunRequest, deps: RunDependencies): P
                 case 'host.hashSavedFiles': {
                     // Every cited file collected so far, not only this step's input, so the outcome covers the whole ledger.
                     const paths = [...new Set([...input!.locations.map(location => location.path), ...ledger.map(entry => entry.path)])].sort();
-                    await pool(fanout(step, paths), async path => {
-                        const located = await source(path);
-                        const hash = ledger.find(entry => entry.path === path)?.contentHash ?? located?.contentHash;
-                        checked.set(path, located && hash ? await deps.live(located.root, located.relative, hash) : 'unchecked');
-                    });
+                    for(const path of fanout(step,paths)){
+                        const remaining=Math.floor(deadline-now());
+                        if(verificationBytes<1||verificationReportBytes<DEFAULT_MCP_MESSAGE_BYTES||remaining<1){checked.set(path,'unchecked');reasons.push(`${step.id}: shared saved-source verification budget exhausted`);continue;}
+                        // Bypass the earlier source-location cache. The native
+                        // verifier owns capture, policy/revision fences and delivery;
+                        // a past file_info cannot authorize a host byte hash.
+                        const expected=ledger.find(entry=>entry.path===path)?.contentHash;
+                        let result:ToolResult;
+                        try{result=await call('airk_file_info',{path,revision:publication,...(expected?{known_hash:expected}:{}),verification:'report',verification_max_sources:1,verification_max_bytes:verificationBytes,verification_deadline_ms:Math.min(30000,remaining),response_mode:'full'});}
+                        catch(error){verificationBytes=0;throw error;}
+                        const receipt=nativeVerification(result.payload.source_verification),counts=receipt?.counts as Value|undefined,spent=counts?.bytes_read;
+                        if(typeof spent!=='number'||!Number.isSafeInteger(spent)||spent<0||spent>verificationBytes){verificationBytes=0;reasons.push(`${step.id}: native verification byte accounting unavailable`);}else verificationBytes-=spent;
+                        const native=result.rawPayload??result.payload,bytes=Buffer.byteLength(JSON.stringify(native));
+                        if(bytes>DEFAULT_MCP_MESSAGE_BYTES||bytes>verificationReportBytes)throw new EvidenceFailure(explorerError('TOOL_ERROR','Native saved-source verification exceeded its retained response budget.'));
+                        verificationReportBytes-=bytes;
+                        const hash=ledger.find(entry=>entry.path===path)?.contentHash??(typeof result.payload.content_hash==='string'?result.payload.content_hash:undefined);
+                        let live:LiveCheck=hash?nativeSavedSourceState(result.payload,hash,result.publication):'unchecked';
+                        const located=result.payload.source as Value|undefined;
+                        if(located&&typeof located.root==='string'&&typeof located.relative_path==='string'){
+                            if(!deps.dirty){live='unchecked';reasons.push(`${step.id}: editor buffer state unavailable`);}
+                            else try{if(await deps.dirty(located.root,located.relative_path))live='not_saved';}catch{live='unchecked';reasons.push(`${step.id}: editor buffer state unavailable`);}
+                        }
+                        checked.set(path,live);sourceChecks.push({step:step.id,path,result:native,live});
+                    }
                     break;
                 }
                 case 'core.dedupe': case 'core.sort': ledger = orderRecords(ledger); break;
@@ -242,6 +268,7 @@ export async function runStrategy(request: RunRequest, deps: RunDependencies): P
             }
             reports.push({ id: step.id, op: step.op, calls: calls - before, records: ledger.length - recordsBefore, outcome: 'ok' });
         } catch (error) {
+            if(error instanceof EvidenceFailure&&['source_policy_unavailable','scoped_read_unavailable'].includes(String((error.nativePayload?.error as Value|undefined)?.code)))throw error;
             if (error instanceof Stop) { stopped = true; reports.push({ id: step.id, op: step.op, calls: calls - before, records: ledger.length - recordsBefore, outcome: 'error', message: reasons.at(-1) }); }
             else {
                 const message = error instanceof EvidenceFailure ? `${error.error.code}: ${error.error.message}` : error instanceof Error ? error.message : String(error);
@@ -264,7 +291,7 @@ export async function runStrategy(request: RunRequest, deps: RunDependencies): P
     if (unchecked.length) { reasons.push(`live files not checked for ${unchecked.length} cited path(s)`); }
     if (!kept.length) { reasons.push('no evidence was collected'); }
     const digest = createHash('sha256').update(JSON.stringify(kept.map(entry => [entry.path, entry.startLine, entry.endLine, entry.contentHash, entry.producer, entry.text]))).digest('hex');
-    return { records: kept, omitted, manifest: {
+    return { records: kept, omitted,...(sourceChecks.length?{sourceChecks}:{}), manifest: {
         schema: RUN_SCHEMA, extensionVersion: deps.extensionVersion, ...(serviceVersion ? { serviceVersion } : {}), project: deps.project, publication: publication ?? 'unknown',
         template: `${strategy.id}@${strategy.version}`, params, scope, steps: reports, evidenceDigest: digest,
         outcome: reasons.length || !publication ? 'partial' : 'verified_snapshot', reasons: [...new Set(reasons)].slice(0, 40), startedAt, finishedAt: now(),

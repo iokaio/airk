@@ -48,6 +48,8 @@ pub mod service_resource_observations;
 pub mod service_resources;
 mod shared_models;
 pub mod source_observations;
+pub mod source_policy;
+pub use source_policy::SourcePolicyReadUnavailable;
 pub mod source_watch;
 pub mod storage;
 #[cfg(feature = "local-inference")]
@@ -76,6 +78,7 @@ fn unlinked_tempdir() -> Result<tempfile::TempDir> {
 
 #[derive(Clone)]
 pub struct Kernel {
+    source_policy: Arc<std::sync::Mutex<source_policy::PolicyRuntime>>,
     read_scope: Option<Arc<scoped_reads::SessionScope>>,
     verification_cancellation: Option<Arc<std::sync::atomic::AtomicBool>>,
     progress: Option<ProgressObserver>,
@@ -131,6 +134,8 @@ fn managed_data_path(path: PathBuf) -> Result<PathBuf> {
 
 #[derive(Serialize)]
 pub struct Status {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_policy: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_availability: Option<service_projects::SourceObservation>,
     pub execution: airk_core::execution::ExecutionPlan,
@@ -321,6 +326,11 @@ impl Kernel {
             FileStore::new(directory.join("collections-1.2").join(collection))
         };
         let kernel = Self {
+            source_policy: source_policy::PolicyRuntime::shared_load(if service {
+                directory.join("collections-1.4").join(collection)
+            } else {
+                store.directory().to_path_buf()
+            })?,
             read_scope: None,
             verification_cancellation: None,
             progress: None,
@@ -355,6 +365,7 @@ impl Kernel {
                 }
             }
         }
+        kernel.observe_retained_source_policy()?;
         Ok(kernel)
     }
 
@@ -720,7 +731,8 @@ impl Kernel {
             !policy.pending_reindex,
             "index pending extraction policy before preparing provider analysis"
         );
-        let (current, _) = airk_ingest::scan_streaming_v2_with_budgets(
+        let permanent_policy = self.source_policy_for_work()?;
+        let (current, _, _) = airk_ingest::scan_payloads_with_execution_source_policy(
             &self.root,
             &self.data_root,
             snapshot,
@@ -728,7 +740,13 @@ impl Kernel {
             self.scan_limits()?,
             &policy.policy,
             false,
-            |path, hash, profile| {
+            airk_ingest::ExtractionExecution::default(),
+            None,
+            permanent_policy.as_deref(),
+            |request| {
+                let path = request.path;
+                let hash = request.source_hash;
+                let profile = request.profile;
                 Ok(snapshot
                     .artifacts
                     .get(path)
@@ -740,9 +758,13 @@ impl Kernel {
                                 .and_then(|r| r.profile.as_ref())
                                 .is_some_and(|p| p == profile)
                     })
-                    .cloned())
+                    .cloned()
+                    .map(|artifact| airk_ingest::observations::VerifiedReuse {
+                        artifact,
+                        basis: airk_ingest::observations::ReuseBasis::SamePath,
+                    }))
             },
-            |_, artifact, _| {
+            |_, artifact, _, _| {
                 // Verification needs identities, never a second in-memory corpus.
                 let mut metadata = artifact.clone();
                 metadata.chunks.clear();
@@ -772,10 +794,15 @@ impl Kernel {
                 && snapshot.extractor_version == airk_core::EXTRACTOR_VERSION,
             "reindex before preparing analysis"
         );
+        for input in build_inputs {
+            self.require_source_policy_source(&self.root_id(), input)?;
+        }
         airk_ingest::semantic::prepare(&self.root, &snapshot, producer, version, build_inputs)
     }
 
     pub fn import_scip(&self, index: &Path, manifest: &Path) -> Result<Status> {
+        self.require_source_policy_input(index)?;
+        self.require_source_policy_input(manifest)?;
         let writer = self.store.lock()?;
         let baseline = self.load()?;
         let source = airk_store::blobs::RetainedSource {
@@ -789,6 +816,9 @@ impl Kernel {
         );
         let binding: airk_core::AnalysisManifest =
             serde_json::from_slice(&airk_ingest::semantic::read_bounded(manifest, 8_388_608)?)?;
+        for input in binding.build_inputs.keys() {
+            self.require_source_policy_source(&self.root_id(), input)?;
+        }
         airk_ingest::semantic::validate_build_inputs(&self.root, &binding)?;
         let current = self.verify_source_inventory(&snapshot)?;
         ensure!(
@@ -996,6 +1026,7 @@ impl Kernel {
         &self,
         read: Arc<airk_store::current::CurrentRead>,
     ) -> Result<Arc<airk_store::current::CurrentRead>> {
+        self.attach_source_policy_read(&read)?;
         if let Some(scope) = &self.read_scope {
             scope.attach(&read)?;
         }

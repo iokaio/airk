@@ -1,5 +1,10 @@
 # Reviewed project registration and launcher binding
 
+P9's reviewed [permanent exclusions](source-policy.md) survive index retirement.
+Ordinary registration of retired backing refuses rather than replacing its
+stable policy owner. Use a distinct reviewed index setup when a new independent
+index is intended; this does not authorize clearing another index's policy.
+
 The 1.8.8 P6f working candidate uses explicit setup and grant review. In a fresh
 trusted installation, **Management → Service → Start service** prepares the
 approved bundled runtime; **Connect / reconnect** observes an existing installation.

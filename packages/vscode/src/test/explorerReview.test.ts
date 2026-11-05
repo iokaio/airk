@@ -24,6 +24,14 @@ function load(repositories: unknown[], setting?: string) {
     try { return require('../explorerReview') as typeof import('../explorerReview'); } finally { loader._load = original; }
 }
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+const nativeReceiptFixture=JSON.parse(fs.readFileSync(path.resolve(__dirname,'../../../../docs/research/contracts-v190/fixtures.json'),'utf8')).receipt_cases.find((entry:any)=>entry.name==='single_index_match_and_supplement').value;
+function nativeCheck(root:string,file:string,expected:string|undefined,state='matched'){
+    const value=structuredClone(nativeReceiptFixture);value.origins[0].publication='airk-r1:p:1';
+    if(!expected){value.status='not_applicable';value.sources=[];value.references=[];value.origins=[];value.counts={...value.counts,references:0,references_lower_bound:0,requested_sources:0,requested_sources_lower_bound:0,checked_sources:0,matched_sources:0,bytes_read:0};return value;}
+    const source=value.sources[0];source.path=file;source.original_root=root;source.source_relative_path=file;source.expected_hash=expected;source.observed_hash=state==='matched'?expected:hash('changed after indexing\n');source.state=state;source.bytes_read=1;value.counts.bytes_read=1;
+    if(state!=='matched'){value.status='partial';value.requirements_satisfied=false;value.counts.matched_sources=0;value.counts.mismatched_sources=1;}
+    return value;
+}
 
 test('Changes pages cover hundreds of files without duplicates and reject changed lists/publications', async () => {
     const root = path.resolve('review-paged');
@@ -122,7 +130,7 @@ test('Tests preserves trust and binding refusals instead of falling back to Git'
     }
 });
 
-test('Review joins the editor\'s Git changes with indexed records and live hashes, inside the project root only', async t => {
+test('Review joins editor Git changes with native source-verification receipts inside the project root only', async t => {
     const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'airk-review-')));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     fs.mkdirSync(path.join(root, 'src')); fs.mkdirSync(path.join(root, 'test'));
@@ -139,7 +147,7 @@ test('Review joins the editor\'s Git changes with indexed records and live hashe
         calls.push(`${tool} ${args.path ?? args.path_prefix ?? args.name}`);
         if (tool === 'airk_file_info') {
             const indexed: Record<string, string> = { 'src/session.ts': hash('export function renew() {}\n'), 'src/edited.ts': hash('original\n') };
-            return { publication: 'airk-r1:p:1', payload: indexed[args.path] ? { content_hash: indexed[args.path], language: 'typescript' } : { read: { status: 'unknown', reason: 'path is absent from the current index' } } };
+            return { publication: 'airk-r1:p:1', payload: indexed[args.path] ? { content_hash: indexed[args.path], language: 'typescript',source:{root,relative_path:args.path},source_verification:nativeCheck(root,args.path,indexed[args.path],args.path==='src/edited.ts'?'mismatch':'matched') } : { read: { status: 'unknown', reason: 'path is absent from the current index' },source_verification:nativeCheck(root,args.path,undefined) } };
         }
         if (tool === 'airk_symbols') {
             return { publication: 'airk-r1:p:1', payload: args.path_prefix === 'src/session.ts'

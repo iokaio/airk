@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { LiveCheck, OpenSourceResult, WorkspaceFileKind, WorkspaceFilesView } from './explorerContracts';
 import { AGENT_INSTRUCTION_FILES } from './explorerContracts';
-import { caseFold, displayPath, inside, liveCheck, sourceFile } from './explorerSource';
+import { caseFold, displayPath, inside, sourceFile } from './explorerSource';
 import { explorerError } from './explorerErrors';
 import { EvidenceFailure } from './explorerEvidence';
 import { PLAN_LIMIT_BYTES, safePrefix, SearchRecipe, Strategy, validateRecipe, validateStrategy } from './explorerStrategies';
@@ -13,12 +13,12 @@ import { ImportedPlan, parsePlanFile } from './explorerPlanFiles';
 import { StudioDocument, STUDIO_LIMIT_BYTES, STUDIO_SCHEMA, validateStudio } from './explorerStrategies';
 
 const MESSAGES: Record<LiveCheck, string> = {
-    matches_index: 'The saved file matches the indexed bytes.',
+    matches_index: 'Saved bytes matched the indexed hash during the native check.',
     changed_since_index: 'The saved file changed since it was indexed; the cited lines may have moved.',
     not_saved: 'The file has unsaved edits; the index describes the saved version.',
     missing: 'The file is no longer present at its indexed location.',
     outside_workspace: 'The file is outside this window’s workspace folders.',
-    unchecked: 'The file was too large to compare with the index.',
+    unchecked: 'Native saved-source verification was unavailable or incomplete.',
 };
 
 /**
@@ -28,29 +28,30 @@ const MESSAGES: Record<LiveCheck, string> = {
  * The Explorer is itself an editor tab, so it opens sources beside itself; the
  * sidebar Workbench passes ViewColumn.Active to use the main editor without a split.
  */
-export async function openSource(location: { root: string; relative: string; contentHash: string; lineBasis?: string; startLine: number },
+export async function openSource(location: { root: string; relative: string; contentHash: string; lineBasis?: string; startLine: number;savedState?:LiveCheck;nativeMessage?:string;nativeResult?:Record<string,unknown> },
     column: vscode.ViewColumn = vscode.ViewColumn.Beside): Promise<OpenSourceResult> {
     const file = await sourceFile(location.root, location.relative);
     const uri = vscode.Uri.file(file);
     const dirty = vscode.workspace.textDocuments.some(document => document.uri.scheme === 'file' && caseFold(document.uri.fsPath) === caseFold(file) && document.isDirty);
-    const live = await liveCheck(file, location.contentHash, dirty);
-    if (live === 'missing') { return { live, opened: false, message: MESSAGES[live] }; }
+    const live = dirty?'not_saved':location.savedState??'unchecked';
+    const observed=location.nativeMessage?` ${location.nativeMessage}`:'';
+    if (live === 'missing') { return { live, opened: false, message: MESSAGES[live]+observed,...(location.nativeResult?{nativeResult:location.nativeResult}:{}) }; }
     const inWorkspace = (vscode.workspace.workspaceFolders ?? []).some(folder => folder.uri.scheme === 'file' && inside(folder.uri.fsPath, file));
     const note = inWorkspace ? '' : ` ${MESSAGES.outside_workspace}`;
     if (location.lineBasis && location.lineBasis !== 'source') {
         await vscode.commands.executeCommand('vscode.open', uri, { viewColumn: column });
-        return { live, opened: true, message: `${MESSAGES[live]} Line numbers refer to extracted text; cite the original document location.${note}` };
+        return { live, opened: true, message: `${MESSAGES[live]}${observed} Line numbers refer to extracted text; cite the original document location.${note}`,...(location.nativeResult?{nativeResult:location.nativeResult}:{}) };
     }
     const line = Math.max(0, location.startLine - 1);
     await vscode.window.showTextDocument(uri, { viewColumn: column, preview: true, selection: new vscode.Range(line, 0, line, 0) });
-    return { live, opened: true, message: MESSAGES[live] + note };
+    return { live, opened: true, message: MESSAGES[live] + observed + note,...(location.nativeResult?{nativeResult:location.nativeResult}:{}) };
 }
 
-/** Saved-bytes check for an indexed file at AIRK's own source location. */
-export async function liveAt(root: string, relative: string, contentHash: string): Promise<LiveCheck> {
-    const file = await sourceFile(root, relative);
-    const dirty = vscode.workspace.textDocuments.some(document => document.uri.scheme === 'file' && caseFold(document.uri.fsPath) === caseFold(file) && document.isDirty);
-    return liveCheck(file, contentHash, dirty);
+/** Editor-buffer metadata only; saved-byte capture belongs to the native verifier. */
+export async function dirtyAt(root: string, relative: string): Promise<boolean> {
+    const base=displayPath(root),file=path.resolve(base,relative);
+    if(!path.isAbsolute(base)||!relative||path.isAbsolute(relative)||relative.replaceAll('\\','/').split('/').includes('..')||!inside(base,file))return false;
+    return vscode.workspace.textDocuments.some(document => document.uri.scheme === 'file' && caseFold(document.uri.fsPath) === caseFold(file) && document.isDirty);
 }
 
 const STRATEGY_FILTERS = { 'AIRK strategy': ['json'] };

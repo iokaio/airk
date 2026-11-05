@@ -130,6 +130,17 @@ impl Kernel {
         source: &std::path::Path,
         expected: Option<Sha256Digest>,
     ) -> Result<VectorStatus> {
+        self.require_unrestricted_read()?;
+        self.require_source_policy_directory_capture_path(source)?;
+        // Service setup already pinned a canonical manifest/directory during
+        // native preparation. Keep that spelling across the worker handoff;
+        // direct explicit setup resolves its input once before authorization.
+        let source = if expected.is_some() {
+            source.to_path_buf()
+        } else {
+            source.canonicalize()?
+        };
+        self.require_source_policy_directory_capture_path(&source)?;
         let _writer = self.store.lock()?;
         anyhow::ensure!(
             self.vectors_enabled()?,
@@ -141,8 +152,8 @@ impl Kernel {
             "index storage must not contain its source root"
         );
         if self.store.shared_model_runtime().is_some() {
-            let objects = airk_retrieval::embedding_worker::connector()?
-                .provision_model(&source.canonicalize()?)?;
+            let objects =
+                airk_retrieval::embedding_worker::connector()?.provision_model(&source)?;
             anyhow::ensure!(
                 expected.is_none_or(|expected| objects
                     .assets
@@ -161,8 +172,14 @@ impl Kernel {
             )?;
             return self.vector_status();
         }
-        let set = airk_retrieval::model::inspect_object_plan(source)?;
-        airk_store::model_objects::install_input_model(source, &set, &quota, &self.collection)?;
+        let source = crate::service_configuration::ProtectedModelInput(&source);
+        let set = source.inspect_plan()?;
+        airk_store::model_objects::install_input_model_assets(
+            &source,
+            &set,
+            &quota,
+            &self.collection,
+        )?;
         self.vector_status()
     }
 

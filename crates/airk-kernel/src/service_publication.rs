@@ -98,6 +98,7 @@ impl Kernel {
         Ok(selected)
     }
     pub fn rebuild_service(&self, job: Sha256Digest) -> Result<RevisionToken> {
+        self.source_policy_for_work()?;
         self.require_service_sources()?;
         let collection = self
             .service_collection

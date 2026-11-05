@@ -47,10 +47,25 @@ cross-platform qualification.
 | P6 | Complete — Windows local qualification and required full Neo checkpoint | Guarded authority-1 activation, reviewed setup/grants, installed Windows scenarios, all 84 matched native latency gates and source-bound Neo campaign with explicit corrections/reruns; release/platform limits remain separate |
 | P7 | Complete — locally qualified checkpoint | Unique-index composition and complete native/CLI/MCP/Workbench/parse/session/verification support; Windows release and Neo debug actual suites, all 84 latency gates and 120 Windows fan-out trials passed; platform/release limits below |
 | P8 | Complete — locally qualified checkpoint | Canonical Recommendations and harness scope guidance; Windows release / Neo debug actual transports, useful subset evidence and all 84 unchanged latency gates passed; installed/platform limits below |
-| P9–P10 | Not started | Permanent trim, split and integrated management advice |
+| P9 | Accepted locally | Windows workspace/runtime, 84 frozen latency gates and focused Mac ARM checks passed; exact source identities, test-only follow-up and release limits recorded below |
+| P10 | Isolated implementation in progress — not integrated or accepted | Split and integrated management advice; acceptance follows signed P9 |
 | P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
 | P13a/P13b | Conditional | Ranking/diversity only if frozen relevance/resource gates pass |
 | P14 | Not started | Combined qualification and release-candidate evidence |
+
+**Additional maintainer request — 5 November 2026:** after P9–P14, reproduce and
+fix deleted-source failure loops in the current release: individual indexed files
+and an entire source folder can disappear, and repeated failures must not make
+other indexes unusable. Audit the then-current native discovery, scheduler,
+worker admission/recovery and retirement paths before changing them. Provide
+bounded cleanup of stale references and explicit affected-index cleanup from
+retained ownership metadata, including when the original folder no longer exists.
+Preserve source read-only behavior, other indexes and exact operation recovery;
+allow temporarily unavailable locations to recover without accidental deletion.
+Qualify actual CLI/MCP/Workbench observations and native cleanup/isolation on
+Windows and Neo, with Cargo cleanup afterward. This work is not yet implemented
+or claimed fixed. Include it before the final local Windows test installer;
+publication and normal installation remain separate actions.
 
 ## P0a — reproducible controls and relevance measurements
 
@@ -3904,3 +3919,584 @@ acceptance, Linux execution, full Mac workspace/performance and final signed
 release qualification remain outside these observations. Fresh dependency
 advisory qualification is unavailable as recorded above. P9/P10 management actions
 remain pending, and 1.9.0 promotion/publication remains a later reviewed handoff.
+
+## P9 — permanent source exclusions (in progress)
+
+### Resumed checkpoint — 5 November 2026
+
+P9 remains **unaccepted** on working version **1.8.8**. P10–P14 have not started.
+The resumed work preserves the existing native admission, read fences, removal,
+durable policy capsule, cleanup receipts and extension consumers. The
+[usage contract](../source-policy.md) describes implemented candidate behavior
+and its explicit limitations; it is not a release-qualification claim.
+
+The checkpoint's two actual native/CLI/MCP trim tests pass after the remaining
+vector comparison authenticates and unwraps the complete transport bodies.
+The four direct Kernel policy tests also pass after the retained graph fixture
+asserts omission of an unresolved endpoint and survival of a proven allowed edge.
+These runs precede the following naming corrections and are not final-source
+qualification (`p9-resume-transports-r4.log`, `p9-resume-kernel-policy-r2.log`).
+
+The naming audit replaced general Windows/macOS Unicode string comparison with
+exact equality, qualified ASCII case equivalence and explicit unsupported
+outcomes. Metadata-only native probes reject unsupported case modes/filesystems.
+An unsupported comparison propagates through the boolean discovery filter and
+watch planner rather than producing a successful partial walk. Denied ignore
+control inputs that the current ignore adapter cannot omit cause traversal and
+saved-source checks to refuse before reading those controls. Pure predicates and
+direct Kernel regressions cover disjoint Unicode names, failed removal/new
+capture, retained evidence and source preservation. Early Windows checks pass
+three predicate cases and five direct Kernel cases; the final added ignore-control
+and watcher regressions await the full source-bound campaigns below.
+
+The first Windows source campaign passes formatting, build, extension tests
+(**714 passed / 19 skipped**), Python tests (**440 run / nine skipped**), repository,
+366-package notices, version and whitespace checks. It exposes a Store Clippy
+lint and an obsolete runtime-activation test which still rejected policy contract
+1. The corrected test accepts the implemented contract, explicitly rejects a
+same-version policy-0 runtime and continues rejecting an unknown policy contract.
+A diagnostic workspace Clippy pass identifies only the subsequently corrected
+placement of the policy test module.
+
+The next Windows campaign passes **485 CLI library cases / 21 ignored**, then
+exposes a helper fixture calling native configuration preparation from the test
+executable's distinct image. Its retained complete result is
+`service_rebind_required`. The fixture now exercises the actual CLI preparation
+command, preserving engine identity checks. All four helper/model tests then
+pass (`p9-helper-stop-native-cli-r1.log`). These partial broad runs do not qualify
+the targets skipped by Cargo after a failure. Raw campaign receipts remain in
+`p9-source-20261105-r1/` and `p9-source-20261105-r2/`.
+
+The fresh dependency policy gate **passes**
+(`p9-dependency-fresh-20261105.json`), including Cargo Audit, npm advisories, Deny,
+Vet, source policy and input integrity. Three findings remain covered by the
+existing explicit exceptions: `paste` and `ttf-parser` maintenance advisories,
+and the moderate `minimatch` advisory. No policy/exception/lock changes were made.
+This supersedes the resumed offline audit's missing advisory checkout for this
+new observation; historical unavailable results remain identifiable.
+
+Neo's first public snapshot completes its CLI library run with **485 passed /
+23 ignored / one failed**: the same obsolete activation assertion. Its owned
+runner's `finally` calls `cargo clean` on the exact isolated target; the cleanup
+receipt reports **exit 0**, preserving source and external model/runtime inputs.
+The initial launcher used an absent Python path and ran no tests; the retry uses
+Neo's existing Python 3.13. Neither event is relabeled as a passing campaign.
+
+The next frozen native source is **`b55893f0…` / 922 declared inputs**.
+Windows all-target/all-feature Clippy passes with `-D warnings` on this source.
+Windows and Neo full workspace runs collect all target outcomes with
+`--no-fail-fast`; Neo again guarantees exact-target Cargo cleanup after the run.
+Their final results, fresh runtime/resource/latency campaigns and phase review
+remain pending. Bounded LLVM coverage is unavailable because `cargo-llvm-cov`
+is not installed. No final P9 acceptance, phase commit, push, PR, normal-runtime
+replacement or publication has occurred. This review is a primary-agent review,
+not an independent review.
+
+### Corrective qualification — 5 November 2026
+
+The broad campaigns on `b55893f0…` completed rather than stopping at the first
+failure. Windows reported **2,484 passed / five failed / 47 ignored**; Neo R2
+reported **2,442 passed / six failed / 47 ignored**. These are sums of completed
+Rust log summaries, including child-test summaries, not a unique-test census.
+Failures covered retained-reader contention, two obsolete FTS rebuild fixtures,
+the discovery root's ignore-control setup, unsupported policy-version diagnostics
+and (Neo only) native review contention during queued setup. They remain failed
+historical runs, even where the following corrections pass.
+
+The ignore walker exempts its root from its entry filter, so checking only the
+filter was insufficient: it could load excluded root ignore controls first.
+Discovery now qualifies the root before the first iterator step. Watch planning
+and verification share checked policy predicates. A missing policy capsule now
+also blocks derived reset preparation before obsolete owner metadata is removed.
+Known native policy authority permits the intended legacy FTS rebuild; cold
+unknown authority continues to refuse it without changing its owner bytes.
+
+Focused Windows corrections pass: four policy-runtime unit cases, six direct
+Kernel policy cases, six FTS cases, seven Store catalog cases, ten watcher cases,
+three native naming-boundary cases, three ingest policy predicates, four scheduler
+join cases and the read-only contention regression. Read-only management lock
+contention uses the existing retryable `registry_busy`; mutating admissions and
+permission failures retain refusal. The trim fixture waits for accepted setup
+without canceling or replaying it. Neo R3 passes policy-runtime, direct Kernel,
+FTS and watcher checks before exposing the catalog diagnostic mismatch; Neo R4
+then passes catalog, read-only contention, both actual CLI/MCP trim cases and
+workspace/all-target/all-feature Clippy with `-D warnings`. Both runs complete
+their exact-target `cargo clean` with exit 0.
+
+A stronger positive Unblock regression subsequently exposes a cold worker startup
+failure masked by a negative-only evidence check: the source-completion selector
+was iterating the retention union of source and policy jobs. A succeeded policy
+job has no source-change begin receipt. Source-completion recovery now selects
+only exact source lineage; generic recovery and pruning retain the union. Current
+policy jobs remain pinned after physical cleanup because policy status still
+requires their receipts. Superseded jobs retain normal history/pruning semantics.
+Store regressions cover both successful-policy recovery and completed-receipt
+retention; actual native CLI/MCP tests cover trim, reviewed Unblock, source reindex
+and positive evidence delivery after cold restart. All **21 selected Store policy
+cases** and **two actual CLI/MCP cases** pass on native source `7a673d55…` / 922
+inputs (`p9-policy-recovery-store-r1.log`, `p9-policy-recovery-native-r1.log`).
+Temporary production diagnostics used to identify the worker error were removed.
+
+The formatted successor is **`689e2f5e…` / 922 native inputs**. Neo R5 is a new
+immutable public-source snapshot with focused recovery/transport/Clippy checks
+and unconditional exact-target Cargo cleanup. All six steps pass: formatting,
+seven Store catalog cases, 21 selected Store policy cases, the read-only contention
+case, both native CLI/MCP cases and all-target/all-feature workspace Clippy with
+`-D warnings`. Source verification before/after remains unchanged; Cargo cleanup
+reports **exit 0** (`p9-neo-r5-qualification.json`, `p9-neo-r5-cleanup.json`). This
+is focused Apple Silicon qualification, not a fresh complete Mac workspace run.
+The new Windows release build and workspace rerun remain pending.
+
+An earlier Windows release pair on `b55893f0…` passes model-backed native clients
+and **15 four-core local CI cycles** (five repetitions each of smoke, clients and
+installation). Its immutable receipt is retained under
+`p9-runtime-20261105-r1/`, with local-CI results in
+`artifacts/ci-local/20261105-023041-d4bccc3c/summary.json`. These binaries predate
+the corrections above and do not qualify the successor source. Final frozen
+latency/relevance, fault/upgrade evidence and complete-diff review remain open.
+P9 is still unaccepted; P10–P14 remain unstarted. No commit, push, PR, ordinary
+runtime replacement, publication or version promotion has occurred.
+
+### Retirement review finding — 5 November 2026
+
+The corrected-source Windows release build completes in 707 seconds with native
+inputs unchanged (`p9-final-runtime-build-r2.receipt.json`). Its full workspace
+run is still collecting outcomes. Runtime benchmarks were queued behind these
+prerequisites, then held before execution when primary source review found an
+uncovered retirement path. No latency/relevance result is inferred from the build.
+
+The collection purge allowlist predates `source-policy.json` and refuses that
+file as unknown. Simply adding it to the deletion list would erase a durable
+enforcement copy. Registry removal also deletes all job receipts, although policy
+status requires its exact current Configure job. Finally, retirement can follow a
+failed admitted trim before any capsule was written. Cleanup must preserve the
+admitted deny in that case as well. Fresh policy-cleanup resumes on a tombstoned
+index also require explicit refusal. These linked lifecycle paths are a P9
+blocker; correction and native regression evidence remain pending. The queued
+measurements on this superseded candidate are held while the existing workspace
+run collects its remaining results. Historical passing Neo checks remain valid
+only for the paths they exercised, and its required Cargo cleanup is complete.
+
+The Windows workspace run then completes successfully on `689e2f5e…`: **2,489
+reported passed / zero failed / 47 ignored**, across 78 completed summaries
+(`p9-workspace-final-r2-summary.json`). As above, sums include child summaries;
+they are not a unique-test census. The subsequent correction is separately bound
+and does not relabel that run as coverage of newly added paths.
+
+The new purge regression reproduces the review finding before the correction:
+`unknown removal entry is preserved: source-policy.json`
+(`p9-retirement-store-red-r1.log`). Store now validates and preserves the capsule
+and stable owner while completing bounded incarnation cleanup. Native retirement
+materializes missing/older enforcement copies from admitted policy as pending,
+under quota, and preserves the current policy job and its inactive registration.
+It clears the removal-polling guard after completion. Fresh policy resumes on a
+tombstone refuse; exact already-accepted retry observation retains its existing
+semantics. The extension hides the retired-index resume action and its controller
+also refuses it. Normal removals without policy retain their original deletion
+behavior.
+
+The same review closes ADR 002's stable-owner requirement: its required policy
+reference is separately authenticated and excluded from the original ownership
+digest. Old owners reject the field. Kernel checks its required digest even if
+the retained publication is absent; a missing capsule blocks indexing and reset
+preparation rather than becoming an empty policy. Store checks same-epoch digest
+reuse, epoch regression, unchanged immutable ownership, corrupt/foreign capsule
+refusal and idempotent cleanup.
+
+Focused Windows evidence passes **19 retirement cases**, **23 selected Store
+policy cases** and **seven direct Kernel cases**. The expanded actual CLI/MCP
+run passes **three cases / one explicitly ignored predecessor qualification**
+on `06f43289…`; these include completed-policy retirement and a quota failure
+before capsule creation (`p9-retirement-native-r3.log`). An earlier new-test compile
+failure used Debug on a Serialize-only response and was corrected to retain its
+complete JSON. The first quota injection attempted to revoke an existing retained
+allocation and was correctly refused; its corrected bound includes used and
+reserved bytes plus 128 KiB for metadata, leaving the 64-MiB publication turn
+inadmissible. These earlier failures remain identifiable in the r1/r2 logs.
+
+An additional two-scenario native quota test passes on **`c2039ba6…` / 922 inputs**
+(`p9-quota-exact-resume-r1.log`). After the fixture restores its injected capacity
+through the owning Store adapter, the actual native resume preserves operation,
+policy and failed-job history, returns the same accepted job on exact observation,
+publishes removal and delivers positive allowed evidence after explicit grant
+renewal. The alternative explicitly retires the failed operation and retains its
+pending enforcement copy. This does not qualify every frontend quota-edit flow.
+Workspace/all-target/all-feature Clippy with `-D warnings` also passes on this
+source (`p9-owner-retirement-clippy-r1.log`).
+
+The original entry-revision Store is built in an isolated public-source archive
+with only one declared test-driver module; its production handler files remain
+unchanged. Its actual constructor/current-metadata reader succeeds before trim,
+then its constructor and native purge refuse specifically the required policy
+field after retirement, without changing owner/capsule/source bytes. The explicit
+ignored qualification passes on Windows
+(`p9-pre-policy-actual-native-r1.log`; helper SHA-256 `14d44336…`, origin
+`8c790a53…`). This is a native Store-handler compatibility fixture, not an approved
+predecessor service, signed distribution or installed-editor claim. The regenerated
+ignore inventory records **58 literal Rust ignores**, including this separately
+gated case; unselected qualification remains ignored, not passing.
+
+Neo R6 transfers the frozen `c2039ba6…` source and exact original predecessor
+archive for focused lifecycle, quota, actual predecessor-handler and Clippy
+checks. Both builds use its exact owned target, and the runner unconditionally
+calls Cargo cleanup afterward. R6 results, the matching Windows release pair,
+fresh runtime/frozen latency/relevance and the final review remain pending.
+P9 remains unaccepted; no phase commit or P10–P14 implementation has occurred.
+
+### Frozen runtime and corrected Neo qualification — 5 November 2026
+
+Neo R6 passes all ten selected steps on `c2039ba6…` / 922 native inputs:
+formatting, catalog, Store policy and retirement, Kernel policy, read-only review
+contention, actual CLI/MCP trim/Unblock/quota-resume/retirement, original predecessor
+Store-handler build/execution and all-target/all-feature Clippy. The ordinary
+transport selection reports three passed / one ignored; the predecessor case
+is then explicitly selected and passes. Source bytes are verified before/after.
+The runner's final Cargo cleanup exits **0**, and a separate SSH check confirms
+the entire owned target was removed. Source and external offline model/runtime
+inputs remain. Receipts are `p9-neo-r6-qualification.json`,
+`p9-neo-r6-cleanup.json` and `p9-neo-r6-pre-policy-*.json`. This is focused
+Apple Silicon qualification, not a fresh complete Mac workspace, signed app,
+Intel/Linux, editor or Mac performance claim.
+
+The corrected Windows release build completes in 673 seconds with native inputs
+unchanged. Its verified complete inventory is `p9-runtime-final-r3-seal.json`:
+
+- Main SHA-256: `84b8bd34183dbc3ea75434ac2ac9cf67879c8722e1038c6cfad3dc8716ebdd6a`.
+- Helper SHA-256: `45e9ba2086bb427cee009f267d6606cfb351470267a197356b10af8d08e415e2`.
+- Install manifest SHA-256: `d75ea8fdc8964e76c7f72875f9d0dfb83c59750a1ca5885831dcafff60d191b5`.
+
+The serial runtime campaign passes (`p9-final-qualification-r2.json`). It includes
+model-backed clients, six publication process-death attempts, unchanged frozen
+Off/Report workloads and **84/84 unchanged-bound latency gates**
+(`p9-final-gates-r2.json`). The nine-case original graded corpus completes three
+trials per supported mode; every measured grade/recall outcome exactly matches P5
+and P8 across **84 metric/reference comparisons**
+(`p9-final-quality-comparison-r2.json`). The corpus remains a small regression
+baseline. No model, labels, ranking or semantic unit was changed. Resource/fixture
+conditions and payload hashes are retained in the raw dated receipts.
+
+One fresh four-core local CI cycle passes **3/3** smoke, clients and installation
+checks (`artifacts/ci-local/20261105-052839-3fbbaaf4/summary.json`). The older fifteen
+cycles remain separately tied to their earlier source. These are isolated runtime
+fixtures, not an installer delivered to or activated in the normal installation.
+The fault campaign simulates process termination; Windows full-volume tmpfs and
+physical power-loss claims are outside its evidence.
+
+The extension rerun passes **714 cases / 19 skipped** on the corrected source.
+The direct `npm` wrapper launch initially failed on Windows; using Node's installed
+npm entry runs the suite successfully. A subsequent wrapper-only console encoding
+error occurred after its successful receipt was saved; the ignored runner now
+prints UTF-8. Neither launcher error is recorded as a product-test failure or a
+passing qualification step. The actual suite log and receipt remain intact.
+
+A final complete Windows workspace and Python contract rerun on `c2039ba6…` is
+now collecting outcomes. Final repository/whitespace/version checks and explicit
+complete-diff review remain before P9 acceptance and its signed phase commit.
+No P10–P14 implementation, ordinary-runtime replacement, PR, push, publication,
+installer delivery or version promotion has occurred.
+
+The Python contract rerun initially reports one error in the source-tree identity
+fixture because Git refuses this sandbox token's repository ownership. The same
+read-only Git command reproduces that refusal. With the integrated checker's
+process-scoped `safe.directory` setting, all **440 tests complete successfully,
+with nine skipped** (`p9-owner-python-final-r2.log`); no global Git setting or
+assertion changed. The native source identity remains `c2039ba6…` before/after.
+The release notice generator also succeeds for **366 third-party packages**
+(`p9-final-notices-r1.log`); its initial direct invocation lacked Cargo on PATH,
+and the standard local runner supplies the already configured toolchain.
+Native/extension/lockfile versions agree at **1.8.8**, contributor instruction
+files are byte-identical, and the tracked whitespace check passes. ADR 002 now
+names the implemented stable enforcement copy and explicitly refuses ordinary
+re-registration of retired backing rather than describing the proposed layout
+or unimplemented reactivation as current behavior.
+
+The primary agent's post-implementation review traces the combined P9 admission,
+watcher/worker fencing, source-policy and source-change recovery selectors,
+retained-read and delivery checks, retirement ownership, compatibility refusal,
+and complete CLI/MCP/Workbench observations. Its inventory covers **134 changed
+or new public files** (`p9-final-review.json`), including the documentation
+reconciliation above. This is an explicit primary review, not independent review.
+No further production correction was identified in that pass. Full Windows
+workspace completion and final acceptance documentation remain outstanding.
+
+A subsequent status-field audit identifies one remaining correction: the native
+policy observation currently hardcodes `blocked: true` even after the last
+reviewed Unblock leaves no deny or positive inclusion restriction. Read admission
+is already correct, and Explorer's management labels use the actual rules, but
+the native observation must describe the effective restriction honestly. Collect
+the current workspace result before changing source, then qualify the corrected
+native observation through the actual transports. P9 remains unaccepted.
+
+The full Windows workspace run on frozen **`c2039ba6…` / 922 inputs** completes
+successfully in **2,169.7 seconds** (`p9-workspace-owner-final-r1.receipt.json`).
+Its **78 summaries report 2,493 passed, zero failed and 48 ignored**; subprocess
+summaries are included, so this is not a unique-test census. Before/after native
+source identities match. This result includes the final stable-owner,
+quota-resume and retirement corrections and precedes only the status-field
+correction identified above. It does not qualify that later delta by implication.
+
+### Final status and coverage audit — 5 November 2026
+
+The last-Unblock observation regression first fails with the hardcoded true
+flag (`p9-empty-policy-observation-red-r1.log`). Its correction retains true
+while native application is pending or include/deny restrictions remain, and
+reports false for the applied unrestricted policy while preserving its required
+format and receipt. Five direct policy cases, three actual native CLI/MCP cases
+(one separate predecessor qualification remains ignored) and all-target/all-feature
+Clippy pass on **`58282eeb…` / 922 inputs**. Actual complete status bodies agree
+after Unblock, including positive false/pending assertions. Neo R7 passes its four
+selected steps on the same source, then Cargo cleanup exits zero; a separate SSH
+check verifies target removal (`p9-neo-r7-qualification.json`,
+`p9-neo-r7-cleanup.json`).
+
+The later inventory-call audit finds a distinct gap: `coverage(true)` still uses
+the ordinary inventory adapter without permanent policy, and a pre-trim coverage
+cache can return old excluded paths. Managed replacement rebuild calls coverage
+validation and therefore shares the affected path. Both new behavioral
+regressions fail before the correction (`p9-coverage-red-r2.log`). The earlier r1
+is a test compile error from an unqualified digest type, not a behavioral result.
+
+Ingest now passes policy through the existing qualified discovery iterator and
+checks native liveness before inventory work, per candidate and at completion.
+Unknown naming/ignore-control refusals remain explicit. Kernel binds its private
+coverage cache to the exact policy digest, validates its epoch before cache
+delivery/persistence, and supplies the service cancellation checkpoint during
+refresh. The public coverage result shape remains unchanged; no new evidence
+mutation or corpus scan is introduced into ordinary status. Source checks,
+retained reads and replacement ownership continue through their existing owners.
+
+On **`c1ac112c…` / 922 inputs**, all **nine direct policy cases** pass, including
+pre-policy cache rejection, a 128-byte refresh budget with a 1-MiB excluded source,
+actual managed replacement/reopen, unknown-name and excluded-control refusal, and
+source-byte preservation (`p9-coverage-green-r2.log`). The first run after the
+production correction reports eight passed and one mistaken new assertion: the
+Unicode case expected the ignore-control reason. Its corrected assertion checks
+the actual Unicode reason, and a separate ignore-control assertion was added in
+the correct case. Two obsolete private discovery wrappers were removed after
+their callers moved to the qualified iterator. No product assertion was weakened.
+The related coverage selection passes **12 cases across its targets**, including
+existing multi-root, budget, runtime and cached-coverage cases
+(`p9-coverage-related-r1.log`); workspace/all-target/all-feature Clippy also passes
+(`p9-coverage-clippy-r1.log`).
+
+Neo R8 and a fresh Windows actual-transport run are collecting results for this
+inventory correction. Earlier full-workspace, release, latency and relevance
+receipts remain tied to `c2039ba6…`; they are not relabeled as testing these later
+deltas. P9 remains unaccepted pending the final scoped results and review. P10–P14
+remain unimplemented; no phase commit, push, publication, installer delivery or
+version promotion has occurred.
+
+### Protected ignore-control inputs — 5 November 2026
+
+Neo R8 passes its five selected steps on `c1ac112c…`, including the coverage
+correction and actual CLI/MCP lifecycle cases. Cargo cleanup exits zero and a
+separate SSH check verifies target removal (`p9-neo-r8-*.json`). A further audit
+of the locked ignore dependency finds that its control loader opens files
+directly. A new Unix native regression deliberately symlinks `.airkignore` to
+an excluded file containing `public.md`: the uncorrected code reads that rule
+and removes the allowed document while reporting successful indexing. Neo R9
+reproduces this failure on `1f864708…` (`p9-neo-r9-linked-control-red.log`). This
+is intentional pre-fix evidence, not a passing qualification. Its final Cargo
+cleanup also succeeds and target removal is verified.
+
+Ingest now captures controls through its existing protected no-follow source
+reader, validates held identity/pathname and passes captured lines to the pattern
+compiler. The dependency performs no control-file opens in the restricted path.
+Discovery, coverage, watcher planning and saved-source verification share that
+adapter. Native input checks still apply to global configuration and its selected
+excludes file. Failed verification configuration is cached per root rather than
+reread for every source. The ordinary empty-restriction path retains its adapter.
+The [source-policy guide](../source-policy.md) records explicit control-byte,
+directory, encoding and supported-reference limits, including unqualified
+worktree/commondir indirection and ambiguous global excludes values.
+
+Three Ingest regressions pass for ordinary/nested pattern precedence, rejection
+of a configured global control inside a denied subtree, and oversized-control
+refusal. Ten Windows direct policy cases pass, including a before/after native
+index comparison for nested ignores and explicit credential-file whitelists,
+plus positive saved-source verification. The first Windows protected-reader run
+refuses the sandbox token's inaccessible default global ignore file; an explicit
+metadata probe confirms permission denial. The scoped test runner now supplies
+an owned empty global ignore configuration, without changing user files, ACLs or
+global settings. The earlier failed observation remains in
+`p9-protected-controls-kernel-r2.log`; r3/r4 record the qualified fixture results.
+The initial compile errors and subsequent Clippy style findings remain identified
+in their separate r1 logs; corrections preserve the behavioral assertions.
+
+The latest actual CLI/MCP selection passes three cases / one separately gated
+predecessor ignore on **`727fd1b5…` / 923 native inputs**
+(`p9-protected-controls-native-r1.log`). It also positively verifies an allowed
+source with Report after trim and compares the complete native, CLI and MCP
+receipts. Neo R10 is collecting protected-reader, policy, watcher, verification,
+coverage, actual transport and Clippy outcomes on that source, using the same
+explicit owned configuration profile and unconditional Cargo cleanup. P9 remains
+unaccepted; P10–P14 have not started. All earlier full-workspace and frozen runtime
+receipts keep their original source identities.
+
+### P9 independent audit closure and combined validation, 5 November 2026
+
+Parallel independent review identified and corrected two ignore-snapshot issues:
+global patterns now retain the ordinary adapter's process-CWD base, and a nested
+control failure remains latched until a fresh matcher. Deterministic regressions
+cover configured/default global controls and repaired-but-still-failed snapshots.
+
+The source-I/O audit replaced split metadata/canonicalization/open sequences for
+administrative inputs with authorize-original/authorize-resolved/protected-exact-
+path capture. Kernel settings/usage/model and calibration adapters, semantic
+inputs and helper installation retain that selected path. Store consumes bounded
+asset captures and verifies references rather than reopening those source paths.
+These are supported-input protections; no universal filesystem or memory claim
+is added. The local full Ingest run on **`8129b98d…` / 924 native inputs** passed
+272 tests, failed one and ignored six. The failure was the parser fixture's live
+writable Windows `NamedTempFile` handle conflicting with protected capture.
+The fixture now closes the handle with `into_temp_path`, retaining automatic path
+cleanup and the protected reader's sharing requirements. The failed receipt is
+preserved in `p9-combined-audit-ingest-r1`.
+
+The lifecycle audit added a read-only exact cleanup-resume receipt independent
+of the current policy operation. Native validation binds request key, caller,
+index, operation, configuration and result. Workbench retains complete accepted
+proof separately from later current status, so a lost response can reconcile
+after a reviewed successor without replaying old work. Missing/expired/pruned
+proof remains unknown. Two separate agents reviewed that change without finding
+a concrete defect; another independent review found no further capture defect.
+These were code reviews, not executed-check claims.
+
+On **`8129b98d…`**, the complete extension suite passes **716 / 19 skipped**;
+Windows Kernel's administrative-input and policy integration targets pass
+**12 / zero failed**. The later fixture correction has a new source identity;
+combined owner tests and workspace Clippy are collecting separate receipts.
+Neo R10 completed all nine selected steps successfully and its exact isolated
+target was removed by successful `cargo clean`; collected receipts retain its
+earlier **`727fd1b5…`** source. R11 is prepared for the final combined audit delta,
+with unconditional cleanup, but has not yet launched at this checkpoint.
+
+P9 remains unaccepted. P10 and later implementation has not begun. Parallel
+preparation maps and inert proposed patches stay under ignored artifacts; they
+do not constitute phase acceptance. Existing broad/runtime evidence remains
+bound to its original inputs and is not relabeled as final-source validation.
+
+The corrected candidate is frozen at **`224ee433…` / 924 native inputs**.
+Combined Windows owner suites pass: Ingest **273 / six ignored**, Store
+**688 / three ignored**, zero failures. Workspace/all-target/all-feature Clippy
+passes with `-D warnings`; repository checks pass for 1,738 public files. Python
+reports 440 run, **431 passed / nine skipped**. Native/extension/lockfile version
+consistency remains 1.8.8. Full workspace tests followed by one sealed release-pair
+runtime/performance/relevance sequence are collecting in
+`p9-combined-final-queue-r1`; that queue stops on failure and preserves each
+source-bound result. It does not dispatch hosted CI. Neo R11 has launched on the
+same native fingerprint; its owner wrapper always attempts Cargo cleanup and its
+results/target removal remain to be collected. No phase acceptance is claimed
+from queued or running checks.
+
+Neo R11 is now collected: **all seven steps passed** on **`224ee433…`**,
+including full Ingest, Kernel policy/administrative capture, Store exact-policy
+receipt and calibration selections, actual native CLI/MCP permanent-trim cases,
+formatting and workspace Clippy. `cargo clean` exited zero, and a separate SSH
+existence check confirms the exact isolated target directory was removed.
+This is focused macOS ARM64 evidence; it does not claim a full Mac workspace,
+fresh runtime/performance, installed editor, signing or additional platforms.
+
+Evidence bookkeeping correction: the current primary review generator retained
+the older r2 inventory output name. Its current 158-file inventory was moved to
+`p9-final-review-r3.json`; the overwritten historical r2 inventory is unavailable
+and its filename now contains an explicit invalidation marker. Do not cite that
+marker as review evidence. Source files and all test/runtime receipts were
+unaffected; historical test results retain their original fingerprints.
+
+
+### P9 feature-mode correction and isolated P10 work, 5 November 2026
+
+The full Windows workspace/all-feature suite passed on **`224ee433…` / 924
+native inputs**, exit zero in 2,242.5 seconds. Its unchanged-source receipt is
+`p9-combined-final-workspace-r1.receipt.json`; no unique-test census is inferred
+from nested subprocess summaries. Neo R11 passed all seven steps and cleaned its
+target as recorded above.
+
+The fresh release producer built its helper but failed lightweight-main
+compilation: `OfflineTokenizer` referenced the remote tokenizer's `open` wrapper,
+which the administrative-capture change had made test-only. All-feature tests
+compile the other tokenizer implementation and did not expose this branch.
+The failed producer/queue remain preserved as r4 / combined-final-queue-r1.
+The correction is **exactly three cfg attributes** in `remote_tokenization.rs`:
+include the existing import/wrappers when either testing or local inference is
+disabled. Function bodies are unchanged. Primary review mechanically compared
+with the R11 source archive (`p9-feature-guard-review-r1.json`). All-feature
+production/test predicates are unchanged; no full-workspace rerun is justified
+by this compile-only feature restoration. Its earlier result retains its source
+identity rather than being relabeled.
+
+The corrected source is **`42224990…` / 924 native inputs**. Lightweight CLI
+all-target Clippy and workspace/all-target/all-feature Clippy pass with warnings
+as errors; focused tokenizer/helper selections pass in both feature modes, and
+formatting passes. The corrected r5 release pair and frozen gates are collecting
+under `p9-combined-final-queue-r2`; Neo R12 is collecting focused feature-mode
+Clippy/tokenizer checks with unconditional cleanup. P9 remains unaccepted until
+these results settle. Future phase qualification will check lightweight and
+helper feature compilation before long suites or release LTO.
+
+To use the validation wait productively without altering tested root files,
+P10 implementation now runs only in the ignored isolated worktree
+`artifacts/v190/p10-worktree`, based on the public P9 snapshot plus the exact
+feature-guard correction. Core/catalog staging, funded quota and positive-control
+input work have separate owners; the primary owns native transport/coordination
+and consumers. No P10 code is integrated into this P9 tree, enabled or accepted.
+Acceptance remains sequential after signed P9. Prepared post-P14 deleted-source
+regressions likewise remain unapplied and unexecuted.
+
+
+### P9 accepted local phase and signed checkpoint, 5 November 2026
+
+P9 is accepted for this unpublished 1.8.8 development phase. No push, PR,
+publication, version promotion or normal user installation is authorized here.
+The complete current change received a primary review, with separate parallel
+source-I/O, ignore and receipt/lifecycle reviews as recorded above.
+
+Final evidence retains its actual input identity:
+
+- **`224ee433…` / 924 native inputs:** full Windows workspace/all-feature suite
+  passes, exit zero in 2,242.5 seconds; combined Ingest/Store suites pass273/688
+  with6/3 ignored. Python reports431 passed/nine skipped. The complete extension
+  suite passes716 with19 skips on its earlier **`8129b98d…`** source; subsequent
+  changes are native-only, and its receipt is not relabeled. Neo R11 passes all
+  seven focused steps, including real
+  CLI/MCP policy parity and Unix protected-path regressions, and cleans its target.
+- **`42224990…` / 924:** exact three-attribute feature correction, both-mode
+  Clippy/tokenizer checks and fresh sealed r5 Windows release pair. All12 queue
+  stages pass: formatting, both tokenizer modes, producer, clients, six publication
+  fault attempts, frozen Off/Report replays, all84 unchanged-bound latency gates,
+  original nine-case three-trial/mode relevance, all84 metric/reference
+  comparisons, and local four-core smoke/clients/install3/3. Detailed install
+  results are `artifacts/ci-local/20261105-094824-b13bcd94/summary.json`.
+- **`7163ef05…` / 924:** only the shared-calibration unit fixture changed after
+  that runtime campaign: canonical temporary parent plus useful failure output.
+  Primary byte comparison verifies the entire production source outside that
+  test function is unchanged (`p9-fixture-test-only-review-r1.json`). Both Windows
+  feature-mode cases, workspace Clippy and formatting pass. Neo R13 passes fmt
+  and both feature-mode cases using its original default TMPDIR environment.
+  Successful Cargo cleanup and a separate SSH check confirm target removal.
+
+Neo R12's lightweight CLI Clippy passed, but its tokenizer fixture failed because
+macOS exposes default temporary storage through `/var`. The fixture had passed
+that unresolved spelling to an exact-path helper reader. The corrected fixture
+selects a canonical temporary parent; neither the protected reader nor expected
+assertion was weakened. R12's failed receipt remains preserved, with successful
+Cargo cleanup/target removal; R13 supplies the corrected focused result.
+
+The r5 runtime remains honestly bound to **`42224990…`**, not relabeled as the
+later test-fixture input. Main SHA-256:
+`7723276a5767cbacac1e14958cd113c0e5a99e1b8fdb1c3bcbb5b6b84c1fc808`;
+helper: `ce589b2aa3b17a43a3affc771e72bf10509618edfa679db82c22d01669139526`;
+install manifest: `0872d52aab2a44160906dcc296e82d9bcaaebaf9f5dbb5686f2838953255bf10`.
+Its complete inventory is `p9-runtime-final-r5-seal.json`. No production code
+changed after those runtime gates. The later final installer will be rebuilt
+from its final accepted implementation and version.
+
+This is bounded local qualification, not full Mac workspace/performance,
+installed-editor, Linux/Intel, signing/notarization, power-loss/secure-erasure or
+published-artifact qualification. The small original relevance corpus establishes
+only its measured controls. LLVM coverage is unavailable. Earlier dependency,
+notice and actual predecessor-handler evidence retains its recorded inputs and
+limits. Fresh post-documentation repository/version/whitespace checks and the
+human DCO signed phase commit complete this checkpoint. P10 implementation is
+isolated until that commit; P11–P14 and deleted-source follow-up remain unaccepted.

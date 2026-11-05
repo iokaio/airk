@@ -13,6 +13,7 @@ use std::sync::OnceLock;
 
 pub(super) const SCHEMA: &str = include_str!("service_catalog_schema.sql");
 const AUTHORITY_V1_SCHEMA: &str = include_str!("service_catalog_authority_v1.sql");
+const POLICY_V1_SCHEMA: &str = include_str!("service_catalog_policy_v1.sql");
 const LEGACY_SCHEMA: &str = include_str!("service_registry_schema11.sql");
 const MAX_SCHEMA_OBJECTS: usize = 512;
 const MAX_SCHEMA_BYTES: usize = 512 * 1024;
@@ -20,7 +21,7 @@ const MAX_OBJECT_SQL: usize = 16384;
 // P6 and P9 must explicitly advance their own required contracts. Older schema-12
 // readers must refuse them rather than silently ignore grants or source policy.
 pub const SUPPORTED_AUTHORITY_CONTRACT: u32 = 1;
-pub const SUPPORTED_POLICY_CONTRACT: u32 = 0;
+pub const SUPPORTED_POLICY_CONTRACT: u32 = 1;
 
 #[derive(Clone, Copy, Debug)]
 pub struct AdmissionPending;
@@ -51,6 +52,9 @@ pub mod setup;
 
 #[path = "service_catalog_source_change.rs"]
 pub mod source_change;
+
+#[path = "service_catalog_policy.rs"]
+pub mod policy;
 
 #[path = "service_catalog_operations.rs"]
 pub mod operations;
@@ -214,14 +218,21 @@ pub enum CatalogLayout {
     Schema11,
     Schema12Authority0,
     Schema12Authority1,
+    Schema12Authority1Policy1,
 }
 
 fn expected_layout(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>> {
     static AUTHORITY_V1: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
+    static POLICY_V1: OnceLock<Result<Vec<SchemaObject>, String>> = OnceLock::new();
     match layout {
         CatalogLayout::Schema11 => expected(11),
         CatalogLayout::Schema12Authority0 => expected(12),
-        CatalogLayout::Schema12Authority1 => AUTHORITY_V1
+        CatalogLayout::Schema12Authority1 | CatalogLayout::Schema12Authority1Policy1 => {
+            (if layout == CatalogLayout::Schema12Authority1 {
+                &AUTHORITY_V1
+            } else {
+                &POLICY_V1
+            })
             .get_or_init(|| {
                 (|| -> Result<_> {
                     let connection = Connection::open_in_memory()?;
@@ -232,12 +243,16 @@ fn expected_layout(layout: CatalogLayout) -> Result<&'static Vec<SchemaObject>> 
                     // Exactly the DDL used by owned promotion; no alternative
                     // permissive schema or hand-maintained object roster.
                     connection.execute_batch(AUTHORITY_V1_SCHEMA)?;
+                    if layout == CatalogLayout::Schema12Authority1Policy1 {
+                        connection.execute_batch(POLICY_V1_SCHEMA)?;
+                    }
                     schema_objects(&connection)
                 })()
                 .map_err(|error| format!("{error:#}"))
             })
             .as_ref()
-            .map_err(|error| anyhow::anyhow!("compiled registry schema is invalid: {error}")),
+            .map_err(|error| anyhow::anyhow!("compiled registry schema is invalid: {error}"))
+        }
     }
 }
 
@@ -248,6 +263,8 @@ fn physical_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
         Ok(CatalogLayout::Schema12Authority0)
     } else if objects == expected_layout(CatalogLayout::Schema12Authority1)?.as_slice() {
         Ok(CatalogLayout::Schema12Authority1)
+    } else if objects == expected_layout(CatalogLayout::Schema12Authority1Policy1)?.as_slice() {
+        Ok(CatalogLayout::Schema12Authority1Policy1)
     } else {
         anyhow::bail!("unsupported registry table, index, foreign-key or trigger shape")
     }
@@ -257,19 +274,48 @@ fn physical_catalog_layout(objects: &[SchemaObject]) -> Result<CatalogLayout> {
 /// marker. A metadata edit cannot turn a foreign/partial schema into a format.
 pub(super) fn validate_catalog_layout(connection: &Connection) -> Result<CatalogLayout> {
     let layout = physical_catalog_layout(&schema_objects(connection)?)?;
-    let authority: i64 = connection.query_row(
-        "SELECT authority_contract FROM index_catalog_meta WHERE id=1",
+    let (authority, policy): (i64, i64) = connection.query_row(
+        "SELECT authority_contract,policy_contract FROM index_catalog_meta WHERE id=1",
         [],
-        |row| row.get(0),
+        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     ensure!(
+        authority <= i64::from(SUPPORTED_AUTHORITY_CONTRACT)
+            && policy <= i64::from(SUPPORTED_POLICY_CONTRACT),
+        "index catalog upgrade required: unsupported authority or policy contract"
+    );
+    ensure!(
         matches!(
-            (layout, authority),
-            (CatalogLayout::Schema12Authority0, 0) | (CatalogLayout::Schema12Authority1, 1)
+            (layout, authority, policy),
+            (CatalogLayout::Schema12Authority0, 0, 0)
+                | (CatalogLayout::Schema12Authority1, 1, 0)
+                | (CatalogLayout::Schema12Authority1Policy1, 1, 1)
         ),
         "index authority marker does not match the compiled registry layout"
     );
     Ok(layout)
+}
+
+/// Policy installation is part of the already fenced catalog transaction. A
+/// predecessor sees either the unchanged policy-0 shape or a format it refuses.
+pub(super) fn apply_policy_v1_layout(connection: &Connection) -> Result<()> {
+    ensure!(
+        !connection.is_autocommit(),
+        "policy layout requires an explicit transaction"
+    );
+    match validate_catalog_layout(connection)? {
+        CatalogLayout::Schema12Authority1 => {
+            connection.execute_batch(POLICY_V1_SCHEMA)?;
+            connection.execute(
+                "UPDATE index_catalog_meta SET policy_contract=1,accepted_new_writes=1 WHERE id=1",
+                [],
+            )?;
+        }
+        CatalogLayout::Schema12Authority1Policy1 => {}
+        _ => anyhow::bail!("policy installation requires qualified authority 1"),
+    }
+    validate_catalog_layout(connection)?;
+    Ok(())
 }
 
 /// Pure DDL stage for an already owned/backed-up promotion transaction. This

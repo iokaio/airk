@@ -279,6 +279,9 @@ export function StudioScreen(props: ScreenProps) {
                     {manifest.reasons.length > 0 && <ul>{manifest.reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
                     <div class="table-wrap"><table class="grid"><thead><tr><th>Step</th><th>Operator</th><th>Calls</th><th>Records</th><th>Outcome</th></tr></thead>
                         <tbody>{manifest.steps.map(step => <tr key={step.id}><td>{step.id}</td><td><code>{step.op}</code></td><td>{step.calls}</td><td>{step.records}</td><td>{step.outcome}{step.message ? ` — ${step.message}` : ''}</td></tr>)}</tbody></table></div>
+                    <p>Saved-source receipts retain their original check times and publication. They do not authorize a later edit or promise continued freshness. Complete run JSON includes every retained native source-check reply; prompt copies contain selected evidence.</p>
+                    <button disabled={!draft.run.hostRunId} onClick={()=>void request('strategy.run.export',{runId:draft.run!.hostRunId!,digest:manifest.evidenceDigest,format:'copy'}).then(()=>setNotice('Complete run copied.')).catch(failure=>setError(message(failure)))}>Copy complete run JSON</button>
+                    <button disabled={!draft.run.hostRunId} onClick={()=>void request('strategy.run.export',{runId:draft.run!.hostRunId!,digest:manifest.evidenceDigest,format:'json'}).then(()=>setNotice('Run export completed or canceled.')).catch(failure=>setError(message(failure)))}>Export complete run JSON…</button>
                 </section>
             )}
             <section class="card">

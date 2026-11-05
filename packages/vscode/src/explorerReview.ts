@@ -8,14 +8,16 @@ import type { LiveCheck } from './explorerContracts';
 import { absentFromIndex, EvidenceClient, EvidenceFailure, PublicationChanged, samePublication } from './explorerEvidence';
 import { explorerError } from './explorerErrors';
 import { FactHandles, factList } from './explorerFacts';
-import { caseFold, displayPath, inside, liveCheck } from './explorerSource';
+import { caseFold, displayPath, inside } from './explorerSource';
+import { nativeSavedSourceState, nativeVerification } from './sourceVerification';
+import { DEFAULT_MCP_MESSAGE_BYTES } from './mcpStdioSession';
 
 export const REVIEW_LIMITS = { files: 50, sourceFiles: 20, declarations: 20, references: 20, testScopes: 2, inventoryPages: 2 } as const;
 /** Paths treated as tests when no setting overrides it: test/tests/__tests__/spec folders and *.test.* / *.spec.* / *_test.* files. */
 export const DEFAULT_TEST_PATTERN = '(^|/)(tests?|__tests__|specs?)/|[._-](test|spec)\\.[A-Za-z0-9]+$|_test\\.[A-Za-z0-9]+$';
 
 export type ChangeKind = 'added' | 'modified' | 'deleted' | 'renamed' | 'untracked' | 'conflicted';
-export interface ChangedFileView { readonly path: string; readonly change: ChangeKind; readonly staged: boolean; readonly indexed: boolean; readonly workingTree?: boolean; readonly originalPath?: string; readonly live: LiveCheck | 'deleted'; readonly language?: string }
+export interface ChangedFileView { readonly path: string; readonly change: ChangeKind; readonly staged: boolean; readonly indexed: boolean; readonly workingTree?: boolean; readonly originalPath?: string; readonly live: LiveCheck | 'deleted'; readonly language?: string;readonly nativeResult?:Record<string,unknown> }
 export interface ChangesReview { readonly git: 'available' | 'unavailable' | 'no_repository'; readonly files: readonly ChangedFileView[]; readonly truncated: boolean; readonly publication?: string; readonly notes: readonly string[]; readonly offset: number; readonly total: number; readonly limit: number; readonly snapshot: string }
 export interface ImpactItem { readonly name: string; readonly kind: string; readonly path: string; readonly line?: number; readonly references: number; readonly referenceFiles: readonly string[]; readonly testReferences: number; readonly truncated: boolean }
 export interface ImpactReview { readonly items: readonly ImpactItem[]; readonly files: number; readonly truncated: boolean; readonly publication?: string; readonly notes: readonly string[] }
@@ -94,12 +96,27 @@ async function changesPage(context: ReviewContext, page: ReviewPage): Promise<Ch
     const files: ChangedFileView[] = [];
     for (const change of changes.slice(offset, offset + REVIEW_LIMITS.files)) {
         let info: Record<string, unknown> | undefined;
-        const result = await session.call('airk_file_info', { path: change.path }, { timeout: 30000 });
+        const budget=context.verificationBudget,remaining=budget?Math.floor(budget.deadline-performance.now()):30000;
+        if(budget&&(budget.reportBytes<DEFAULT_MCP_MESSAGE_BYTES||remaining<1))throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT','Review native response or time budget was exhausted. Narrow the Git change set and refresh.'));
+        const verify=change.change!=='deleted'&&(!budget||budget.bytes>0);
+        if(budget&&!verify&&change.change!=='deleted'&&!notes.includes('Saved-source verification is incomplete: the shared byte budget or native accounting is exhausted. Remaining indexed metadata is read without source capture.'))notes.push('Saved-source verification is incomplete: the shared byte budget or native accounting is exhausted. Remaining indexed metadata is read without source capture.');
+        let result;
+        try{result=await session.call('airk_file_info', { path: change.path,...(publication?{revision:publication}:{}),...(!verify?{verification:'off'}:budget?{verification:'report',verification_max_sources:1,verification_max_bytes:budget.bytes,verification_deadline_ms:Math.min(30000,remaining)}:{}) }, { timeout: 30000 });}
+        catch(error){if(budget)budget.bytes=0;throw error;}
+        const native=result.rawPayload??result.payload,reportBytes=Buffer.byteLength(JSON.stringify(native));
+        if(budget){
+            if(reportBytes>DEFAULT_MCP_MESSAGE_BYTES||reportBytes>budget.reportBytes)throw new EvidenceFailure(explorerError('TOOL_ERROR','Review native verification exceeded its retained response budget.'));
+            budget.reportBytes-=reportBytes;
+            if(verify){
+                const receipt=nativeVerification(result.payload.source_verification),spent=(receipt?.counts as Record<string,unknown>|undefined)?.bytes_read;
+                if(typeof spent!=='number'||!Number.isSafeInteger(spent)||spent<0||spent>budget.bytes)budget.bytes=0;else budget.bytes-=spent;
+            }
+        }
         publication = samePublication(publication, result);
         info = absentFromIndex(result.payload) ? undefined : result.payload;
         const hash = typeof info?.content_hash === 'string' ? info.content_hash : undefined;
         if (info && !hash) { throw new Error('AIRK returned an incomplete indexed record; indexing state is unknown.'); }
-        files.push({ path: change.path, change: change.change, staged: change.staged, workingTree: change.workingTree, originalPath: change.originalPath, indexed: !!hash, live: change.change === 'deleted' ? 'deleted' : hash ? await liveCheck(change.file, hash, dirty(change.file)) : 'unchecked',
+        files.push({ path: change.path, change: change.change, staged: change.staged, workingTree: change.workingTree, originalPath: change.originalPath, indexed: !!hash, live: change.change === 'deleted' ? 'deleted' : dirty(change.file)?'not_saved':hash&&verify?nativeSavedSourceState(info,hash,result.publication):'unchecked',nativeResult:native,
             ...(typeof info?.language === 'string' ? { language: info.language.slice(0, 40) } : {}) });
     }
     if (changes.length > REVIEW_LIMITS.files) { notes.push(`Showing ${offset + 1}–${offset + files.length} of ${changes.length} changed files. Use Previous and Next to read other pages.`); }
@@ -111,15 +128,16 @@ async function changesPage(context: ReviewContext, page: ReviewPage): Promise<Ch
 interface Declaration { name: string; kind: string; path: string; line?: number }
 
 /** Reads go through the shared fact parser, which understands both compact and rich reply shapes. */
-export interface ReviewContext { readonly session: EvidenceClient; readonly handles: FactHandles; readonly project: string; readonly root: string }
+export interface ReviewContext { readonly session: EvidenceClient; readonly handles: FactHandles; readonly project: string; readonly root: string;readonly verificationBudget?:{bytes:number;reportBytes:number;deadline:number} }
 
 /** Restart the whole read-only report once; never combine results from attempts. */
 async function consistentReview<T extends { notes: readonly string[] }>(context: ReviewContext, read: (context: ReviewContext) => Promise<T>, restart = true): Promise<T> {
     if (context.session.spec?.combinedSession) { throw new EvidenceFailure(explorerError('CAPABILITY_DISABLED', 'Git Review requires one explicit source/index context; combined paths need an originating index. Use qualified evidence in Workbench.')); }
     const deadline = performance.now() + 90000;
+    const verificationBudget={bytes:512*1024*1024,reportBytes:8*1024*1024,deadline};
     for (let attempt = 0; ; attempt++) {
         const cache = new Map<string, ReturnType<EvidenceClient['call']>>();
-        const scoped = { ...context, session: { call: (tool, args, options = {}) => {
+        const scoped = { ...context,verificationBudget, session: { call: (tool, args, options = {}) => {
             const remaining = Math.floor(deadline - performance.now());
             if (remaining <= 0) { throw new EvidenceFailure(explorerError('REQUEST_TIMEOUT', 'Review exceeded its time budget. Narrow the Git change set and refresh.')); }
             const key = JSON.stringify([tool, args]);

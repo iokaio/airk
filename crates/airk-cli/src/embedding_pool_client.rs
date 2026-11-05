@@ -208,7 +208,9 @@ struct PoolConnector {
 }
 impl Connector for PoolConnector {
     fn provision_model(&self, source: &Path) -> Result<airk_core::model_objects::ModelObjectSet> {
-        let source = source.canonicalize()?;
+        // The project owner already authorized this exact canonical spelling.
+        // Resolving again could redirect an admitted input before helper capture.
+        let source = source.to_path_buf();
         let session = Session::new(self.client.clone())?;
         match session.request(Request::ProvisionModel { directory: source })? {
             Response::Provisioned { objects } => {

@@ -100,6 +100,15 @@ pub enum CatalogOperation {
         expected_definition_revision: CatalogRevision,
         name: String,
     },
+    ChangeIndexPolicy {
+        id: IndexId,
+        expected_source_revision: CatalogRevision,
+        expected_policy_epoch: u64,
+        expected_policy_digest: Option<Sha256Digest>,
+        change: crate::source_policy::PolicyChange,
+        configuration: Box<crate::service_configuration::ConfigurationRequest>,
+        engine_identity: Sha256Digest,
+    },
     BeginIndexSourceChange {
         id: IndexId,
         expected_source_revision: CatalogRevision,
@@ -150,6 +159,12 @@ pub enum CatalogOperation {
     },
 }
 impl CatalogOperation {
+    pub fn requires_worker_drain(&self) -> bool {
+        matches!(
+            self,
+            Self::RetireIndex { .. } | Self::ChangeIndexPolicy { .. }
+        )
+    }
     pub fn requires_authority_fence(&self) -> bool {
         matches!(
             self,
@@ -159,6 +174,7 @@ impl CatalogOperation {
                 | Self::RevokeGrant { .. }
                 | Self::BeginIndexSourceChange { .. }
                 | Self::RetireIndex { .. }
+                | Self::ChangeIndexPolicy { .. }
         )
     }
 }
@@ -174,6 +190,39 @@ impl CatalogRequest {
     pub fn validate(&self) -> Result<()> {
         ensure!(self.key.epoch <= i64::MAX as u64, "invalid request epoch");
         match &self.operation {
+            CatalogOperation::ChangeIndexPolicy {
+                expected_policy_epoch,
+                expected_policy_digest,
+                change,
+                configuration,
+                ..
+            } => {
+                ensure!(
+                    *expected_policy_epoch <= i64::MAX as u64
+                        && (*expected_policy_epoch == 0) == expected_policy_digest.is_none(),
+                    "invalid reviewed source policy identity"
+                );
+                if let crate::source_policy::PolicyChange::Trim { selector, .. } = change {
+                    selector.validate()?;
+                }
+                configuration.validate()?;
+                ensure!(
+                    !configuration.prepare,
+                    "source policy work requires pinned native preparation"
+                );
+                let crate::service_configuration::ProjectConfiguration::ApplySourcePolicy {
+                    policy,
+                    operation_id,
+                } = &configuration.configuration
+                else {
+                    anyhow::bail!("source policy change requires its exact configuration job");
+                };
+                ensure!(
+                    *operation_id == catalog_operation_id(self.caller, &self.key)?,
+                    "source policy operation identity differs from job"
+                );
+                policy.validate()?;
+            }
             CatalogOperation::CreateProject { name, .. }
             | CatalogOperation::RenameProject { name, .. }
             | CatalogOperation::RenameIndex { name, .. } => label(name)?,
@@ -270,7 +319,11 @@ pub struct CatalogPreview {
     pub after: Vec<CatalogItem>,
     /// Native delivery must acknowledge its own fence before reporting completion.
     pub authority_fence_required: bool,
+    /// The admitted operation changes derived index file data (possibly through
+    /// its queued native job). This never authorizes writes to source files.
     pub file_data_changes: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_policy_impact: Option<crate::catalog_policy::PolicyImpact>,
 }
 impl CatalogPreview {
     pub fn identity(&self) -> Result<Sha256Digest> {

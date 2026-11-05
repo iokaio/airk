@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-//! Inert policy format and canonical predicates; native enforcement activates later.
+//! Policy format and canonical predicates; native adapters enforce reviewed authority.
 use crate::{
     identity::{Sha256Digest, framed_digest},
     index_catalog::{
@@ -13,6 +13,10 @@ use std::collections::BTreeSet;
 
 pub const POLICY_SCHEMA: &str = "airk.source-policy/1";
 pub const MAX_POLICY_BYTES: usize = 1024 * 1024;
+
+#[path = "source_policy_mutation.rs"]
+mod mutation;
+pub use mutation::{PolicyChange, PolicyChangePreview};
 
 #[cfg(test)]
 #[path = "source_policy_tests.rs"]

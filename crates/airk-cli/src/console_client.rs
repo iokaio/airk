@@ -54,6 +54,9 @@ async fn handle(
         | ControlMethod::CatalogSourceMutationDraft { .. }
         | ControlMethod::CatalogSourceChangeObservation { .. }
         | ControlMethod::CatalogPendingSourceChange { .. }
+        | ControlMethod::CatalogPolicyStatus { .. }
+        | ControlMethod::CatalogPolicyResumeReceipt { .. }
+        | ControlMethod::CatalogPolicyResume { .. }
         | ControlMethod::CatalogIndexRetirementEvidence { .. }
         | ControlMethod::CatalogSourceChangeResolve { .. }
         | ControlMethod::CatalogIndexSetupDraft { .. }

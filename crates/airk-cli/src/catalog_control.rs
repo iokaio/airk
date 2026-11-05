@@ -379,6 +379,7 @@ pub(super) fn send_reply(reply: &SyncSender<Result<Response>>, result: Result<Re
 pub(crate) struct CatalogControlHandle {
     sender: Weak<SyncSender<Envelope>>,
     gate: NativeCatalogAdmission,
+    source: Option<crate::source_supervisor::SourceWake>,
 }
 #[derive(Debug)]
 struct NativePredecessorsPending;
@@ -396,12 +397,17 @@ impl Supervisor {
         let handle = CatalogControlHandle {
             sender: Arc::downgrade(self.sender.as_ref().context("supervisor closed")?),
             gate,
+            source: None,
         };
         handle.attach_before(Instant::now() + Duration::from_secs(30))?;
         Ok(handle)
     }
 }
 impl CatalogControlHandle {
+    pub(crate) fn with_source_wake(mut self, source: crate::source_supervisor::SourceWake) -> Self {
+        self.source = Some(source);
+        self
+    }
     pub(crate) fn resolve_source_change(
         &self,
         project: ProjectBinding,
@@ -509,6 +515,26 @@ impl CatalogControlHandle {
     }
 }
 impl CatalogControl for CatalogControlHandle {
+    fn fence_source_policy(
+        &self,
+        project: ProjectBinding,
+        operation_id: Incarnation,
+    ) -> Result<()> {
+        self.source
+            .as_ref()
+            .context("native source policy watcher port unavailable")?
+            .fence_policy(project, operation_id)
+    }
+    fn release_source_policy(
+        &self,
+        project: ProjectBinding,
+        operation_id: Incarnation,
+    ) -> Result<()> {
+        self.source
+            .as_ref()
+            .context("native source policy watcher port unavailable")?
+            .release_policy(project, operation_id)
+    }
     fn uses_gate(&self, gate: &NativeCatalogAdmission) -> bool {
         self.gate.same_instance(gate)
     }
@@ -1621,6 +1647,7 @@ mod tests {
         let handle = CatalogControlHandle {
             sender: Arc::downgrade(&owner),
             gate,
+            source: None,
         };
         drop(owner);
         assert!(handle.call(Operation::Attach).is_err());

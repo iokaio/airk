@@ -257,23 +257,45 @@ fn scoped_event_allowed(
 
 impl CurrentRead {
     fn scope_recent_changes(&self, mut view: RecentChanges) -> Result<RecentChanges> {
-        let Some(scope) = self.read_scope.get() else {
+        let scope = self.read_scope.get();
+        let policy = self.source_policy_digest()?;
+        if scope.is_none() && policy.is_none() {
             return Ok(view);
-        };
+        }
         self.require_read_scope_live()?;
         // Shared authenticated change pages are metadata, selected before the
         // caller applies response record/count budgets or loads source bodies.
         let mut selected = Vec::new();
         for event in view.events {
-            if scoped_event_allowed(scope, &event)? {
+            // A removal/move's historical endpoint can identify blocked content
+            // even when its new endpoint is allowed. Omit the complete event;
+            // never expose the old source hash as part of a filtered move.
+            let policy_allowed = [&event.before, &event.after]
+                .into_iter()
+                .flatten()
+                .all(|endpoint| self.source_policy_allows_source(&endpoint.root, &endpoint.path));
+            if policy_allowed
+                && scope
+                    .map(|scope| scoped_event_allowed(scope, &event))
+                    .transpose()?
+                    .unwrap_or(true)
+            {
                 selected.push(event);
             }
         }
         view.events = selected;
-        view.view_digest = framed_digest(
-            b"scoped-recent-change-view/1",
-            &[view.view_digest.as_bytes(), scope.fingerprint.as_bytes()],
-        );
+        if let Some(scope) = scope {
+            view.view_digest = framed_digest(
+                b"scoped-recent-change-view/1",
+                &[view.view_digest.as_bytes(), scope.fingerprint.as_bytes()],
+            );
+        }
+        if let Some(policy) = policy {
+            view.view_digest = framed_digest(
+                b"policy-recent-change-view/1",
+                &[view.view_digest.as_bytes(), policy.as_bytes()],
+            );
+        }
         Ok(view)
     }
 
