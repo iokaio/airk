@@ -37,6 +37,7 @@ import { readResultBody } from './sourceVerification';
 export interface ExplorerHost {
     /** Validate the active frozen combined selection and prefill an inert form. */
     prefillCombinedSearch?(search: SearchDraft): Promise<void>;
+    prefillRecommendedSearch?(search: SearchDraft): Promise<void>;
     /** Trusted owning adapter supplies canonical identity; absence keeps window association controls gated. */
     windowContext?(): WindowContextDescriptor | undefined;
     windowContextObservation?(): CatalogObject | undefined;
@@ -432,6 +433,30 @@ export class ExplorerController implements vscode.Disposable {
         if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
         if(message.type.startsWith('indexing.'))this.requireAuthorization(message.type!=='indexing.export');
         switch (message.type) {
+            case 'indexing.recommendations':
+                return this.indexing.recommendations(async()=> (await this.session().call('airk_query_scope',{...message.arguments,view:'recommendations',max_bytes:65536},{supersede:'recommendations'})).payload);
+            case 'indexing.recommendations.dismiss': return this.indexing.dismissRecommendations();
+            case 'indexing.recommendations.copy':
+            case 'indexing.recommendations.use': {
+                const prior=this.indexing.snapshot().recommendations;
+                const scopeEpoch=this.selectionEpoch;
+                if(prior?.schema!=='airk.recommendations/1')throw new Error('Read current recommendations first.');
+                const selection=prior.selected as CatalogObject;
+                const choice={project_ids:selection.project_ids,index_ids:selection.index_ids,member_availability:selection.member_availability};
+                // Revalidate the exact selection and current grants before an action.
+                const current=(await this.session().call('airk_query_scope',{view:'recommendations',selection:choice,max_bytes:65536},{supersede:'recommendations'})).payload;
+                this.requireAuthorization(true);
+                if(scopeEpoch!==this.selectionEpoch||this.indexing.snapshot().recommendations!==prior)throw new Error('Recommendations changed; refresh before acting.');
+                if(current.scope_identity!==prior.scope_identity||current.catalog_revision!==prior.catalog_revision)throw new Error('Recommendations changed; refresh before acting.');
+                if(message.type==='indexing.recommendations.copy'){
+                    const instructions=current.instructions as CatalogObject;
+                    if(instructions.status!=='available'||typeof instructions.text!=='string')throw new Error('Scope instructions unavailable.');
+                    await vscode.env.clipboard.writeText(instructions.text);return {copied:true};
+                }
+                if(!this.host.prefillRecommendedSearch)throw new Error('A reviewed combined Workbench connection is required.');
+                await this.host.prefillRecommendedSearch({query:'',mode:'lexical',limit:12,maxBytes:8192,fullChunks:false,...choice} as SearchDraft);
+                return {prefilled:true};
+            }
             case 'workspace.manageTrust':
                 if(this.disposed)throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));
                 if(this.host.workspaceTrusted?.()!==false&&!this.host.trusted())throw new EvidenceFailure(explorerError('CLIENT_NOT_AUTHORIZED'));

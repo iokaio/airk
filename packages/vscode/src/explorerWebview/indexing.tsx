@@ -17,6 +17,8 @@ export function IndexingScreen(props: ScreenProps) {
     const [setupName,setSetupName]=useState(''),[setupPrimary,setSetupPrimary]=useState(''),[setupData,setSetupData]=useState(''),[setupCollection,setSetupCollection]=useState(''),[setupWatch,setSetupWatch]=useState(false);
     const [setupRoots,setSetupRoots]=useState<{alias:string;path:string}[]>([]);
     const [useIndex,setUseIndex]=useState(''),[useProjects,setUseProjects]=useState('');
+    const actionLabels:Record<string,string>={keep_layout:'Keep this layout',review_reuse:'Review reuse',use_query_scope:'Choose a query scope',split_pending:'Split unavailable until P10',removal_pending:'Permanent removal unavailable until P9',manual_selection:'Choose manually while observations are unknown'};
+    const [adviceProjects,setAdviceProjects]=useState(''),[adviceIndexes,setAdviceIndexes]=useState(''),[situation,setSituation]=useState('keep');
     const [sourceAlias,setSourceAlias]=useState(''),[sourcePath,setSourcePath]=useState(''),[removeAlias,setRemoveAlias]=useState(''),[beginOperation,setBeginOperation]=useState('');
     const savedContext=catalogWindowAssociation(view);
     const contextToken=view.hostContext?JSON.stringify([catalogObject(view.hostContext.descriptor).namespace,catalogObject(view.hostContext.descriptor).catalog_revision,savedContext?.id,savedContext?.revision]):view.context?JSON.stringify([catalogObject(view.context.detail).namespace,catalogObject(view.context.detail).revision,savedContext?.id,savedContext?.revision]):'';
@@ -26,6 +28,8 @@ export function IndexingScreen(props: ScreenProps) {
     const disabled=view.busy||!props.state.trusted||props.state.nativeExecutionEnabled===false;
     const rows=catalogItems(view.page), detail=catalogItems(view.detail,'detail')[0];
     const project=detail?.kind==='project'?detail.value:undefined, selectedIndex=detail?.kind==='index'?detail.value:undefined;
+    const adviceSelection=view.recommendations?.schema==='airk.recommendations/1'?catalogObject(view.recommendations.selected):undefined;
+    const canSaveAdviceDefault=project&&Array.isArray(adviceSelection?.project_ids)&&adviceSelection.project_ids.length===1&&adviceSelection.project_ids[0]===project.id;
     const grantRow=catalogItems(view.grantDetail,'detail')[0],selectedGrant=grantRow?catalogObject(grantRow.value.grant):undefined;
     const sourceStatus=view.sourceObservation?sourceChangeObservation(view.sourceObservation):undefined,sourceJob=sourceStatus?.job?catalogObject(sourceStatus.job):undefined;
     const sourceBegin=sourceStatus?String(catalogObject(catalogObject(sourceStatus.begin).metadata).operation_id):undefined;
@@ -39,6 +43,32 @@ export function IndexingScreen(props: ScreenProps) {
     const editAtom=(at:number,change:Partial<CatalogScopeAtom>)=>setScopeAtoms(rows=>rows.map((row,i)=>i===at?{...row,...change}:row));
     const editMembership=(member:CatalogObject)=>{const draft=catalogMembershipDraft(member);setIndex(draft.index);setMemberRevision(draft.revision);setScopeAtoms(draft.scope);};
     return <section>
+        <article class="card" id="recommendations"><h2>Recommendations</h2>
+            <p>Choose what to reuse and query using authorized saved metadata. Readiness and costs without dated observations remain unknown. This read starts no source scan, evidence query or model.</p>
+            <form onSubmit={event=>{event.preventDefault();void run(()=>request('indexing.recommendations',{arguments:{situation,...(adviceProjects.trim()||adviceIndexes.trim()?{selection:{project_ids:adviceProjects.split(',').map(v=>v.trim()).filter(Boolean),index_ids:adviceIndexes.split(',').map(v=>v.trim()).filter(Boolean)}}:{})}}));}}>
+                <label>Situation<select value={situation} onChange={event=>setSituation(event.currentTarget.value)}>
+                    <option value="keep">Keep this layout</option><option value="reuse">Reuse existing evidence</option><option value="focused_task">One application or package</option><option value="shared_dependencies">Shared code or specifications</option><option value="different_lifecycles">Different lifecycle or policy needs</option><option value="overlap">Possible overlapping indexes</option><option value="irrelevant_path">Path irrelevant to this task</option><option value="never_index_path">Path should never be indexed</option>
+                </select></label>
+                <label>Query Project IDs (comma separated)<input value={adviceProjects} onInput={event=>setAdviceProjects(event.currentTarget.value)} /></label>
+                <label>Query index IDs (comma separated)<input value={adviceIndexes} onInput={event=>setAdviceIndexes(event.currentTarget.value)} /></label>
+                <p>Leave both blank to inspect the active connection. Otherwise provide both explicit subsets. Selecting all or widening is a deliberate choice within the active grant.</p>
+                <button disabled={disabled}>Read recommendations</button>
+            </form>
+            {view.recommendations&&(view.recommendations.schema==='airk.recommendations/1'?<>
+                <p>Available to this connection: {Array.isArray(view.recommendations.available)?view.recommendations.available.length:0} unique indexes. Selected for this query: {Array.isArray(catalogObject(view.recommendations.selected).index_ids)?(catalogObject(view.recommendations.selected).index_ids as unknown[]).length:0}.</p>
+                <p>Omitted indexes: {JSON.stringify(view.recommendations.omitted_index_ids)}. Observation: {String(catalogObject(view.recommendations.observation).source)} at {new Date(Number(view.recommendations.observed_unix_ms)).toLocaleString()}. Connection scope only; machine library coverage is incomplete.</p>
+                <details><summary>Available indexes, Project names, selected source and prefix boundaries</summary><pre>{JSON.stringify({available:view.recommendations.available,projects:view.recommendations.projects,source_boundaries:view.recommendations.source_boundaries,selected_scope:view.recommendations.selected_scope},null,2)}</pre></details>
+                {Array.isArray(view.recommendations.cards)&&view.recommendations.cards.map((item,at)=>{const card=catalogObject(item);return <article key={at}><h3>{actionLabels[String(card.action)]??String(card.action)}</h3><p>{String(card.reason)}</p><p>{String(card.expected_benefit)}</p><p>{String(card.tradeoff)}</p></article>;})}
+                <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.use',{}))}>Use this query scope</button>
+                <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.copy',{}))}>Copy agent scope instructions</button>
+                <p>Use this query scope prefills a temporary Workbench form. Review it before running. It does not change an agent connection or replace saved session choices automatically.</p>
+                {canSaveAdviceDefault&&<button disabled={disabled} onClick={()=>void preview({operation:'set_project_defaults',project_id:project!.id,expected_defaults_revision:project!.defaults_revision,index_ids:adviceSelection!.index_ids})}>Review saving as Project default</button>}
+                <p>To save a single-Project scope, inspect that Project and review its native defaults change. For a combined scope, use each Project's defaults form below; a query index may belong to only one selected Project. Reuse opens existing membership review. Split and permanent-removal actions remain unavailable until P10 and P9 respectively.</p>
+                <button disabled={disabled} onClick={()=>props.go({workspace:'indexing',tab:'projects'})}>Review reuse or Project defaults</button>
+                <details><summary>Complete Recommendations response</summary><pre>{JSON.stringify(view.recommendations,null,2)}</pre></details>
+            </>:<p>Recommendations unavailable on this connection. Review the complete native response: <code>{JSON.stringify(view.recommendations)}</code></p>)}
+            <button disabled={disabled} onClick={()=>void run(()=>request('indexing.recommendations.dismiss',{}))}>Keep this layout / Dismiss</button>
+        </article>
         {props.route.tab==='window'?<article class="card"><h2>This window</h2>
             <p>Saved window associations are preferences. Saving or deleting an association does not grant access, switch an evidence session or change a coding agent's configured scope.</p>
             {view.windowDescriptor||view.canReadWindowContext?<>{view.windowDescriptor&&<p>{view.windowDescriptor.name} · {view.windowDescriptor.kind}</p>}

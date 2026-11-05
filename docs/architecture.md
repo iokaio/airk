@@ -1,5 +1,13 @@
 # Architecture
 
+P8 adds a pure bounded Recommendations projection in Core over the existing
+authorized combined snapshot. CLI retains catalog/delivery fencing and obtains
+recipes from MCP's actual served catalog. Workbench plans and native aliases use
+the same read; the extension renders complete results, revalidates Copy/Use and
+prefills a temporary form or opens existing native defaults review. It adds no
+scheduler, evidence query, worker probe or source scan. Missing dated observations
+stay unknown. See [Recommendations](recommendations.md).
+
 P7 adds transport-independent combined-read selection/result contracts in Core
 and canonical scope/budget/rank composition in Kernel. CLI resolves the frozen
 reviewed grant and reuses protected scoped native connections for each unique

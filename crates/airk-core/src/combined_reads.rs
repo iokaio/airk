@@ -17,6 +17,7 @@ pub const COMBINED_READ_SCHEMA: &str = "airk.combined-read/1";
 pub mod header_templates;
 pub mod origins;
 pub mod query_scope;
+pub mod recommendations;
 pub mod shared_values;
 pub use origins::{PublicationMemberRef, QualifiedOrigin, RankedOrigin, materialize_ranked_origin};
 

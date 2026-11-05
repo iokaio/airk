@@ -1,5 +1,9 @@
 # AIRK documentation
 
+[Recommendations and agent query scope](recommendations.md) explains P8's bounded
+metadata-only advice, temporary selections, reviewed defaults and copied harness
+instructions in the unpublished 1.8.8 working build.
+
 [Combined Project reads](combined-reads.md) records P7's unique-index composition,
 shared budgets, member-qualified results and current acceptance boundary.
 

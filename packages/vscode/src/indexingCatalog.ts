@@ -22,6 +22,7 @@ export interface NativeHostContextDescriptor extends CatalogObject {
     schema: 1; namespace: string; host: string; key: string; catalog_revision: number; context: CatalogObject | null;
 }
 export interface CatalogView {
+    recommendations?: CatalogObject;
     generation: number; busy: boolean; error?: string; namespace?: string; revision?: number;
     page?: CatalogObject; detail?: CatalogObject; sources?: CatalogObject; memberships?: CatalogObject;
     review?: CatalogReview; outcome?: CatalogObject; pending?: readonly string[];

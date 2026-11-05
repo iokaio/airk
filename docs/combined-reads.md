@@ -1,5 +1,10 @@
 # Combined Project reads
 
+P8 extends `query_scope` with [Recommendations](recommendations.md), an authorized
+metadata-only view sharing native, CLI/MCP and Workbench schemas and complete
+results. It distinguishes available, selected and omitted members and generates
+catalog-checked instructions without querying evidence or widening grants.
+
 P7 is implemented on the unpublished **1.8.8** working build. Actual native
 transport suites passed on Windows release and Apple Silicon debug pairs;
 Windows legacy latency and selected-index fan-out gates passed. The

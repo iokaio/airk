@@ -14,6 +14,13 @@ import { readResultBody, selectedVerification } from '../sourceVerification';
 import { assertOriginalPublicationForSymbolInputs, strategyFromPlan } from '../workbenchStrategies';
 
 const project=(n:number)=>'prj_'+n.toString(16).padStart(2,'0').repeat(16);
+test('advisory details and complete exports preserve the entire canonical recommendation',()=>{
+    const native={schema:'airk.recommendations/1',available:[],selected:{project_ids:[],index_ids:[]},instructions:{text:'validated example'},future_field:{retained:true}};
+    const envelope={executed:true,status:'complete',steps:[{id:'advice',tool:'query_scope',status:'complete',result:native}]};
+    assert.deepEqual(discoveryDetails(envelope)[0].recommendations,native);
+    const turn={id:'advice',input:'Scope advice',envelope} as unknown as WorkbenchTurn;
+    for(const format of ['json','markdown'] as const)assert.match(renderExport({schema:1,id:'session',project:hash,title:'Advice',createdAt:1,updatedAt:1,revision:1,omitted:0,turns:[turn]},format),/future_field/);
+});
 const index=(n:number)=>'idx_'+n.toString(16).padStart(2,'0').repeat(16);
 const source=(n:number)=>'src_'+n.toString(16).padStart(2,'0').repeat(16);
 const hash='11'.repeat(32),grantId='grt_'+'04'.repeat(16),namespace='01'.repeat(16),host='02'.repeat(32),contextKey='03'.repeat(32);

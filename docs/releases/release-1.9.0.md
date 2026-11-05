@@ -1,5 +1,11 @@
 # Planned AIRK 1.9.0 release and development checkpoints
 
+P8 implements [Recommendations and agent scope instructions](../recommendations.md)
+on the unpublished **1.8.8** working build. Advice is metadata-only, selections
+are explicit and saved defaults retain separate native review. Split and trim
+remain pending P10/P9; [P8 evidence and limits](../research/implementation-v190.md#p8--recommendations-and-harness-guidance)
+remain separate from final 1.9.0 release qualification.
+
 P7 implements [combined Project reads](../combined-reads.md) with complete
 native, CLI, MCP, Workbench, plan/session, verification and export support.
 Windows release and Apple Silicon debug native suites passed, as did all 84
@@ -97,7 +103,8 @@ gates. Report adds intentional checking cost: small-file median 135.76 ms versus
 editors, concurrent editor saves, physical disk I/O or other platforms. Earlier
 failures and their corrections remain in the ledger. At that P4 checkpoint,
 Project/index management, upgrade activation and combined scope remained planned;
-P6f and P7 now implement those paths. Recommendations, trim and split remain planned.
+P6f and P7 now implement those paths, and P8 adds Recommendations. Trim and split
+remain planned for P9/P10.
 
 ## Performance and validation evidence
 

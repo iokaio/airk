@@ -407,17 +407,23 @@ export class WorkbenchView implements vscode.WebviewViewProvider, vscode.Disposa
     }
     /** Explicit Inbox Apply only: stores editable inputs, never prepares or runs
      * evidence and never restores a grant or another window's saved defaults. */
-    async prefillSearchForm(spec:LaunchSpec,search:SearchDraft):Promise<void>{
+    async prefillSearchForm(spec:LaunchSpec,search:SearchDraft,reviewedSubset=false):Promise<void>{
         this.authorized();const key=workbenchProjectKey(spec);
         if(!spec.combinedSession||!key||!this.host.specs().some(value=>JSON.stringify(value)===JSON.stringify(spec)))throw new Error('The combined scope changed before applying the search draft.');
-        if(!search.project_ids||JSON.stringify([...search.project_ids].sort())!==JSON.stringify(spec.combinedSession.project_ids)
+        if(reviewedSubset){
+            if(!search.project_ids?.length||!search.index_ids?.length||search.project_ids.some(id=>!spec.combinedSession!.project_ids.includes(id))
+                ||spec.combinedSession.index_ids&&search.index_ids.some(id=>!spec.combinedSession!.index_ids!.includes(id)))throw new Error('The recommended scope is outside the frozen connection.');
+        }else if(!search.project_ids||JSON.stringify([...search.project_ids].sort())!==JSON.stringify(spec.combinedSession.project_ids)
             ||JSON.stringify(search.index_ids?[...search.index_ids].sort():null)!==JSON.stringify(spec.combinedSession.index_ids??null))throw new Error('The search draft does not match the frozen combined scope.');
         if(!this.session||this.session.project!==key){this.stop();this.releaseClient();this.sessionEpoch++;this.session=newSession(key);this.recent=[];this.status=undefined;this.operations=undefined;}
         const session=this.session,prior=normalizeWorkbenchFormDraft(session.formDraft)??defaultWorkbenchFormDraft();
         const scope=search as SearchDraft&{project_ids?:string[];index_ids?:string[];member_availability?:string};
-        const values:Record<string,string>={query:search.query,limit:String(search.limit),max_bytes:String(search.maxBytes),full_chunks:String(search.fullChunks),
-            ...(search.mode!=='policy'?{mode:search.mode}:{}),...(search.pathPrefix?{path_prefix:search.pathPrefix}:{}),
-            ...(scope.project_ids?{project_ids:JSON.stringify(scope.project_ids)}:{}),...(scope.index_ids?{index_ids:JSON.stringify(scope.index_ids)}:{}),
+        const selectors={...(scope.project_ids?{project_ids:JSON.stringify(scope.project_ids)}:{}),...(scope.index_ids?{index_ids:JSON.stringify(scope.index_ids)}:{})};
+        const values:Record<string,string>=reviewedSubset?{
+            ...(prior.values.search??{}),...selectors,
+            ...(!prior.values.search?.member_availability&&scope.member_availability?{member_availability:scope.member_availability}:{}),
+        }:{query:search.query,limit:String(search.limit),max_bytes:String(search.maxBytes),full_chunks:String(search.fullChunks),
+            ...(search.mode!=='policy'?{mode:search.mode}:{}),...(search.pathPrefix?{path_prefix:search.pathPrefix}:{}),...selectors,
             ...(scope.member_availability?{member_availability:scope.member_availability}:{})};
         const draft=normalizeWorkbenchFormDraft({...prior,activeTool:'search',values:{...prior.values,search:values},revision:prior.revision+1});
         if(!draft)throw new Error('The search draft exceeds the saved form limits.');

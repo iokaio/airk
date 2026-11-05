@@ -48,6 +48,7 @@ export interface DiscoveryStepDetails {
     replyDetail?:'lean'|'rich';
     guidance?:Value;
     readGuidance?:Value;
+    recommendations?:Value;
     sourceVerification?:Value;
     execution?:Value;semanticReadiness?:Value;discoveryReadiness?:Value;readError?:Value;scopeObservation?:Value;
     requestedMode?:string;publication?:unknown;
@@ -119,6 +120,7 @@ function resultMetadata(raw:unknown):Value {
         reply_detail:['lean','rich'].includes(String(source.reply_detail))?source.reply_detail:undefined,
         guidance:guidanceMetadata(source.guidance??evidence.guidance),
         read_guidance:Object.keys(object(source.read_guidance)).length?source.read_guidance:undefined,
+        recommendations:source.schema==='airk.recommendations/1'?source:undefined,
         source_verification:nativeVerification(source.source_verification),
         execution:source.execution??evidence.execution,
         semantic_readiness:source.semantic_readiness??evidence.semantic_readiness,
@@ -148,6 +150,7 @@ export function discoveryDetails(envelope:Value):DiscoveryStepDetails[]{
             ...(metadata.reply_detail==='lean'||metadata.reply_detail==='rich'?{replyDetail:metadata.reply_detail}:{}),
             ...(metadata.guidance?{guidance:object(metadata.guidance)}:{}),
             ...(metadata.read_guidance?{readGuidance:object(metadata.read_guidance)}:{}),
+            ...(metadata.recommendations?{recommendations:object(metadata.recommendations)}:{}),
             ...(metadata.source_verification?{sourceVerification:object(metadata.source_verification)}:{}),
             ...(Object.keys(object(metadata.execution)).length?{execution:object(metadata.execution)}:{}),
             ...(Object.keys(object(metadata.semantic_readiness)).length?{semanticReadiness:object(metadata.semantic_readiness)}:{}),

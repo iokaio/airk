@@ -37,6 +37,14 @@ export class IndexingCatalogController {
         this.sync();
         return this.host.authorized() ? { ...this.view, canReviewRetirement:!!this.host.control?.catalogRetirementReview&&!!this.host.control?.catalogStopTracking,windowDescriptor:this.descriptor(),canReadWindowContext:this.host.canReadWindowContext?.(),canReviewGrant:!!this.host.control?.catalogGrantDraft,canUseGrant:!!this.host.useGrant,canReviewSource:!!this.host.control?.catalogSourceDraft,canReadPendingSource:!!this.host.control?.catalogPendingSource,canReviewSetup:!!this.host.control?.catalogIndexSetupDraft&&!!this.host.control?.catalogIndexSetupApply,pending: this.host.control?.catalogPending() ?? [],pendingDetails:this.host.control?.catalogPendingDetails?.() } : { generation: this.view.generation, busy: false, error: 'Workspace trust or client authority is unavailable.' };
     }
+    /** Complete native read, retained with the same owner fence as catalog data. */
+    async recommendations(read:()=>Promise<CatalogObject>):Promise<CatalogView>{
+        return this.run(async(_control,current)=>{
+            const response=await read();current();catalogBound(response,65536);
+            this.view={...this.view,recommendations:response,generation:this.view.generation+1};
+        });
+    }
+    dismissRecommendations():CatalogView {this.sync();this.sequence++;this.view={...this.view,busy:false,recommendations:undefined,generation:this.view.generation+1};this.host.changed();return this.snapshot();}
     invalidate(): void {
         this.sequence++; this.view = { generation: this.view.generation + 1, busy: false };
         this.pageRequest = this.membershipRequest = this.sourceRequest = undefined;

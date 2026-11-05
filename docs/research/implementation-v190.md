@@ -46,7 +46,8 @@ cross-platform qualification.
 | P5 | Complete — this locally qualified checkpoint | Inert normalized catalogs and owned U0–U6 upgrade/recovery; production activation disabled until P6 |
 | P6 | Complete — Windows local qualification and required full Neo checkpoint | Guarded authority-1 activation, reviewed setup/grants, installed Windows scenarios, all 84 matched native latency gates and source-bound Neo campaign with explicit corrections/reruns; release/platform limits remain separate |
 | P7 | Complete — locally qualified checkpoint | Unique-index composition and complete native/CLI/MCP/Workbench/parse/session/verification support; Windows release and Neo debug actual suites, all 84 latency gates and 120 Windows fan-out trials passed; platform/release limits below |
-| P8–P10 | Not started | Recommendations/harness scopes, permanent trim, split and integrated advice |
+| P8 | Complete — locally qualified checkpoint | Canonical Recommendations and harness scope guidance; Windows release / Neo debug actual transports, useful subset evidence and all 84 unchanged latency gates passed; installed/platform limits below |
+| P9–P10 | Not started | Permanent trim, split and integrated management advice |
 | P11a–P12 | Not started | Effective-profile reporting, explicit retained-profile migration and refresh |
 | P13a/P13b | Conditional | Ranking/diversity only if frozen relevance/resource gates pass |
 | P14 | Not started | Combined qualification and release-candidate evidence |
@@ -3784,3 +3785,122 @@ local Neo connection artifact remains excluded by the existing `artifacts/`
 ignore rule. A final independent documentation review corrected an inline-only
 wording ambiguity; capability-field groups and ordinary native-header templates
 are now distinguished explicitly.
+
+## P8 — Recommendations and harness guidance
+
+Implemented on the unchanged **1.8.8** working version. The canonical native
+`query_scope` Recommendations view projects only authorized metadata; CLI/MCP
+aliases and Workbench plans/forms share its closed schema and complete result.
+Core owns selection narrowing and the deterministic decision table. MCP owns
+recipe generation from the catalog actually served by that binary; CLI retains
+current catalog/grant/delivery fences. The extension renders the result and
+revalidates Copy/Use, prefills an explicit temporary form, or opens the existing
+separate native defaults review. Split/removal remain explanatory pending P10/P9.
+No source scan, evidence query, new watcher or model load is added. Unknown dated
+coverage/cost/overlap observations remain unknown rather than using whole-index
+counters to claim selected-prefix coverage.
+
+### Contract and validation evidence
+
+The eight decision situations have deterministic tests. Narrowing recomputes the
+selected Projects' own disjoint prefixes; it never filters an already broadened
+union. A valid selection may retain a Project contributing no selected index,
+matching `QuerySelection::resolve`. The failing regression (`unknown advice
+selection`) is retained in `p8-unused-project-before.log`; the corrected Core and
+actual native/CLI/MCP/Workbench tests pass. Multi-Project scopes use each Project's
+existing defaults form rather than proposing another Project's indexes as its
+defaults. Temporary scope application preserves existing query/filter/budget and
+availability inputs and starts no native client.
+
+Actual transport tests compare complete advisory results through native, CLI,
+MCP, explicit Workbench plans and slash commands, after authenticating delivery
+receipts. Only documented transport identities/observation timing are normalized.
+Copied examples execute through actual MCP; strict member availability survives
+copying. The metadata-only phase acquires no project worker lease. Native and
+advisory selection observations also match for a useful positive lexical fixture.
+The two-index scope reads two unique members and returns three evidence records;
+the deliberate one-index scope reads one member and returns one useful record,
+with its omitted index explicit. This is a small original fixture, not a general
+recall, latency or physical-I/O improvement claim. `p8-subset-observations.json`
+retains the observed bytes and selection/policy qualifiers.
+
+Windows validation includes the all-feature workspace checkpoint: **2,433 passed,
+47 ignored, zero failed**, including all eight actual combined-read cases. The
+initial ambient-temp attempt stopped at two owner-only catalog fixtures; all
+four runnable catalog cases then passed using a newly created, isolated,
+owner-controlled `AIRK_PRIVATE_CENSUS_BASE`, followed by that full workspace run.
+No existing directory permissions or assertions were weakened. The final slash
+and unused-Project corrections receive separate focused/native regression runs;
+the earlier broad checkpoint is not relabeled as a fresh post-correction run.
+All-target/all-feature Clippy and formatting pass. Rustdoc completed all eight
+crates with zero runnable examples.
+
+Extension checks pass **698 / 19 skipped** (717 total), including actual host
+scope-prefill persistence, complete JSON/Markdown export, late owner/grant fences,
+explicit Copy/Use and dismissal. The Python repository contract suite passes
+**440 run / nine skipped**. Its initial Git-ownership error was corrected with a
+per-process safe-directory setting; no global Git setting or identity changed.
+Repository/whitespace and synchronized **1.8.8** version checks pass. Notices for
+**366** dependency packages pass. Offline dependency source review, Cargo Deny
+and Cargo Vet pass; Cargo Audit is **unavailable** because its cached advisory
+checkout is missing, npm advisories were **not run**, and fresh audit qualification
+is not claimed.
+
+The saved `neo-connection.local.json` was used only for the owned Neo test
+workspace and remains ignored. The first system-Python extraction preflight
+failed before tests; the existing Python 3.13 was then selected, preserving that
+failure. Final three-file overlays are hash checked against preceding receipts.
+Neo passes **21 Core combined-read cases**, the complete **seven combined
+transport cases / one opt-in benchmark ignored**, and all-target/all-feature
+Clippy. Earlier focused Workbench/MCP cases and slash-command tests are retained.
+Its final native source identity is
+`ddfb66065c9c7b7d4e20790f7f5f66fa63ecfac57fcc0e811a9ad508fff5e807`
+(**910 declared inputs**). Source bytes remain unchanged apart from the explicit
+verified overlays. No installed Mac editor, full Mac workspace, Mac performance,
+Developer ID/notarization or Linux execution qualification is implied.
+
+An explicit primary-agent review covered the complete production/test diff,
+including new files, input families, stale actions, source isolation and the final
+corrections. This was **not an independent review**. No commit, push, installed
+normal-runtime replacement or publication was performed. Working version 1.8.8
+is retained; the already requested version change was not repeated.
+
+### Final candidate and frozen gates
+
+The final Windows x64 release candidate (`p8-runtime-release-r3`) binds the same
+**ddfb6606… / 910-input** source as the final Neo receipt. Its independently
+verified identities are:
+
+- Main: `d7959fe0fe35cbfc4e10c8a1a6387560a236b19e4b6b117cb92b54ec3faa6169`.
+- Helper: `9940aa8a8465b5ea8c5875a60f143d295f7056c1d4bf950a33086e44656108b3`.
+- Install manifest: `db6ba8c00823c54a7ae778e7b857ac7389c438fa75da4248e76452fa2e94ede7`.
+
+The complete actual combined transport suite passes **8/8**, with its opt-in
+measurement holder separately ignored (`p8-release-r3-combined.log`). This includes
+canonical advisory/CLI/MCP/Workbench/slash equality, the valid unused-Project
+subset, unchanged read families, exact follow-up origin and failure preservation.
+The model-enabled 16-file native-client smoke passes in **27.940 s**, preserving
+source bytes (`p8-service-clients-r3.log`). Earlier P8 candidates and pre-correction
+receipts remain tied to their own source identities.
+
+With builds and competing suites finished, the final Off and Report replays each
+complete **90 trials / 810 calls**, with **zero errors/retries** and respectively
+zero/**720** verified source receipts. All **84/84 unchanged latency gates pass**
+(`p8-gates.json`): frozen 1.8.7, archived P5, the recorded P5 control and preceding
+P7 R8 references. The recorded control is an archived observation, not a newly
+run contemporary P8 control. Bounds remain median +max(10%,25 ms) and p95
++max(15%,50 ms); fixtures, sample counts, connection cohorts and query budgets
+are unchanged. No claim of universal lower latency follows from this result.
+
+The frozen original nine-case corpus passes three trials in each supported mode
+(`p8-relevance.json`). Every measured development/held-out lexical/vector/hybrid
+grade metric exactly matches both P5 and P7, across **84 metric/reference checks**
+(`p8-quality-comparison.json`). Labels and model inputs remain unchanged. This is
+a small regression corpus; the separate purposeful subset fixture records
+omissions and work counts without asserting equal recall for a narrower scope.
+
+P8 is complete at this local checkpoint. Installed-editor interaction and manual
+acceptance, Linux execution, full Mac workspace/performance and final signed
+release qualification remain outside these observations. Fresh dependency
+advisory qualification is unavailable as recorded above. P9/P10 management actions
+remain pending, and 1.9.0 promotion/publication remains a later reviewed handoff.

@@ -101,6 +101,27 @@ function controller(trusted = true, stored = new Map<string, unknown>(), handoff
 }
 const flush = () => new Promise(resolve => setTimeout(resolve, 5));
 
+test('Recommendations copy and temporary scope use revalidate native scope and never mutate catalog or configuration',async t=>{
+    const f=controller(),instance=f.explorer as any,calls:unknown[]=[],copied:string[]=[],applied:unknown[]=[];
+    const projects=['prj_'+'01'.repeat(16)],indexes=['idx_'+'02'.repeat(16)];
+    let current={schema:'airk.recommendations/1',scope_identity:'scope',catalog_revision:2,selected:{project_ids:projects,index_ids:indexes,member_availability:'require'},instructions:{status:'available',text:'inert native scope instructions'}};
+    instance.indexing=new IndexingCatalogController({identity:()=> 'one',authorized:()=>f.host.trusted(),changed(){},control:{catalogRead:async()=>({}),catalogPrepare:async()=>{throw new Error('unexpected mutation');},catalogApply:async()=>{throw new Error('unexpected mutation');},catalogReconcile:async()=>[],catalogPending:()=>[]}});
+    instance.session=()=>({call:async(tool:string,args:unknown)=>{assert.equal(tool,'airk_query_scope');calls.push(structuredClone(args));return {payload:structuredClone(current)};}});
+    (f.host as any).prefillRecommendedSearch=async(search:unknown)=>{applied.push(search);};
+    t.mock.method(vscodeStub.env.clipboard,'writeText',async(text:string)=>{copied.push(text);});
+    try{
+        await instance.dispatch({type:'indexing.recommendations',arguments:{situation:'shared_dependencies'}});
+        assert.equal(copied.length,0);assert.equal(applied.length,0);
+        await instance.dispatch({type:'indexing.recommendations.copy'});assert.deepEqual(copied,['inert native scope instructions']);
+        await instance.dispatch({type:'indexing.recommendations.use'});
+        assert.deepEqual(applied,[{query:'',mode:'lexical',limit:12,maxBytes:8192,fullChunks:false,project_ids:projects,index_ids:indexes,member_availability:'require'}]);
+        assert.equal(calls.length,3);assert.deepEqual(f.runs,[]);
+        current={...current,catalog_revision:3};
+        await assert.rejects(instance.dispatch({type:'indexing.recommendations.copy'}),/changed/);assert.equal(copied.length,1);
+        f.host.trusted=()=>false;await assert.rejects(instance.dispatch({type:'indexing.recommendations.use'}));assert.equal(applied.length,1);
+    }finally{f.explorer.dispose();}
+});
+
 test('registered spec-change listener fences same-backing scoped identity even before an evidence client exists',()=>{
     const f=controller(),before=f.explorer.snapshot().selectionEpoch,base=f.host.specs()[0];
     assert.ok(before!==undefined,'the registered controller has an initial selected-project epoch');

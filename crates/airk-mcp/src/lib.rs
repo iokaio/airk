@@ -23,6 +23,7 @@ pub mod help;
 pub mod local;
 pub mod query_capacity;
 pub mod remote;
+pub mod scope_instructions;
 pub mod unified;
 
 #[cfg(test)]
@@ -628,7 +629,7 @@ impl AirkServer {
 
     #[tool(
         name = "airk_query_scope",
-        description = "Discover only the connection's reviewed Project/index grant. Projects, indexes and sources have independently bounded pages and revision-bound continuations. Legacy connections report configuration_required; this never enumerates the machine library or opens sources.",
+        description = "Discover only the connection's reviewed Project/index grant. Projects, indexes and sources have bounded pages and revision-bound continuations. recommendations returns bounded metadata-only advice and catalog-checked scope instructions, with optional explicit selection/situation and no cursor or limit. Legacy connections report configuration_required. Never enumerates the machine library, queries evidence or opens sources.",
         annotations(
             read_only_hint = true,
             destructive_hint = false,

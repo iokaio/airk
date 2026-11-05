@@ -51,6 +51,95 @@ fn selection(project_ids: Vec<QueryProjectId>, index_ids: Option<Vec<IndexId>>) 
         member_availability: MemberAvailability::Report,
     }
 }
+
+#[test]
+fn recommendations_narrow_disjoint_prefixes_and_cover_all_decision_rows() -> Result<()> {
+    use recommendations::{Situation, project as advise, select};
+    let available = selection(vec![project(1), project(2)], None).resolve(&grant(vec![
+        member(1, 1, "app"),
+        member(2, 1, "shared"),
+        member(2, 2, "specs"),
+    ]))?;
+    let selected = select(
+        &available,
+        Some(&selection(vec![project(1)], Some(vec![index(1)]))),
+    )?;
+    assert_eq!(
+        selected.members[0].scope,
+        vec![atom("app", PathScope::Subtree)]
+    );
+    assert!(
+        select(
+            &available,
+            Some(&selection(vec![project(1)], Some(vec![index(2)])))
+        )
+        .is_err()
+    );
+    assert!(
+        select(
+            &available,
+            Some(&selection(vec![project(3)], Some(vec![index(1)])))
+        )
+        .is_err()
+    );
+    for (situation, action) in [
+        (Situation::Keep, "keep_layout"),
+        (Situation::Reuse, "review_reuse"),
+        (Situation::FocusedTask, "use_query_scope"),
+        (Situation::SharedDependencies, "use_query_scope"),
+        (Situation::DifferentLifecycles, "split_pending"),
+        (Situation::Overlap, "review_reuse"),
+        (Situation::IrrelevantPath, "use_query_scope"),
+        (Situation::NeverIndexPath, "removal_pending"),
+    ] {
+        let result = advise(&available, &selected, &[], &[], situation, 100)?;
+        assert_eq!(result["cards"][0]["action"], action);
+        assert_eq!(result["omitted_index_ids"], json!([index(2)]));
+        assert_eq!(result["available"][0]["readiness"]["state"], "unknown");
+        assert_eq!(result["limits"]["source_scans"], 0);
+        assert_eq!(result["cards"].as_array().unwrap().len(), 3);
+        assert_eq!(result["library_coverage"], "connection_only");
+    }
+    for invalid in [
+        json!({"view":"projects","situation":"keep"}),
+        json!({"view":"recommendations","selection":{"project_ids":[project(1)]}}),
+        json!({"view":"recommendations","selection":{"project_ids":[project(1)],"index_ids":[]}}),
+        json!({"view":"recommendations","project_id":project(1)}),
+        json!({"view":"recommendations","cursor":"old"}),
+        json!({"view":"recommendations","limit":1}),
+        json!({"view":"recommendations","situation":null}),
+    ] {
+        assert!(
+            serde_json::from_value::<query_scope::QueryScopeArgs>(invalid)
+                .map_err(anyhow::Error::from)
+                .and_then(|args| args.validate())
+                .is_err()
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn recommendations_match_query_selection_with_unused_selected_projects() -> Result<()> {
+    let frozen = grant(vec![member(1, 1, "app"), member(2, 2, "specs")]);
+    let available = selection(vec![project(1), project(2)], None).resolve(&frozen)?;
+    let choice = selection(vec![project(1), project(2)], Some(vec![index(1)]));
+    let expected = choice.resolve(&frozen)?;
+    let selected = recommendations::select(&available, Some(&choice))?;
+    assert_eq!(selected, expected);
+    // The same valid selection can itself be the connection's frozen subset.
+    recommendations::project(
+        &expected,
+        &expected,
+        &[],
+        &[],
+        recommendations::Situation::Keep,
+        100,
+    )?;
+    assert_eq!(selected.project_ids, vec![project(1), project(2)]);
+    assert_eq!(selected.members.len(), 1);
+    Ok(())
+}
 fn envelope(sequence: u64, revision: u8) -> RevisionEnvelope {
     RevisionEnvelope::new(
         "fixture".into(),

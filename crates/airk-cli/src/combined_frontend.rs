@@ -452,11 +452,50 @@ impl Backend {
         use airk_mcp::combined::{QueryScopeArgs, QueryScopeView};
         let args: QueryScopeArgs = serde_json::from_value(Value::Object(args))?;
         args.validate()?;
+        if args.view == QueryScopeView::Recommendations {
+            let selected_scope = airk_core::combined_reads::recommendations::select(
+                &before.resolved,
+                args.selection.as_ref(),
+            )?;
+            let indexes = before
+                .members
+                .iter()
+                .map(|member| member.index.clone())
+                .collect::<Vec<_>>();
+            let mut body = airk_core::combined_reads::recommendations::project(
+                &before.resolved,
+                &selected_scope,
+                &before.projects,
+                &indexes,
+                args.situation.unwrap_or_default(),
+                now_ms(),
+            )?;
+            body["catalog_revision"] = json!(before.revision);
+            body["scope_identity"] = json!(before.identity);
+            body["source_boundaries"] = json!(before.members.iter().flat_map(|member| member.sources.iter().map(move |source| json!({"index_id":member.index.id,"source_root_id":source.id,"original_root":source.canonical_path,"aliases":source.aliases}))).collect::<Vec<_>>());
+            body["instructions"] = airk_mcp::scope_instructions::generate(&selected_scope, &body)?;
+            let after = snapshot(&self.control, &self.selection, selected).await?;
+            ensure!(
+                before.identity == after.identity && before.revision == after.revision,
+                ScopeReadRefused
+            );
+            airk_core::index_catalog::encoded_size(
+                &body,
+                args.max_bytes()
+                    .saturating_sub(DELIVERY_OBSERVATION_RESERVE),
+            )?;
+            let result = self
+                .finalize(selected, before.identity, native_envelope(body), deadline)
+                .await?;
+            airk_core::index_catalog::encoded_size(&canonical_body(&result), args.max_bytes())?;
+            return Ok(result);
+        }
         let page_bytes = args.max_bytes().saturating_sub(1024);
         let view = match args.view {
             QueryScopeView::Projects => "projects",
             QueryScopeView::Indexes => "indexes",
             QueryScopeView::Sources => "sources",
+            QueryScopeView::Recommendations => unreachable!("handled above"),
         };
         let mut records = Vec::new();
         match args.view {
@@ -518,6 +557,7 @@ impl Backend {
                     }
                 }
             }
+            QueryScopeView::Recommendations => unreachable!("handled above"),
         }
         let identity = framed_digest(
             b"airk/query-scope-page/1",

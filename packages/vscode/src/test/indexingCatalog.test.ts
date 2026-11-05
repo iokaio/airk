@@ -21,6 +21,21 @@ const request:CatalogRequest={caller,key:{namespace,epoch:1,nonce},expected_cata
 const intent:CatalogApplyIntent={catalog_apply:{request,preview_digest:digest},request_digest:requestDigest};
 const review:CatalogReview={request,response:{status:'catalog_preview',preview:{request_digest:requestDigest,catalog_revision:1,next_revision:2,operation,before:[],after:[],authority_fence_required:false,file_data_changes:false},preview_digest:digest},previewDigest:digest,requestDigest};
 const page=(extra:CatalogObject={})=>({status:'catalog_page',page:{namespace,revision:1,items:[{kind:'project',value:projectValue}],continuation:null,...extra}});
+test('recommendations retain complete native results and fence late owner changes without mutations',async()=>{
+    let owner='one',resolve!:(value:CatalogObject)=>void,mutations=0;
+    const control:CatalogControl={catalogRead:async()=>page(),catalogPrepare:async()=>{mutations++;return review;},catalogApply:async()=>{mutations++;return {};},catalogReconcile:async()=>[],catalogPending:()=>[]};
+    const controller=new IndexingCatalogController({control,identity:()=>owner,authorized:()=>true,changed(){}});
+    const result={schema:'airk.recommendations/1',future_field:{retained:true},selected:{project_ids:[project],index_ids:[index]},instructions:{text:'scope example'}};
+    const first=await controller.recommendations(async()=>result);
+    assert.deepEqual(first.recommendations,result);assert.match(catalogExport(first),/future_field/);
+    const pending=controller.recommendations(()=>new Promise(done=>{resolve=done;}));
+    owner='two';resolve(result);await assert.rejects(pending,/stale_catalog_view/);
+    assert.equal(controller.snapshot().recommendations,undefined);assert.equal(mutations,0);
+    await controller.recommendations(async()=>result);controller.dismissRecommendations();assert.equal(controller.snapshot().recommendations,undefined);
+    const dismissed=controller.recommendations(()=>new Promise(done=>{resolve=done;}));controller.dismissRecommendations();resolve(result);
+    await assert.rejects(dismissed,/stale_catalog_view/);assert.equal(controller.snapshot().busy,false);assert.equal(controller.snapshot().recommendations,undefined);
+    assert.ok(parseWebviewMessage({v:1,type:'indexing.recommendations',requestId:'advice',arguments:{selection:{project_ids:[project],index_ids:[index]}}}));
+});
 function setupFixture(){
     const selection={key:request.key,expected_catalog_revision:1,name:'Explicit setup',primary_root:'/chosen/source',data_root:'/chosen/storage',collection:'fixture',additional_roots:[],setup_watch:false};
     const setupRequest={caller:'9a'.repeat(16),key:request.key,expected_catalog_revision:1,name:selection.name,registration:{binding:'11'.repeat(32),root:'/native/source',data_root:'/native/storage',collection:'fixture'},sources:[{canonical_path:'/native/source',aliases:[],owner:true}],setup_watch:false};

@@ -11,12 +11,25 @@ pub enum QueryScopeView {
     Projects,
     Indexes,
     Sources,
+    Recommendations,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct QueryScopeArgs {
     pub view: QueryScopeView,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub selection: Option<super::QuerySelection>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    pub situation: Option<super::recommendations::Situation>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -62,9 +75,29 @@ impl QueryScopeArgs {
                 QueryScopeView::Projects => self.project_id.is_none() && self.index_id.is_none(),
                 QueryScopeView::Indexes => self.project_id.is_some() && self.index_id.is_none(),
                 QueryScopeView::Sources => self.project_id.is_some() && self.index_id.is_some(),
+                QueryScopeView::Recommendations =>
+                    self.project_id.is_none() && self.index_id.is_none() && self.cursor.is_none(),
             },
             "query_scope view requires its exact Project/index selectors"
         );
+        if self.view == QueryScopeView::Recommendations {
+            ensure!(
+                self.limit.is_none(),
+                "recommendations uses a fixed eight-card ceiling, not paged limits"
+            );
+            if let Some(selection) = &self.selection {
+                selection.validate()?;
+                ensure!(
+                    selection.index_ids.is_some(),
+                    "advice selection requires an explicit index subset"
+                );
+            }
+        } else {
+            ensure!(
+                self.selection.is_none() && self.situation.is_none(),
+                "advice controls require recommendations view"
+            );
+        }
         ensure!(
             (1..=32).contains(&self.limit())
                 && (1..=65536).contains(&self.max_bytes())
@@ -88,7 +121,13 @@ impl QueryScopeArgs {
 /// checked by the same native validator before metadata or member work.
 pub fn schema() -> Value {
     json!({"type":"object","additionalProperties":false,"required":["view"],"properties":{
-        "view":{"type":"string","enum":["projects","indexes","sources"],"description":"projects accepts no IDs; indexes requires project_id only; sources requires project_id and index_id. The native owner rejects incompatible selectors before reading."},
+        "view":{"type":"string","enum":["projects","indexes","sources","recommendations"],"description":"projects accepts no IDs; indexes requires project_id only; sources requires project_id and index_id. recommendations accepts optional selection/situation, no IDs or cursor, and reads only authorized saved metadata."},
+        "selection":{"type":"object","additionalProperties":false,"required":["project_ids","index_ids"],"properties":{
+            "project_ids":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":{"type":"string","pattern":"^prj_[0-9a-f]{32}$"}},
+            "index_ids":{"type":"array","minItems":1,"maxItems":32,"uniqueItems":true,"items":{"type":"string","pattern":"^idx_[0-9a-f]{32}$"}},
+            "member_availability":{"type":"string","enum":["report","require"],"default":"report"}
+        }},
+        "situation":{"type":"string","enum":["keep","reuse","focused_task","shared_dependencies","different_lifecycles","overlap","irrelevant_path","never_index_path"]},
         "project_id":{"type":"string","pattern":"^prj_[0-9a-f]{32}$"},
         "index_id":{"type":"string","pattern":"^idx_[0-9a-f]{32}$"},
         "cursor":{"type":"string","minLength":1,"maxLength":32768},

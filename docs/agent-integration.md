@@ -1,5 +1,11 @@
 # Coding-agent MCP setup research
 
+The unpublished **1.8.8** P8 working build can [copy agent scope instructions](recommendations.md)
+for an explicit reviewed Project/index subset. Generated examples follow the
+installed catalog, retain origin/publication and budget rules and never write
+client configuration or grant access. Use this path for current combined-scope
+guidance; the versioned setup research below retains its historical catalogs.
+
 In 1.6.1, managed connections name the stable launcher and source folder (`--root <folder> mcp`), rather than persisting storage paths and internal binding IDs. The 27-tool catalog separates lightweight `status` from detailed `diagnostics`; routine access checks should use status, and troubleshooting should explicitly call diagnostics. See [the source-scope and migration contract](unified-mcp.md).
 
 ## Project instructions (1.5.12)

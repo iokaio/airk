@@ -1158,7 +1158,7 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
                 key.into(),
                 if argument_schema(key)["type"] == "integer" {
                     json!(value.parse::<usize>()?)
-                } else if key == "selectors" {
+                } else if matches!(key, "selectors" | "selection") {
                     serde_json::from_str(value)?
                 } else {
                     json!(value)
@@ -1216,7 +1216,7 @@ pub fn parse_text(text: &str) -> Result<(Vec<Step>, Vec<String>)> {
         "query_scope" => {
             ensure!(
                 positional.len() == 1,
-                "query_scope needs one view: projects, indexes or sources"
+                "query_scope needs one view: projects, indexes, sources or recommendations"
             );
             args.insert("view".into(), json!(value));
         }
@@ -1362,6 +1362,8 @@ fn fields(tool: &str) -> &'static [&'static str] {
         "capabilities" => &["adapter", "rich"],
         "query_scope" => &[
             "view",
+            "selection",
+            "situation",
             "project_id",
             "index_id",
             "cursor",
@@ -1397,6 +1399,9 @@ pub fn operation_catalog() -> Value {
 
 fn argument_schema(key: &str) -> Value {
     match key {
+        "selection" | "situation" => {
+            airk_core::combined_reads::query_scope::schema()["properties"][key].clone()
+        }
         "verification" => {
             json!({"type":"string","enum":["off","report","require"],"default":"report"})
         }
@@ -3221,6 +3226,18 @@ mod tests {
 
     #[test]
     fn navigation_catalog_and_slash_options_use_the_same_typed_validation() -> Result<()> {
+        let choice = json!({"project_ids":[format!("prj_{}","01".repeat(16))],"index_ids":[format!("idx_{}","02".repeat(16))],"member_availability":"require"});
+        let (commands, needs) = parse_text(&format!(
+            "/query_scope recommendations --selection '{choice}' --situation focused_task --bytes 65536"
+        ))?;
+        assert!(needs.is_empty());
+        assert_eq!(commands[0].args["selection"], choice);
+        validate_step(&commands[0], "", false)?;
+        assert_eq!(
+            argument_schema("selection"),
+            airk_core::combined_reads::query_scope::schema()["properties"]["selection"]
+        );
+        assert!(parse_text("/query_scope recommendations --selection '{broken}'").is_err());
         let catalog = operation_catalog();
         assert_eq!(
             catalog["operations"]["symbols"]["properties"]["include_count"]["type"],

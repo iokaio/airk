@@ -1114,6 +1114,12 @@ class ServiceExtension implements vscode.Disposable,AgentSetupHost,vscode.TreeDa
                 await this.workbench.prefillSearchForm(spec,search);
                 this.trusted();if(this.currentCatalogScope()?.spec!==spec)throw new ServiceError('combined_draft_scope_changed');
             },
+            prefillRecommendedSearch:async(search:SearchDraft)=>{
+                this.trusted();const spec=this.currentCatalogScope()?.spec;
+                if(!spec?.combinedSession||!this.workbench)throw new ServiceError('combined_draft_scope_changed');
+                await this.workbench.prefillSearchForm(spec,search,true);
+                this.trusted();if(this.currentCatalogScope()?.spec!==spec)throw new ServiceError('combined_draft_scope_changed');
+            },
             activeProject:()=>{
                 const active=vscode.window.activeTextEditor&&vscode.workspace.getWorkspaceFolder(vscode.window.activeTextEditor.document.uri);
                 const root=active&&this.roots.find(root=>same(root.opened,active.uri.fsPath));

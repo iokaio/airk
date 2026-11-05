@@ -720,6 +720,24 @@ fn stable_cursor(encoded: &str) -> Result<String> {
 fn stable(mut value: Value) -> Result<Value> {
     match &mut value {
         Value::Object(fields) => {
+            // Generated instructions embed only their outer observation time.
+            // Normalize that documented timing identity, retaining all recipe text.
+            if fields.get("schema") == Some(&json!("airk.recommendations/1")) {
+                let stamp = fields
+                    .get("observed_unix_ms")
+                    .map(Value::to_string)
+                    .unwrap_or_default();
+                if let Some(text) = fields
+                    .get_mut("instructions")
+                    .and_then(|v| v.get_mut("text"))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+                {
+                    fields["instructions"]["text"] = json!(
+                        text.replace(&format!("at {stamp} Unix ms"), "at <observation> Unix ms")
+                    );
+                }
+            }
             if let Some(deadline) = fields
                 .get_mut("allocation")
                 .and_then(Value::as_object_mut)
@@ -1708,6 +1726,151 @@ async fn actual_query_scope_discovery_keeps_three_views_and_continuations_in_par
     for registration in &f.registrations {
         let untouched = ProjectLease::acquire(&f.control, registration.binding)?;
         drop(untouched);
+    }
+    backend.close();
+    backend.shutdown().await?;
+    f.assert_sources_unchanged()?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn recommendations_keep_native_cli_mcp_parity_and_execute_copied_examples() -> Result<()> {
+    let f = Fixture::new(true)?;
+    let _service = f.start().await?;
+    let backend = airk_cli::combined_frontend::resolve(None, Some(&f.control), &f.session).await?;
+    let mut mcp = McpSession::start(&f)?;
+    let mut id = 4000;
+    let mut subset_observations = Vec::new();
+    for selection in [
+        None,
+        Some(
+            json!({"project_ids":f.session.project_ids,"index_ids":[f.indexes[1]],"member_availability":"require"}),
+        ),
+    ] {
+        let mut args =
+            json!({"view":"recommendations","situation":"focused_task","max_bytes":65536});
+        if let Some(selection) = selection {
+            args["selection"] = selection;
+        }
+        let native = native_read(backend.as_ref(), "airk_query_scope", &args).await?;
+        let cli = f.cli("airk_query_scope", &args).await?;
+        let wire = mcp.call(id, "query_scope", args.clone())?;
+        id += 1;
+        ensure!(
+            native["isError"] != true
+                && cli["isError"] != true
+                && wire["result"]["isError"] != true,
+            "advice failed: {native} {cli} {wire}"
+        );
+        let result = body(&native)?;
+        assert_eq!(result["schema"], "airk.recommendations/1");
+        assert_parity("recommendations CLI", &result, &body(&cli)?)?;
+        assert_parity("recommendations MCP", &result, &body(&wire["result"])?)?;
+        let plan = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","plan":{"schema":"airk.parse.plan/1","steps":[{"id":"advice","tool":"query_scope","args":args}]}});
+        let parsed = mcp.call(id, "parse", plan)?;
+        id += 1;
+        ensure!(
+            parsed["result"]["isError"] != true,
+            "Workbench advisory plan failed: {parsed}"
+        );
+        let parsed_body = body(&parsed["result"])?;
+        assert_parity(
+            "recommendations Workbench plan",
+            &result,
+            &body(&parsed_body["steps"][0]["result"])?,
+        )?;
+        if let Some(choice) = args.get("selection") {
+            let slash = json!({"schema":"airk.parse.request/1","mode":"execute","verification":"off","text":format!("/query_scope recommendations --selection '{choice}' --situation focused_task --bytes 65536")});
+            let cli = f.cli("airk_parse", &slash).await?;
+            let wire = mcp.call(id, "parse", slash)?;
+            id += 1;
+            for (route, reply) in [("CLI", cli), ("MCP", wire["result"].clone())] {
+                ensure!(
+                    reply["isError"] != true,
+                    "{route} slash advice failed: {reply}"
+                );
+                let plan = body(&reply)?;
+                assert_parity(
+                    &format!("recommendations slash {route}"),
+                    &result,
+                    &body(&plan["steps"][0]["result"])?,
+                )?;
+            }
+        }
+        assert_eq!(result["limits"]["evidence_queries"], 0);
+        assert_eq!(
+            result["instructions"]["examples"][1]["arguments"]["member_availability"],
+            result["selected"]["member_availability"]
+        );
+        assert!(!result.to_string().contains(&f.indexes[2].to_string()));
+        // Metadata-only advice must not acquire project worker leases.
+        if id == 4002 {
+            for registration in &f.registrations {
+                drop(ProjectLease::acquire(&f.control, registration.binding)?);
+            }
+        }
+        for example in result["instructions"]["examples"]
+            .as_array()
+            .context("scope examples absent")?
+        {
+            let name = example["name"]
+                .as_str()
+                .context("scope example tool absent")?;
+            let reply = mcp.call(id, name, example["arguments"].clone())?;
+            id += 1;
+            ensure!(
+                reply["result"]["isError"] != true,
+                "copied example rejected by actual transport: {reply}"
+            );
+        }
+        // Original fixture judgments predate candidate output: this literal
+        // matches permitted policy evidence, including in the one-index subset.
+        let mut task = result["instructions"]["examples"][1]["arguments"].clone();
+        task["query"] = json!("boundaryneedle");
+        let reply = mcp.call(id, "search", task)?;
+        id += 1;
+        ensure!(
+            reply["result"]["isError"] != true,
+            "recommended task scope failed: {reply}"
+        );
+        let evidence = body(&reply["result"])?;
+        assert_eq!(
+            evidence["selection"], result["selected"],
+            "advisory and retrieval scopes diverged"
+        );
+        let members = evidence["members"]
+            .as_array()
+            .context("selected members absent")?;
+        let ranking = evidence["ranking"]
+            .as_array()
+            .context("selected evidence absent")?;
+        ensure!(
+            !ranking.is_empty(),
+            "useful fixture evidence absent from recommended scope: {evidence}"
+        );
+        assert_eq!(
+            members.len(),
+            result["selected"]["index_ids"].as_array().unwrap().len()
+        );
+        subset_observations.push(json!({"selected":result["selected"],"omitted_index_ids":result["omitted_index_ids"],"unique_members_read":members.len(),"returned_evidence_records":ranking.len(),"canonical_response_bytes":serde_json::to_vec(&evidence)?.len(),"mode":"lexical","verification":"off"}));
+    }
+    save_replies(
+        "P8 useful subset observations",
+        &json!({"scope":"Original fictional positive lexical fixture; selected and all available scope, not a general recall/latency/physical-I/O claim","cases":subset_observations}),
+    )?;
+    for args in [
+        json!({"view":"recommendations","selection":{"project_ids":[f.projects[2]],"index_ids":[f.indexes[2]]}}),
+        json!({"view":"recommendations","max_bytes":1}),
+        json!({"view":"recommendations","cursor":"stale"}),
+    ] {
+        // native read: deliberate invalid/budget calls must be observed once.
+        let reply = backend
+            .call("airk_query_scope".into(), args.as_object().unwrap().clone())
+            .await?;
+        ensure!(
+            reply["isError"] == true,
+            "invalid advice was accepted: {reply}"
+        );
     }
     backend.close();
     backend.shutdown().await?;

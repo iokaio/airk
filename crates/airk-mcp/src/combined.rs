@@ -22,7 +22,7 @@ impl rmcp::schemars::JsonSchema for QueryScopeParameters {
 pub fn query_scope_tool(name: &str) -> Tool {
     serde_json::from_value(json!({
         "name":name,
-        "description":"Discover only the connection's reviewed Project/index grant. Projects, indexes and sources have independently bounded pages and revision-bound continuations. Legacy connections report configuration_required; this never enumerates the machine library or opens sources.",
+        "description":"Discover only the connection's reviewed Project/index grant. Projects, indexes and sources have bounded pages and revision-bound continuations. recommendations returns bounded metadata-only advice and catalog-checked scope instructions, with optional explicit selection/situation and no cursor or limit. Legacy connections report configuration_required. Never enumerates the machine library, queries evidence or opens sources.",
         "inputSchema":airk_core::combined_reads::query_scope::schema(),
         "annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}
     })).expect("static query_scope catalog")

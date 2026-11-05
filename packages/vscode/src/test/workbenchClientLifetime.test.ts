@@ -580,6 +580,24 @@ test('error-only turns retain canonical native refusals in full copies and actua
 const scopedSelector=(project:string):CatalogSessionSelector=>({schema:1,context_key:'12'.repeat(32),namespace:'34'.repeat(16),expected_catalog_revision:8,grant_id:'grt_'+ '11'.repeat(16),expected_grant_revision:7,index_id:'idx_'+ '22'.repeat(16),project_ids:['prj_'+project.repeat(16)]});
 const combinedSelector=():CombinedCatalogSessionSelector=>({schema:1,context_key:'12'.repeat(32),namespace:'34'.repeat(16),expected_catalog_revision:8,grant_id:'grt_'+'11'.repeat(16),expected_grant_revision:7,project_ids:['prj_'+'44'.repeat(16)],index_ids:['idx_'+'22'.repeat(16),'idx_'+'33'.repeat(16)]});
 
+test('explicit recommended subset only prefills the matching Workbench form and cannot widen its connection',async()=>{
+    const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()};
+    const draft={query:'',mode:'lexical' as const,limit:12,maxBytes:8192,fullChunks:false,project_ids:selected.combinedSession.project_ids,index_ids:[selected.combinedSession.index_ids![0]],member_availability:'report' as const};
+    try{
+        f.replace([selected]);
+        await f.provider.prefillSearchForm(selected,{...draft,query:'Keep this task',mode:'hybrid',limit:9,maxBytes:4096,pathPrefix:'docs/',fullChunks:true,index_ids:selected.combinedSession.index_ids,member_availability:'require'});
+        await f.provider.prefillSearchForm(selected,draft,true);await f.state.saveQueue;
+        assert.equal(f.created.length,0,'prefilling starts no native client');
+        assert.equal(f.state.session!.formDraft?.values.search.index_ids,JSON.stringify(draft.index_ids));
+        const values=f.state.session!.formDraft!.values.search;
+        assert.equal(values.query,'Keep this task');assert.equal(values.mode,'hybrid');assert.equal(values.path_prefix,'docs/');
+        assert.equal(values.limit,'9');assert.equal(values.max_bytes,'4096');assert.equal(values.full_chunks,'true');assert.equal(values.member_availability,'require');
+        assert.deepEqual(selected.combinedSession.index_ids,combinedSelector().index_ids,'the frozen connection is unchanged');
+        await assert.rejects(f.provider.prefillSearchForm(selected,{...draft,index_ids:['idx_'+'99'.repeat(16)]},true),/outside/);
+        await assert.rejects(f.provider.prefillSearchForm(selected,draft),/does not match/,'ordinary Inbox drafts still require an exact session match');
+    }finally{f.provider.dispose();}
+});
+
 test('combined search Apply stores exact editable inputs and launches no evidence process',async()=>{
     const f=fixture(),selected={...spec(A),combinedSession:combinedSelector()};
     try{
