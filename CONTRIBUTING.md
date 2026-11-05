@@ -27,6 +27,22 @@ Install Git, Rust as pinned in [rust-toolchain.toml](rust-toolchain.toml), nativ
 
 For the native Mac workflow and architecture-specific release steps, see [the macOS build guide](docs/macos-build.md). For the app and extension together, see [Windows build/review](docs/windows-local-build.md). Extension development also needs Node.js 24.15.0/npm; use `npm ci --ignore-scripts --no-audit --no-fund --prefix packages/vscode` and `npm test --prefix packages/vscode`. `npm run compile` compiles the host modules with `tsc`, typechecks the AIRK Explorer webview (`tsconfig.webview.json`) and the Explorer Assistance MCP server (`tsconfig.assistance.json`), and bundles them with the pinned esbuild into flat `out/explorerWebview.js`/`.css` and `out/explorerAssistance.js` files. The optional Explorer adapter bundle may load Node built-ins only. The native unified MCP catalog snapshots its strict UI schemas in crates/airk-mcp/src/unified_explorer.json; the offline template catalog in `crates/airk-mcp/src/explorer_templates.json` also embeds the extension version. After an intentional adapter schema or package version change, compile the TypeScript modules first, then regenerate with `node packages/vscode/scripts/build-explorer.cjs --write-mcp-catalog` and review the diff. Normal compilation rejects drift. Strategies prompt and plan output is checked against golden files in `packages/vscode/src/test/fixtures/explorer/`; after an intended output change, run the test once with `AIRK_UPDATE_GOLDEN=1` and review the diff before committing. esbuild works without install scripts through its locked optional platform packages. New host modules must be added to the `MODULES` list in `scripts/package-extension.py`, and new bundles to `BUNDLES`.
 
+### Local Rust iteration
+
+The local helper checks formatting first, then runs scoped Clippy for the affected owner with Cargo timings enabled and warnings denied:
+
+```console
+python scripts/dev-check.py -p airk-store
+```
+
+If formatting already passed for the same edits, `--skip-fmt` reuses that completed check. Scoped iteration uses `--no-default-features`; `--features` adds the explicit comma-separated features needed by the change. An explicit broad pass is `python scripts/dev-check.py --workspace --all-features`. `--target-dir` selects an existing persistent target, including the isolated P10 target; otherwise keep the same checkout's target warm between runs. Coordinate one Cargo owner among parallel agents and queue compilation, Clippy and tests. Do not precede Clippy with `cargo check` for the same feature/target configuration; the separate lightweight-main check below remains a required gate.
+
+The helper defaults to Windows development incremental compilation on (`CARGO_INCREMENTAL=1`) and off on other hosts (`0`); use `--incremental on` or `--incremental off` for an explicit per-run override. This is a local development choice, with no change to release profiles or CI qualification. Avoid routine Windows `cargo clean` or fresh target directories. Batch required Mac Neo checks over its existing SSH connection, preserve the complete results/timing reports, and run `cargo clean` there after testing even if a check failed, to recover its limited drive space.
+
+Every helper invocation includes Cargo `--timings`. On the next necessary build or Clippy run, record the exact command, selected packages/features/targets, persistent target directory, incremental setting, elapsed time, result and timing-report location. Retain evidence outside the target before Neo cleanup. Use those observations to investigate cost; do not launch speculative benchmarks or broad builds just to compare workflow settings. A scoped pass proves only its selected configuration. Required workspace, lightweight-main, inference-helper, runtime, packaging and release checks below remain in force.
+
+### Required qualification
+
 ```console
 cargo fmt --all --check
 cargo check -p airk-cli --no-default-features --all-targets --locked

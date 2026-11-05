@@ -7,6 +7,11 @@ Windows workspace/runtime and focused Mac ARM checks passed with the limits in
 the [ledger](../research/implementation-v190.md). P10–P14 acceptance remains pending;
 this working build is unpublished.
 
+Contributor iteration now has a [scoped, timed Clippy command](../../CONTRIBUTING.md#local-rust-iteration)
+with persistent build output and a Windows-only development incremental default.
+Required qualification and release profiles remain unchanged; measured speedup
+is not yet established. Mac Neo test batches retain their mandatory cleanup.
+
 P8 adds [Recommendations and copied agent scope instructions](../recommendations.md)
 through the canonical native `query_scope` read, CLI/MCP aliases and Workbench
 plans/forms. Indexing renders available/selected/omitted scope, explicit temporary

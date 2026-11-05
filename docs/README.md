@@ -137,7 +137,9 @@ Trusted VSIX activation now installs the native runtime and the `airk` terminal 
 
 The **1.4.4 release** corrects WAL admission and logical database sizing. Earlier 1.4.0/1.4.1/1.4.2 qualification remains historical. Start with the [historical 1.4.4 release record](releases/release-1.4.4.md), [service plan](airkservice-architecture.md), [completion checklist](service-implementation-checklist.md), [project setup](service-project-setup.md) and [client adapters](service-client-adapters.md). That historical record did not qualify native Mac or the complete installed-platform/signing/policy matrix; current P6 evidence is recorded in the implementation ledger.
 
-The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at 1.9.0; publication is verified separately.
+The 1.3.x/1.2.x release records and former direct-helper/window-scheduler guides are historical references. They do not describe the 1.4 default lifecycle or authorize opening legacy stores through the service. Native and extension source/lockfile versions are synchronized at the **1.8.8 manual-test working build**. Promotion to the planned **1.9.0** follows implementation and manual acceptance; publication is verified separately.
+
+The [local Rust iteration guide](../CONTRIBUTING.md#local-rust-iteration) covers scoped Clippy, persistent targets, platform-specific development incremental settings and timing reports; full qualification remains required.
 
 The [Windows build/editor guide](windows-local-build.md) describes pair builds, stage-only acceptance without a VSIX, and real native registration/usage/response-mode checks in isolated editor profiles.
 

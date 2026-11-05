@@ -2,6 +2,8 @@
 
 A one-release exception covers the [pinned 1.4.4 tooling repair](release-workflow.md#pinned-144-release-tool-repair). Its complete cumulative diff must stay within an explicit release-tool/test/document allowlist, retain version 1.4.4 and match the original 664-file runtime identity. Only then do PR/main CI run quick checks and Python contracts on all four hosts without repeating native/container builds. Other changes, missing history, manual CI dispatches and version 1.4.5 restore the ordinary plan. The original full main CI remains the authenticated producer.
 
+For local development, use the [scoped Rust iteration workflow](../CONTRIBUTING.md#local-rust-iteration): one coordinated Cargo owner, warm per-checkout targets and retained timings. Its Windows incremental override applies to development Clippy only. Required CI/release scopes and checked-in compilation profiles below are unchanged; a local scoped pass does not qualify them.
+
 The current manual-test working version is **1.8.8** toward the planned 1.9.0 release; see [the working-build record](releases/release-1.8.8.md). The separate [dependency audit](dependency-advisories.md) workflow runs only when lockfiles or the advisory policy change, weekly, and on request; routine CI is unchanged. Prior release and qualification records retain their original scope.
 
 Container compilation and ownership tests run as UID/GID 10001. Every cache-using
